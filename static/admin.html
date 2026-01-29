@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Панель Администратора ЖКХ</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        /* Стили для полей ввода коррекции внутри таблицы */
+        .corr-input {
+            width: 70px;
+            padding: 5px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 13px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <!-- Шапка -->
+        <header>
+            <h1>Администрирование ЖКХ</h1>
+            <div style="display: flex; align-items: center; gap: 15px;">
+                <span id="adminName" style="font-weight: bold; color: #555;"></span>
+                <button class="logout-btn" onclick="logout()">Выйти</button>
+            </div>
+        </header>
+
+        <!-- Навигация по вкладкам -->
+        <div class="tabs">
+            <button class="tab-btn active" onclick="openTab('readings')">🔍 Сверка показаний</button>
+            <button class="tab-btn" onclick="openTab('users')">👥 Пользователи</button>
+            <button class="tab-btn" onclick="openTab('tariffs')">⚙️ Тарифы и Цены</button>
+        </div>
+
+        <!-- ВКЛАДКА 1: Сверка показаний (Черновики -> Утверждение с Коррекцией) -->
+        <div id="readings" class="tab-content active">
+            <div class="card">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <h2>Поступившие показания</h2>
+                    <button class="refresh-btn" onclick="loadReadings()">↻ Обновить список</button>
+                </div>
+
+                <p style="color: #666; font-size: 13px; margin-bottom: 15px; background: #fff3cd; padding: 10px; border-radius: 5px; border-left: 4px solid #ffc107;">
+                    ⚠️ <strong>Инструкция:</strong> Введите значение в поля <strong>"Корр."</strong> (если нужно вычесть кубы из расхода).
+                    Если коррекция не нужна, оставьте 0. Нажмите <strong>"Утвердить"</strong>, чтобы пересчитать сумму и закрыть месяц.
+                </p>
+
+                <div class="table-container">
+                    <table id="readingsTable">
+                        <thead>
+                            <tr>
+                                <th>Жилец</th>
+                                <th>Г.Вода (Расход)</th>
+                                <th>Корр. ГВ</th>
+                                <th>Х.Вода (Расход)</th>
+                                <th>Корр. ХВ</th>
+                                <th>Свет (Расход)</th>
+                                <th>Предв. Сумма</th>
+                                <th>Действие</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ВКЛАДКА 2: Управление пользователями -->
+        <div id="users" class="tab-content">
+
+            <!-- Форма добавления -->
+            <div class="card">
+                <h2>Регистрация нового жильца</h2>
+                <form id="addUserForm">
+                    <div class="form-grid">
+                        <!-- Блок авторизации -->
+                        <div class="form-group">
+                            <label>Логин (Username)</label>
+                            <input type="text" id="newUsername" required placeholder="ivanov123">
+                        </div>
+                        <div class="form-group">
+                            <label>Пароль</label>
+                            <input type="password" id="newPassword" required placeholder="******">
+                        </div>
+                        <div class="form-group">
+                            <label>Роль в системе</label>
+                            <select id="newRole">
+                                <option value="user">Жилец</option>
+                                <option value="accountant">Бухгалтер</option>
+                            </select>
+                        </div>
+
+                        <!-- Блок данных о жилье -->
+                        <div class="form-group">
+                            <label>Общежитие</label>
+                            <input type="text" id="dormitory" placeholder="Например: №5, Ленина 10">
+                        </div>
+                        <div class="form-group">
+                            <label>Площадь (м²)</label>
+                            <input type="number" step="0.1" id="area" placeholder="0.0">
+                        </div>
+                        <div class="form-group">
+                            <label>Кол-во жильцов</label>
+                            <input type="number" id="residentsCount" value="1" min="1">
+                        </div>
+
+                        <!-- Дополнительно -->
+                        <div class="form-group full-width">
+                            <label>Место работы / Примечание</label>
+                            <input type="text" id="workplace" placeholder="Лидер или ЦА">
+                        </div>
+                    </div>
+                    <button type="submit" class="action-btn">Зарегистрировать пользователя</button>
+                </form>
+            </div>
+
+            <!-- Таблица пользователей -->
+            <div class="card">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                    <h2>Список пользователей</h2>
+                    <button class="refresh-btn" onclick="loadUsers()">↻ Обновить таблицу</button>
+                </div>
+                <div class="table-container">
+                    <table id="usersTable">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Логин</th>
+                                <th>Роль</th>
+                                <th>Общежитие</th>
+                                <th>Площадь</th>
+                                <th>Жильцов</th>
+                                <th>Работа</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- ВКЛАДКА 3: Управление тарифами -->
+        <div id="tariffs" class="tab-content">
+            <div class="card">
+                <h2>Настройка тарифов (руб.)</h2>
+                <form id="tariffsForm">
+                    <div class="tariffs-grid">
+
+                        <!-- Жилищные услуги -->
+                        <div class="tariff-item">
+                            <label>Содержание и ремонт <span class="unit">(м²)</span></label>
+                            <input type="number" step="0.01" id="t_main" required>
+                        </div>
+                        <div class="tariff-item">
+                            <label>Наем жилья <span class="unit">(м²)</span></label>
+                            <input type="number" step="0.01" id="t_rent" required>
+                        </div>
+                        <div class="tariff-item">
+                            <label>ТКО (Вывоз мусора) <span class="unit">(чел)</span></label>
+                            <input type="number" step="0.01" id="t_waste" required>
+                        </div>
+
+                        <!-- Коммунальные ресурсы -->
+                        <div class="tariff-item">
+                            <label>Отопление <span class="unit">(Гкал)</span></label>
+                            <input type="number" step="0.01" id="t_heat" required>
+                        </div>
+                        <div class="tariff-item">
+                            <label>Подогрев воды <span class="unit">(м³)</span></label>
+                            <input type="number" step="0.01" id="t_w_heat" required>
+                        </div>
+                        <div class="tariff-item">
+                            <label>Холодная вода (ХВС) <span class="unit">(м³)</span></label>
+                            <input type="number" step="0.01" id="t_w_sup" required>
+                        </div>
+                        <div class="tariff-item">
+                            <label>Водоотведение <span class="unit">(м³)</span></label>
+                            <input type="number" step="0.01" id="t_sew" required>
+                        </div>
+
+                        <!-- Общедомовые нужды -->
+                        <div class="tariff-item">
+                            <label>Эл. энергия (ОДН) <span class="unit">(м²)</span></label>
+                            <input type="number" step="0.01" id="t_el_sqm" required>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="action-btn" style="background-color: #27ae60; margin-top: 30px;">Сохранить изменения тарифов</button>
+                </form>
+            </div>
+        </div>
+
+    </div>
+
+    <script src="auth.js"></script>
+    <script src="admin.js"></script>
+</body>
+</html>

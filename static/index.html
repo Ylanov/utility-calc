@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Личный кабинет жильца</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        .meter-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 20px; }
+        .meter-col { background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #e0e0e0; }
+        .prev-val { font-weight: bold; color: #555; font-size: 18px; display: block; margin-top: 5px; }
+        .status-badge { display: inline-block; padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold; margin-bottom: 15px;}
+        .status-draft { background: #fff3cd; color: #856404; }
+        .status-saved { background: #d1e7dd; color: #0f5132; }
+    </style>
+</head>
+<body>
+    <div class="container" style="max-width: 800px;">
+        <header>
+            <h1>Мои счетчики</h1>
+            <button class="logout-btn" onclick="logout()">Выйти</button>
+        </header>
+
+        <div class="card">
+            <div id="statusArea"></div>
+            <form id="meterForm">
+                <div class="meter-grid">
+                    <!-- ГОРЯЧАЯ ВОДА -->
+                    <div class="meter-col">
+                        <h3>Горячая вода (м³)</h3>
+                        <label>Предыдущее:</label>
+                        <span id="prevHot" class="prev-val">0.00</span>
+                        <hr style="margin: 10px 0; border: 0; border-top: 1px solid #ddd;">
+                        <label>Текущее:</label>
+                        <input type="number" step="0.01" id="hotWater" required>
+                    </div>
+
+                    <!-- ХОЛОДНАЯ ВОДА -->
+                    <div class="meter-col">
+                        <h3>Холодная вода (м³)</h3>
+                        <label>Предыдущее:</label>
+                        <span id="prevCold" class="prev-val">0.00</span>
+                        <hr style="margin: 10px 0; border: 0; border-top: 1px solid #ddd;">
+                        <label>Текущее:</label>
+                        <input type="number" step="0.01" id="coldWater" required>
+                    </div>
+
+                    <!-- ЭЛЕКТРИЧЕСТВО -->
+                    <div class="meter-col">
+                        <h3>Электричество</h3>
+                        <label>Предыдущее:</label>
+                        <span id="prevElect" class="prev-val">0.00</span>
+                        <hr style="margin: 10px 0; border: 0; border-top: 1px solid #ddd;">
+                        <label>Текущее:</label>
+                        <input type="number" step="0.01" id="electricity" required>
+                    </div>
+                </div>
+
+                <div style="background: #e3f2fd; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
+                    <strong>ℹ️ Как исправить ошибку:</strong> Пока бухгалтер не утвердил показания, вы можете исправлять цифры и нажимать "Сохранить" сколько угодно раз.
+                </div>
+
+                <button type="submit" class="action-btn">Сохранить показания</button>
+            </form>
+        </div>
+
+        <div id="result" class="card hidden" style="display:none; background:#e8f5e9; border:1px solid #c8e6c9;">
+            <h3>Результат расчета (Предварительно):</h3>
+            <p id="resultText" style="font-size: 18px; font-weight: bold; color: #2e7d32;"></p>
+        </div>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>
