@@ -2,72 +2,521 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Личный кабинет жильца</title>
-    <link rel="stylesheet" href="style.css">
+
+    <script src="https://cdn.tailwindcss.com"></script>
+
     <style>
-        .meter-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin-bottom: 20px; }
-        .meter-col { background: #f8f9fa; padding: 15px; border-radius: 8px; border: 1px solid #e0e0e0; }
-        .prev-val { font-weight: bold; color: #555; font-size: 18px; display: block; margin-top: 5px; }
-        .status-badge { display: inline-block; padding: 5px 10px; border-radius: 15px; font-size: 12px; font-weight: bold; margin-bottom: 15px;}
-        .status-draft { background: #fff3cd; color: #856404; }
-        .status-saved { background: #d1e7dd; color: #0f5132; }
+        body {
+            background: linear-gradient(135deg, #e3f2fd, #f1f8e9);
+            min-height: 100vh;
+        }
     </style>
 </head>
-<body>
-    <div class="container" style="max-width: 800px;">
-        <header>
-            <h1>Мои счетчики</h1>
-            <button class="logout-btn" onclick="logout()">Выйти</button>
-        </header>
 
-        <div class="card">
-            <div id="statusArea"></div>
-            <form id="meterForm">
-                <div class="meter-grid">
-                    <!-- ГОРЯЧАЯ ВОДА -->
-                    <div class="meter-col">
-                        <h3>Горячая вода (м³)</h3>
-                        <label>Предыдущее:</label>
-                        <span id="prevHot" class="prev-val">0.00</span>
-                        <hr style="margin: 10px 0; border: 0; border-top: 1px solid #ddd;">
-                        <label>Текущее:</label>
-                        <input type="number" step="0.01" id="hotWater" required>
-                    </div>
+<body class="font-sans">
 
-                    <!-- ХОЛОДНАЯ ВОДА -->
-                    <div class="meter-col">
-                        <h3>Холодная вода (м³)</h3>
-                        <label>Предыдущее:</label>
-                        <span id="prevCold" class="prev-val">0.00</span>
-                        <hr style="margin: 10px 0; border: 0; border-top: 1px solid #ddd;">
-                        <label>Текущее:</label>
-                        <input type="number" step="0.01" id="coldWater" required>
-                    </div>
+<div class="max-w-6xl mx-auto p-4">
 
-                    <!-- ЭЛЕКТРИЧЕСТВО -->
-                    <div class="meter-col">
-                        <h3>Электричество</h3>
-                        <label>Предыдущее:</label>
-                        <span id="prevElect" class="prev-val">0.00</span>
-                        <hr style="margin: 10px 0; border: 0; border-top: 1px solid #ddd;">
-                        <label>Текущее:</label>
-                        <input type="number" step="0.01" id="electricity" required>
-                    </div>
-                </div>
 
-                <div style="background: #e3f2fd; padding: 15px; border-radius: 5px; margin-bottom: 20px;">
-                    <strong>ℹ️ Как исправить ошибку:</strong> Пока бухгалтер не утвердил показания, вы можете исправлять цифры и нажимать "Сохранить" сколько угодно раз.
-                </div>
+<!-- ================= HEADER ================= -->
 
-                <button type="submit" class="action-btn">Сохранить показания</button>
-            </form>
-        </div>
+<header class="flex justify-between items-center bg-white shadow rounded-xl p-4 mb-6">
 
-        <div id="result" class="card hidden" style="display:none; background:#e8f5e9; border:1px solid #c8e6c9;">
-            <h3>Результат расчета (Предварительно):</h3>
-            <p id="resultText" style="font-size: 18px; font-weight: bold; color: #2e7d32;"></p>
-        </div>
+    <div>
+        <h1 class="text-2xl font-bold text-gray-800">🏠 Личный кабинет</h1>
+        <p class="text-sm text-gray-500">ЖКХ — управление показаниями</p>
     </div>
-    <script src="script.js"></script>
+
+    <button onclick="logout()"
+            class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg">
+        Выйти
+    </button>
+
+</header>
+
+
+<!-- ================= PROFILE ================= -->
+
+<div class="bg-white shadow rounded-xl p-6 mb-6">
+
+    <h2 class="text-xl font-semibold mb-4 text-gray-700">👤 Профиль</h2>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+
+        <div>
+            <div class="text-gray-500">Пользователь</div>
+            <div id="pUser" class="font-semibold"></div>
+        </div>
+
+        <div>
+            <div class="text-gray-500">Адрес</div>
+            <div id="pAddress" class="font-semibold"></div>
+        </div>
+
+        <div>
+            <div class="text-gray-500">Площадь</div>
+            <div id="pArea" class="font-semibold"></div>
+        </div>
+
+        <div>
+            <div class="text-gray-500">Жильцов</div>
+            <div id="pResidents" class="font-semibold"></div>
+        </div>
+
+        <div>
+            <div class="text-gray-500">Период</div>
+            <div id="pPeriod" class="font-semibold"></div>
+        </div>
+
+    </div>
+
+</div>
+
+
+<!-- ================= STATUS ================= -->
+
+<div id="statusArea" class="mb-4"></div>
+
+
+<!-- ================= METERS ================= -->
+
+<div class="bg-white rounded-xl shadow p-6 mb-6">
+
+<h2 class="text-xl font-semibold mb-4 text-gray-700">📊 Показания</h2>
+
+<form id="meterForm" class="space-y-6">
+
+
+<div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+
+
+<!-- HOT -->
+<div class="border rounded-lg p-4 bg-gray-50">
+
+<h3 class="font-semibold text-red-500">🔥 Горячая вода</h3>
+
+<p class="text-sm text-gray-600 mt-2">Предыдущее:</p>
+<p id="prevHot" class="text-xl font-bold">0.00</p>
+
+<input id="hotWater" type="number" step="0.01"
+class="mt-3 w-full border rounded-lg px-3 py-2"
+placeholder="Текущее" required>
+
+</div>
+
+
+<!-- COLD -->
+<div class="border rounded-lg p-4 bg-gray-50">
+
+<h3 class="font-semibold text-blue-500">❄️ Холодная вода</h3>
+
+<p class="text-sm text-gray-600 mt-2">Предыдущее:</p>
+<p id="prevCold" class="text-xl font-bold">0.00</p>
+
+<input id="coldWater" type="number" step="0.01"
+class="mt-3 w-full border rounded-lg px-3 py-2"
+placeholder="Текущее" required>
+
+</div>
+
+
+<!-- ELECT -->
+<div class="border rounded-lg p-4 bg-gray-50">
+
+<h3 class="font-semibold text-yellow-500">⚡ Электричество</h3>
+
+<p class="text-sm text-gray-600 mt-2">Предыдущее:</p>
+<p id="prevElect" class="text-xl font-bold">0.00</p>
+
+<input id="electricity" type="number" step="0.01"
+class="mt-3 w-full border rounded-lg px-3 py-2"
+placeholder="Текущее" required>
+
+</div>
+
+
+</div>
+
+
+<div class="bg-blue-50 border border-blue-200 p-3 rounded-lg text-blue-700">
+ℹ️ Введите актуальные показания
+</div>
+
+
+<div class="text-center">
+
+<button type="submit"
+class="bg-green-600 hover:bg-green-700 text-white px-6 py-3 rounded-xl shadow text-lg">
+
+💾 Сохранить
+
+</button>
+
+</div>
+
+
+</form>
+
+</div>
+
+
+<!-- ================= RESULT ================= -->
+
+<div id="result" class="hidden bg-white rounded-xl shadow p-6 mb-6">
+
+<h2 class="text-xl font-semibold mb-4 text-gray-700">💰 Начисления</h2>
+
+<ul class="divide-y">
+
+<li class="flex justify-between py-2"><span>ГВС</span><span id="rHot"></span></li>
+<li class="flex justify-between py-2"><span>ХВС</span><span id="rCold"></span></li>
+<li class="flex justify-between py-2"><span>Канализация</span><span id="rSew"></span></li>
+<li class="flex justify-between py-2"><span>Свет</span><span id="rEl"></span></li>
+<li class="flex justify-between py-2"><span>Содержание</span><span id="rMain"></span></li>
+<li class="flex justify-between py-2"><span>Наем</span><span id="rRent"></span></li>
+<li class="flex justify-between py-2"><span>ТКО</span><span id="rWaste"></span></li>
+<li class="flex justify-between py-2"><span>Фикс.</span><span id="rFix"></span></li>
+
+<li class="flex justify-between py-4 text-lg font-bold text-green-700">
+<span>ИТОГО</span><span id="rTotal"></span>
+</li>
+
+</ul>
+
+
+<div class="text-center mt-4">
+
+<button onclick="downloadReceipt()"
+class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg">
+
+📄 Скачать квитанцию
+
+</button>
+
+</div>
+
+</div>
+
+
+<!-- ================= HISTORY ================= -->
+
+<div class="bg-white shadow rounded-xl p-6 mb-6">
+
+<h2 class="text-xl font-semibold mb-4 text-gray-700">📚 История начислений</h2>
+
+<div class="overflow-x-auto">
+
+<table class="w-full text-sm border">
+
+<thead class="bg-gray-100">
+
+<tr>
+<th class="p-2 border">Период</th>
+<th class="p-2 border">ГВС</th>
+<th class="p-2 border">ХВС</th>
+<th class="p-2 border">Свет</th>
+<th class="p-2 border">Итого</th>
+<th class="p-2 border">PDF</th>
+</tr>
+
+</thead>
+
+<tbody id="historyBody"></tbody>
+
+</table>
+
+</div>
+
+</div>
+
+
+</div>
+
+
+<!-- ================= SCRIPT ================= -->
+
+<script>
+
+/* =============== AUTH =============== */
+
+const token = localStorage.getItem('token');
+
+if (!token) logout();
+
+function logout(){
+    localStorage.removeItem('token');
+    location.href='login.html';
+}
+
+
+/* =============== DATA =============== */
+
+let last={hot:0,cold:0,el:0};
+
+
+/* =============== LOAD MAIN =============== */
+
+async function loadData(){
+
+try{
+
+const res = await fetch('/api/readings/state',{
+headers:{Authorization:`Bearer ${token}`}
+});
+
+if(!res.ok) throw 1;
+
+const d = await res.json();
+
+
+/* PROFILE */
+
+pUser.textContent = d.username || '-';
+pAddress.textContent = d.dormitory || '-';
+pArea.textContent = d.apartment_area+' м²';
+pResidents.textContent = d.residents_count;
+pPeriod.textContent = d.period_name || '-';
+
+
+/* PREV */
+
+last.hot=d.prev_hot;
+last.cold=d.prev_cold;
+last.el=d.prev_elect;
+
+prevHot.textContent=d.prev_hot.toFixed(2);
+prevCold.textContent=d.prev_cold.toFixed(2);
+prevElect.textContent=d.prev_elect.toFixed(2);
+
+
+/* STATUS */
+
+if(d.is_draft){
+
+statusArea.innerHTML=`
+<div class="bg-yellow-100 p-3 rounded border">
+✏️ Черновик на проверке
+</div>`;
+
+hotWater.value=d.current_hot;
+coldWater.value=d.current_cold;
+electricity.value=d.current_elect;
+
+if(d.total_cost) showResult(d);
+
+}else{
+
+statusArea.innerHTML=`
+<div class="bg-green-100 p-3 rounded border">
+✅ Месяц закрыт
+</div>`;
+
+result.classList.add('hidden');
+}
+
+
+}catch{
+
+alert('Ошибка загрузки');
+
+}
+}
+
+
+/* =============== RESULT =============== */
+
+function showResult(d){
+
+result.classList.remove('hidden');
+
+rHot.textContent=d.cost_hot_water.toFixed(2)+' ₽';
+rCold.textContent=d.cost_cold_water.toFixed(2)+' ₽';
+rSew.textContent=d.cost_sewage.toFixed(2)+' ₽';
+rEl.textContent=d.cost_electricity.toFixed(2)+' ₽';
+rMain.textContent=d.cost_maintenance.toFixed(2)+' ₽';
+rRent.textContent=d.cost_social_rent.toFixed(2)+' ₽';
+rWaste.textContent=d.cost_waste.toFixed(2)+' ₽';
+rFix.textContent=d.cost_fixed_part.toFixed(2)+' ₽';
+
+rTotal.textContent=d.total_cost.toFixed(2)+' ₽';
+}
+
+
+/* =============== SUBMIT =============== */
+
+meterForm.onsubmit=async e=>{
+
+e.preventDefault();
+
+const hot=+hotWater.value;
+const cold=+coldWater.value;
+const el=+electricity.value;
+
+if(hot<last.hot||cold<last.cold||el<last.el){
+alert('Меньше предыдущих');
+return;
+}
+
+try{
+
+const res=await fetch('/api/calculate',{
+method:'POST',
+headers:{
+'Content-Type':'application/json',
+Authorization:`Bearer ${token}`
+},
+body:JSON.stringify({
+hot_water:hot,
+cold_water:cold,
+electricity:el
+})
+});
+
+if(!res.ok) throw 1;
+
+alert('Сохранено');
+
+loadData();
+loadHistory();
+
+}catch{
+
+alert('Ошибка');
+
+}
+
+};
+
+
+/* =============== PDF =============== */
+
+async function downloadReceipt(){
+
+try{
+
+const res=await fetch('/api/client/receipts/latest',{
+headers:{Authorization:`Bearer ${token}`}
+});
+
+if(!res.ok) throw 1;
+
+const blob=await res.blob();
+
+const url=URL.createObjectURL(blob);
+
+const a=document.createElement('a');
+
+a.href=url;
+a.download='receipt.pdf';
+
+document.body.appendChild(a);
+a.click();
+a.remove();
+
+URL.revokeObjectURL(url);
+
+}catch{
+
+alert('Нет квитанции');
+
+}
+
+}
+
+
+/* =============== HISTORY =============== */
+
+async function loadHistory(){
+
+try{
+
+const res=await fetch('/api/readings/history',{
+headers:{Authorization:`Bearer ${token}`}
+});
+
+if(!res.ok) return;
+
+const data=await res.json();
+
+historyBody.innerHTML='';
+
+data.forEach(r=>{
+
+const tr=document.createElement('tr');
+
+tr.innerHTML=`
+
+<td class="border p-2">${r.period}</td>
+<td class="border p-2">${r.hot.toFixed(2)}</td>
+<td class="border p-2">${r.cold.toFixed(2)}</td>
+<td class="border p-2">${r.electric.toFixed(2)}</td>
+<td class="border p-2 font-semibold">${r.total.toFixed(2)}</td>
+
+<td class="border p-2 text-center">
+<button onclick="downloadHistory(${r.id})"
+class="text-blue-600 underline">PDF</button>
+</td>
+
+`;
+
+historyBody.appendChild(tr);
+
+});
+
+}catch{}
+
+}
+
+
+/* =============== HISTORY PDF =============== */
+
+async function downloadHistory(id){
+
+try{
+
+const res=await fetch(`/api/client/receipts/${id}`,{
+headers:{Authorization:`Bearer ${token}`}
+});
+
+if(!res.ok) throw 1;
+
+const blob=await res.blob();
+
+const url=URL.createObjectURL(blob);
+
+const a=document.createElement('a');
+
+a.href=url;
+a.download=`receipt_${id}.pdf`;
+
+document.body.appendChild(a);
+a.click();
+a.remove();
+
+URL.revokeObjectURL(url);
+
+}catch{
+
+alert('Файл недоступен');
+
+}
+
+}
+
+
+/* =============== INIT =============== */
+
+document.addEventListener('DOMContentLoaded',()=>{
+
+loadData();
+loadHistory();
+
+});
+
+</script>
+
+
 </body>
 </html>

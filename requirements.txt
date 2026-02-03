@@ -3,7 +3,14 @@ uvicorn
 sqlalchemy
 asyncpg
 pydantic
+pydantic-settings
 python-multipart
 passlib
 bcrypt==3.2.2
 python-jose
+qrcode
+pillow
+alembic
+jinja2
+weasyprint
+openpyxl

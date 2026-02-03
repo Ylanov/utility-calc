@@ -1,0 +1,333 @@
+// =========================================================
+// 1. РАБОТА С ПОКАЗАНИЯМИ (READINGS - СВЕРКА)
+// =========================================================
+
+// Переменные, специфичные для этого модуля
+let currentPage = 1;
+const pageSize = 50;
+let currentReadings = []; // Хранилище загруженных показаний для модального окна
+let anomalyFilter = false; // Состояние фильтра аномалий
+
+/**
+ * Карта для визуализации тегов аномалий.
+ */
+const anomalyMap = {
+    "HIGH_HOT": { text: "ГВС↑", color: "#e74c3c", title: "Очень высокий расход горячей воды" },
+    "HIGH_COLD": { text: "ХВС↑", color: "#e74c3c", title: "Очень высокий расход холодной воды" },
+    "HIGH_ELECT": { text: "Свет↑", color: "#e74c3c", title: "Очень высокий расход электричества" },
+    "ZERO_HOT": { text: "ГВС=0", color: "#f39c12", title: "Нулевой расход горячей воды" },
+    "ZERO_COLD": { text: "ХВС=0", color: "#f39c12", title: "Нулевой расход холодной воды" },
+    "ZERO_ELECT": { text: "Свет=0", color: "#f39c12", title: "Нулевой расход электричества" },
+    "FROZEN_HOT": { text: "ГВС❄️", color: "#3498db", title: "Счетчик ГВС не менялся 3+ мес." },
+    "FROZEN_COLD": { text: "ХВС❄️", color: "#3498db", title: "Счетчик ХВС не менялся 3+ мес." },
+    "FROZEN_ELECT": { text: "Свет❄️", color: "#3498db", title: "Счетчик света не менялся 3+ мес." }
+};
+
+/**
+ * Генерирует HTML для отображения флагов аномалий.
+ * @param {string | null} flags - Строка с флагами через запятую.
+ * @returns {string} HTML-код с цветными метками.
+ */
+function renderAnomalies(flags) {
+    if (!flags) return '<span style="color:#27ae60; font-weight: bold;">OK</span>';
+
+    return flags.split(',').map(flag => {
+        const details = anomalyMap[flag];
+        if (!details) return '';
+        return `<span title="${details.title}" style="display:inline-block; background:${details.color}; color:white; padding: 2px 5px; border-radius:3px; font-size:10px; margin: 1px; font-weight: bold;">
+            ${details.text}
+        </span>`;
+    }).join(' ');
+}
+
+
+/**
+ * Включает/выключает фильтр по аномальным показаниям.
+ * @param {boolean} isChecked - Состояние чекбокса.
+ */
+function toggleAnomalyFilter(isChecked) {
+    anomalyFilter = isChecked;
+    loadReadings(1); // Перезагружаем данные с первой страницы с учетом фильтра
+}
+
+
+/**
+ * Смена страницы для списка показаний.
+ * @param {number} delta - +1 (вперед) или -1 (назад).
+ */
+function changePage(delta) {
+    const newPage = currentPage + delta;
+    if (newPage < 1) return;
+    loadReadings(newPage);
+}
+
+/**
+ * Загружает список неподтвержденных показаний с пагинацией.
+ * @param {number} page - Номер страницы для загрузки.
+ */
+async function loadReadings(page = 1) {
+    const tbody = document.querySelector('#readingsTable tbody');
+    if (!tbody) return;
+
+    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;">Загрузка...</td></tr>';
+
+    const btnPrev = document.getElementById('btnPrev');
+    if (btnPrev) btnPrev.disabled = (page <= 1);
+
+    try {
+        // Добавляем параметр `anomalies_only` в URL, если фильтр включен
+        const url = `/api/admin/readings?page=${page}&limit=${pageSize}` + (anomalyFilter ? '&anomalies_only=true' : '');
+
+        const response = await fetch(url, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (response.ok) {
+            currentReadings = await response.json();
+            tbody.innerHTML = '';
+
+            currentPage = page;
+            const pageIndicator = document.getElementById('pageIndicator');
+            if (pageIndicator) pageIndicator.innerText = `Стр. ${currentPage}`;
+
+            const btnNext = document.getElementById('btnNext');
+
+            if (currentReadings.length === 0) {
+                const message = anomalyFilter ? "Нет подозрительных показаний" : "Нет данных на этой странице";
+                tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding: 20px;">${message}</td></tr>`;
+                if (btnNext) btnNext.disabled = true;
+                return;
+            } else {
+                if (btnNext) btnNext.disabled = (currentReadings.length < pageSize);
+            }
+
+            currentReadings.forEach(r => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td>
+                        <strong>${r.username}</strong>
+                        <div style="font-size:11px; color:#888;">${r.dormitory || ''}</div>
+                    </td>
+                    <td>${renderAnomalies(r.anomaly_flags)}</td>
+                    <td>${r.cur_hot}</td>
+                    <td>${r.cur_cold}</td>
+                    <td>${r.cur_elect}</td>
+                    <td style="color: green; font-weight: bold;">~ ${r.total_cost.toFixed(2)} ₽</td>
+                    <td>
+                        <button onclick="openModal(${r.id})" class="action-btn" style="padding: 5px 15px; margin: 0; font-size: 13px; background: #4a90e2;">
+                            📝 Проверить
+                        </button>
+                    </td>
+                `;
+                tbody.appendChild(tr);
+            });
+        } else if (response.status === 401) {
+            logout();
+        }
+    } catch (e) {
+        console.error("Ошибка загрузки показаний:", e);
+        tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; color:red;">Ошибка загрузки</td></tr>';
+    }
+}
+
+/**
+ * Открытие модального окна для коррекции.
+ * @param {number} id - ID записи показаний.
+ */
+function openModal(id) {
+    const reading = currentReadings.find(r => r.id === id);
+    if (!reading) return;
+
+    document.getElementById('modal_reading_id').value = id;
+    document.getElementById('m_username').innerText = reading.username;
+
+    const hotUsage = (reading.cur_hot - reading.prev_hot).toFixed(2);
+    const coldUsage = (reading.cur_cold - reading.prev_cold).toFixed(2);
+    const electUsage = (reading.cur_elect - reading.prev_elect).toFixed(2);
+
+    document.getElementById('m_hot_usage').innerText = hotUsage;
+    document.getElementById('m_cold_usage').innerText = coldUsage;
+    document.getElementById('m_elect_usage').innerText = electUsage;
+
+    document.getElementById('m_corr_hot').value = 0;
+    document.getElementById('m_corr_cold').value = 0;
+    document.getElementById('m_corr_elect').value = 0;
+    document.getElementById('m_corr_sewage').value = 0;
+
+    document.getElementById('approveModal').classList.add('open');
+}
+
+/**
+ * Закрытие модального окна.
+ */
+function closeModal() {
+    document.getElementById('approveModal').classList.remove('open');
+}
+
+/**
+ * Отправка утвержденных данных с коррекциями на сервер.
+ */
+async function submitApproval() {
+    const id = document.getElementById('modal_reading_id').value;
+    const data = {
+        hot_correction: parseFloat(document.getElementById('m_corr_hot').value) || 0,
+        cold_correction: parseFloat(document.getElementById('m_corr_cold').value) || 0,
+        electricity_correction: parseFloat(document.getElementById('m_corr_elect').value) || 0,
+        sewage_correction: parseFloat(document.getElementById('m_corr_sewage').value) || 0
+    };
+
+    try {
+        const response = await fetch(`/api/admin/approve/${id}`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(data)
+        });
+
+        if (response.ok) {
+            const result = await response.json();
+            alert(`Показания утверждены!\nИтоговая сумма: ${result.new_total.toFixed(2)} руб.`);
+            closeModal();
+            loadReadings(currentPage); // Перезагружаем текущую страницу
+        } else {
+            const err = await response.json();
+            alert("Ошибка: " + (err.detail || 'Неизвестная ошибка'));
+        }
+    } catch (e) {
+        alert("Ошибка сети");
+    }
+}
+
+// =========================================================
+// МАССОВОЕ УТВЕРЖДЕНИЕ (BULK APPROVE)
+// =========================================================
+
+async function bulkApprove() {
+    if (!confirm("ВНИМАНИЕ! \n\nЭто автоматически утвердит все черновики текущего месяца, где показания больше предыдущих.\nРучные коррекции не будут применены.\n\nПродолжить?")) {
+        return;
+    }
+
+    const btn = document.querySelector('button[onclick="bulkApprove()"]');
+    const oldText = btn ? btn.innerText : "Утвердить все";
+
+    try {
+        if (btn) {
+            btn.innerText = "Обработка...";
+            btn.disabled = true;
+        }
+
+        const response = await fetch('/api/admin/approve-bulk', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (response.ok) {
+            const res = await response.json();
+            alert(`Успешно утверждено записей: ${res.approved_count}`);
+            loadReadings(1);
+        } else {
+            const err = await response.json();
+            alert("Ошибка при массовом утверждении: " + (err.detail || "Неизвестная ошибка"));
+        }
+    } catch (e) {
+        alert("Ошибка сети");
+        console.error(e);
+    } finally {
+        if (btn) {
+            btn.innerText = oldText;
+            btn.disabled = false;
+        }
+    }
+}
+
+// =========================================================
+// УПРАВЛЕНИЕ ПЕРИОДАМИ (ЗАКРЫТИЕ МЕСЯЦА)
+// =========================================================
+
+async function loadActivePeriod() {
+    try {
+        const res = await fetch('/api/admin/periods/active', {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (res.ok) {
+            const data = await res.json();
+            const label = document.getElementById('currentPeriodLabel');
+            if (label) {
+                if (data && data.name) {
+                    label.innerText = data.name;
+                    label.style.color = "#2980b9";
+                } else {
+                    label.innerText = "Нет активного периода";
+                    label.style.color = "red";
+                }
+            }
+        }
+    } catch (e) {
+        console.error("Ошибка загрузки периода:", e);
+    }
+}
+
+async function closePeriod() {
+    const nameInput = document.getElementById('newPeriodName');
+    const newName = nameInput ? nameInput.value : null;
+
+    if (!newName) {
+        alert("Введите название НОВОГО месяца (например: 'Апрель 2025')");
+        return;
+    }
+
+    if (!confirm(`ВНИМАНИЕ!\n\nВы закрываете текущий период и открываете "${newName}".\n\n1. Всем, кто не сдал показания, будет начислено "по среднему" (или 0, если нет истории).\n2. Текущий месяц станет доступен только для чтения.\n3. Жильцы смогут подавать показания в новый месяц.\n\nПродолжить?`)) {
+        return;
+    }
+
+    const btn = document.querySelector('button[onclick="closePeriod()"]');
+    const oldText = btn ? btn.innerText : "Закрыть месяц";
+
+    try {
+        if (btn) {
+            btn.disabled = true;
+            btn.innerText = "Закрытие...";
+        }
+
+        const response = await fetch('/api/admin/periods', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({ name: newName })
+        });
+
+        if (response.ok) {
+            const res = await response.json();
+            alert(`Период успешно закрыт!\n\nАвтоматически создано показаний: ${res.auto_generated_count}\nНовый период: ${res.new_period}`);
+            location.reload(); // Перезагружаем страницу полностью для обновления всех вкладок
+        } else {
+            const err = await response.json();
+            alert("Ошибка: " + (err.detail || "Неизвестная ошибка"));
+            if (btn) {
+                btn.disabled = false;
+                btn.innerText = oldText;
+            }
+        }
+    } catch (e) {
+        alert("Ошибка сети");
+        if (btn) {
+            btn.disabled = false;
+            btn.innerText = oldText;
+        }
+    }
+}
+
+// =========================================================
+// ИНИЦИАЛИЗАЦИЯ
+// =========================================================
+
+document.addEventListener('DOMContentLoaded', () => {
+    // Если мы на странице админки, загружаем период
+    if (document.getElementById('currentPeriodLabel')) {
+        loadActivePeriod();
+    }
+});

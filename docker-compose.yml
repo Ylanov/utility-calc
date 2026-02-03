@@ -1,37 +1,73 @@
-version: '3.8'
-
 services:
+
+  # -------------------------------------------------
+  # BACKEND (FASTAPI)
+  # -------------------------------------------------
   web:
     build: .
+
+    container_name: utility_calc_web
+
+    restart: always
+
     ports:
       - "8000:8000"
+
     environment:
-      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db/utility_db
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/utility_db
+
     depends_on:
       db:
-        condition: service_healthy # <--- Ждать, пока БД станет "здоровой"
+        condition: service_healthy
+
     volumes:
       - ./app:/app/app
       - ./static:/app/static
-    # Если приложение всё же упадет, Docker перезапустит его
-    restart: always
+      - ./alembic:/app/alembic
 
+    networks:
+      - utility_net
+
+
+  # -------------------------------------------------
+  # DATABASE (POSTGRES)
+  # -------------------------------------------------
   db:
     image: postgres:15
+
+    container_name: utility_calc_db
+
+    restart: always
+
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: utility_db
+      PGDATA: /var/lib/postgresql/data/pgdata
+
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-    # Добавляем проверку готовности базы данных
+
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d utility_db"]
       interval: 5s
       timeout: 5s
       retries: 5
 
+    networks:
+      - utility_net
+
+
+# -------------------------------------------------
+# DATA VOLUME
+# -------------------------------------------------
 volumes:
   postgres_data:
+
+
+# -------------------------------------------------
+# NETWORK
+# -------------------------------------------------
+networks:
+  utility_net:
+    driver: bridge
