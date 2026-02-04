@@ -50,4 +50,10 @@ document.addEventListener('DOMContentLoaded', () => {
     loadReadings(1); // Загружаем первую страницу показаний
     loadUsers();
     loadTariffs();
+
+    // ИСПРАВЛЕНИЕ: Инициализация кнопок управления периодом (Открыть/Закрыть месяц)
+    // Проверяем наличие контейнеров управления периодом и запускаем загрузку статуса
+    if (document.getElementById('periodActiveState') || document.getElementById('periodClosedState')) {
+        loadActivePeriod();
+    }
 });

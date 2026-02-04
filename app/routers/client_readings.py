@@ -8,7 +8,6 @@ from app.models import User, MeterReading, Tariff, BillingPeriod
 from app.schemas import ReadingSchema, ReadingStateResponse
 from app.dependencies import get_current_user
 from app.services.calculations import calculate_utilities
-# <--- НОВЫЙ ИМПОРТ: Подключаем наш сервис детектора аномалий
 from app.services.anomaly_detector import check_reading_for_anomalies
 
 router = APIRouter(tags=["Client Readings"])
@@ -54,6 +53,10 @@ async def get_reading_state(current_user: User = Depends(get_current_user), db: 
 
         "total_cost": draft.total_cost if draft else None,
         "is_draft": True if draft else False,
+
+        # --- ВАЖНОЕ ИСПРАВЛЕНИЕ: Передаем статус периода ---
+        "is_period_open": True if active_period else False,
+        # ---------------------------------------------------
 
         # Детализация
         "cost_hot_water": draft.cost_hot_water if draft else None,
@@ -120,8 +123,8 @@ async def save_reading(data: ReadingSchema, current_user: User = Depends(get_cur
         volume_electricity_share=user_share_kwh
     )
 
-    # <--- НАЧАЛО: БЛОК ПРОВЕРКИ АНОМАЛИЙ --->
-    # Получаем историю для анализа (последние 4 утвержденных, чтобы получить 3 дельты расхода)
+    # <--- БЛОК ПРОВЕРКИ АНОМАЛИЙ --->
+    # Получаем историю для анализа (последние 4 утвержденных)
     history_res = await db.execute(
         select(MeterReading)
         .where(MeterReading.user_id == current_user.id, MeterReading.is_approved == True)
@@ -130,28 +133,17 @@ async def save_reading(data: ReadingSchema, current_user: User = Depends(get_cur
     )
     history = history_res.scalars().all()
 
-    # --- НОВЫЙ БЛОК: РАСЧЕТ СРЕДНИХ ПОКАЗАТЕЛЕЙ ПО ОБЩЕЖИТИЮ ---
     avg_peer_consumption = None
-    if history and current_user.dormitory:
-        # Находим средний РАСХОД (не показания) за последний утвержденный период
-        # Это сложный запрос, который можно оптимизировать. Вот упрощенная концепция:
-        # 1. Найти ID последнего закрытого периода.
-        # 2. Посчитать среднюю разницу между показаниями в том периоде и предыдущем для всех жильцов
-        #    в том же общежитии.
-        # Пока для простоты реализуем как плейсхолдер, который можно будет наполнить
-        # реальной логикой SQL.
-        # В идеале, эти средние значения можно считать раз в месяц при закрытии периода и сохранять.
-        # Например, { 'avg_hot': 4.5, 'avg_cold': 5.1, 'avg_elect': 150.2 }
-        pass # Тут будет SQL запрос для получения средних значений
+    # Здесь можно добавить логику получения средних показателей по общежитию
 
-    # Создаем временный объект MeterReading из новых данных для передачи в детектор
+    # Создаем временный объект MeterReading для детектора
     temp_reading = MeterReading(
         hot_water=data.hot_water,
         cold_water=data.cold_water,
         electricity=data.electricity
     )
     anomaly_flags = check_reading_for_anomalies(temp_reading, history, avg_peer_consumption)
-    # <--- КОНЕЦ: БЛОК ПРОВЕРКИ АНОМАЛИЙ --->
+    # <--- КОНЕЦ БЛОКА АНОМАЛИЙ --->
 
     # 6. Сохранение в БД
     # Ищем черновик ТОЛЬКО В ТЕКУЩЕМ ПЕРИОДЕ

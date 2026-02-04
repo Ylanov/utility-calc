@@ -93,6 +93,8 @@ class ReadingStateResponse(BaseModel):
     total_cost: Optional[float]
     is_draft: bool
 
+    is_period_open: bool
+
     cost_hot_water: Optional[float] = None
     cost_cold_water: Optional[float] = None
     cost_electricity: Optional[float] = None

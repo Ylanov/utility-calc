@@ -285,24 +285,37 @@
             }
         },
         updateStatus(data) {
-            appState.isPeriodActive = data.is_draft;
+            // ЛОГИКА ОБНОВЛЕНА: Проверяем флаг is_period_open
+            appState.isPeriodActive = data.is_period_open;
             const statusArea = document.getElementById('statusArea');
             const meterFieldset = document.getElementById('meterFieldset');
 
-            if (data.is_draft) {
+            if (!data.is_period_open) {
+                // ПЕРИОД ЗАКРЫТ
+                statusArea.innerHTML = `
+                    <div class="bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-4 rounded-md" role="alert">
+                        <p class="font-bold">🔒 Расчетный период закрыт</p>
+                        <p>Подача показаний в этом месяце завершена.</p>
+                    </div>`;
+                meterFieldset.disabled = true;
+
+            } else if (data.is_draft) {
+                // ПЕРИОД ОТКРЫТ + ЕСТЬ ЧЕРНОВИК
                 statusArea.innerHTML = `
                     <div class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded-md" role="alert">
                         <p class="font-bold">✏️ Черновик на проверке</p>
                         <p>Ваши показания сохранены и ожидают утверждения бухгалтером.</p>
                     </div>`;
                 meterFieldset.disabled = false;
+
             } else {
+                // ПЕРИОД ОТКРЫТ + НЕТ ЧЕРНОВИКА (Зеленая плашка)
                 statusArea.innerHTML = `
-                    <div class="bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-4 rounded-md" role="alert">
-                        <p class="font-bold">🔒 Расчетный период закрыт</p>
-                        <p>Подача показаний в этом месяце завершена. Новые показания можно будет подать в следующем периоде.</p>
+                    <div class="bg-green-100 border-l-4 border-green-500 text-green-700 p-4 rounded-md" role="alert">
+                        <p class="font-bold">🟢 Сбор показаний открыт</p>
+                        <p>Пожалуйста, внесите текущие показания счетчиков и нажмите "Сохранить".</p>
                     </div>`;
-                meterFieldset.disabled = true;
+                meterFieldset.disabled = false;
             }
         },
         updateResults(data) {
