@@ -1,73 +1,87 @@
 services:
-
   # -------------------------------------------------
   # BACKEND (FASTAPI)
   # -------------------------------------------------
   web:
     build: .
-
     container_name: utility_calc_web
-
     restart: always
-
-    ports:
-      - "8000:8000"
-
+    # Порты убрали, так как доступ будет через Nginx внутри сети Docker
+    expose:
+      - "8000"
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/utility_db
-
+      REDIS_URL: redis://redis:6379/0
     depends_on:
       db:
         condition: service_healthy
-
+      redis:
+        condition: service_started
     volumes:
       - ./app:/app/app
       - ./static:/app/static
       - ./alembic:/app/alembic
-
     networks:
       - utility_net
-
 
   # -------------------------------------------------
   # DATABASE (POSTGRES)
   # -------------------------------------------------
   db:
     image: postgres:15
-
     container_name: utility_calc_db
-
     restart: always
-
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: utility_db
       PGDATA: /var/lib/postgresql/data/pgdata
-
     volumes:
       - postgres_data:/var/lib/postgresql/data
-
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d utility_db"]
       interval: 5s
       timeout: 5s
       retries: 5
-
     networks:
       - utility_net
 
+  # -------------------------------------------------
+  # REDIS (CACHE & LIMITER) - НОВОЕ
+  # -------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: utility_calc_redis
+    restart: always
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis_data:/data
+    networks:
+      - utility_net
 
-# -------------------------------------------------
-# DATA VOLUME
-# -------------------------------------------------
+  # -------------------------------------------------
+  # NGINX (PROXY & HTTPS) - НОВОЕ
+  # -------------------------------------------------
+  nginx:
+    image: nginx:alpine
+    container_name: utility_calc_nginx
+    restart: always
+    ports:
+      - "8080:80"   # Теперь HTTP будет на 8080
+      - "8443:443"  # Теперь HTTPS будет на 8443
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./nginx/certs:/etc/nginx/certs
+      - ./static:/usr/share/nginx/html/static  # Nginx будет сам отдавать статику (быстрее)
+    depends_on:
+      - web
+    networks:
+      - utility_net
+
 volumes:
   postgres_data:
+  redis_data:  # Persistent storage for Redis
 
-
-# -------------------------------------------------
-# NETWORK
-# -------------------------------------------------
 networks:
   utility_net:
     driver: bridge

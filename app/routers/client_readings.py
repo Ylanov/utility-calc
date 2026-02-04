@@ -130,13 +130,27 @@ async def save_reading(data: ReadingSchema, current_user: User = Depends(get_cur
     )
     history = history_res.scalars().all()
 
+    # --- НОВЫЙ БЛОК: РАСЧЕТ СРЕДНИХ ПОКАЗАТЕЛЕЙ ПО ОБЩЕЖИТИЮ ---
+    avg_peer_consumption = None
+    if history and current_user.dormitory:
+        # Находим средний РАСХОД (не показания) за последний утвержденный период
+        # Это сложный запрос, который можно оптимизировать. Вот упрощенная концепция:
+        # 1. Найти ID последнего закрытого периода.
+        # 2. Посчитать среднюю разницу между показаниями в том периоде и предыдущем для всех жильцов
+        #    в том же общежитии.
+        # Пока для простоты реализуем как плейсхолдер, который можно будет наполнить
+        # реальной логикой SQL.
+        # В идеале, эти средние значения можно считать раз в месяц при закрытии периода и сохранять.
+        # Например, { 'avg_hot': 4.5, 'avg_cold': 5.1, 'avg_elect': 150.2 }
+        pass # Тут будет SQL запрос для получения средних значений
+
     # Создаем временный объект MeterReading из новых данных для передачи в детектор
     temp_reading = MeterReading(
         hot_water=data.hot_water,
         cold_water=data.cold_water,
         electricity=data.electricity
     )
-    anomaly_flags = check_reading_for_anomalies(temp_reading, history)
+    anomaly_flags = check_reading_for_anomalies(temp_reading, history, avg_peer_consumption)
     # <--- КОНЕЦ: БЛОК ПРОВЕРКИ АНОМАЛИЙ --->
 
     # 6. Сохранение в БД

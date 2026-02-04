@@ -1,3 +1,4 @@
+
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
@@ -27,6 +28,18 @@ class UserResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# <<< НОВАЯ СХЕМА ДЛЯ ОБНОВЛЕНИЯ >>>
+class UserUpdate(BaseModel):
+    username: Optional[str] = None
+    password: Optional[str] = None
+    role: Optional[str] = None
+    dormitory: Optional[str] = None
+    workplace: Optional[str] = None
+    residents_count: Optional[int] = None
+    total_room_residents: Optional[int] = None
+    apartment_area: Optional[float] = None
 
 
 # --- TARIFF ---

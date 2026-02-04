@@ -11,36 +11,33 @@ import logging
 logger = logging.getLogger("billing_service")
 
 
-async def close_period_and_generate_missing(db: AsyncSession, new_period_name: str, admin_user_id: int):
+# --- ЛОГИКА ЗАКРЫТИЯ ПЕРИОДА ---
+async def close_current_period(db: AsyncSession, admin_user_id: int):
     """
     1. Находит текущий активный период.
-    2. Находит пользователей, которые НЕ сдали показания.
-    3. Генерирует им показания 'по среднему' за последние 3 месяца.
-    4. Закрывает текущий период.
-    5. Открывает новый период.
+    2. Генерирует показания 'по среднему' для тех, кто не сдал.
+    3. Утверждает все зависшие черновики (опционально, или оставляет как есть).
+    4. Делает период неактивным.
     """
-
     # 1. Получаем активный период
     res_period = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))
     active_period = res_period.scalars().first()
 
     if not active_period:
-        # Если периода нет, просто создаем новый
-        new_p = BillingPeriod(name=new_period_name, is_active=True)
-        db.add(new_p)
-        await db.commit()
-        return {"status": "created_initial", "period": new_p}
+        raise ValueError("Нет активного периода для закрытия.")
 
     # 2. Получаем тарифы
     res_tariff = await db.execute(select(Tariff).where(Tariff.id == 1))
     tariff = res_tariff.scalars().first()
 
-    # 3. Ищем пользователей БЕЗ показаний в этом периоде
-    # Получаем ID всех пользователей
-    res_users = await db.execute(select(User).where(User.role == "user"))  # Только жильцы
+    # 3. Ищем пользователей БЕЗ показаний (черновики считаются как "сдал", но их надо утвердить)
+    # В этом решении мы считаем "сдавшим" того, у кого есть хоть какая-то запись в этом периоде.
+
+    # Получаем всех жильцов
+    res_users = await db.execute(select(User).where(User.role == "user"))
     all_users = res_users.scalars().all()
 
-    # Получаем ID тех, кто сдал (или кому уже создали черновик)
+    # Получаем ID тех, у кого уже есть запись (черновик или утвержденная)
     res_readings = await db.execute(
         select(MeterReading.user_id)
         .where(MeterReading.period_id == active_period.id)
@@ -51,10 +48,11 @@ async def close_period_and_generate_missing(db: AsyncSession, new_period_name: s
 
     for user in all_users:
         if user.id in users_with_readings_ids:
-            continue
+            continue  # У пользователя уже есть показание, пропускаем
 
-        # ЭТО ДОЛЖНИК (не подал показания)
-        # 4. Считаем среднее потребление за 3 последних закрытых месяца
+        # ЭТО ДОЛЖНИК (вообще нет записи) -> Генерируем по среднему
+
+        # Получаем историю (последние 3 утвержденных)
         last_readings = await db.execute(
             select(MeterReading)
             .where(MeterReading.user_id == user.id, MeterReading.is_approved == True)
@@ -63,21 +61,8 @@ async def close_period_and_generate_missing(db: AsyncSession, new_period_name: s
         )
         history = last_readings.scalars().all()
 
-        avg_hot = 0.0
-        avg_cold = 0.0
-        avg_elect = 0.0
-
-        # Если история есть, считаем дельты
+        # Расчет среднего прироста
         if len(history) >= 2:
-            # Берем разницу между самым свежим и самым старым в выборке / кол-во месяцев
-            # Упрощенно: берем среднее арифметическое начислений (cost), но нам нужны объемы
-            # Сложный момент: у нас хранятся накопительные итоги (счетчик).
-            # Нам нужно предсказать СЛЕДУЮЩЕЕ значение счетчика.
-
-            # Самое последнее показание (база для нового)
-            last_reading = history[0]
-
-            # Считаем средний прирост
             deltas_hot = []
             deltas_cold = []
             deltas_elect = []
@@ -93,57 +78,45 @@ async def close_period_and_generate_missing(db: AsyncSession, new_period_name: s
             avg_cold = sum(deltas_cold) / len(deltas_cold) if deltas_cold else 0
             avg_elect = sum(deltas_elect) / len(deltas_elect) if deltas_elect else 0
 
-            # Новые показания = Последнее + Среднее
+            last_reading = history[0]
             new_hot = last_reading.hot_water + avg_hot
             new_cold = last_reading.cold_water + avg_cold
             new_elect = last_reading.electricity + avg_elect
-
         elif len(history) == 1:
-            # Если только 1 запись, считаем прирост 0 (или можно нормативы внедрить)
+            # Если одна запись, прирост 0
             new_hot = history[0].hot_water
             new_cold = history[0].cold_water
             new_elect = history[0].electricity
         else:
-            # Истории нет вообще - ставим нули
+            # Нет истории
             new_hot = 0.0
             new_cold = 0.0
             new_elect = 0.0
 
-        # Рассчитываем стоимость
-        # Т.к. это "по среднему", ставим коррекции в 0
-
-        # Доля электричества
+        # Расчет денег
         total_residents = user.total_room_residents if user.total_room_residents > 0 else 1
-        # Объем электричества (прирост)
         d_elect_val = new_elect - (history[0].electricity if history else 0)
         user_share_kwh = (user.residents_count / total_residents) * d_elect_val
-
-        # Объем воды (прирост)
-        d_hot_val = new_hot - (history[0].hot_water if history else 0)
-        d_cold_val = new_cold - (history[0].cold_water if history else 0)
-        vol_sewage = d_hot_val + d_cold_val
+        vol_sewage = (new_hot - (history[0].hot_water if history else 0)) + \
+                     (new_cold - (history[0].cold_water if history else 0))
 
         costs = calculate_utilities(
             user=user,
             tariff=tariff,
-            volume_hot=d_hot_val,
-            volume_cold=d_cold_val,
-            volume_sewage=vol_sewage,
-            volume_electricity_share=user_share_kwh
+            volume_hot=max(0, new_hot - (history[0].hot_water if history else 0)),
+            volume_cold=max(0, new_cold - (history[0].cold_water if history else 0)),
+            volume_sewage=max(0, vol_sewage),
+            volume_electricity_share=max(0, user_share_kwh)
         )
 
-        # Создаем запись (Сразу утвержденную, т.к. месяц закрывается)
         auto_reading = MeterReading(
             user_id=user.id,
             period_id=active_period.id,
             hot_water=new_hot,
             cold_water=new_cold,
             electricity=new_elect,
-
-            # Пишем, что это автоматический расчет (можно добавить поле comment в модель, но пока так)
-            is_approved=True,
-
-            # Заполняем финансы
+            is_approved=True,  # Сразу утверждаем авто-показания
+            anomaly_flags="AUTO_GENERATED",
             total_cost=costs["total_cost"],
             cost_hot_water=costs["cost_hot_water"],
             cost_cold_water=costs["cost_cold_water"],
@@ -153,25 +126,48 @@ async def close_period_and_generate_missing(db: AsyncSession, new_period_name: s
             cost_social_rent=costs["cost_social_rent"],
             cost_waste=costs["cost_waste"],
             cost_fixed_part=costs["cost_fixed_part"],
-
             created_at=datetime.utcnow()
         )
         db.add(auto_reading)
         generated_count += 1
 
-    # 5. Закрываем старый период
+    # ВАЖНО: Утверждаем все висящие черновики, так как месяц закрывается
+    # (Или можно оставить их неутвержденными, но тогда они "застрянут" в закрытом периоде)
+    # Для безопасности лучше утвердить их "как есть".
+    pending_drafts = await db.execute(
+        select(MeterReading).where(MeterReading.period_id == active_period.id, MeterReading.is_approved == False)
+    )
+    for draft in pending_drafts.scalars().all():
+        draft.is_approved = True
+
+    # 4. Делаем период неактивным
     active_period.is_active = False
 
-    # 6. Создаем новый
-    new_period = BillingPeriod(name=new_period_name, is_active=True)
-    db.add(new_period)
+    await db.commit()
+    logger.info(f"Period '{active_period.name}' closed.")
 
+    return {
+        "status": "closed",
+        "closed_period": active_period.name,
+        "auto_generated": generated_count
+    }
+
+
+# --- ЛОГИКА ОТКРЫТИЯ ПЕРИОДА ---
+async def open_new_period(db: AsyncSession, new_name: str):
+    # Проверяем, нет ли уже активного
+    res = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))
+    if res.scalars().first():
+        raise ValueError("Сначала закройте текущий активный месяц!")
+
+    # Проверяем имя на уникальность
+    res_exist = await db.execute(select(BillingPeriod).where(BillingPeriod.name == new_name))
+    if res_exist.scalars().first():
+        raise ValueError(f"Период с именем '{new_name}' уже существует!")
+
+    new_p = BillingPeriod(name=new_name, is_active=True)
+    db.add(new_p)
     await db.commit()
 
-    logger.info(f"Period closed. Auto-generated {generated_count} readings.")
-    return {
-        "status": "closed_and_opened",
-        "old_period": active_period.name,
-        "new_period": new_period.name,
-        "auto_generated_count": generated_count
-    }
+    logger.info(f"New period '{new_name}' opened.")
+    return new_p

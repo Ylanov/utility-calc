@@ -12,6 +12,8 @@ let anomalyFilter = false; // Состояние фильтра аномалий
  * Карта для визуализации тегов аномалий.
  */
 const anomalyMap = {
+    "NEGATIVE_HOT": { text: "ГВС<0", color: "#e74c3c", title: "Ошибка: Показания ГВС меньше предыдущих!" },
+    "HIGH_VS_PEERS_HOT": { text: "ГВС Peers↑", color: "#9b59b6", title: "Расход ГВС значительно выше среднего по общежитию" },
     "HIGH_HOT": { text: "ГВС↑", color: "#e74c3c", title: "Очень высокий расход горячей воды" },
     "HIGH_COLD": { text: "ХВС↑", color: "#e74c3c", title: "Очень высокий расход холодной воды" },
     "HIGH_ELECT": { text: "Свет↑", color: "#e74c3c", title: "Очень высокий расход электричества" },
@@ -243,55 +245,86 @@ async function bulkApprove() {
 }
 
 // =========================================================
-// УПРАВЛЕНИЕ ПЕРИОДАМИ (ЗАКРЫТИЕ МЕСЯЦА)
+// УПРАВЛЕНИЕ ПЕРИОДАМИ (ОТКРЫТИЕ / ЗАКРЫТИЕ)
 // =========================================================
 
 async function loadActivePeriod() {
+    const activeDiv = document.getElementById('periodActiveState');
+    const closedDiv = document.getElementById('periodClosedState');
+    const label = document.getElementById('activePeriodLabel');
+
     try {
         const res = await fetch('/api/admin/periods/active', {
             headers: { 'Authorization': `Bearer ${token}` }
         });
+
         if (res.ok) {
             const data = await res.json();
-            const label = document.getElementById('currentPeriodLabel');
-            if (label) {
-                if (data && data.name) {
-                    label.innerText = data.name;
-                    label.style.color = "#2980b9";
-                } else {
-                    label.innerText = "Нет активного периода";
-                    label.style.color = "red";
-                }
+
+            if (data && data.name) {
+                // ПЕРИОД ЕСТЬ
+                activeDiv.style.display = 'flex';
+                closedDiv.style.display = 'none';
+                label.innerText = data.name;
+            } else {
+                // ПЕРИОДА НЕТ (null)
+                activeDiv.style.display = 'none';
+                closedDiv.style.display = 'flex';
             }
+        } else {
+            // Если 401 или ошибка - считаем что закрыто или редирект
+            console.error("Ошибка проверки периода");
         }
     } catch (e) {
-        console.error("Ошибка загрузки периода:", e);
+        console.error("Ошибка сети:", e);
     }
 }
 
-async function closePeriod() {
-    const nameInput = document.getElementById('newPeriodName');
-    const newName = nameInput ? nameInput.value : null;
-
-    if (!newName) {
-        alert("Введите название НОВОГО месяца (например: 'Апрель 2025')");
+// ФУНКЦИЯ ЗАКРЫТИЯ
+async function closePeriodAction() {
+    if (!confirm(`ВНИМАНИЕ!\n\nВы закрываете текущий месяц.\n\n1. Прием показаний остановится.\n2. Должникам будет начислено "по среднему".\n3. Все черновики утвердятся.\n\nПродолжить?`)) {
         return;
     }
 
-    if (!confirm(`ВНИМАНИЕ!\n\nВы закрываете текущий период и открываете "${newName}".\n\n1. Всем, кто не сдал показания, будет начислено "по среднему" (или 0, если нет истории).\n2. Текущий месяц станет доступен только для чтения.\n3. Жильцы смогут подавать показания в новый месяц.\n\nПродолжить?`)) {
-        return;
-    }
-
-    const btn = document.querySelector('button[onclick="closePeriod()"]');
-    const oldText = btn ? btn.innerText : "Закрыть месяц";
+    const btn = document.querySelector('button[onclick="closePeriodAction()"]');
+    if(btn) { btn.disabled = true; btn.innerText = "Закрытие..."; }
 
     try {
-        if (btn) {
-            btn.disabled = true;
-            btn.innerText = "Закрытие...";
-        }
+        const response = await fetch('/api/admin/periods/close', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
 
-        const response = await fetch('/api/admin/periods', {
+        if (response.ok) {
+            const res = await response.json();
+            alert(`Месяц успешно закрыт!\nАвто-показаний создано: ${res.auto_generated}`);
+            location.reload();
+        } else {
+            const err = await response.json();
+            alert("Ошибка: " + (err.detail || "Неизвестная ошибка"));
+            if(btn) { btn.disabled = false; btn.innerText = "🔒 Закрыть месяц"; }
+        }
+    } catch (e) {
+        alert("Ошибка сети");
+        if(btn) { btn.disabled = false; btn.innerText = "🔒 Закрыть месяц"; }
+    }
+}
+
+// ФУНКЦИЯ ОТКРЫТИЯ
+async function openPeriodAction() {
+    const nameInput = document.getElementById('newPeriodNameInput');
+    const newName = nameInput ? nameInput.value.trim() : null;
+
+    if (!newName) {
+        alert("Введите название месяца (например: 'Март 2026')");
+        return;
+    }
+
+    const btn = document.querySelector('button[onclick="openPeriodAction()"]');
+    if(btn) { btn.disabled = true; btn.innerText = "Открытие..."; }
+
+    try {
+        const response = await fetch('/api/admin/periods/open', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -301,23 +334,16 @@ async function closePeriod() {
         });
 
         if (response.ok) {
-            const res = await response.json();
-            alert(`Период успешно закрыт!\n\nАвтоматически создано показаний: ${res.auto_generated_count}\nНовый период: ${res.new_period}`);
-            location.reload(); // Перезагружаем страницу полностью для обновления всех вкладок
+            alert(`Новый месяц "${newName}" успешно открыт!\nПользователи могут подавать показания.`);
+            location.reload();
         } else {
             const err = await response.json();
             alert("Ошибка: " + (err.detail || "Неизвестная ошибка"));
-            if (btn) {
-                btn.disabled = false;
-                btn.innerText = oldText;
-            }
+            if(btn) { btn.disabled = false; btn.innerText = "📂 Открыть новый месяц"; }
         }
     } catch (e) {
         alert("Ошибка сети");
-        if (btn) {
-            btn.disabled = false;
-            btn.innerText = oldText;
-        }
+        if(btn) { btn.disabled = false; btn.innerText = "📂 Открыть новый месяц"; }
     }
 }
 

@@ -5,11 +5,10 @@ from sqlalchemy.future import select
 from app.database import get_db
 from app.models import User
 from app.auth import verify_password, create_access_token
-
+from fastapi_limiter.depends import RateLimiter
 router = APIRouter()
 
-
-@router.post("/token")
+@router.post("/token", dependencies=[Depends(RateLimiter(times=5, seconds=60))]) # <--- ОГРАНИЧЕНИЕ
 async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.username == form_data.username))
     user = result.scalars().first()

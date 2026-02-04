@@ -82,22 +82,43 @@ def _kill_db_connections_sync():
 
 def _apply_migrations_sync():
     """Миграции для совместимости."""
-    # Мы добавляем period_id и создаем таблицу periods, если её нет (хотя sqlalchemy create_all создаст таблицу)
-    # Но period_id в readings надо добавить вручную
     migration_sql = """
     DO $$
     BEGIN
         -- Старые миграции
         ALTER TABLE readings ADD COLUMN IF NOT EXISTS cost_social_rent FLOAT DEFAULT 0.0;
         ALTER TABLE readings ADD COLUMN IF NOT EXISTS cost_waste FLOAT DEFAULT 0.0;
-
-        -- НОВАЯ МИГРАЦИЯ: Периоды
         ALTER TABLE readings ADD COLUMN IF NOT EXISTS period_id INTEGER REFERENCES periods(id);
+        ALTER TABLE readings ADD COLUMN IF NOT EXISTS anomaly_flags VARCHAR;
 
-        -- Создание индекса (если нет) - чисто через SQL сложно проверить наличие индекса просто, 
-        -- но CREATE INDEX IF NOT EXISTS работает в новых версиях PG. 
-        -- В старых это вызовет ошибку, поэтому оставим создание индексов на откуп SQLAlchemy при старте,
-        -- или админ должен сделать это вручную, если данные уже есть.
+        -- <<< ВАЖНОЕ ИСПРАВЛЕНИЕ: Добавляем каскадное удаление >>> 
+        -- Удаляем старый constraint и создаем новый с CASCADE
+        IF EXISTS (SELECT 1 FROM information_schema.table_constraints 
+                  WHERE constraint_name = 'readings_user_id_fkey' 
+                  AND table_name = 'readings') THEN
+            ALTER TABLE readings DROP CONSTRAINT readings_user_id_fkey;
+        END IF;
+
+        -- Создаем новый constraint с каскадным удалением
+        ALTER TABLE readings 
+        ADD CONSTRAINT readings_user_id_fkey 
+        FOREIGN KEY (user_id) 
+        REFERENCES users(id) 
+        ON DELETE CASCADE;
+
+        -- Аналогично для period_id
+        IF EXISTS (SELECT 1 FROM information_schema.table_constraints 
+                  WHERE constraint_name = 'readings_period_id_fkey' 
+                  AND table_name = 'readings') THEN
+            ALTER TABLE readings DROP CONSTRAINT readings_period_id_fkey;
+        END IF;
+
+        ALTER TABLE readings 
+        ADD CONSTRAINT readings_period_id_fkey 
+        FOREIGN KEY (period_id) 
+        REFERENCES periods(id) 
+        ON DELETE SET NULL;
+
     EXCEPTION
         WHEN duplicate_column THEN RAISE NOTICE 'column already exists';
         WHEN others THEN RAISE NOTICE 'Migration warning: %', SQLERRM;

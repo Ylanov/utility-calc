@@ -17,8 +17,44 @@ from sqlalchemy.orm import selectinload
 from app.services.billing import close_period_and_generate_missing
 from fastapi.responses import StreamingResponse
 from app.services.excel_service import generate_billing_report_xlsx
-
+from app.services.billing import close_current_period, open_new_period
 router = APIRouter(tags=["Admin Readings"])
+
+from typing import Dict, Any
+
+# ===================================================================
+# КАРТА ДЛЯ ДЕТАЛИЗАЦИИ АНОМАЛИЙ
+# Эту карту можно вынести в отдельный файл/модуль, если она разрастется.
+# Она переводит коды из БД в понятные сообщения для фронтенда.
+# ===================================================================
+ANOMALY_MAP: Dict[str, Dict[str, str]] = {
+    # Критические ошибки (требуют немедленного внимания)
+    "NEGATIVE_HOT": {"message": "Ошибка: Текущие показания ГВС меньше предыдущих!", "severity": "high"},
+    "NEGATIVE_COLD": {"message": "Ошибка: Текущие показания ХВС меньше предыдущих!", "severity": "high"},
+    "NEGATIVE_ELECT": {"message": "Ошибка: Текущие показания электричества меньше предыдущих!", "severity": "high"},
+
+    # Аномалии высокого потребления (статистика и сравнение)
+    "HIGH_HOT": {"message": "Очень высокий расход горячей воды по сравнению с историей.", "severity": "medium"},
+    "HIGH_COLD": {"message": "Очень высокий расход холодной воды по сравнению с историей.", "severity": "medium"},
+    "HIGH_ELECT": {"message": "Очень высокий расход электричества по сравнению с историей.", "severity": "medium"},
+    "HIGH_VS_PEERS_HOT": {"message": "Расход ГВС значительно выше среднего по общежитию.", "severity": "medium"},
+    "HIGH_VS_PEERS_COLD": {"message": "Расход ХВС значительно выше среднего по общежитию.", "severity": "medium"},
+    "HIGH_VS_PEERS_ELECT": {"message": "Расход электричества значительно выше среднего по общежитию.",
+                            "severity": "medium"},
+
+    # Аномалии низкого или нулевого потребления
+    "ZERO_HOT": {"message": "Нулевой расход горячей воды (возможно, комната пустует).", "severity": "low"},
+    "ZERO_COLD": {"message": "Нулевой расход холодной воды (возможно, комната пустует).", "severity": "low"},
+    "ZERO_ELECT": {"message": "Нулевой расход электричества (возможно, ком-та пустует).", "severity": "low"},
+
+    # "Замерзшие" счетчики
+    "FROZEN_HOT": {"message": "Показания счетчика ГВС не менялись 3+ месяца.", "severity": "low"},
+    "FROZEN_COLD": {"message": "Показания счетчика ХВС не менялись 3+ месяца.", "severity": "low"},
+    "FROZEN_ELECT": {"message": "Показания счетчика света не менялись 3+ месяца.", "severity": "low"},
+
+    # Сообщение по умолчанию для неизвестных флагов
+    "UNKNOWN": {"message": "Обнаружена неопознанная аномалия.", "severity": "low"}
+}
 
 
 # -------------------------------------------------
@@ -34,8 +70,7 @@ async def get_admin_readings(
 ):
     """
     Возвращает список неутвержденных показаний (черновиков)
-    ТОЛЬКО для текущего активного периода.
-    Включает оптимизацию N+1 для получения предыдущих показаний.
+    для текущего активного периода с подробной информацией об аномалиях.
     """
     if current_user.role != "accountant":
         raise HTTPException(status_code=403, detail="Доступ запрещен")
@@ -44,32 +79,30 @@ async def get_admin_readings(
     period_res = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))
     active_period = period_res.scalars().first()
 
-    # Если периода нет, то и показаний быть не может
     if not active_period:
         return []
 
     offset = (page - 1) * limit
 
     # 2. ОПТИМИЗАЦИЯ SQL (Решение проблемы N+1)
-    # Нам нужно найти ПОСЛЕДНЕЕ УТВЕРЖДЕННОЕ показание для каждого юзера,
-    # чтобы показать бухгалтеру разницу (было -> стало).
-    # Это показание могло быть сделано в ПРОШЛОМ периоде, поэтому фильтр по периоду тут не нужен.
-
+    # Создаем подзапрос, который для каждого user_id находит единственную
+    # (самую последнюю по дате) УТВЕРЖДЕННУЮ запись.
+    # Это позволяет избежать выполнения N отдельных запросов в цикле.
     prev_subq = (
         select(MeterReading)
         .where(MeterReading.is_approved == True)
-        .distinct(MeterReading.user_id)  # PostgreSQL specific: оставляет одну (последнюю) запись
+        .distinct(MeterReading.user_id)
         .order_by(MeterReading.user_id, MeterReading.created_at.desc())
         .subquery()
     )
-
-    # Создаем алиас для join'а
     prev_alias = aliased(MeterReading, prev_subq)
 
     # 3. Основной запрос
     stmt = (
         select(MeterReading, User, prev_alias)
         .join(User, MeterReading.user_id == User.id)
+        # Используем LEFT JOIN (outerjoin), чтобы обработать жильцов,
+        # у которых еще нет ни одного утвержденного показания (prev будет None).
         .outerjoin(prev_alias, MeterReading.user_id == prev_alias.user_id)
         .where(
             MeterReading.is_approved == False,
@@ -80,21 +113,36 @@ async def get_admin_readings(
         .limit(limit)
     )
 
-    # ДОБАВЛЯЕМ ФИЛЬТР
     if anomalies_only:
+        # Фильтруем по наличию флагов аномалий.
+        # В будущем можно добавить фильтр по is_anomaly_acknowledged == False
         stmt = stmt.where(MeterReading.anomaly_flags != None)
 
     results = await db.execute(stmt)
 
+    # 4. Формирование ответа
     data = []
-    for current, user, prev in results:
+    for current, user, prev in results.all():
+
+        # --- Блок обработки аномалий ---
+        anomaly_details = []
+        if current.anomaly_flags:
+            flags = current.anomaly_flags.split(',')
+            for flag_code in flags:
+                details = ANOMALY_MAP.get(flag_code, ANOMALY_MAP["UNKNOWN"])
+                anomaly_details.append({
+                    "code": flag_code,
+                    "message": details["message"],
+                    "severity": details["severity"]
+                })
+        # --- Конец блока ---
+
         data.append({
             "id": current.id,
             "user_id": user.id,
             "username": user.username,
             "dormitory": user.dormitory,
 
-            # Предыдущие показания (или 0.0, если это первый ввод)
             "prev_hot": prev.hot_water if prev else 0.0,
             "cur_hot": current.hot_water,
 
@@ -108,8 +156,13 @@ async def get_admin_readings(
             "residents_count": user.residents_count,
             "total_room_residents": user.total_room_residents,
             "created_at": current.created_at,
-            "anomaly_flags": current.anomaly_flags # <--- НОВОЕ ПОЛЕ
 
+            # Старое поле для совместимости
+            "anomaly_flags": current.anomaly_flags,
+
+            # НОВЫЕ ПОЛЯ для улучшенного UI/UX
+            "anomaly_details": anomaly_details,  # Структурированная информация
+            # "is_anomaly_acknowledged": current.is_anomaly_acknowledged # Поле для будущего функционала
         })
 
     return data
@@ -286,42 +339,42 @@ async def delete_reading_record(
 
 
 # -------------------------------------------------
-# 5. УПРАВЛЕНИЕ ПЕРИОДАМИ (ЗАКРЫТИЕ МЕСЯЦА)
+# 5. УПРАВЛЕНИЕ ПЕРИОДАМИ
 # -------------------------------------------------
 
-@router.post("/api/admin/periods", summary="Закрыть текущий и открыть новый месяц")
-async def create_period(
-        data: PeriodCreate,
+@router.post("/api/admin/periods/close", summary="Закрыть текущий месяц")
+async def api_close_period(
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
 ):
-    """
-    Закрывает текущий месяц.
-    Всем, кто не подал показания, начисляет автоматически 'по среднему'.
-    Открывает новый месяц.
-    """
     if current_user.role != "accountant":
         raise HTTPException(status_code=403, detail="Доступ запрещен")
 
     try:
-        result = await close_period_and_generate_missing(
-            db=db,
-            new_period_name=data.name,
-            admin_user_id=current_user.id
-        )
+        result = await close_current_period(db=db, admin_user_id=current_user.id)
         return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        print(f"Error closing period: {e}")
-        raise HTTPException(status_code=500, detail=f"Ошибка закрытия периода: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/api/admin/periods/active", response_model=Optional[PeriodResponse], summary="Текущий активный месяц")
-async def get_active_period(
+@router.post("/api/admin/periods/open", summary="Открыть новый месяц")
+async def api_open_period(
+        data: PeriodCreate, # Ожидает JSON {"name": "..."}
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
 ):
-    res = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))
-    return res.scalars().first()
+    if current_user.role != "accountant":
+        raise HTTPException(status_code=403, detail="Доступ запрещен")
+
+    try:
+        new_period = await open_new_period(db=db, new_name=data.name)
+        return {"status": "opened", "period": new_period.name}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # -------------------------------------------------
@@ -430,3 +483,45 @@ async def export_report(
 
     return StreamingResponse(output, headers=headers,
                              media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+
+
+# -------------------------------------------------
+# УДАЛЕНИЕ ПОЛЬЗОВАТЕЛЯ (С ПРЕДВАРИТЕЛЬНОЙ ОЧИСТКОЙ ПОКАЗАНИЙ)
+# -------------------------------------------------
+@router.delete("/api/admin/users/{user_id}")
+async def delete_user_with_cleanup(
+        user_id: int,
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db)
+):
+    """
+    Удаляет пользователя, предварительно удалив все его показания.
+    """
+    if current_user.role != "accountant":
+        raise HTTPException(status_code=403, detail="Доступ запрещен")
+
+    try:
+        # 1. Проверяем существование пользователя
+        user = await db.get(User, user_id)
+        if not user:
+            raise HTTPException(status_code=404, detail="Пользователь не найден")
+
+        # 2. УДАЛЯЕМ ВСЕ ПОКАЗАНИЯ ПОЛЬЗОВАТЕЛЯ (сначала дочерние записи)
+        readings_stmt = select(MeterReading).where(MeterReading.user_id == user_id)
+        readings_result = await db.execute(readings_stmt)
+        readings = readings_result.scalars().all()
+
+        for reading in readings:
+            await db.delete(reading)
+
+        # 3. Теперь можно удалить пользователя
+        await db.delete(user)
+        await db.commit()
+
+        return {"status": "success",
+                "message": f"Пользователь {user.username} удален вместе с {len(readings)} записями показаний"}
+
+    except Exception as e:
+        await db.rollback()
+        print(f"Error deleting user {user_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка удаления: {str(e)}")

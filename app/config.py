@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "supersecretkey_change_me_in_prod"
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 1 день
+    REDIS_URL: str = "redis://redis:6379/0"
 
     # Генерация URL подключения (Асинхронный для приложения)
     @property

@@ -1,9 +1,13 @@
-from typing import List, Optional
+from typing import List, Optional, Dict
 from statistics import mean, stdev
 from app.models import MeterReading
 
 
-def check_reading_for_anomalies(current_reading: MeterReading, history: List[MeterReading]) -> Optional[str]:
+def check_reading_for_anomalies(
+    current_reading: MeterReading,
+    history: List[MeterReading],
+    avg_peer_consumption: Optional[Dict[str, float]] = None
+) -> Optional[str]:
     """
     Анализирует показание на основе истории и возвращает строку с флагами аномалий.
     """
@@ -31,6 +35,11 @@ def check_reading_for_anomalies(current_reading: MeterReading, history: List[Met
     current_delta_hot = current_reading.hot_water - last_approved.hot_water
     current_delta_cold = current_reading.cold_water - last_approved.cold_water
     current_delta_elect = current_reading.electricity - last_approved.electricity
+
+    # --- НОВОЕ ПРАВИЛО 0: ОТРИЦАТЕЛЬНЫЙ РАСХОД (ВЫСШИЙ ПРИОРИТЕТ) ---
+    if current_delta_hot < 0: flags.append("NEGATIVE_HOT")
+    if current_delta_cold < 0: flags.append("NEGATIVE_COLD")
+    if current_delta_elect < 0: flags.append("NEGATIVE_ELECT")
 
     # --- ПРАВИЛО 1: Нулевое потребление ---
     if current_delta_hot == 0 and mean(deltas['hot']) > 0.1: flags.append("ZERO_HOT")
@@ -63,5 +72,22 @@ def check_reading_for_anomalies(current_reading: MeterReading, history: List[Met
     if not flags:
         return None
 
-    # Убираем дубликаты и возвращаем строку
+    # --- ПРАВИЛО 4: Сравнение со средним по группе (общежитию) ---
+    if avg_peer_consumption:
+        # Считаем аномалией, если расход превышает средний более чем в 3 раза (коэффициент можно настроить)
+        if avg_peer_consumption.get('avg_hot', 0) > 1.0 and \
+                current_delta_hot > avg_peer_consumption['avg_hot'] * 3:
+            flags.append("HIGH_VS_PEERS_HOT")
+
+        if avg_peer_consumption.get('avg_cold', 0) > 1.0 and \
+                current_delta_cold > avg_peer_consumption['avg_cold'] * 3:
+            flags.append("HIGH_VS_PEERS_COLD")
+
+        if avg_peer_consumption.get('avg_elect', 0) > 10.0 and \
+                current_delta_elect > avg_peer_consumption['avg_elect'] * 3:
+            flags.append("HIGH_VS_PEERS_ELECT")
+
+    if not flags:
+        return None
+
     return ",".join(sorted(list(set(flags))))
