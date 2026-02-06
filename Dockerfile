@@ -5,7 +5,6 @@ FROM python:3.10-slim
 WORKDIR /app
 
 # 1. УСТАНОВКА СИСТЕМНЫХ ЗАВИСИМОСТЕЙ
-# Исправлены имена пакетов для Debian Bookworm/Trixie
 RUN apt-get update && apt-get install -y \
     postgresql-client \
     build-essential \
@@ -30,5 +29,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 3. Копируем код
 COPY . .
 
-# Запуск
+# --- НОВЫЙ БЛОК: Создание не-рутового пользователя ---
+# Создаем группу и пользователя 'appuser'
+RUN groupadd -r appuser && useradd --no-log-init -r -g appuser appuser
+
+# Меняем владельца всех файлов приложения на нашего нового пользователя
+RUN chown -R appuser:appuser /app
+
+# Переключаемся на этого пользователя. Все последующие команды будут выполняться от его имени.
+USER appuser
+# --- КОНЕЦ НОВОГО БЛОКА ---
+
+# Запуск. Теперь uvicorn и celery будут запускаться от имени 'appuser'
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

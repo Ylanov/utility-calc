@@ -1,242 +1,406 @@
 import io
+from typing import Dict, List, Tuple
+
 from openpyxl import Workbook, load_workbook
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+
 from app.models import User, MeterReading, BillingPeriod
 from app.auth import get_password_hash
 
 
-async def import_users_from_excel(file_content: bytes, db: AsyncSession):
+# =========================================================
+# ИМПОРТ ПОЛЬЗОВАТЕЛЕЙ ИЗ EXCEL
+# =========================================================
+
+async def import_users_from_excel(
+    file_content: bytes,
+    db: AsyncSession
+) -> dict:
     """
-    Чтение Excel файла и создание пользователей.
-    Ожидаемые колонки: username, password, dormitory, apartment_area, residents_count
+    Импорт пользователей из Excel файла.
+
+    Ожидаемые колонки:
+
+    0 - username (обязательно)
+    1 - password
+    2 - dormitory
+    3 - apartment_area
+    4 - residents_count
+    5 - total_room_residents
+    6 - workplace
     """
+
     try:
-        wb = load_workbook(filename=io.BytesIO(file_content), read_only=True)
-        ws = wb.active
+        # =============================================
+        # Загружаем Excel
+        # =============================================
+
+        workbook = load_workbook(
+            filename=io.BytesIO(file_content),
+            read_only=True,
+            data_only=True
+        )
+
+        worksheet = workbook.active
+
+
+        # =============================================
+        # Загружаем всех пользователей одним запросом
+        # =============================================
+
+        users_result = await db.execute(select(User))
+        existing_users: Dict[str, User] = {
+            user.username: user
+            for user in users_result.scalars().all()
+        }
+
+
+        # =============================================
+        # Подготовка счетчиков
+        # =============================================
 
         added_count = 0
         updated_count = 0
         skipped_count = 0
-        errors = []
 
-        # Получаем ВСЕХ существующих пользователей заранее
-        existing_users_result = await db.execute(select(User.username))
-        existing_usernames = {row[0] for row in existing_users_result.all()}
+        errors: List[str] = []
 
-        # Пропускаем заголовок (первая строка)
-        rows = ws.iter_rows(min_row=2, values_only=True)
+        new_users: List[User] = []
 
-        for idx, row in enumerate(rows, start=2):
-            # Ожидаем порядок:
-            # 0: Логин (обязательно)
-            # 1: Пароль (если нет, будет равен логину)
-            # 2: Общежитие/Комната
-            # 3: Площадь
-            # 4: Кол-во жильцов (плательщик)
-            # 5: Всего в комнате
-            # 6: Место работы (НОВОЕ)
 
-            if not row or not row[0]:
-                skipped_count += 1
-                continue
+        # =============================================
+        # Кэш паролей (ускоряет bcrypt)
+        # =============================================
 
-            username = str(row[0]).strip()
+        password_cache: Dict[str, str] = {}
 
-            # Пропускаем пустые имена пользователей
-            if not username:
-                skipped_count += 1
-                continue
 
-            # Проверяем существование пользователя (используем предварительно полученный список)
-            if username in existing_usernames:
-                # Обновляем существующего пользователя
-                try:
-                    existing_user_result = await db.execute(
-                        select(User).where(User.username == username)
-                    )
-                    existing_user = existing_user_result.scalars().first()
+        # =============================================
+        # Обработка строк Excel
+        # =============================================
 
-                    if existing_user:
-                        # Обновляем поля пользователя
-                        password = str(row[1]).strip() if (len(row) > 1 and row[1]) else None
-                        dormitory = str(row[2]).strip() if (len(row) > 2 and row[2]) else existing_user.dormitory
+        rows = worksheet.iter_rows(
+            min_row=2,
+            values_only=True
+        )
 
-                        try:
-                            area = float(row[3]) if (len(row) > 3 and row[3]) else existing_user.apartment_area
-                            residents = int(row[4]) if (len(row) > 4 and row[4]) else existing_user.residents_count
-                            total_residents = int(row[5]) if (
-                                        len(row) > 5 and row[5]) else existing_user.total_room_residents
-                        except (ValueError, TypeError):
-                            area = existing_user.apartment_area
-                            residents = existing_user.residents_count
-                            total_residents = existing_user.total_room_residents
 
-                        workplace = str(row[6]).strip() if (len(row) > 6 and row[6]) else existing_user.workplace
+        for row_index, row in enumerate(rows, start=2):
 
-                        # Обновляем данные пользователя
-                        existing_user.dormitory = dormitory
-                        existing_user.apartment_area = area
-                        existing_user.residents_count = residents
-                        existing_user.total_room_residents = total_residents
-                        existing_user.workplace = workplace
-
-                        # Обновляем пароль только если он указан
-                        if password and password != username:
-                            existing_user.hashed_password = get_password_hash(password)
-
-                        updated_count += 1
-                        errors.append(f"Строка {idx}: Обновлен пользователь '{username}'")
-                    else:
-                        # Это не должно случиться, но на всякий случай
-                        skipped_count += 1
-                        errors.append(f"Строка {idx}: Пользователь '{username}' не найден для обновления")
-
-                except Exception as e:
-                    errors.append(f"Строка {idx}: Ошибка обновления пользователя '{username}': {str(e)}")
-                    skipped_count += 1
-
-                continue  # Переходим к следующему пользователю
-
-            # Создаем нового пользователя
             try:
-                password = str(row[1]).strip() if (len(row) > 1 and row[1]) else username
-                dormitory = str(row[2]).strip() if (len(row) > 2 and row[2]) else None
+
+                # -----------------------------
+                # Проверка строки
+                # -----------------------------
+
+                if not row:
+                    skipped_count += 1
+                    continue
+
+                if not row[0]:
+                    skipped_count += 1
+                    continue
+
+                username = str(row[0]).strip()
+
+                if not username:
+                    skipped_count += 1
+                    continue
+
+
+                # -----------------------------
+                # Пароль
+                # -----------------------------
+
+                if len(row) > 1 and row[1]:
+                    password = str(row[1]).strip()
+                else:
+                    password = username
+
+
+                # -----------------------------
+                # Общежитие
+                # -----------------------------
+
+                dormitory = None
+
+                if len(row) > 2 and row[2]:
+                    dormitory = str(row[2]).strip()
+
+
+                # -----------------------------
+                # Площадь / жильцы
+                # -----------------------------
 
                 try:
-                    area = float(row[3]) if (len(row) > 3 and row[3]) else 0.0
-                    residents = int(row[4]) if (len(row) > 4 and row[4]) else 1
-                    total_residents = int(row[5]) if (len(row) > 5 and row[5]) else residents
-                except (ValueError, TypeError):
-                    errors.append(f"Строка {idx}: Ошибка числовых данных, используются значения по умолчанию")
-                    area = 0.0
-                    residents = 1
-                    total_residents = residents
 
-                # Читаем новое поле "Место работы"
-                workplace = str(row[6]).strip() if (len(row) > 6 and row[6]) else None
+                    apartment_area = float(row[3]) if len(row) > 3 and row[3] else 0.0
+
+                    residents_count = int(row[4]) if len(row) > 4 and row[4] else 1
+
+                    total_room_residents = (
+                        int(row[5])
+                        if len(row) > 5 and row[5]
+                        else residents_count
+                    )
+
+                except Exception:
+
+                    apartment_area = 0.0
+                    residents_count = 1
+                    total_room_residents = 1
+
+                    errors.append(
+                        f"Строка {row_index}: Ошибка числовых значений"
+                    )
+
+
+                # -----------------------------
+                # Место работы
+                # -----------------------------
+
+                workplace = None
+
+                if len(row) > 6 and row[6]:
+                    workplace = str(row[6]).strip()
+
+
+                # -----------------------------
+                # Хеширование пароля с кешем
+                # -----------------------------
+
+                if password in password_cache:
+
+                    hashed_password = password_cache[password]
+
+                else:
+
+                    hashed_password = get_password_hash(password)
+                    password_cache[password] = hashed_password
+
+
+                # =====================================================
+                # ОБНОВЛЕНИЕ СУЩЕСТВУЮЩЕГО ПОЛЬЗОВАТЕЛЯ
+                # =====================================================
+
+                if username in existing_users:
+
+                    user = existing_users[username]
+
+                    user.dormitory = dormitory
+                    user.apartment_area = apartment_area
+                    user.residents_count = residents_count
+                    user.total_room_residents = total_room_residents
+                    user.workplace = workplace
+
+                    if password and password != username:
+                        user.hashed_password = hashed_password
+
+                    updated_count += 1
+
+                    continue
+
+
+                # =====================================================
+                # СОЗДАНИЕ НОВОГО ПОЛЬЗОВАТЕЛЯ
+                # =====================================================
 
                 new_user = User(
                     username=username,
-                    hashed_password=get_password_hash(password),
+                    hashed_password=hashed_password,
                     role="user",
                     dormitory=dormitory,
-                    apartment_area=area,
-                    residents_count=residents,
-                    total_room_residents=total_residents,
+                    apartment_area=apartment_area,
+                    residents_count=residents_count,
+                    total_room_residents=total_room_residents,
                     workplace=workplace
                 )
-                db.add(new_user)
+
+                new_users.append(new_user)
+
+                existing_users[username] = new_user
+
                 added_count += 1
 
-                # Добавляем в множество для последующих проверок
-                existing_usernames.add(username)
 
-            except Exception as e:
-                errors.append(f"Строка {idx}: Ошибка создания пользователя '{username}': {str(e)}")
+            except Exception as error:
+
                 skipped_count += 1
-                continue
 
-        # Коммитим все изменения одним разом
-        try:
-            await db.commit()
-        except Exception as e:
-            await db.rollback()
-            return {
-                "status": "error",
-                "message": f"Ошибка при сохранении в базу данных: {str(e)}",
-                "added": 0,
-                "updated": 0,
-                "skipped": skipped_count,
-                "errors": [f"Ошибка коммита: {str(e)}"]
-            }
+                errors.append(
+                    f"Строка {row_index}: {str(error)}"
+                )
+
+
+        # =============================================
+        # Массовая вставка
+        # =============================================
+
+        if new_users:
+            db.add_all(new_users)
+
+
+        # =============================================
+        # Коммит
+        # =============================================
+
+        await db.commit()
+
+
+        # =============================================
+        # Ответ
+        # =============================================
 
         return {
             "status": "success",
-            "message": f"Успешно обработано {added_count + updated_count} записей",
+            "message": "Импорт завершен",
             "added": added_count,
             "updated": updated_count,
             "skipped": skipped_count,
             "errors": errors
         }
 
-    except Exception as e:
-        # Откатываем транзакцию в случае общей ошибки
-        try:
-            await db.rollback()
-        except:
-            pass
+
+    except Exception as error:
+
+        await db.rollback()
 
         return {
             "status": "error",
-            "message": f"Ошибка обработки файла: {str(e)}",
+            "message": f"Ошибка импорта: {str(error)}",
             "added": 0,
             "updated": 0,
             "skipped": 0,
-            "errors": [str(e)]
+            "errors": [str(error)]
         }
 
 
-async def generate_billing_report_xlsx(db: AsyncSession, period_id: int):
+# =========================================================
+# ГЕНЕРАЦИЯ ОТЧЕТА
+# =========================================================
+
+async def generate_billing_report_xlsx(
+    db: AsyncSession,
+    period_id: int
+) -> Tuple[io.BytesIO, str]:
     """
-    Генерация сводного отчета в формате XLSX для бухгалтерии.
+    Генерация XLSX отчета для бухгалтерии
     """
-    # 1. Получаем период
-    p_res = await db.execute(select(BillingPeriod).where(BillingPeriod.id == period_id))
-    period = p_res.scalars().first()
+
+    # =============================================
+    # Получаем период
+    # =============================================
+
+    period_result = await db.execute(
+        select(BillingPeriod)
+        .where(BillingPeriod.id == period_id)
+    )
+
+    period = period_result.scalars().first()
+
     period_name = period.name if period else "Unknown"
 
-    # 2. Получаем данные
-    stmt = (
+
+    # =============================================
+    # Получаем показания
+    # =============================================
+
+    statement = (
         select(User, MeterReading)
-        .join(MeterReading, User.id == MeterReading.user_id)
-        .where(MeterReading.period_id == period_id, MeterReading.is_approved == True)
-        .order_by(User.dormitory, User.username)
+        .join(
+            MeterReading,
+            User.id == MeterReading.user_id
+        )
+        .where(
+            MeterReading.period_id == period_id,
+            MeterReading.is_approved.is_(True)
+        )
+        .order_by(
+            User.dormitory,
+            User.username
+        )
     )
-    result = await db.execute(stmt)
 
-    # 3. Создаем Excel
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Сводная ведомость"
+    result = await db.execute(statement)
 
-    # Заголовок
+
+    # =============================================
+    # Создаем Excel
+    # =============================================
+
+    workbook = Workbook()
+    worksheet = workbook.active
+
+    worksheet.title = "Сводная ведомость"
+
+
     headers = [
-        "Общежитие/Комната", "ФИО (Логин)", "Площадь", "Жильцов",
-        "ГВС (руб)", "ХВС (руб)", "Водоотв. (руб)", "Эл-во (руб)",
-        "Содержание (руб)", "Наем (руб)", "ТКО (руб)", "Отопление+ОДН (руб)",
+        "Общежитие/Комната",
+        "ФИО (Логин)",
+        "Площадь",
+        "Жильцов",
+        "ГВС (руб)",
+        "ХВС (руб)",
+        "Водоотв. (руб)",
+        "Электроэнергия (руб)",
+        "Содержание (руб)",
+        "Наем (руб)",
+        "ТКО (руб)",
+        "Отопление + ОДН (руб)",
         "ИТОГО (руб)"
     ]
-    ws.append(headers)
+
+    worksheet.append(headers)
+
 
     total_sum = 0.0
 
-    for user, r in result:
+
+    for user, reading in result:
+
         row = [
             user.dormitory,
             user.username,
             user.apartment_area,
-            f"{user.residents_count} / {user.total_room_residents}",
-            r.cost_hot_water,
-            r.cost_cold_water,
-            r.cost_sewage,
-            r.cost_electricity,
-            r.cost_maintenance,
-            r.cost_social_rent,
-            r.cost_waste,
-            r.cost_fixed_part,
-            r.total_cost
+            f"{user.residents_count}/{user.total_room_residents}",
+            reading.cost_hot_water,
+            reading.cost_cold_water,
+            reading.cost_sewage,
+            reading.cost_electricity,
+            reading.cost_maintenance,
+            reading.cost_social_rent,
+            reading.cost_waste,
+            reading.cost_fixed_part,
+            reading.total_cost
         ]
-        ws.append(row)
-        total_sum += r.total_cost
 
-    # Итоговая строка
-    ws.append([""] * 11 + ["ИТОГО:", total_sum])
+        worksheet.append(row)
 
+        total_sum += float(reading.total_cost or 0)
+
+
+    # =============================================
+    # Итог
+    # =============================================
+
+    worksheet.append(
+        [""] * 11 + ["ИТОГО:", total_sum]
+    )
+
+
+    # =============================================
     # Сохраняем в память
+    # =============================================
+
     output = io.BytesIO()
-    wb.save(output)
+
+    workbook.save(output)
+
     output.seek(0)
 
+
     filename = f"Report_{period_name}.xlsx".replace(" ", "_")
+
+
     return output, filename

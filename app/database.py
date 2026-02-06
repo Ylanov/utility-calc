@@ -1,37 +1,17 @@
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    create_async_engine
-)
-from sqlalchemy.orm import (
-    sessionmaker,
-    declarative_base
-)
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy import create_engine # <--- Добавляем синхронный create_engine
 from app.config import settings
 
-# -------------------------------------------------
-# СОЗДАНИЕ ASYNC ENGINE
-# -------------------------------------------------
-
+# --- ASYNC ENGINE (ДЛЯ FASTAPI) ---
 engine = create_async_engine(
-    settings.DATABASE_URL_ASYNC,  # Берем из конфига
-
+    settings.DATABASE_URL_ASYNC,
     echo=False,
-
-    # Проверяет соединение перед использованием
     pool_pre_ping=True,
-
-    # Ограничение пула (стабильность под нагрузкой в 1000 юзеров)
     pool_size=20,
     max_overflow=10,
-
-    # Таймаут ожидания соединения
     pool_timeout=30
 )
-
-
-# -------------------------------------------------
-# ФАБРИКА СЕССИЙ
-# -------------------------------------------------
 
 AsyncSessionLocal = sessionmaker(
     bind=engine,
@@ -39,18 +19,19 @@ AsyncSessionLocal = sessionmaker(
     expire_on_commit=False
 )
 
+# --- SYNC ENGINE (ДЛЯ CELERY WORKER) ---
+# Celery проще и надежнее работает с синхронным драйвером
+engine_sync = create_engine(
+    settings.DATABASE_URL_SYNC, # Используем синхронный URL из конфига
+    echo=False,
+    pool_pre_ping=True
+)
 
-# -------------------------------------------------
-# БАЗОВАЯ МОДЕЛЬ SQLALCHEMY
-# -------------------------------------------------
+SessionLocalSync = sessionmaker(autocommit=False, autoflush=False, bind=engine_sync)
 
 Base = declarative_base()
 
-
-# -------------------------------------------------
-# DEPENDENCY ДЛЯ FASTAPI
-# -------------------------------------------------
-
+# Dependency для FastAPI
 async def get_db():
     async with AsyncSessionLocal() as session:
         try:

@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from datetime import datetime
+from decimal import Decimal
 
 from app.database import get_db
 from app.models import User, MeterReading, Tariff, BillingPeriod
@@ -40,12 +41,15 @@ async def get_reading_state(current_user: User = Depends(get_current_user), db: 
         )
         draft = draft_res.scalars().first()
 
+    # Приводим к Decimal для корректного ответа Pydantic
+    zero_vol = Decimal("0.000")
+
     return {
         "period_name": active_period.name if active_period else "Прием показаний закрыт",
 
-        "prev_hot": prev.hot_water if prev else 0.0,
-        "prev_cold": prev.cold_water if prev else 0.0,
-        "prev_elect": prev.electricity if prev else 0.0,
+        "prev_hot": prev.hot_water if prev else zero_vol,
+        "prev_cold": prev.cold_water if prev else zero_vol,
+        "prev_elect": prev.electricity if prev else zero_vol,
 
         "current_hot": draft.hot_water if draft else None,
         "current_cold": draft.cold_water if draft else None,
@@ -54,9 +58,8 @@ async def get_reading_state(current_user: User = Depends(get_current_user), db: 
         "total_cost": draft.total_cost if draft else None,
         "is_draft": True if draft else False,
 
-        # --- ВАЖНОЕ ИСПРАВЛЕНИЕ: Передаем статус периода ---
+        # Статус периода
         "is_period_open": True if active_period else False,
-        # ---------------------------------------------------
 
         # Детализация
         "cost_hot_water": draft.cost_hot_water if draft else None,
@@ -92,14 +95,19 @@ async def save_reading(data: ReadingSchema, current_user: User = Depends(get_cur
     )
     prev = prev_res.scalars().first()
 
-    p_hot = prev.hot_water if prev else 0.0
-    p_cold = prev.cold_water if prev else 0.0
-    p_elect = prev.electricity if prev else 0.0
+    # Используем Decimal для инициализации
+    zero_vol = Decimal("0.000")
+    p_hot = prev.hot_water if prev else zero_vol
+    p_cold = prev.cold_water if prev else zero_vol
+    p_elect = prev.electricity if prev else zero_vol
 
-    # 3. Валидация
-    if data.hot_water < p_hot: raise HTTPException(400, f"Г.В меньше предыдущей ({p_hot})")
-    if data.cold_water < p_cold: raise HTTPException(400, f"Х.В меньше предыдущей ({p_cold})")
-    if data.electricity < p_elect: raise HTTPException(400, f"Свет меньше предыдущего ({p_elect})")
+    # 3. Валидация (data.* уже Decimal благодаря Pydantic schema)
+    if data.hot_water < p_hot:
+        raise HTTPException(400, f"Г.В меньше предыдущей ({p_hot})")
+    if data.cold_water < p_cold:
+        raise HTTPException(400, f"Х.В меньше предыдущей ({p_cold})")
+    if data.electricity < p_elect:
+        raise HTTPException(400, f"Свет меньше предыдущего ({p_elect})")
 
     # 4. Расчет объемов (Дельта)
     d_hot = data.hot_water - p_hot
@@ -107,8 +115,12 @@ async def save_reading(data: ReadingSchema, current_user: User = Depends(get_cur
     d_elect_total = data.electricity - p_elect
 
     # Расчет доли электричества
-    total_residents = current_user.total_room_residents if current_user.total_room_residents > 0 else 1
-    user_share_kwh = (current_user.residents_count / total_residents) * d_elect_total
+    # ВАЖНО: Конвертируем int в Decimal перед делением, иначе получим float
+    residents = Decimal(current_user.residents_count)
+    total_residents_val = current_user.total_room_residents if current_user.total_room_residents > 0 else 1
+    total_residents = Decimal(total_residents_val)
+
+    user_share_kwh = (residents / total_residents) * d_elect_total
 
     # Расчет объема водоотведения (сумма воды)
     vol_sewage = d_hot + d_cold
@@ -161,7 +173,7 @@ async def save_reading(data: ReadingSchema, current_user: User = Depends(get_cur
         draft.cold_water = data.cold_water
         draft.electricity = data.electricity
 
-        # Обновляем все поля стоимости
+        # Обновляем все поля стоимости (значения в costs уже Decimal)
         draft.total_cost = costs["total_cost"]
         draft.cost_hot_water = costs["cost_hot_water"]
         draft.cost_cold_water = costs["cost_cold_water"]
@@ -200,4 +212,4 @@ async def save_reading(data: ReadingSchema, current_user: User = Depends(get_cur
         db.add(new_reading)
 
     await db.commit()
-    return {"status": "success", "total_cost": round(costs["total_cost"], 2)}
+    return {"status": "success", "total_cost": costs["total_cost"]}

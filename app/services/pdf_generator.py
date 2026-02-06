@@ -8,13 +8,26 @@ from weasyprint import HTML, CSS
 from app.models import User, MeterReading, Tariff, BillingPeriod
 
 # Папки
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # путь до app/
+# Определяем пути относительно текущего файла
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__)) # app/services
+APP_DIR = os.path.dirname(CURRENT_DIR) # app
+BASE_DIR = os.path.dirname(APP_DIR) # корень проекта (где main.py или выше)
+
+# Путь к шаблонам. Если templates лежит рядом с app или внутри app, путь может отличаться.
+# Предполагаем, что templates лежит в корне контейнера /app/templates
 TEMPLATE_DIR = os.path.join(BASE_DIR, "templates")
-PDF_DIR = "/tmp/receipts"
-os.makedirs(PDF_DIR, exist_ok=True)
+
+# Папка по умолчанию (если не указана иная)
+DEFAULT_PDF_DIR = "/tmp/receipts"
+os.makedirs(DEFAULT_PDF_DIR, exist_ok=True)
 
 # Инициализация Jinja2
-env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
+# Добавляем проверку существования папки, чтобы не падать с ошибкой, если её нет
+if os.path.exists(TEMPLATE_DIR):
+    env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
+else:
+    # Фолбек на случай, если templates внутри папки app
+    env = Environment(loader=FileSystemLoader(os.path.join(APP_DIR, "templates")))
 
 # =====================================================
 # ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
@@ -76,30 +89,23 @@ def generate_receipt_pdf(
         reading: MeterReading,
         period: BillingPeriod,
         tariff: Tariff,
-        prev_reading: MeterReading
+        prev_reading: MeterReading,
+        output_dir: str = None  # <--- ДОБАВЛЕН АРГУМЕНТ
 ) -> str:
     """
     Генерирует PDF используя HTML шаблон и WeasyPrint.
+    :param output_dir: Папка для сохранения. Если None, используется /tmp/receipts
+    :return: Абсолютный путь к созданному файлу
     """
 
-    # 1. Считаем объемы потребления (для отображения в таблице)
+    # 1. Считаем объемы потребления
     prev_hot = prev_reading.hot_water if prev_reading else 0.0
     prev_cold = prev_reading.cold_water if prev_reading else 0.0
     prev_elect = prev_reading.electricity if prev_reading else 0.0
 
-    # Внимание: reading содержит уже *текущие показания*.
-    # Но в базе у нас могут быть применены коррекции.
-    # Для простоты вывода в квитанции считаем "грязную" разницу,
-    # так как коррекции обычно спрятаны внутри финансового расчета.
-    # Если нужно выводить коррекции, добавьте их в контекст.
-
-    # Реальный объем к оплате (включая коррекции, если они были применены к деньгам)
-    # Тут можно улучшить логику: выводить "Было - Стало".
     vol_hot = max(0, reading.hot_water - prev_hot - reading.hot_correction)
     vol_cold = max(0, reading.cold_water - prev_cold - reading.cold_correction)
 
-    # Для света нужно учесть долю (это сложно вывести в одной цифре,
-    # выведем то, за что начислены деньги: cost / rate)
     if tariff.electricity_rate > 0:
         vol_elect = reading.cost_electricity / tariff.electricity_rate
     else:
@@ -135,8 +141,12 @@ def generate_receipt_pdf(
     html_content = template.render(context)
 
     # 5. Генерация PDF
+    # Определяем целевую папку
+    target_dir = output_dir if output_dir else DEFAULT_PDF_DIR
+    os.makedirs(target_dir, exist_ok=True) # Гарантируем, что папка существует
+
     filename = f"receipt_{user.id}_{period.id}.pdf"
-    filepath = os.path.join(PDF_DIR, filename)
+    filepath = os.path.join(target_dir, filename)
 
     # WeasyPrint делает магию
     HTML(string=html_content).write_pdf(filepath)

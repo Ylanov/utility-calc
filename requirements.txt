@@ -2,6 +2,7 @@ fastapi
 uvicorn
 sqlalchemy
 asyncpg
+psycopg2-binary  # <--- НУЖЕН для синхронного подключения в воркере
 pydantic
 pydantic-settings
 python-multipart
@@ -16,3 +17,7 @@ weasyprint
 openpyxl
 redis
 fastapi-limiter
+celery           # <--- НОВОЕ
+pytest
+pytest-asyncio
+httpx  # Нужен для тестирования API эндпоинтов (на будущее)

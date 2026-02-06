@@ -129,11 +129,12 @@ async function loadAccountantSummary() {
                     </td>
 
                     <td>
-                        <button onclick="downloadReceipt(${r.reading_id})">
+                        <!-- ОБНОВЛЕНО: Передаем 'this' для анимации кнопки -->
+                        <button onclick="downloadReceipt(${r.reading_id}, this)" style="cursor: pointer;" title="Сформировать квитанцию">
                             📄
                         </button>
 
-                        <button onclick="deleteRecord(${r.reading_id})">
+                        <button onclick="deleteRecord(${r.reading_id})" style="cursor: pointer;" title="Удалить запись">
                             🗑
                         </button>
                     </td>
@@ -185,6 +186,45 @@ async function loadAccountantSummary() {
     }
 }
 
+// =========================================================
+// УТИЛИТА: ОПРОС СТАТУСА ЗАДАЧИ (POLLING)
+// =========================================================
+
+async function pollTaskStatus(taskId) {
+    const pollInterval = 1000; // Опрос каждую секунду
+    const maxAttempts = 60; // Максимум 60 секунд ожидания (1 минута)
+
+    for (let i = 0; i < maxAttempts; i++) {
+        try {
+            const res = await fetch(`/api/admin/tasks/${taskId}`, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (!res.ok) throw new Error("Ошибка проверки статуса");
+
+            const data = await res.json();
+
+            // Если задача готова
+            if (data.status === 'done' || data.state === 'SUCCESS') {
+                return data; // Возвращаем результат (ссылку на файл)
+            }
+
+            // Если ошибка
+            if (data.state === 'FAILURE') {
+                throw new Error(data.error || "Ошибка генерации на сервере");
+            }
+
+            // Если еще делается (PENDING/STARTED/RETRY) - ждем
+            await new Promise(resolve => setTimeout(resolve, pollInterval));
+
+        } catch (e) {
+            console.error("Polling error:", e);
+            throw e;
+        }
+    }
+    throw new Error("Таймаут ожидания задачи (сервер перегружен)");
+}
+
 
 // =========================================================
 // УДАЛЕНИЕ
@@ -215,71 +255,75 @@ async function deleteRecord(id) {
 
 
 // =========================================================
-// СКАЧИВАНИЕ PDF (ИСПРАВЛЕНО)
+// СКАЧИВАНИЕ PDF (АСИНХРОННОЕ / CELERY)
 // =========================================================
 
-async function downloadReceipt(readingId) {
+async function downloadReceipt(readingId, btnElement) {
+
+    // 1. Сохраняем исходное состояние кнопки
+    const originalContent = btnElement ? btnElement.innerHTML : '📄';
+
+    // 2. Включаем индикацию загрузки
+    if (btnElement) {
+        btnElement.disabled = true;
+        // Простой CSS спиннер внутри кнопки
+        btnElement.innerHTML = '<span style="display:inline-block; width:12px; height:12px; border:2px solid #ccc; border-top-color:#333; border-radius:50%; animation: spin 1s linear infinite;"></span>';
+        // Добавляем стиль анимации, если его нет глобально
+        if (!document.getElementById('spinStyle')) {
+            const style = document.createElement('style');
+            style.id = 'spinStyle';
+            style.innerHTML = '@keyframes spin { to { transform: rotate(360deg); } }';
+            document.head.appendChild(style);
+        }
+    }
 
     try {
 
-        const res = await fetch(`/api/admin/receipts/${readingId}`, {
+        // 3. Запускаем задачу генерации на сервере
+        const startRes = await fetch(`/api/admin/receipts/${readingId}/generate`, {
+            method: 'POST',
             headers: {
-                'Authorization': `Bearer ${token}`
+                'Authorization': `Bearer ${token}`,
+                'Content-Type': 'application/json'
             }
         });
 
-
-        if (!res.ok) {
-
-            if (res.status === 401) {
+        if (!startRes.ok) {
+            if (startRes.status === 401) {
                 logout();
                 return;
             }
-
-            throw new Error("Ошибка сервера");
+            throw new Error("Не удалось запустить генерацию");
         }
 
+        const startData = await startRes.json();
+        const taskId = startData.task_id;
 
-        // Получаем файл
-        const blob = await res.blob();
+        // 4. Ждем выполнения задачи (Polling)
+        const result = await pollTaskStatus(taskId);
 
-
-        // Имя файла (без крашей)
-        let filename = `receipt_${readingId}.pdf`;
-
-        const cd = res.headers.get('content-disposition');
-
-        if (cd && cd.includes('filename=')) {
-
-            const match = cd.match(/filename="?([^"]+)"?/);
-
-            if (match && match[1]) {
-                filename = match[1];
-            }
-        }
-
-
-        // Скачивание
-        const url = URL.createObjectURL(blob);
-
-        const a = document.createElement('a');
-
-        a.href = url;
-        a.download = filename;
-
-        document.body.appendChild(a);
-
-        a.click();
-
-        a.remove();
-
-        URL.revokeObjectURL(url);
+        // 5. Скачиваем файл
+        // result.download_url приходит с бэкенда (например: "/static/generated_files/receipt_1.pdf")
+        const link = document.createElement('a');
+        link.href = result.download_url;
+        link.download = result.filename || `receipt_${readingId}.pdf`;
+        link.target = '_blank'; // Открываем в новой вкладке для надежности
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
 
     } catch (err) {
 
         console.error(err);
+        alert("Ошибка скачивания: " + err.message);
 
-        alert("Ошибка скачивания PDF");
+    } finally {
+
+        // 6. Возвращаем кнопку в исходное состояние
+        if (btnElement) {
+            btnElement.disabled = false;
+            btnElement.innerHTML = originalContent;
+        }
     }
 }
 

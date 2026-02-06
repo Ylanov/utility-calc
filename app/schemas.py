@@ -1,10 +1,28 @@
-
-from pydantic import BaseModel
+from pydantic import BaseModel, condecimal
 from typing import Optional
 from datetime import datetime
+from decimal import Decimal
+
+# =================================================================
+# ОПРЕДЕЛЕНИЕ ТИПОВ ДАННЫХ (DECIMAL)
+# =================================================================
+# Используем condecimal для жесткой фиксации точности
+# max_digits - общее количество цифр
+# decimal_places - количество знаков после запятой
+
+# Для денег: точность до копеек (2 знака)
+DecimalAmount = condecimal(max_digits=12, decimal_places=2)
+
+# Для объемов (вода, свет): точность до тысячных (3 знака)
+DecimalVolume = condecimal(max_digits=12, decimal_places=3)
+
+# Для тарифов: высокая точность для расчетов (4 знака)
+DecimalTariff = condecimal(max_digits=10, decimal_places=4)
 
 
-# --- USER ---
+# =================================================================
+# СХЕМЫ ПОЛЬЗОВАТЕЛЕЙ (USER)
+# =================================================================
 class UserCreate(BaseModel):
     username: str
     password: str
@@ -13,7 +31,8 @@ class UserCreate(BaseModel):
     workplace: str = ""
     residents_count: int = 1
     total_room_residents: int = 1
-    apartment_area: float = 0.0
+    # Площадь важна для расчетов, используем Decimal
+    apartment_area: DecimalAmount = Decimal("0.00")
 
 
 class UserResponse(BaseModel):
@@ -24,13 +43,12 @@ class UserResponse(BaseModel):
     workplace: Optional[str]
     residents_count: int
     total_room_residents: int
-    apartment_area: float
+    apartment_area: Decimal
 
     class Config:
         from_attributes = True
 
 
-# <<< НОВАЯ СХЕМА ДЛЯ ОБНОВЛЕНИЯ >>>
 class UserUpdate(BaseModel):
     username: Optional[str] = None
     password: Optional[str] = None
@@ -39,28 +57,32 @@ class UserUpdate(BaseModel):
     workplace: Optional[str] = None
     residents_count: Optional[int] = None
     total_room_residents: Optional[int] = None
-    apartment_area: Optional[float] = None
+    apartment_area: Optional[DecimalAmount] = None
 
 
-# --- TARIFF ---
+# =================================================================
+# СХЕМЫ ТАРИФОВ (TARIFF)
+# =================================================================
 class TariffSchema(BaseModel):
-    maintenance_repair: float
-    social_rent: float
-    heating: float
-    water_heating: float
-    water_supply: float
-    sewage: float
-    waste_disposal: float
-    electricity_per_sqm: float
-    electricity_rate: float
+    maintenance_repair: DecimalTariff
+    social_rent: DecimalTariff
+    heating: DecimalTariff
+    water_heating: DecimalTariff
+    water_supply: DecimalTariff
+    sewage: DecimalTariff
+    waste_disposal: DecimalTariff
+    electricity_per_sqm: DecimalTariff
+    electricity_rate: DecimalTariff
 
     class Config:
         from_attributes = True
 
 
-# --- PERIODS (НОВОЕ) ---
+# =================================================================
+# СХЕМЫ ПЕРИОДОВ (PERIODS)
+# =================================================================
 class PeriodCreate(BaseModel):
-    name: str  # "Февраль 2025"
+    name: str  # Например: "Февраль 2025"
 
 
 class PeriodResponse(BaseModel):
@@ -73,40 +95,50 @@ class PeriodResponse(BaseModel):
         from_attributes = True
 
 
-# --- READING ---
+# =================================================================
+# СХЕМЫ ПОКАЗАНИЙ (READINGS)
+# =================================================================
 class ReadingSchema(BaseModel):
-    hot_water: float
-    cold_water: float
-    electricity: float
+    # Входные данные от пользователя - объемы
+    hot_water: DecimalVolume
+    cold_water: DecimalVolume
+    electricity: DecimalVolume
 
 
 class ReadingStateResponse(BaseModel):
     # Добавляем информацию о периоде
     period_name: Optional[str] = None
 
-    prev_hot: float
-    prev_cold: float
-    prev_elect: float
-    current_hot: Optional[float]
-    current_cold: Optional[float]
-    current_elect: Optional[float]
-    total_cost: Optional[float]
-    is_draft: bool
+    # Объемы (предыдущие и текущие)
+    prev_hot: Decimal
+    prev_cold: Decimal
+    prev_elect: Decimal
 
+    current_hot: Optional[Decimal]
+    current_cold: Optional[Decimal]
+    current_elect: Optional[Decimal]
+
+    # Итоговая сумма
+    total_cost: Optional[Decimal]
+
+    # Статусы
+    is_draft: bool
     is_period_open: bool
 
-    cost_hot_water: Optional[float] = None
-    cost_cold_water: Optional[float] = None
-    cost_electricity: Optional[float] = None
-    cost_sewage: Optional[float] = None
-    cost_maintenance: Optional[float] = None
-    cost_social_rent: Optional[float] = None
-    cost_waste: Optional[float] = None
-    cost_fixed_part: Optional[float] = None
+    # Детализация стоимости (все поля денежные)
+    cost_hot_water: Optional[Decimal] = None
+    cost_cold_water: Optional[Decimal] = None
+    cost_electricity: Optional[Decimal] = None
+    cost_sewage: Optional[Decimal] = None
+    cost_maintenance: Optional[Decimal] = None
+    cost_social_rent: Optional[Decimal] = None
+    cost_waste: Optional[Decimal] = None
+    cost_fixed_part: Optional[Decimal] = None
 
 
 class ApproveRequest(BaseModel):
-    hot_correction: float
-    cold_correction: float
-    electricity_correction: float
-    sewage_correction: float
+    # Коррекции - это объемы, которые вычитаются/прибавляются
+    hot_correction: DecimalVolume
+    cold_correction: DecimalVolume
+    electricity_correction: DecimalVolume
+    sewage_correction: DecimalVolume

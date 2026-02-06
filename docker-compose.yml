@@ -6,11 +6,13 @@ services:
     build: .
     container_name: utility_calc_web
     restart: always
-    # Порты убрали, так как доступ будет через Nginx внутри сети Docker
     expose:
       - "8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/utility_db
+      # URL для асинхронного драйвера (используется приложением)
+      DATABASE_URL_ASYNC: postgresql+asyncpg://postgres:postgres@db:5432/utility_db
+      # URL для синхронного драйвера (используется Alembic)
+      DATABASE_URL_SYNC: postgresql://postgres:postgres@db:5432/utility_db
       REDIS_URL: redis://redis:6379/0
     depends_on:
       db:
@@ -21,8 +23,38 @@ services:
       - ./app:/app/app
       - ./static:/app/static
       - ./alembic:/app/alembic
+      # Общий том для сохранения сгенерированных отчетов
+      - shared_data:/app/static/generated_files
     networks:
       - utility_net
+    # Сначала применяем миграции, потом запускаем сервер
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  # -------------------------------------------------
+  # WORKER (CELERY) - ФОНОВЫЕ ЗАДАЧИ
+  # -------------------------------------------------
+  worker:
+    build: .
+    container_name: utility_calc_worker
+    restart: always
+    environment:
+      # Те же переменные окружения, так как используется тот же код
+      DATABASE_URL_ASYNC: postgresql+asyncpg://postgres:postgres@db:5432/utility_db
+      DATABASE_URL_SYNC: postgresql://postgres:postgres@db:5432/utility_db
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./app:/app/app
+      # Подключаем тот же общий том, чтобы сохранять туда PDF
+      - shared_data:/app/static/generated_files
+    networks:
+      - utility_net
+    # Команда запуска Celery воркера
+    command: celery -A app.worker.celery worker --loglevel=info
 
   # -------------------------------------------------
   # DATABASE (POSTGRES)
@@ -47,7 +79,7 @@ services:
       - utility_net
 
   # -------------------------------------------------
-  # REDIS (CACHE & LIMITER) - НОВОЕ
+  # REDIS (CACHE & QUEUE)
   # -------------------------------------------------
   redis:
     image: redis:7-alpine
@@ -60,27 +92,59 @@ services:
       - utility_net
 
   # -------------------------------------------------
-  # NGINX (PROXY & HTTPS) - НОВОЕ
+  # NGINX (PROXY & STATIC)
   # -------------------------------------------------
   nginx:
     image: nginx:alpine
     container_name: utility_calc_nginx
     restart: always
     ports:
-      - "8080:80"   # Теперь HTTP будет на 8080
-      - "8443:443"  # Теперь HTTPS будет на 8443
+      - "8080:80"   # HTTP
+      - "8443:443"  # HTTPS
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d
       - ./nginx/certs:/etc/nginx/certs
-      - ./static:/usr/share/nginx/html/static  # Nginx будет сам отдавать статику (быстрее)
+      # Статика: CSS, JS
+      - ./static:/usr/share/nginx/html/static
+      # ВАЖНО: Подключаем общий том, чтобы Nginx мог отдавать сгенерированные файлы
+      # Мы монтируем его внутрь папки static, чтобы URL был вида /static/generated_files/...
+      - shared_data:/usr/share/nginx/html/static/generated_files
     depends_on:
       - web
     networks:
       - utility_net
 
+  # -------------------------------------------------
+  # BACKUP SERVICE (SIDECAR)
+  # -------------------------------------------------
+  backup:
+    image: postgres:15
+    container_name: utility_calc_backup
+    restart: always
+    environment:
+      # Параметры подключения к БД (сервис db)
+      PGHOST: db
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDB: utility_db
+    volumes:
+      # Папка на хосте, куда будут падать файлы
+      - ./backups:/backups
+      # Пробрасываем скрипт внутрь контейнера
+      - ./backup.sh:/usr/local/bin/backup.sh
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - utility_net
+    # Команда запуска: делаем скрипт исполняемым и запускаем цикл
+    # sleep 86400 = 24 часа. Бэкап будет делаться раз в сутки.
+    command: bash -c "chmod +x /usr/local/bin/backup.sh && while true; do /usr/local/bin/backup.sh; sleep 86400; done"
+
 volumes:
   postgres_data:
-  redis_data:  # Persistent storage for Redis
+  redis_data:
+  shared_data: # Том для обмена файлами между контейнерами
 
 networks:
   utility_net:
