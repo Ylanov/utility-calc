@@ -4,154 +4,70 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Личный кабинет жильца</title>
-
-    <!-- Подключение Tailwind CSS для стилей -->
     <script src="https://cdn.tailwindcss.com"></script>
-
-    <!-- Внутренние стили для кастомных элементов: тосты, спиннеры и т.д. -->
     <style>
-        body {
-            background: linear-gradient(135deg, #f0f4f8, #e6f3e6);
-            min-height: 100vh;
-        }
-
-        /* Стили для всплывающих уведомлений (тостов) */
-        #toast-container {
-            position: fixed;
-            bottom: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            z-index: 1000;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 10px;
-        }
-        .toast {
-            padding: 12px 20px;
-            border-radius: 8px;
-            color: white;
-            font-weight: 500;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-            opacity: 0;
-            transform: translateY(20px);
-            transition: opacity 0.3s ease, transform 0.3s ease;
-        }
-        .toast.show {
-            opacity: 1;
-            transform: translateY(0);
-        }
-        .toast-success { background-color: #27ae60; }
-        .toast-error { background-color: #c0392b; }
-
-        /* Анимация для спиннера загрузки */
-        .spinner {
-            border: 2px solid rgba(255,255,255,0.3);
-            border-top-color: #fff;
-            border-radius: 50%;
-            width: 16px;
-            height: 16px;
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        /* Класс для невалидного поля ввода */
-        .input-error {
-            border-color: #c0392b !important;
-            box-shadow: 0 0 0 1px #c0392b;
-        }
+        body { background: linear-gradient(135deg, #f0f4f8, #e6f3e6); min-height: 100vh; }
+        #toast-container { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 1000; display: flex; flex-direction: column; align-items: center; gap: 10px; }
+        .toast { padding: 12px 20px; border-radius: 8px; color: white; font-weight: 500; box-shadow: 0 4px 15px rgba(0,0,0,0.1); opacity: 0; transform: translateY(20px); transition: opacity 0.3s ease, transform 0.3s ease; }
+        .toast.show { opacity: 1; transform: translateY(0); }
+        .spinner { border: 2px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; width: 16px; height: 16px; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .input-error { border-color: #c0392b !important; box-shadow: 0 0 0 1px #c0392b; }
     </style>
 </head>
-
 <body class="font-sans text-gray-800">
 
-<!-- Контейнер для тостов -->
 <div id="toast-container"></div>
 
-<!-- Основной контейнер страницы -->
 <div id="app-container" class="max-w-6xl mx-auto p-4 opacity-0 transition-opacity duration-500">
-
-    <!-- ================= HEADER ================= -->
     <header class="flex justify-between items-center bg-white shadow-md rounded-xl p-4 mb-6">
         <div>
             <h1 class="text-2xl font-bold text-gray-800">🏠 Личный кабинет</h1>
             <p class="text-sm text-gray-500">ЖКХ — управление показаниями</p>
         </div>
-        <button onclick="logout()" class="bg-red-500 hover:bg-red-600 text-white font-semibold px-4 py-2 rounded-lg transition-colors">
-            Выйти
-        </button>
+        <button onclick="logout()" class="bg-red-500 hover:bg-red-600 text-white font-semibold px-4 py-2 rounded-lg transition-colors">Выйти</button>
     </header>
 
-    <!-- ================= PROFILE ================= -->
     <div class="bg-white shadow-md rounded-xl p-6 mb-6">
         <h2 class="text-xl font-semibold mb-4 text-gray-700 border-b pb-2">👤 Профиль</h2>
         <div class="grid grid-cols-1 md:grid-cols-3 gap-x-4 gap-y-6 text-sm">
-            <div>
-                <div class="text-gray-500">Пользователь</div>
-                <div id="pUser" class="font-bold text-lg">Загрузка...</div>
-            </div>
-            <div>
-                <div class="text-gray-500">Адрес</div>
-                <div id="pAddress" class="font-semibold">Загрузка...</div>
-            </div>
-            <div>
-                <div class="text-gray-500">Площадь</div>
-                <div id="pArea" class="font-semibold">Загрузка...</div>
-            </div>
-            <div>
-                <div class="text-gray-500">Кол-во жильцов</div>
-                <div id="pResidents" class="font-semibold">Загрузка...</div>
-            </div>
-            <div>
-                <div class="text-gray-500">Текущий период</div>
-                <div id="pPeriod" class="font-bold text-blue-600">Загрузка...</div>
-            </div>
+            <div><div class="text-gray-500">Пользователь</div><div id="pUser" class="font-bold text-lg">Загрузка...</div></div>
+            <div><div class="text-gray-500">Адрес</div><div id="pAddress" class="font-semibold">Загрузка...</div></div>
+            <div><div class="text-gray-500">Площадь</div><div id="pArea" class="font-semibold">Загрузка...</div></div>
+            <div><div class="text-gray-500">Кол-во жильцов</div><div id="pResidents" class="font-semibold">Загрузка...</div></div>
+            <div><div class="text-gray-500">Текущий период</div><div id="pPeriod" class="font-bold text-blue-600">Загрузка...</div></div>
         </div>
     </div>
 
-    <!-- ================= STATUS ================= -->
     <div id="statusArea" class="mb-6"></div>
 
-    <!-- ================= METERS ================= -->
     <div class="bg-white rounded-xl shadow-md p-6 mb-6">
         <h2 class="text-xl font-semibold mb-4 text-gray-700 border-b pb-2">📊 Ввод показаний</h2>
-        <!-- Используем fieldset, чтобы легко блокировать всю форму -->
         <fieldset id="meterFieldset">
             <form id="meterForm" class="space-y-6">
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <!-- HOT WATER -->
                     <div class="border rounded-lg p-4 bg-gray-50 flex flex-col">
                         <h3 class="font-semibold text-red-600">🔥 Горячая вода (м³)</h3>
-                        <div class="mt-2 text-sm text-gray-600">Предыдущее:</div>
-                        <div id="prevHot" class="text-2xl font-bold text-gray-700">0.00</div>
+                        <div class="mt-2 text-sm text-gray-600">Предыдущее:</div><div id="prevHot" class="text-2xl font-bold text-gray-700">0.00</div>
                         <label for="hotWater" class="mt-4 text-sm font-medium">Текущее:</label>
                         <input id="hotWater" type="number" step="0.01" min="0" class="mt-1 w-full border-gray-300 rounded-lg px-3 py-2 transition focus:border-red-500 focus:ring-red-500" required>
                         <span id="hotError" class="text-red-600 text-xs mt-1 h-4"></span>
                     </div>
-
-                    <!-- COLD WATER -->
                     <div class="border rounded-lg p-4 bg-gray-50 flex flex-col">
                         <h3 class="font-semibold text-blue-600">❄️ Холодная вода (м³)</h3>
-                        <div class="mt-2 text-sm text-gray-600">Предыдущее:</div>
-                        <div id="prevCold" class="text-2xl font-bold text-gray-700">0.00</div>
+                        <div class="mt-2 text-sm text-gray-600">Предыдущее:</div><div id="prevCold" class="text-2xl font-bold text-gray-700">0.00</div>
                         <label for="coldWater" class="mt-4 text-sm font-medium">Текущее:</label>
                         <input id="coldWater" type="number" step="0.01" min="0" class="mt-1 w-full border-gray-300 rounded-lg px-3 py-2 transition focus:border-blue-500 focus:ring-blue-500" required>
                         <span id="coldError" class="text-red-600 text-xs mt-1 h-4"></span>
                     </div>
-
-                    <!-- ELECTRICITY -->
                     <div class="border rounded-lg p-4 bg-gray-50 flex flex-col">
                         <h3 class="font-semibold text-yellow-500">⚡ Электричество (кВт*ч)</h3>
-                        <div class="mt-2 text-sm text-gray-600">Предыдущее:</div>
-                        <div id="prevElect" class="text-2xl font-bold text-gray-700">0.00</div>
+                        <div class="mt-2 text-sm text-gray-600">Предыдущее:</div><div id="prevElect" class="text-2xl font-bold text-gray-700">0.00</div>
                         <label for="electricity" class="mt-4 text-sm font-medium">Текущее:</label>
                         <input id="electricity" type="number" step="0.01" min="0" class="mt-1 w-full border-gray-300 rounded-lg px-3 py-2 transition focus:border-yellow-500 focus:ring-yellow-500" required>
                         <span id="electError" class="text-red-600 text-xs mt-1 h-4"></span>
                     </div>
                 </div>
-
                 <div class="text-center pt-4">
                     <button id="submitBtn" type="submit" class="bg-green-600 hover:bg-green-700 text-white px-8 py-3 rounded-xl shadow-lg text-lg font-semibold transition-all duration-300 flex items-center justify-center mx-auto disabled:bg-gray-400 disabled:cursor-not-allowed">
                         <span id="submitBtnText">💾 Сохранить</span>
@@ -162,7 +78,6 @@
         </fieldset>
     </div>
 
-    <!-- ================= RESULT ================= -->
     <div id="result" class="hidden bg-white rounded-xl shadow-md p-6 mb-6">
         <h2 class="text-xl font-semibold mb-4 text-gray-700 border-b pb-2">💰 Предварительные начисления</h2>
         <ul class="divide-y divide-gray-200">
@@ -180,340 +95,19 @@
         </ul>
     </div>
 
-    <!-- ================= HISTORY ================= -->
     <div class="bg-white shadow-md rounded-xl p-6 mb-6">
         <h2 class="text-xl font-semibold mb-4 text-gray-700 border-b pb-2">📚 История начислений</h2>
         <div class="overflow-x-auto">
             <table class="w-full text-sm border">
                 <thead class="bg-gray-100">
-                    <tr>
-                        <th class="p-2 border font-medium text-left">Период</th>
-                        <th class="p-2 border font-medium">ГВС (м³)</th>
-                        <th class="p-2 border font-medium">ХВС (м³)</th>
-                        <th class="p-2 border font-medium">Свет (кВт*ч)</th>
-                        <th class="p-2 border font-medium">Итого (руб.)</th>
-                        <th class="p-2 border font-medium">Квитанция</th>
-                    </tr>
+                    <tr><th class="p-2 border font-medium text-left">Период</th><th class="p-2 border font-medium">ГВС (м³)</th><th class="p-2 border font-medium">ХВС (м³)</th><th class="p-2 border font-medium">Свет (кВт*ч)</th><th class="p-2 border font-medium">Итого (руб.)</th><th class="p-2 border font-medium">Квитанция</th></tr>
                 </thead>
-                <tbody id="historyBody" class="divide-y">
-                    <!-- Данные загружаются динамически -->
-                </tbody>
+                <tbody id="historyBody" class="divide-y"></tbody>
             </table>
         </div>
     </div>
 </div>
 
-<!-- ================= SCRIPT ================= -->
-<script>
-    'use strict';
-
-    // ===================================================================
-    // 1. ГЛОБАЛЬНОЕ СОСТОЯНИЕ И КОНФИГУРАЦИЯ
-    // ===================================================================
-    const appState = {
-        token: localStorage.getItem('token'),
-        lastReadings: { hot: 0, cold: 0, elect: 0 },
-        isPeriodActive: false
-    };
-
-    // ===================================================================
-    // 2. СЕРВИС ДЛЯ РАБОТЫ С API
-    // ===================================================================
-    const apiService = {
-        async request(endpoint, options = {}) {
-            const defaultOptions = {
-                headers: {
-                    'Authorization': `Bearer ${appState.token}`,
-                    'Content-Type': 'application/json'
-                }
-            };
-            const config = { ...defaultOptions, ...options };
-
-            try {
-                const response = await fetch(endpoint, config);
-                if (response.status === 401) {
-                    logout(); // Если токен невалиден, выходим
-                    return;
-                }
-                if (!response.ok) {
-                    const errorData = await response.json().catch(() => ({ detail: 'Неизвестная ошибка сервера' }));
-                    throw new Error(errorData.detail || `Ошибка ${response.status}`);
-                }
-                // Для DELETE запросов, у которых может не быть тела
-                if (response.status === 204) return null;
-                // Для скачивания файлов
-                if (options.isBlob) return await response.blob();
-
-                return await response.json();
-            } catch (error) {
-                console.error(`API Error on ${endpoint}:`, error);
-                throw error; // Передаем ошибку дальше для обработки в UI
-            }
-        },
-        get(endpoint) {
-            return this.request(endpoint);
-        },
-        post(endpoint, body) {
-            return this.request(endpoint, { method: 'POST', body: JSON.stringify(body) });
-        },
-        download(endpoint) {
-            return this.request(endpoint, { isBlob: true });
-        }
-    };
-
-    // ===================================================================
-    // 3. ФУНКЦИИ ОБНОВЛЕНИЯ ИНТЕРФЕЙСА (UI)
-    // ===================================================================
-    const uiUpdater = {
-        updateProfile(data) {
-            document.getElementById('pUser').textContent = data.username || '-';
-            document.getElementById('pAddress').textContent = data.dormitory || '-';
-            document.getElementById('pArea').textContent = `${data.apartment_area} м²`;
-            document.getElementById('pResidents').textContent = data.residents_count;
-            document.getElementById('pPeriod').textContent = data.period_name || 'Прием закрыт';
-        },
-        updateMeters(data) {
-            appState.lastReadings = { hot: data.prev_hot, cold: data.prev_cold, elect: data.prev_elect };
-            document.getElementById('prevHot').textContent = data.prev_hot.toFixed(2);
-            document.getElementById('prevCold').textContent = data.prev_cold.toFixed(2);
-            document.getElementById('prevElect').textContent = data.prev_elect.toFixed(2);
-
-            if (data.is_draft) {
-                document.getElementById('hotWater').value = data.current_hot || '';
-                document.getElementById('coldWater').value = data.current_cold || '';
-                document.getElementById('electricity').value = data.current_elect || '';
-            }
-        },
-        updateStatus(data) {
-            // ЛОГИКА ОБНОВЛЕНА: Проверяем флаг is_period_open
-            appState.isPeriodActive = data.is_period_open;
-            const statusArea = document.getElementById('statusArea');
-            const meterFieldset = document.getElementById('meterFieldset');
-
-            if (!data.is_period_open) {
-                // ПЕРИОД ЗАКРЫТ
-                statusArea.innerHTML = `
-                    <div class="bg-blue-100 border-l-4 border-blue-500 text-blue-700 p-4 rounded-md" role="alert">
-                        <p class="font-bold">🔒 Расчетный период закрыт</p>
-                        <p>Подача показаний в этом месяце завершена.</p>
-                    </div>`;
-                meterFieldset.disabled = true;
-
-            } else if (data.is_draft) {
-                // ПЕРИОД ОТКРЫТ + ЕСТЬ ЧЕРНОВИК
-                statusArea.innerHTML = `
-                    <div class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded-md" role="alert">
-                        <p class="font-bold">✏️ Черновик на проверке</p>
-                        <p>Ваши показания сохранены и ожидают утверждения бухгалтером.</p>
-                    </div>`;
-                meterFieldset.disabled = false;
-
-            } else {
-                // ПЕРИОД ОТКРЫТ + НЕТ ЧЕРНОВИКА (Зеленая плашка)
-                statusArea.innerHTML = `
-                    <div class="bg-green-100 border-l-4 border-green-500 text-green-700 p-4 rounded-md" role="alert">
-                        <p class="font-bold">🟢 Сбор показаний открыт</p>
-                        <p>Пожалуйста, внесите текущие показания счетчиков и нажмите "Сохранить".</p>
-                    </div>`;
-                meterFieldset.disabled = false;
-            }
-        },
-        updateResults(data) {
-            const resultDiv = document.getElementById('result');
-            if (!data.total_cost) {
-                resultDiv.classList.add('hidden');
-                return;
-            }
-            resultDiv.classList.remove('hidden');
-            const formatCurrency = (value) => `${(value || 0).toFixed(2)} ₽`;
-            document.getElementById('rHot').textContent = formatCurrency(data.cost_hot_water);
-            document.getElementById('rCold').textContent = formatCurrency(data.cost_cold_water);
-            document.getElementById('rSew').textContent = formatCurrency(data.cost_sewage);
-            document.getElementById('rEl').textContent = formatCurrency(data.cost_electricity);
-            document.getElementById('rMain').textContent = formatCurrency(data.cost_maintenance);
-            document.getElementById('rRent').textContent = formatCurrency(data.cost_social_rent);
-            document.getElementById('rWaste').textContent = formatCurrency(data.cost_waste);
-            document.getElementById('rFix').textContent = formatCurrency(data.cost_fixed_part);
-            document.getElementById('rTotal').textContent = formatCurrency(data.total_cost);
-        },
-        updateHistory(historyData) {
-            const historyBody = document.getElementById('historyBody');
-            historyBody.innerHTML = ''; // Очищаем перед заполнением
-            if (!historyData || historyData.length === 0) {
-                historyBody.innerHTML = `<tr><td colspan="6" class="text-center p-4 text-gray-500">История начислений пуста.</td></tr>`;
-                return;
-            }
-            historyData.forEach(r => {
-                const tr = document.createElement('tr');
-                tr.className = 'hover:bg-gray-50';
-                tr.innerHTML = `
-                    <td class="border p-2 font-semibold">${r.period}</td>
-                    <td class="border p-2 text-center">${r.hot.toFixed(2)}</td>
-                    <td class="border p-2 text-center">${r.cold.toFixed(2)}</td>
-                    <td class="border p-2 text-center">${r.electric.toFixed(2)}</td>
-                    <td class="border p-2 text-center font-bold text-green-800">${r.total.toFixed(2)}</td>
-                    <td class="border p-2 text-center">
-                        <button onclick="downloadHistoryReceipt(${r.id})" class="text-blue-600 hover:underline text-2xl" title="Скачать квитанцию">📄</button>
-                    </td>`;
-                historyBody.appendChild(tr);
-            });
-        },
-        showLoader(isLoading) {
-            document.getElementById('app-container').style.opacity = isLoading ? '0' : '1';
-        },
-        showToast(message, isError = false) {
-            const container = document.getElementById('toast-container');
-            const toast = document.createElement('div');
-            toast.className = `toast ${isError ? 'toast-error' : 'toast-success'}`;
-            toast.textContent = message;
-            container.appendChild(toast);
-
-            setTimeout(() => toast.classList.add('show'), 10); // Для анимации появления
-            setTimeout(() => {
-                toast.classList.remove('show');
-                toast.addEventListener('transitionend', () => toast.remove());
-            }, 3000);
-        }
-    };
-
-    // ===================================================================
-    // 4. ЛОГИКА И ОБРАБОТЧИКИ СОБЫТИЙ
-    // ===================================================================
-    function logout() {
-        localStorage.removeItem('token');
-        window.location.href = 'login.html';
-    }
-
-    function validateInputs() {
-        let isFormValid = true;
-        const inputs = [
-            { id: 'hotWater', prev: appState.lastReadings.hot, errorId: 'hotError', name: 'ГВС' },
-            { id: 'coldWater', prev: appState.lastReadings.cold, errorId: 'coldError', name: 'ХВС' },
-            { id: 'electricity', prev: appState.lastReadings.elect, errorId: 'electError', name: 'Свет' }
-        ];
-
-        inputs.forEach(item => {
-            const inputEl = document.getElementById(item.id);
-            const errorEl = document.getElementById(item.errorId);
-            const value = parseFloat(inputEl.value);
-
-            if (inputEl.value && value < item.prev) {
-                inputEl.classList.add('input-error');
-                errorEl.textContent = `Значение не может быть меньше ${item.prev.toFixed(2)}`;
-                isFormValid = false;
-            } else {
-                inputEl.classList.remove('input-error');
-                errorEl.textContent = '';
-            }
-        });
-        document.getElementById('submitBtn').disabled = !isFormValid;
-        return isFormValid;
-    }
-
-    async function handleFormSubmit(event) {
-        event.preventDefault();
-        if (!validateInputs()) return;
-
-        const submitBtn = document.getElementById('submitBtn');
-        const btnText = document.getElementById('submitBtnText');
-        const btnSpinner = document.getElementById('submitBtnSpinner');
-
-        // Показываем состояние загрузки
-        submitBtn.disabled = true;
-        btnText.textContent = 'Сохранение...';
-        btnSpinner.classList.remove('hidden');
-
-        const data = {
-            hot_water: parseFloat(document.getElementById('hotWater').value),
-            cold_water: parseFloat(document.getElementById('coldWater').value),
-            electricity: parseFloat(document.getElementById('electricity').value)
-        };
-
-        try {
-            await apiService.post('/api/calculate', data);
-            uiUpdater.showToast('Показания успешно сохранены!', false);
-            await loadInitialState(); // Перезагружаем все данные
-            await loadHistory();
-        } catch (error) {
-            uiUpdater.showToast(error.message, true);
-        } finally {
-            // Возвращаем кнопку в исходное состояние
-            submitBtn.disabled = false;
-            btnText.textContent = '💾 Сохранить';
-            btnSpinner.classList.add('hidden');
-        }
-    }
-
-    function downloadFile(blob, filename) {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-    }
-
-    async function downloadHistoryReceipt(readingId) {
-        try {
-            const blob = await apiService.download(`/api/client/receipts/${readingId}`);
-            downloadFile(blob, `receipt_${readingId}.pdf`);
-        } catch (error) {
-            uiUpdater.showToast('Квитанция не найдена или недоступна.', true);
-        }
-    }
-
-    // ===================================================================
-    // 5. ИНИЦИАЛИЗАЦИЯ ПРИЛОЖЕНИЯ
-    // ===================================================================
-    async function loadInitialState() {
-        try {
-            const stateData = await apiService.get('/api/readings/state');
-            if (stateData) {
-                uiUpdater.updateProfile(stateData);
-                uiUpdater.updateStatus(stateData);
-                uiUpdater.updateMeters(stateData);
-                uiUpdater.updateResults(stateData);
-                validateInputs(); // Проверяем инпуты после заполнения
-            }
-        } catch (error) {
-            uiUpdater.showToast(error.message, true);
-        }
-    }
-
-    async function loadHistory() {
-        try {
-            const historyData = await apiService.get('/api/readings/history');
-            uiUpdater.updateHistory(historyData);
-        } catch (error) {
-            // Не показываем ошибку, т.к. это не критично
-            console.error("Could not load history:", error);
-        }
-    }
-
-    // Главная функция, запускающая всё приложение
-    async function main() {
-        if (!appState.token) {
-            logout();
-            return;
-        }
-
-        await loadInitialState();
-        await loadHistory();
-
-        uiUpdater.showLoader(false); // Показываем контент после загрузки
-
-        // Устанавливаем обработчики событий
-        document.getElementById('meterForm').addEventListener('submit', handleFormSubmit);
-        document.getElementById('hotWater').addEventListener('input', validateInputs);
-        document.getElementById('coldWater').addEventListener('input', validateInputs);
-        document.getElementById('electricity').addEventListener('input', validateInputs);
-    }
-
-    document.addEventListener('DOMContentLoaded', main);
-
-</script>
-
+<script type="module" src="js/client.js"></script>
 </body>
 </html>

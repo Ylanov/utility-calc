@@ -1,43 +1,49 @@
 import os
 import base64
 import qrcode
+
 from io import BytesIO
+from decimal import Decimal
+from pathlib import Path
+
 from jinja2 import Environment, FileSystemLoader
-from weasyprint import HTML, CSS
+from weasyprint import HTML
 
 from app.models import User, MeterReading, Tariff, BillingPeriod
 
-# Папки
-# Определяем пути относительно текущего файла
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__)) # app/services
-APP_DIR = os.path.dirname(CURRENT_DIR) # app
-BASE_DIR = os.path.dirname(APP_DIR) # корень проекта (где main.py или выше)
-
-# Путь к шаблонам. Если templates лежит рядом с app или внутри app, путь может отличаться.
-# Предполагаем, что templates лежит в корне контейнера /app/templates
-TEMPLATE_DIR = os.path.join(BASE_DIR, "templates")
-
-# Папка по умолчанию (если не указана иная)
-DEFAULT_PDF_DIR = "/tmp/receipts"
-os.makedirs(DEFAULT_PDF_DIR, exist_ok=True)
-
-# Инициализация Jinja2
-# Добавляем проверку существования папки, чтобы не падать с ошибкой, если её нет
-if os.path.exists(TEMPLATE_DIR):
-    env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
-else:
-    # Фолбек на случай, если templates внутри папки app
-    env = Environment(loader=FileSystemLoader(os.path.join(APP_DIR, "templates")))
 
 # =====================================================
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# ПУТИ ПРОЕКТА
+# =====================================================
+
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+TEMPLATE_DIR = BASE_DIR / "templates"
+
+# Папка для сохранения PDF (совпадает с volume nginx)
+DEFAULT_PDF_DIR = "/app/static/generated_files"
+
+os.makedirs(DEFAULT_PDF_DIR, exist_ok=True)
+
+
+# =====================================================
+# JINJA2
+# =====================================================
+
+env = Environment(
+    loader=FileSystemLoader(str(TEMPLATE_DIR)),
+    autoescape=True
+)
+
+
+# =====================================================
+# РЕКВИЗИТЫ ОРГАНИЗАЦИИ
 # =====================================================
 
 ORG_DETAILS = {
     "name": 'ФГКУ "ЦСООР "Лидер"',
     "inn": "5003008102",
     "kpp": "775101001",
-    "rs": "03100643000000017300",
+    "account": "03100643000000017300",
     "bank": 'УФК по г. Москве (ФГКУ "ЦСООР "Лидер")',
     "bik": "004525988",
     "oktmo": "45953000"
@@ -47,10 +53,22 @@ KBC_RENT = "17711301991010300130"
 KBC_UTILS = "17711302061017000130"
 
 
-def _generate_qr_base64(kbc, total_sum, user, purpose_text):
-    """Генерирует QR-код и возвращает его как base64 строку для вставки в HTML"""
+# =====================================================
+# QR-КОД
+# =====================================================
+
+def generate_qr_base64(
+    kbk: str,
+    total_sum: Decimal,
+    user: User,
+    purpose: str
+) -> str:
+    """
+    Генерирует QR-код оплаты (ГОСТ)
+    """
 
     fio = user.username.split()
+
     last = fio[0] if len(fio) > 0 else ""
     first = fio[1] if len(fio) > 1 else ""
     middle = fio[2] if len(fio) > 2 else ""
@@ -58,26 +76,27 @@ def _generate_qr_base64(kbc, total_sum, user, purpose_text):
     qr_data = (
         f"ST00012|"
         f"Name={ORG_DETAILS['name']}|"
-        f"PersonalAcc={ORG_DETAILS['rs']}|"
+        f"PersonalAcc={ORG_DETAILS['account']}|"
         f"BankName={ORG_DETAILS['bank']}|"
         f"BIC={ORG_DETAILS['bik']}|"
         f"PayeeINN={ORG_DETAILS['inn']}|"
         f"KPP={ORG_DETAILS['kpp']}|"
         f"Sum={int(total_sum * 100)}|"
-        f"Purpose={purpose_text} л/с {user.id}|"
+        f"Purpose={purpose} л/с {user.id}|"
         f"lastName={last}|"
         f"firstName={first}|"
         f"middleName={middle}|"
         f"payerAddress={user.dormitory or 'Не указан'}|"
-        f"CBC={kbc}|"
+        f"CBC={kbk}|"
         f"OKTMO={ORG_DETAILS['oktmo']}"
     )
 
     qr = qrcode.make(qr_data)
+
     buffer = BytesIO()
     qr.save(buffer, format="PNG")
-    img_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
-    return img_str
+
+    return base64.b64encode(buffer.getvalue()).decode()
 
 
 # =====================================================
@@ -85,70 +104,132 @@ def _generate_qr_base64(kbc, total_sum, user, purpose_text):
 # =====================================================
 
 def generate_receipt_pdf(
-        user: User,
-        reading: MeterReading,
-        period: BillingPeriod,
-        tariff: Tariff,
-        prev_reading: MeterReading,
-        output_dir: str = None  # <--- ДОБАВЛЕН АРГУМЕНТ
+    user: User,
+    reading: MeterReading,
+    period: BillingPeriod,
+    tariff: Tariff,
+    prev_reading: MeterReading | None,
+    output_dir: str | None = None
 ) -> str:
     """
-    Генерирует PDF используя HTML шаблон и WeasyPrint.
-    :param output_dir: Папка для сохранения. Если None, используется /tmp/receipts
-    :return: Абсолютный путь к созданному файлу
+    Генерация PDF-квитанции
     """
 
-    # 1. Считаем объемы потребления
-    prev_hot = prev_reading.hot_water if prev_reading else 0.0
-    prev_cold = prev_reading.cold_water if prev_reading else 0.0
-    prev_elect = prev_reading.electricity if prev_reading else 0.0
+    # =====================================================
+    # 1. ОБЪЁМЫ (ТОЛЬКО DECIMAL)
+    # =====================================================
 
-    vol_hot = max(0, reading.hot_water - prev_hot - reading.hot_correction)
-    vol_cold = max(0, reading.cold_water - prev_cold - reading.cold_correction)
+    prev_hot = Decimal(prev_reading.hot_water) if prev_reading else Decimal("0")
+    prev_cold = Decimal(prev_reading.cold_water) if prev_reading else Decimal("0")
+    prev_elect = Decimal(prev_reading.electricity) if prev_reading else Decimal("0")
 
-    if tariff.electricity_rate > 0:
-        vol_elect = reading.cost_electricity / tariff.electricity_rate
-    else:
-        vol_elect = 0
+    hot_corr = Decimal(reading.hot_correction or "0")
+    cold_corr = Decimal(reading.cold_correction or "0")
+    elect_corr = Decimal(reading.electricity_correction or "0")
+    sewage_corr = Decimal(reading.sewage_correction or "0")
 
-    vol_sewage = vol_hot + vol_cold - reading.sewage_correction
+    vol_hot = max(Decimal("0"), reading.hot_water - prev_hot - hot_corr)
+    vol_cold = max(Decimal("0"), reading.cold_water - prev_cold - cold_corr)
+    vol_elect = max(Decimal("0"), reading.electricity - prev_elect - elect_corr)
+    vol_sewage = max(Decimal("0"), vol_hot + vol_cold - sewage_corr)
 
-    # 2. Генерируем QR коды
-    total_rent = reading.cost_social_rent
-    total_utils = reading.total_cost - total_rent
 
-    qr_rent_b64 = _generate_qr_base64(KBC_RENT, total_rent, user, "Plata za naem")
-    qr_utils_b64 = _generate_qr_base64(KBC_UTILS, total_utils, user, "Plata za KU")
+    # =====================================================
+    # 2. СУММЫ
+    # =====================================================
 
-    # 3. Подготовка контекста для шаблона
+    rent_sum = Decimal(reading.cost_social_rent or "0")
+    total_sum = Decimal(reading.total_cost or "0")
+    utils_sum = total_sum - rent_sum
+
+    debt = Decimal(getattr(reading, "debt", 0) or 0)
+    overpay = Decimal(getattr(reading, "overpay", 0) or 0)
+    recalc = Decimal(getattr(reading, "recalc", 0) or 0)
+
+
+    # =====================================================
+    # 3. QR
+    # =====================================================
+
+    qr_rent = generate_qr_base64(
+        KBC_RENT,
+        rent_sum,
+        user,
+        "Плата за наем"
+    )
+
+    qr_utils = generate_qr_base64(
+        KBC_UTILS,
+        utils_sum,
+        user,
+        "Коммунальные услуги"
+    )
+
+
+    # =====================================================
+    # 4. КОНТЕКСТ
+    # =====================================================
+
     context = {
+
+        # Пользователь
         "user": user,
-        "reading": reading,
-        "period_name": period.name,
+
+        # Период
+        "period": period,
+
+        # Тарифы
         "tariff": tariff,
 
+        # Начисление
+        "reading": reading,
+
+        # Объёмы
         "vol_hot": vol_hot,
         "vol_cold": vol_cold,
-        "vol_sewage": vol_sewage,
         "vol_elect": vol_elect,
+        "vol_sewage": vol_sewage,
 
-        "qr_rent_b64": qr_rent_b64,
-        "qr_utils_b64": qr_utils_b64
+        # Суммы
+        "rent_sum": rent_sum,
+        "utils_sum": utils_sum,
+        "total_sum": total_sum,
+
+        "debt": debt,
+        "overpay": overpay,
+        "recalc": recalc,
+
+        # Организация
+        "org": ORG_DETAILS,
+
+        # КБК
+        "kbk_rent": KBC_RENT,
+        "kbk_utils": KBC_UTILS,
+
+        # QR
+        "qr_rent": qr_rent,
+        "qr_utils": qr_utils
     }
 
-    # 4. Рендеринг HTML
-    template = env.get_template("receipt.html")
-    html_content = template.render(context)
 
-    # 5. Генерация PDF
-    # Определяем целевую папку
-    target_dir = output_dir if output_dir else DEFAULT_PDF_DIR
-    os.makedirs(target_dir, exist_ok=True) # Гарантируем, что папка существует
+    # =====================================================
+    # 5. HTML
+    # =====================================================
+
+    template = env.get_template("receipt.html")
+    html = template.render(context)
+
+
+    # =====================================================
+    # 6. PDF
+    # =====================================================
+
+    target_dir = output_dir or DEFAULT_PDF_DIR
+    os.makedirs(target_dir, exist_ok=True)
 
     filename = f"receipt_{user.id}_{period.id}.pdf"
     filepath = os.path.join(target_dir, filename)
 
-    # WeasyPrint делает магию
-    HTML(string=html_content).write_pdf(filepath)
+    HTML(string=html).write_pdf(filepath)
 
     return filepath

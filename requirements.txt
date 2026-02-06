@@ -1,23 +1,40 @@
 fastapi
 uvicorn
+
+# Database
 sqlalchemy
 asyncpg
-psycopg2-binary  # <--- НУЖЕН для синхронного подключения в воркере
+psycopg2-binary
+
+# Config & Validation
 pydantic
 pydantic-settings
+
+# Auth
 python-multipart
 passlib
 bcrypt==3.2.2
 python-jose
+
+# PDF / Reports
 qrcode
 pillow
-alembic
 jinja2
 weasyprint
 openpyxl
+
+# Migrations
+alembic
+
+# Redis + Rate limit
 redis
-fastapi-limiter
-celery           # <--- НОВОЕ
+fastapi-limiter[redis]==0.1.5
+
+
+# Background tasks
+celery
+
+# Testing
 pytest
 pytest-asyncio
-httpx  # Нужен для тестирования API эндпоинтов (на будущее)
+httpx

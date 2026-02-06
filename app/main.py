@@ -10,8 +10,7 @@ from app.models import User, Tariff, BillingPeriod
 from app.auth import get_password_hash
 from app.config import settings
 
-# Импортируем роутеры
-# Обратите внимание: admin_readings заменен на 4 новых модуля
+# Routers
 from app.routers import (
     auth_routes,
     users,
@@ -23,70 +22,128 @@ from app.routers import (
     admin_user_ops
 )
 
-app = FastAPI()
+# -------------------------------------------------
+# APP
+# -------------------------------------------------
 
-# Подключаем роутеры
+app = FastAPI(
+    title="Utility Calculator",
+    version="1.0.0"
+)
+
+# -------------------------------------------------
+# ROUTERS
+# -------------------------------------------------
+
 app.include_router(auth_routes.router)
 app.include_router(users.router)
 app.include_router(tariffs.router)
 app.include_router(client_readings.router)
 
-# Подключаем новые разделенные админские роутеры
 app.include_router(admin_readings.router)
 app.include_router(admin_periods.router)
 app.include_router(admin_reports.router)
 app.include_router(admin_user_ops.router)
 
-# Статика (Фронтенд)
-# Важно: Nginx будет перехватывать статику в продакшене, но этот mount нужен
-# для локальной разработки или если Nginx не настроен на статику.
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+# -------------------------------------------------
+# STATIC
+# -------------------------------------------------
 
+app.mount(
+    "/",
+    StaticFiles(directory="static", html=True),
+    name="static"
+)
+
+# -------------------------------------------------
+# STARTUP
+# -------------------------------------------------
 
 @app.on_event("startup")
-async def startup():
+async def startup_event():
     """
-    Действия при запуске приложения:
-    1. Создание таблиц БД.
-    2. Подключение Redis.
-    3. Создание начальных данных.
+    Startup actions:
+    1. Create DB tables
+    2. Init Redis limiter
+    3. Create base data
     """
 
-    # 1. Создание таблиц (если их нет)
+    # -------------------------------------------------
+    # DB INIT
+    # -------------------------------------------------
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
-    # 2. Инициализация Redis для Rate Limiting
+    # -------------------------------------------------
+    # REDIS / LIMITER
+    # -------------------------------------------------
+
     try:
-        r = redis.from_url(settings.REDIS_URL, encoding="utf-8", decode_responses=True)
-        await FastAPILimiter.init(r)
-        print(f"✅ Redis connected successfully at {settings.REDIS_URL}")
+        redis_client = redis.from_url(
+            settings.REDIS_URL,
+            encoding="utf-8",
+            decode_responses=True
+        )
+
+        await FastAPILimiter.init(redis_client)
+
+        print(f"✅ Redis connected: {settings.REDIS_URL}")
+
     except Exception as e:
-        print(f"⚠️ Warning: Redis connection failed. Rate limiting is DISABLED. Error: {e}")
+        print("⚠️ WARNING: Redis unavailable, rate limit disabled")
+        print(f"Reason: {e}")
 
-    # Примечание: _apply_migrations_sync была в system.py.
-    # Если нужны миграции, лучше использовать команду 'alembic upgrade head' в docker-compose,
-    # чем вызывать их из кода python.
+    # -------------------------------------------------
+    # DEFAULT DATA
+    # -------------------------------------------------
 
-    # 3. Инициализация начальных данных
     async with AsyncSessionLocal() as db:
-        # Создание Админа
-        admin = await db.execute(select(User).where(User.username == "admin"))
-        if not admin.scalars().first():
-            print("Creating default admin user...")
-            db.add(User(username="admin", hashed_password=get_password_hash("admin"), role="accountant"))
 
-        # Создание Тарифов
-        tariff = await db.execute(select(Tariff).where(Tariff.id == 1))
-        if not tariff.scalars().first():
-            print("Creating default tariffs...")
-            # Используем Decimal
-            db.add(Tariff(id=1, electricity_rate=Decimal("5.0")))
+        # --- Admin user ---
+        admin_q = await db.execute(
+            select(User).where(User.username == "admin")
+        )
 
-        # Создание первого Периода
-        period_res = await db.execute(select(BillingPeriod))
-        if not period_res.scalars().first():
-            print("Creating default billing period...")
-            db.add(BillingPeriod(name="Начальный период", is_active=True))
+        if not admin_q.scalars().first():
+            print("➡ Creating default admin")
+
+            admin = User(
+                username="admin",
+                hashed_password=get_password_hash("admin"),
+                role="accountant"
+            )
+
+            db.add(admin)
+
+        # --- Tariffs ---
+        tariff_q = await db.execute(
+            select(Tariff).where(Tariff.id == 1)
+        )
+
+        if not tariff_q.scalars().first():
+            print("➡ Creating default tariffs")
+
+            tariff = Tariff(
+                id=1,
+                electricity_rate=Decimal("5.0")
+            )
+
+            db.add(tariff)
+
+        # --- Billing period ---
+        period_q = await db.execute(select(BillingPeriod))
+
+        if not period_q.scalars().first():
+            print("➡ Creating default billing period")
+
+            period = BillingPeriod(
+                name="Начальный период",
+                is_active=True
+            )
+
+            db.add(period)
 
         await db.commit()
+
+        print("✅ Initial data created")

@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+
+<style>
+
+@page {
+    size: A4;
+    margin: 12mm;
+}
+
+body {
+    font-family: "DejaVu Sans", sans-serif;
+    font-size: 10pt;
+    color: #222;
+}
+
+
+/* ============================================
+   HEADER
+============================================ */
+
+.header {
+    text-align: center;
+    border-bottom: 2px solid #333;
+    padding-bottom: 10px;
+    margin-bottom: 15px;
+}
+
+.header h1 {
+    margin: 0;
+    font-size: 18pt;
+    letter-spacing: 1px;
+}
+
+.header .period {
+    font-size: 10pt;
+    margin-top: 5px;
+    color: #555;
+}
+
+
+/* ============================================
+   INFO BLOCKS
+============================================ */
+
+.info-grid {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 15px;
+}
+
+.info-box {
+    width: 48%;
+    border: 1px solid #aaa;
+    padding: 8px 10px;
+    background: #fafafa;
+}
+
+.info-box h3 {
+    margin: 0 0 6px 0;
+    font-size: 11pt;
+    border-bottom: 1px solid #ccc;
+    padding-bottom: 3px;
+}
+
+.row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 3px;
+}
+
+.label {
+    font-weight: bold;
+    color: #444;
+}
+
+
+/* ============================================
+   TABLE
+============================================ */
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 15px;
+}
+
+th, td {
+    border: 1px solid #333;
+    padding: 5px;
+}
+
+th {
+    background: #eee;
+    font-size: 9pt;
+    text-align: center;
+}
+
+td {
+    text-align: right;
+}
+
+.col-left {
+    text-align: left;
+}
+
+
+/* ============================================
+   TOTALS
+============================================ */
+
+.summary {
+    width: 100%;
+    margin-bottom: 15px;
+}
+
+.summary td {
+    border: none;
+    padding: 3px;
+    font-size: 10pt;
+}
+
+.summary .label {
+    text-align: right;
+}
+
+.summary .value {
+    text-align: right;
+    font-weight: bold;
+}
+
+.total-final {
+    font-size: 15pt;
+    font-weight: bold;
+    text-align: right;
+    margin: 15px 0;
+}
+
+
+/* ============================================
+   QR
+============================================ */
+
+.qr-section {
+    display: flex;
+    justify-content: space-between;
+    border-top: 2px dashed #999;
+    padding-top: 12px;
+    margin-top: 15px;
+}
+
+.qr-box {
+    width: 48%;
+    text-align: center;
+}
+
+.qr-box img {
+    width: 120px;
+    height: 120px;
+}
+
+.qr-desc {
+    font-size: 8pt;
+    margin-top: 4px;
+    color: #555;
+}
+
+
+/* ============================================
+   FOOTER
+============================================ */
+
+.footer {
+    margin-top: 12px;
+    font-size: 8pt;
+    color: #666;
+    text-align: center;
+}
+
+</style>
+</head>
+
+
+<body>
+
+<!-- ============================================
+     HEADER
+============================================ -->
+
+<div class="header">
+
+    <h1>ПЛАТЕЖНЫЙ ДОКУМЕНТ</h1>
+
+    <div class="period">
+        Расчетный период: <strong>{{ period.name }}</strong>
+    </div>
+
+</div>
+
+
+<!-- ============================================
+     INFO
+============================================ -->
+
+<div class="info-grid">
+
+    <!-- ПЛАТЕЛЬЩИК -->
+
+    <div class="info-box">
+
+        <h3>Плательщик</h3>
+
+        <div class="row">
+            <span class="label">ФИО:</span>
+            <span>{{ user.username }}</span>
+        </div>
+
+        <div class="row">
+            <span class="label">Лицевой счет:</span>
+            <span>{{ user.id }}</span>
+        </div>
+
+        <div class="row">
+            <span class="label">Адрес:</span>
+            <span>{{ user.dormitory }}</span>
+        </div>
+
+        <div class="row">
+            <span class="label">Площадь:</span>
+            <span>{{ user.apartment_area }} м²</span>
+        </div>
+
+        <div class="row">
+            <span class="label">Проживающих:</span>
+            <span>{{ user.residents_count }}</span>
+        </div>
+
+    </div>
+
+
+    <!-- ПОЛУЧАТЕЛЬ -->
+
+    <div class="info-box">
+
+        <h3>Получатель</h3>
+
+        <div class="row">
+            <span class="label">Организация:</span>
+            <span>{{ org.name }}</span>
+        </div>
+
+        <div class="row">
+            <span class="label">ИНН:</span>
+            <span>{{ org.inn }}</span>
+        </div>
+
+        <div class="row">
+            <span class="label">КПП:</span>
+            <span>{{ org.kpp }}</span>
+        </div>
+
+        <div class="row">
+            <span class="label">Р/С:</span>
+            <span>{{ org.account }}</span>
+        </div>
+
+        <div class="row">
+            <span class="label">БИК:</span>
+            <span>{{ org.bik }}</span>
+        </div>
+
+        <div class="row">
+            <span class="label">ОКТМО:</span>
+            <span>{{ org.oktmo }}</span>
+        </div>
+
+    </div>
+
+</div>
+
+
+<!-- ============================================
+     SERVICES TABLE
+============================================ -->
+
+<table>
+
+<thead>
+<tr>
+    <th>Услуга</th>
+    <th>Ед.</th>
+    <th>Объем</th>
+    <th>Тариф</th>
+    <th>Начислено</th>
+</tr>
+</thead>
+
+<tbody>
+
+<!-- ЖИЛЬЕ -->
+
+<tr>
+    <td class="col-left">Наем жилого помещения</td>
+    <td>м²</td>
+    <td>{{ user.apartment_area }}</td>
+    <td>{{ tariff.social_rent }}</td>
+    <td>{{ reading.cost_social_rent|round(2) }}</td>
+</tr>
+
+<tr>
+    <td class="col-left">Содержание и ремонт</td>
+    <td>м²</td>
+    <td>{{ user.apartment_area }}</td>
+    <td>{{ tariff.maintenance_repair }}</td>
+    <td>{{ reading.cost_maintenance|round(2) }}</td>
+</tr>
+
+
+<!-- КОММУНАЛЬНЫЕ -->
+
+<tr>
+    <td colspan="5"
+        class="col-left"
+        style="background:#f4f4f4;font-weight:bold;">
+        Коммунальные услуги
+    </td>
+</tr>
+
+<tr>
+    <td class="col-left">Холодное водоснабжение</td>
+    <td>м³</td>
+    <td>{{ vol_cold|round(2) }}</td>
+    <td>{{ tariff.water_supply }}</td>
+    <td>{{ reading.cost_cold_water|round(2) }}</td>
+</tr>
+
+<tr>
+    <td class="col-left">Горячее водоснабжение</td>
+    <td>м³</td>
+    <td>{{ vol_hot|round(2) }}</td>
+    <td>{{ tariff.water_supply + tariff.water_heating }}</td>
+    <td>{{ reading.cost_hot_water|round(2) }}</td>
+</tr>
+
+<tr>
+    <td class="col-left">Водоотведение</td>
+    <td>м³</td>
+    <td>{{ vol_sewage|round(2) }}</td>
+    <td>{{ tariff.sewage }}</td>
+    <td>{{ reading.cost_sewage|round(2) }}</td>
+</tr>
+
+<tr>
+    <td class="col-left">Электроэнергия</td>
+    <td>кВт⋅ч</td>
+    <td>{{ vol_elect|round(2) }}</td>
+    <td>{{ tariff.electricity_rate }}</td>
+    <td>{{ reading.cost_electricity|round(2) }}</td>
+</tr>
+
+<tr>
+    <td class="col-left">Отопление</td>
+    <td>м²</td>
+    <td>{{ user.apartment_area }}</td>
+    <td>{{ tariff.heating }}</td>
+    <td>{{ (reading.cost_fixed_part or 0)|round(2) }}</td>
+</tr>
+
+<tr>
+    <td class="col-left">Вывоз ТКО</td>
+    <td>м²</td>
+    <td>{{ user.apartment_area }}</td>
+    <td>{{ tariff.waste_disposal }}</td>
+    <td>{{ reading.cost_waste|round(2) }}</td>
+</tr>
+
+</tbody>
+
+</table>
+
+
+<!-- ============================================
+     SUMMARY
+============================================ -->
+
+<table class="summary">
+
+<tr>
+    <td class="label">Плата за наем (КБК {{ kbk_rent }}):</td>
+    <td class="value">{{ rent_sum|round(2) }} руб.</td>
+</tr>
+
+<tr>
+    <td class="label">Коммунальные услуги (КБК {{ kbk_utils }}):</td>
+    <td class="value">{{ utils_sum|round(2) }} руб.</td>
+</tr>
+
+<tr>
+    <td class="label">Долг:</td>
+    <td class="value">{{ debt|round(2) }} руб.</td>
+</tr>
+
+<tr>
+    <td class="label">Перерасчет:</td>
+    <td class="value">{{ recalc|round(2) }} руб.</td>
+</tr>
+
+<tr>
+    <td class="label">Переплата:</td>
+    <td class="value">{{ overpay|round(2) }} руб.</td>
+</tr>
+
+</table>
+
+
+<div class="total-final">
+    ИТОГО К ОПЛАТЕ: {{ total_sum|round(2) }} руб.
+</div>
+
+
+<!-- ============================================
+     QR
+============================================ -->
+
+<div class="qr-section">
+
+    <div class="qr-box">
+
+        <img src="data:image/png;base64,{{ qr_rent }}" alt="QR Rent">
+
+        <div class="qr-desc">
+            Оплата за наем<br>
+            КБК {{ kbk_rent }}<br>
+            Сумма: {{ rent_sum|round(2) }} руб.
+        </div>
+
+    </div>
+
+
+    <div class="qr-box">
+
+        <img src="data:image/png;base64,{{ qr_utils }}" alt="QR Utils">
+
+        <div class="qr-desc">
+            Коммунальные услуги<br>
+            КБК {{ kbk_utils }}<br>
+            Сумма: {{ utils_sum|round(2) }} руб.
+        </div>
+
+    </div>
+
+</div>
+
+
+<!-- ============================================
+     FOOTER
+============================================ -->
+
+<div class="footer">
+
+    Документ сформирован автоматически информационной системой.
+    Подпись не требуется.
+
+</div>
+
+</body>
+</html>

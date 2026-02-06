@@ -1,7 +1,9 @@
+from typing import List
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from datetime import datetime
+from sqlalchemy.orm import selectinload
 from decimal import Decimal
 
 from app.database import get_db
@@ -10,17 +12,19 @@ from app.schemas import ReadingSchema, ReadingStateResponse
 from app.dependencies import get_current_user
 from app.services.calculations import calculate_utilities
 from app.services.anomaly_detector import check_reading_for_anomalies
+from app.services.pdf_generator import generate_receipt_pdf
 
 router = APIRouter(tags=["Client Readings"])
 
 
 @router.get("/api/readings/state", response_model=ReadingStateResponse)
 async def get_reading_state(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Получение текущего состояния (последние показания, текущий черновик)"""
     # 1. Получаем текущий активный период
     period_res = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))
     active_period = period_res.scalars().first()
 
-    # 2. Получаем последнее утвержденное показание (независимо от периода, просто последнее)
+    # 2. Получаем последнее утвержденное показание (для отображения "Предыдущие")
     prev_res = await db.execute(
         select(MeterReading)
         .where(MeterReading.user_id == current_user.id, MeterReading.is_approved == True)
@@ -41,9 +45,10 @@ async def get_reading_state(current_user: User = Depends(get_current_user), db: 
         )
         draft = draft_res.scalars().first()
 
-    # Приводим к Decimal для корректного ответа Pydantic
     zero_vol = Decimal("0.000")
 
+    # Формируем ответ, добавляя данные пользователя для шапки профиля
+    # (в Pydantic схеме эти поля не обязательны, но фронт их может использовать, если расширить схему)
     return {
         "period_name": active_period.name if active_period else "Прием показаний закрыт",
 
@@ -57,8 +62,6 @@ async def get_reading_state(current_user: User = Depends(get_current_user), db: 
 
         "total_cost": draft.total_cost if draft else None,
         "is_draft": True if draft else False,
-
-        # Статус периода
         "is_period_open": True if active_period else False,
 
         # Детализация
@@ -76,6 +79,7 @@ async def get_reading_state(current_user: User = Depends(get_current_user), db: 
 @router.post("/api/calculate")
 async def save_reading(data: ReadingSchema, current_user: User = Depends(get_current_user),
                        db: AsyncSession = Depends(get_db)):
+    """Расчет и сохранение показаний (Черновик)"""
     # 0. Проверяем, открыт ли период
     period_res = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))
     active_period = period_res.scalars().first()
@@ -95,13 +99,12 @@ async def save_reading(data: ReadingSchema, current_user: User = Depends(get_cur
     )
     prev = prev_res.scalars().first()
 
-    # Используем Decimal для инициализации
     zero_vol = Decimal("0.000")
     p_hot = prev.hot_water if prev else zero_vol
     p_cold = prev.cold_water if prev else zero_vol
     p_elect = prev.electricity if prev else zero_vol
 
-    # 3. Валидация (data.* уже Decimal благодаря Pydantic schema)
+    # 3. Валидация (Нельзя вводить меньше предыдущего)
     if data.hot_water < p_hot:
         raise HTTPException(400, f"Г.В меньше предыдущей ({p_hot})")
     if data.cold_water < p_cold:
@@ -114,15 +117,11 @@ async def save_reading(data: ReadingSchema, current_user: User = Depends(get_cur
     d_cold = data.cold_water - p_cold
     d_elect_total = data.electricity - p_elect
 
-    # Расчет доли электричества
-    # ВАЖНО: Конвертируем int в Decimal перед делением, иначе получим float
     residents = Decimal(current_user.residents_count)
     total_residents_val = current_user.total_room_residents if current_user.total_room_residents > 0 else 1
     total_residents = Decimal(total_residents_val)
 
     user_share_kwh = (residents / total_residents) * d_elect_total
-
-    # Расчет объема водоотведения (сумма воды)
     vol_sewage = d_hot + d_cold
 
     # 5. Вызов сервиса расчетов
@@ -136,7 +135,6 @@ async def save_reading(data: ReadingSchema, current_user: User = Depends(get_cur
     )
 
     # <--- БЛОК ПРОВЕРКИ АНОМАЛИЙ --->
-    # Получаем историю для анализа (последние 4 утвержденных)
     history_res = await db.execute(
         select(MeterReading)
         .where(MeterReading.user_id == current_user.id, MeterReading.is_approved == True)
@@ -145,20 +143,16 @@ async def save_reading(data: ReadingSchema, current_user: User = Depends(get_cur
     )
     history = history_res.scalars().all()
 
-    avg_peer_consumption = None
-    # Здесь можно добавить логику получения средних показателей по общежитию
-
-    # Создаем временный объект MeterReading для детектора
+    # Временный объект для проверки
     temp_reading = MeterReading(
         hot_water=data.hot_water,
         cold_water=data.cold_water,
         electricity=data.electricity
     )
-    anomaly_flags = check_reading_for_anomalies(temp_reading, history, avg_peer_consumption)
-    # <--- КОНЕЦ БЛОКА АНОМАЛИЙ --->
+    anomaly_flags = check_reading_for_anomalies(temp_reading, history, None)
+    # <--- КОНЕЦ БЛОКА --->
 
     # 6. Сохранение в БД
-    # Ищем черновик ТОЛЬКО В ТЕКУЩЕМ ПЕРИОДЕ
     draft_res = await db.execute(
         select(MeterReading).where(
             MeterReading.user_id == current_user.id,
@@ -173,20 +167,13 @@ async def save_reading(data: ReadingSchema, current_user: User = Depends(get_cur
         draft.cold_water = data.cold_water
         draft.electricity = data.electricity
 
-        # Обновляем все поля стоимости (значения в costs уже Decimal)
-        draft.total_cost = costs["total_cost"]
-        draft.cost_hot_water = costs["cost_hot_water"]
-        draft.cost_cold_water = costs["cost_cold_water"]
-        draft.cost_sewage = costs["cost_sewage"]
-        draft.cost_electricity = costs["cost_electricity"]
-        draft.cost_maintenance = costs["cost_maintenance"]
-        draft.cost_social_rent = costs["cost_social_rent"]
-        draft.cost_waste = costs["cost_waste"]
-        draft.cost_fixed_part = costs["cost_fixed_part"]
+        # Обновляем все поля стоимости
+        for k, v in costs.items():
+            if hasattr(draft, k):
+                setattr(draft, k, v)
 
-        # Обновляем флаги аномалий и дату
         draft.anomaly_flags = anomaly_flags
-        draft.created_at = datetime.utcnow()
+        # draft.created_at = datetime.utcnow() # Можно обновлять дату, если нужно
     else:
         new_reading = MeterReading(
             user_id=current_user.id,
@@ -194,22 +181,110 @@ async def save_reading(data: ReadingSchema, current_user: User = Depends(get_cur
             hot_water=data.hot_water,
             cold_water=data.cold_water,
             electricity=data.electricity,
-
-            total_cost=costs["total_cost"],
-            cost_hot_water=costs["cost_hot_water"],
-            cost_cold_water=costs["cost_cold_water"],
-            cost_sewage=costs["cost_sewage"],
-            cost_electricity=costs["cost_electricity"],
-            cost_maintenance=costs["cost_maintenance"],
-            cost_social_rent=costs["cost_social_rent"],
-            cost_waste=costs["cost_waste"],
-            cost_fixed_part=costs["cost_fixed_part"],
-
             is_approved=False,
-            # Добавляем флаги аномалий при создании
-            anomaly_flags=anomaly_flags
+            anomaly_flags=anomaly_flags,
+            **costs  # Распаковка словаря с ценами
         )
         db.add(new_reading)
 
     await db.commit()
     return {"status": "success", "total_cost": costs["total_cost"]}
+
+
+# --- НОВЫЙ ЭНДПОИНТ: ИСТОРИЯ ---
+@router.get("/api/readings/history")
+async def get_client_history(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """Получение истории утвержденных начислений"""
+    stmt = (
+        select(MeterReading)
+        .options(selectinload(MeterReading.period))
+        .where(MeterReading.user_id == current_user.id, MeterReading.is_approved == True)
+        .order_by(MeterReading.created_at.desc())
+    )
+    result = await db.execute(stmt)
+    readings = result.scalars().all()
+
+    history = []
+    for r in readings:
+        history.append({
+            "id": r.id,
+            "period": r.period.name if r.period else "Неизвестно",
+            "hot": r.hot_water,
+            "cold": r.cold_water,
+            "electric": r.electricity,
+            "total": r.total_cost,
+            "date": r.created_at
+        })
+    return history
+
+
+# --- НОВЫЙ ЭНДПОИНТ: СКАЧИВАНИЕ КВИТАНЦИИ ЖИЛЬЦОМ ---
+@router.get("/api/client/receipts/{reading_id}")
+async def download_client_receipt(
+        reading_id: int,
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db)
+):
+    """Генерация и скачивание квитанции для жильца"""
+
+    # 1. Ищем запись и проверяем, принадлежит ли она пользователю
+    stmt = (
+        select(MeterReading)
+        .options(
+            selectinload(MeterReading.user),
+            selectinload(MeterReading.period)
+        )
+        .where(MeterReading.id == reading_id)
+    )
+    res = await db.execute(stmt)
+    reading = res.scalars().first()
+
+    if not reading:
+        raise HTTPException(404, "Квитанция не найдена")
+
+    # ГЛАВНАЯ ПРОВЕРКА БЕЗОПАСНОСТИ
+    if reading.user_id != current_user.id:
+        raise HTTPException(403, "Это не ваша квитанция")
+
+    if not reading.is_approved:
+        raise HTTPException(400, "Квитанция еще не сформирована (показания не утверждены)")
+
+    # 2. Получаем тариф
+    tariff_res = await db.execute(select(Tariff).where(Tariff.id == 1))
+    tariff = tariff_res.scalars().first()
+
+    # 3. Получаем предыдущее показание (для расчета расхода в квитанции)
+    prev_stmt = (
+        select(MeterReading)
+        .where(
+            MeterReading.user_id == reading.user_id,
+            MeterReading.is_approved == True,
+            MeterReading.created_at < reading.created_at
+        )
+        .order_by(MeterReading.created_at.desc())
+        .limit(1)
+    )
+    prev_res = await db.execute(prev_stmt)
+    prev = prev_res.scalars().first()
+
+    try:
+        # Генерируем PDF "на лету" (синхронно, так как это быстро)
+        # Если будет медленно, можно перевести на Celery, но для одного юзера обычно ок.
+        pdf_path = generate_receipt_pdf(
+            user=reading.user,
+            reading=reading,
+            period=reading.period,
+            tariff=tariff,
+            prev_reading=prev
+        )
+
+        filename = f"receipt_{reading.period.name}.pdf"
+
+        return FileResponse(
+            path=pdf_path,
+            filename=filename,
+            media_type="application/pdf"
+        )
+    except Exception as e:
+        print(f"Error generating PDF for client: {e}")
+        raise HTTPException(500, "Ошибка формирования файла")

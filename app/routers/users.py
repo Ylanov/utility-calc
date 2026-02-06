@@ -216,3 +216,10 @@ async def import_users(
     result = await import_users_from_excel(content, db)
 
     return result
+
+@router.get("/me", response_model=UserResponse)
+async def get_me(current_user: User = Depends(get_current_user)):
+    """
+    Получение профиля текущего пользователя
+    """
+    return current_user

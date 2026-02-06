@@ -23,6 +23,7 @@ services:
       - ./app:/app/app
       - ./static:/app/static
       - ./alembic:/app/alembic
+      - ./templates:/app/templates
       # Общий том для сохранения сгенерированных отчетов
       - shared_data:/app/static/generated_files
     networks:
@@ -49,6 +50,7 @@ services:
         condition: service_started
     volumes:
       - ./app:/app/app
+      - ./templates:/app/templates
       # Подключаем тот же общий том, чтобы сохранять туда PDF
       - shared_data:/app/static/generated_files
     networks:
