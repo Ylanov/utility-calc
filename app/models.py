@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, Index, DateTime
-from sqlalchemy.types import Numeric  # <--- ЗАМЕНИЛИ Float на Numeric
+from sqlalchemy.types import Numeric
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.database import Base
@@ -45,6 +45,22 @@ class BillingPeriod(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+# --- ADJUSTMENTS (НОВАЯ ТАБЛИЦА) ---
+class Adjustment(Base):
+    __tablename__ = "adjustments"
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"))
+    period_id = Column(Integer, ForeignKey("periods.id"))
+
+    # Сумма может быть отрицательной (скидка) или положительной (доплата)
+    amount = Column(Numeric(10, 2), nullable=False)
+    description = Column(String, nullable=False)  # Например: "Перерасчет за январь"
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User")
+    period = relationship("BillingPeriod")
+
+
 # --- METER READING ---
 class MeterReading(Base):
     __tablename__ = "readings"
@@ -60,7 +76,7 @@ class MeterReading(Base):
     cold_water = Column(Numeric(12, 3))
     electricity = Column(Numeric(12, 3))
 
-    # Коррекции
+    # Коррекции (объемов)
     hot_correction = Column(Numeric(12, 3), default=0.0)
     cold_correction = Column(Numeric(12, 3), default=0.0)
     electricity_correction = Column(Numeric(12, 3), default=0.0)

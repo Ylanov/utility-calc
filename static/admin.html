@@ -6,7 +6,7 @@
     <title>Панель Администратора ЖКХ</title>
     <link rel="stylesheet" href="style.css">
     <style>
-        /* Внутренние стили для модальных окон и спиннеров */
+        /* Стили для модальных окон (оставляем здесь, так как они специфичны для админки) */
         .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); z-index: 1000; justify-content: center; align-items: center; }
         .modal-overlay.open { display: flex; }
         .modal-window { background: white; padding: 25px; border-radius: 10px; width: 500px; max-width: 90%; box-shadow: 0 4px 15px rgba(0,0,0,0.2); position: relative; animation: slideDown 0.3s ease-out; }
@@ -16,17 +16,14 @@
         .modal-row label { width: 60%; color: #555; font-size: 14px; }
         .modal-row input { width: 35%; padding: 8px; text-align: center; border: 1px solid #ccc; border-radius: 5px; }
         .modal-actions { margin-top: 25px; display: flex; justify-content: flex-end; gap: 10px; }
-        .close-btn { background: #95a5a6; color: white; }
-        .confirm-btn { background: #27ae60; color: white; }
+        .close-btn { background: #95a5a6; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; }
+        .confirm-btn { background: #27ae60; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; }
         .highlight-calc { background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px; font-size: 14px; border-left: 4px solid #4a90e2; line-height: 1.6; }
-        .role-badge { padding: 3px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; color: white; }
-        .role-badge.user { background-color: #3498db; }
-        .role-badge.accountant { background-color: #f39c12; }
+
+        /* Пагинация */
         .pagination { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
         .pagination button { padding: 5px 12px; font-size: 14px; background: #e0e0e0; border: none; border-radius: 4px; cursor: pointer; }
         .pagination button:disabled { opacity: 0.5; cursor: not-allowed; }
-        .action-btn-small { background: none; border: none; cursor: pointer; font-size: 18px; padding: 5px; border-radius: 50%; width: 32px; height: 32px; transition: background-color 0.2s; }
-        .action-btn-small:hover { background-color: #f0f0f0; }
     </style>
 </head>
 <body>
@@ -37,11 +34,11 @@
             <h1>Администрирование ЖКХ</h1>
             <div style="display: flex; align-items: center; gap: 15px;">
                 <span id="adminName" style="font-weight: bold; color: #555;"></span>
-                <button class="logout-btn">Выйти</button> <!-- Удален onclick -->
+                <button class="logout-btn">Выйти</button>
             </div>
         </header>
 
-        <!-- NAV TABS (Система удалена) -->
+        <!-- NAV TABS -->
         <div class="tabs">
             <button class="tab-btn active" data-tab="readings">🔍 Сверка</button>
             <button class="tab-btn" data-tab="users">👥 Пользователи</button>
@@ -53,6 +50,7 @@
         <div id="readings" class="tab-content active">
             <!-- Управление периодом -->
             <div class="card" style="background: linear-gradient(to right, #eef2f3, #8e9eab); border:none; margin-bottom: 20px;">
+                <!-- Блок: Период открыт -->
                 <div id="periodActiveState" style="display:none; justify-content:space-between; align-items:center; flex-wrap: wrap; gap: 15px;">
                     <div>
                         <h2 style="margin:0; border:none; color:#333; font-size: 18px;">
@@ -63,13 +61,14 @@
                     <button class="action-btn" style="margin:0; background:#c0392b; width:auto; padding: 8px 15px;">🔒 Закрыть месяц</button>
                 </div>
 
+                <!-- Блок: Период закрыт -->
                 <div id="periodClosedState" style="display:none; justify-content:space-between; align-items:center; flex-wrap: wrap; gap: 15px;">
                     <div>
                         <h2 style="margin:0; border:none; color:#555; font-size: 18px;">🔴 Прием показаний закрыт</h2>
                         <small style="color:#555;">Чтобы начать новый месяц, введите название и нажмите "Открыть".</small>
                     </div>
                     <div style="display:flex; gap:10px; align-items: center;">
-                        <input type="text" id="newPeriodNameInput" placeholder="Напр. Апрель 2026" style="padding:8px; border-radius:4px; border:1px solid #ccc; width: 220px;">
+                        <input type="text" id="newPeriodNameInput" placeholder="Напр. Апрель 2026" style="width: 200px;">
                         <button class="action-btn" style="margin:0; background:#27ae60; width:auto; padding: 8px 15px;">📂 Открыть новый месяц</button>
                     </div>
                 </div>
@@ -77,11 +76,12 @@
 
             <!-- Таблица -->
             <div class="card">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <!-- Заголовок и кнопки действий -->
+                <div class="controls-header">
                     <h2>Поступившие показания (Черновики)</h2>
-                    <div style="display: flex; gap: 10px;">
-                        <button id="btnBulkApprove" class="action-btn" style="background:#f39c12; margin:0; width: auto; font-size: 13px; padding: 8px 15px;">⚡ Утвердить все (Авто)</button>
-                        <button id="btnRefreshReadings" class="refresh-btn" style="margin:0; height: 38px;">↻ Обновить</button>
+                    <div class="controls-group">
+                        <button id="btnBulkApprove" class="action-btn" style="background:#f39c12; margin:0; width: auto; font-size: 13px;">⚡ Утвердить все (Авто)</button>
+                        <button id="btnRefreshReadings" class="refresh-btn">↻</button>
                     </div>
                 </div>
 
@@ -138,7 +138,7 @@
             </div>
 
             <div class="card">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <div class="controls-header">
                     <h2>Список пользователей</h2>
                     <button id="btnRefreshUsers" class="refresh-btn">↻ Обновить таблицу</button>
                 </div>
@@ -177,19 +177,28 @@
         <!-- TAB 5: СВОДКА -->
         <div id="accountant" class="tab-content">
             <div class="card">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <!-- ИСПРАВЛЕНО: Используем controls-header и controls-group -->
+                <div class="controls-header">
                     <h2>Финансовая сводка</h2>
-                    <div style="display: flex; gap: 10px;">
-                        <button id="btnDownloadExcel" class="action-btn" style="margin:0; background:#27ae60;">📊 Скачать отчет (.xlsx)</button>
-                        <button id="btnRefreshSummary" class="refresh-btn">↻ Обновить</button>
+
+                    <div class="controls-group">
+                        <!-- JS вставит сюда селект с периодами -->
+                        <div id="summaryPeriodSelector"></div>
+
+                        <button id="btnDownloadZip" class="action-btn" style="margin:0; background:#3498db;">🗂 ZIP</button>
+                        <button id="btnDownloadExcel" class="action-btn" style="margin:0; background:#27ae60;">📊 Excel</button>
+                        <button id="btnRefreshSummary" class="refresh-btn" style="margin:0;">↻</button>
                     </div>
                 </div>
-                <div class="table-container" id="summaryContainer"></div>
+
+                <div id="summaryContainer"></div>
             </div>
         </div>
     </div>
 
-    <!-- МОДАЛКИ -->
+    <!-- МОДАЛЬНЫЕ ОКНА -->
+
+    <!-- Модалка: Проверка и Коррекция -->
     <div id="approveModal" class="modal-overlay">
         <div class="modal-window">
             <div class="modal-header">Проверка и Коррекция</div>
@@ -205,12 +214,13 @@
             <div class="modal-row"><label>Коррекция Света:</label><input type="number" step="0.01" id="m_corr_elect" value="0"></div>
             <div class="modal-row"><label>Корр. Водоотведения:</label><input type="number" step="0.01" id="m_corr_sewage" value="0"></div>
             <div class="modal-actions">
-                <button id="btnModalClose" class="action-btn close-btn">Отмена</button>
-                <button id="btnModalSubmit" class="action-btn confirm-btn">Подтвердить</button>
+                <button id="btnModalClose" class="close-btn">Отмена</button>
+                <button id="btnModalSubmit" class="confirm-btn">Подтвердить</button>
             </div>
         </div>
     </div>
 
+    <!-- Модалка: Редактирование пользователя -->
     <div id="userEditModal" class="modal-overlay">
         <div class="modal-window">
             <div class="modal-header">Редактирование пользователя</div>
@@ -227,8 +237,8 @@
                     <div class="form-group"><label>Место работы</label><input type="text" id="editWorkplace"></div>
                 </div>
                 <div class="modal-actions">
-                    <button type="button" class="action-btn close-btn">Отмена</button>
-                    <button type="submit" class="action-btn confirm-btn">Сохранить</button>
+                    <button type="button" class="close-btn">Отмена</button>
+                    <button type="submit" class="confirm-btn">Сохранить</button>
                 </div>
             </form>
         </div>

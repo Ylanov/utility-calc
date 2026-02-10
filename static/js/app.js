@@ -1,4 +1,5 @@
 import { Auth } from './core/auth.js';
+import { toast } from './core/dom.js'; // Импортируем тосты для глобальных ошибок
 import { ReadingsModule } from './modules/readings.js';
 import { UsersModule } from './modules/users.js';
 import { TariffsModule } from './modules/tariffs.js';
@@ -9,19 +10,39 @@ if (!Auth.isAuthenticated()) {
     window.location.href = 'login.html';
 }
 
+// --- Global Error Boundary (Ловим пропущенные ошибки) ---
+window.addEventListener('unhandledrejection', (event) => {
+    // Ловим ошибки асинхронного кода (Promise)
+    console.error('Unhandled Rejection:', event.reason);
+    // Игнорируем ошибки отмены запросов (AbortController), это норма
+    if (event.reason && event.reason.name === 'AbortError') return;
+
+    const msg = event.reason?.message || 'Неизвестная ошибка сервера';
+    toast(`Системная ошибка: ${msg}`, 'error');
+});
+
+window.addEventListener('error', (event) => {
+    // Ловим ошибки синхронного кода
+    console.error('Global Error:', event.error);
+    toast(`Ошибка приложения: ${event.message}`, 'error');
+});
+
 document.addEventListener('DOMContentLoaded', () => {
     console.log('App initialized (Final Version)');
 
-    // Инициализация глобальных событий (табы, логаут)
     initGlobalEvents();
 
-    // Проверяем, какая вкладка активна при загрузке страницы, и запускаем нужный модуль
-    const activeTab = document.querySelector('.tab-btn.active');
-    if (activeTab) {
-        const tabId = activeTab.dataset.tab;
-        initModule(tabId);
-    }
+    // --- Роутинг по URL Hash (чтобы работала перезагрузка страницы) ---
+    const hash = window.location.hash.substring(1); // убираем #
+    const defaultTab = 'readings';
+    const tabToLoad = hash && isValidTab(hash) ? hash : defaultTab;
+
+    switchTab(tabToLoad);
 });
+
+function isValidTab(tabId) {
+    return !!document.querySelector(`.tab-btn[data-tab="${tabId}"]`);
+}
 
 function initGlobalEvents() {
     // Обработка кнопки выхода
@@ -62,7 +83,10 @@ function switchTab(tabId) {
     const btn = document.querySelector(`.tab-btn[data-tab="${tabId}"]`);
     if (btn) btn.classList.add('active');
 
-    // 5. Инициализируем модуль для этой вкладки
+    // 5. Обновляем URL (чтобы можно было скинуть ссылку или обновить страницу)
+    history.replaceState(null, null, `#${tabId}`);
+
+    // 6. Инициализируем модуль для этой вкладки
     initModule(tabId);
 }
 
@@ -85,7 +109,6 @@ function initModule(tabId) {
             SummaryModule.init();
             break;
 
-        // Вкладка system удалена
         default:
             console.warn(`Module for tab "${tabId}" not found or disabled.`);
     }

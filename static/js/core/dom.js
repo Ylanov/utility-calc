@@ -72,3 +72,68 @@ export function setLoading(btnElement, isLoading, loadingText = 'Загрузк�
         btnElement.innerText = btnElement.dataset.originalText || 'OK';
     }
 }
+
+/**
+ * Показывает красивое всплывающее уведомление (Toast)
+ * @param {string} message - Текст сообщения
+ * @param {string} type - 'success' (зеленый), 'error' (красный) или 'info' (синий)
+ */
+export function toast(message, type = 'success') {
+    let container = document.getElementById('toast-container');
+
+    // Если контейнера нет в HTML, создадим его динамически
+    if (!container) {
+        container = el('div', {
+            id: 'toast-container',
+            style: {
+                position: 'fixed',
+                bottom: '20px',
+                right: '20px',
+                zIndex: '9999',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px'
+            }
+        });
+        document.body.appendChild(container);
+    }
+
+    // Цвета для разных типов уведомлений
+    const bgColors = {
+        success: '#2ecc71', // Зеленый
+        error: '#e74c3c',   // Красный
+        info: '#3498db'     // Синий
+    };
+
+    const toastEl = el('div', {
+        style: {
+            backgroundColor: bgColors[type] || bgColors.success,
+            color: '#fff',
+            padding: '12px 20px',
+            borderRadius: '5px',
+            boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+            opacity: '0',
+            transform: 'translateY(20px)',
+            transition: 'all 0.3s ease',
+            minWidth: '250px',
+            fontFamily: 'Segoe UI, sans-serif',
+            fontSize: '14px',
+            fontWeight: '500'
+        }
+    }, message);
+
+    container.appendChild(toastEl);
+
+    // Анимация появления
+    requestAnimationFrame(() => {
+        toastEl.style.opacity = '1';
+        toastEl.style.transform = 'translateY(0)';
+    });
+
+    // Удаление через 3 секунды
+    setTimeout(() => {
+        toastEl.style.opacity = '0';
+        toastEl.style.transform = 'translateY(20px)';
+        toastEl.addEventListener('transitionend', () => toastEl.remove());
+    }, 3000);
+}

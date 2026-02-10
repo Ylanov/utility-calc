@@ -1,153 +1,176 @@
 services:
-  # -------------------------------------------------
-  # BACKEND (FASTAPI)
-  # -------------------------------------------------
+
+  # =============================
+  # BACKEND
+  # =============================
   web:
-    build: .
+    build:
+      context: .
+      target: web
     container_name: utility_calc_web
     restart: always
+
+    environment:
+      DATABASE_URL_ASYNC: postgresql+asyncpg://postgres:postgres@db:5432/utility_db
+      DATABASE_URL_SYNC: postgresql://postgres:postgres@db:5432/utility_db
+      REDIS_URL: redis://redis:6379/0
+
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+    volumes:
+      - shared_data:/app/static/generated_files
+
     expose:
       - "8000"
-    environment:
-      # URL для асинхронного драйвера (используется приложением)
-      DATABASE_URL_ASYNC: postgresql+asyncpg://postgres:postgres@db:5432/utility_db
-      # URL для синхронного драйвера (используется Alembic)
-      DATABASE_URL_SYNC: postgresql://postgres:postgres@db:5432/utility_db
-      REDIS_URL: redis://redis:6379/0
-    depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_started
-    volumes:
-      - ./app:/app/app
-      - ./static:/app/static
-      - ./alembic:/app/alembic
-      - ./templates:/app/templates
-      # Общий том для сохранения сгенерированных отчетов
-      - shared_data:/app/static/generated_files
+
     networks:
       - utility_net
-    # Сначала применяем миграции, потом запускаем сервер
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
 
-  # -------------------------------------------------
-  # WORKER (CELERY) - ФОНОВЫЕ ЗАДАЧИ
-  # -------------------------------------------------
+
+  # =============================
+  # WORKER
+  # =============================
   worker:
-    build: .
+    build:
+      context: .
+      target: worker
     container_name: utility_calc_worker
     restart: always
+
     environment:
-      # Те же переменные окружения, так как используется тот же код
       DATABASE_URL_ASYNC: postgresql+asyncpg://postgres:postgres@db:5432/utility_db
       DATABASE_URL_SYNC: postgresql://postgres:postgres@db:5432/utility_db
       REDIS_URL: redis://redis:6379/0
+
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_started
+
     volumes:
-      - ./app:/app/app
-      - ./templates:/app/templates
-      # Подключаем тот же общий том, чтобы сохранять туда PDF
       - shared_data:/app/static/generated_files
+
     networks:
       - utility_net
-    # Команда запуска Celery воркера
-    command: celery -A app.worker.celery worker --loglevel=info
 
-  # -------------------------------------------------
-  # DATABASE (POSTGRES)
-  # -------------------------------------------------
+
+  # =============================
+  # POSTGRES
+  # =============================
   db:
     image: postgres:15
     container_name: utility_calc_db
     restart: always
+
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: utility_db
       PGDATA: /var/lib/postgresql/data/pgdata
+
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d utility_db"]
       interval: 5s
       timeout: 5s
       retries: 5
+
     networks:
       - utility_net
 
-  # -------------------------------------------------
-  # REDIS (CACHE & QUEUE)
-  # -------------------------------------------------
+
+  # =============================
+  # REDIS
+  # =============================
   redis:
     image: redis:7-alpine
     container_name: utility_calc_redis
     restart: always
-    command: redis-server --save 60 1 --loglevel warning
+
     volumes:
       - redis_data:/data
+
     networks:
       - utility_net
 
-  # -------------------------------------------------
-  # NGINX (PROXY & STATIC)
-  # -------------------------------------------------
+
+  # =============================
+  # NGINX
+  # =============================
   nginx:
     image: nginx:alpine
     container_name: utility_calc_nginx
     restart: always
+
     ports:
-      - "8080:80"   # HTTP
-      - "8443:443"  # HTTPS
+      - "8080:80"
+      - "8443:443"
+
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d
       - ./nginx/certs:/etc/nginx/certs
-      # Статика: CSS, JS
       - ./static:/usr/share/nginx/html/static
-      # ВАЖНО: Подключаем общий том, чтобы Nginx мог отдавать сгенерированные файлы
-      # Мы монтируем его внутрь папки static, чтобы URL был вида /static/generated_files/...
       - shared_data:/usr/share/nginx/html/static/generated_files
+
     depends_on:
       - web
+
     networks:
       - utility_net
 
-  # -------------------------------------------------
-  # BACKUP SERVICE (SIDECAR)
-  # -------------------------------------------------
+
+  # =============================
+  # BACKUP
+  # =============================
   backup:
     image: postgres:15
     container_name: utility_calc_backup
     restart: always
+
     environment:
-      # Параметры подключения к БД (сервис db)
       PGHOST: db
       PGUSER: postgres
       PGPASSWORD: postgres
       PGDB: utility_db
+
     volumes:
-      # Папка на хосте, куда будут падать файлы
       - ./backups:/backups
-      # Пробрасываем скрипт внутрь контейнера
       - ./backup.sh:/usr/local/bin/backup.sh
+
     depends_on:
       db:
         condition: service_healthy
+
+    command: >
+      bash -c "chmod +x /usr/local/bin/backup.sh &&
+      while true; do
+        /usr/local/bin/backup.sh;
+        sleep 86400;
+      done"
+
     networks:
       - utility_net
-    # Команда запуска: делаем скрипт исполняемым и запускаем цикл
-    # sleep 86400 = 24 часа. Бэкап будет делаться раз в сутки.
-    command: bash -c "chmod +x /usr/local/bin/backup.sh && while true; do /usr/local/bin/backup.sh; sleep 86400; done"
 
+
+# =============================
+# VOLUMES
+# =============================
 volumes:
   postgres_data:
   redis_data:
-  shared_data: # Том для обмена файлами между контейнерами
+  shared_data:
 
+
+# =============================
+# NETWORK
+# =============================
 networks:
   utility_net:
     driver: bridge

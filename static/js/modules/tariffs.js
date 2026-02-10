@@ -1,16 +1,29 @@
 // static/js/modules/tariffs.js
 import { api } from '../core/api.js';
-import { setLoading } from '../core/dom.js';
+import { setLoading, toast } from '../core/dom.js';
 
 export const TariffsModule = {
+    // Флаг для защиты от повторной инициализации событий
+    isInitialized: false,
+
     init() {
-        // Форма тарифов
+        // 1. Навешиваем события ТОЛЬКО один раз
+        if (!this.isInitialized) {
+            this.setupEventListeners();
+            this.isInitialized = true;
+        }
+
+        // 2. Загружаем данные каждый раз
+        this.load();
+    },
+
+    setupEventListeners() {
+        console.log('TariffsModule: Event listeners setup.');
+
         const form = document.getElementById('tariffsForm');
         if (form) {
             form.addEventListener('submit', (e) => this.submit(e));
         }
-
-        this.load();
     },
 
     async load() {
@@ -39,7 +52,7 @@ export const TariffsModule = {
             }
         } catch (error) {
             console.error('Ошибка загрузки тарифов:', error);
-            // Можно не выводить alert, если просто не загрузилось при старте
+            toast('Не удалось загрузить тарифы: ' + error.message, 'error');
         }
     },
 
@@ -63,9 +76,9 @@ export const TariffsModule = {
 
         try {
             await api.post('/tariffs', data);
-            alert("Тарифы успешно обновлены!");
+            toast("Тарифы успешно обновлены!", "success");
         } catch (error) {
-            alert("Ошибка сохранения: " + error.message);
+            toast("Ошибка сохранения: " + error.message, "error");
         } finally {
             setLoading(btn, false);
         }

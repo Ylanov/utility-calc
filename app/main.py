@@ -19,7 +19,8 @@ from app.routers import (
     admin_readings,
     admin_periods,
     admin_reports,
-    admin_user_ops
+    admin_user_ops,
+    admin_adjustments  # <-- ИЗМЕНЕНИЕ: Импортируем новый роутер
 )
 
 # -------------------------------------------------
@@ -44,11 +45,13 @@ app.include_router(admin_readings.router)
 app.include_router(admin_periods.router)
 app.include_router(admin_reports.router)
 app.include_router(admin_user_ops.router)
+app.include_router(admin_adjustments.router)  # <-- ИЗМЕНЕНИЕ: Подключаем новый роутер
 
 # -------------------------------------------------
 # STATIC
 # -------------------------------------------------
 
+# Этот роутер должен быть в конце, чтобы не перехватывать запросы API
 app.mount(
     "/",
     StaticFiles(directory="static", html=True),
@@ -73,6 +76,7 @@ async def startup_event():
     # -------------------------------------------------
 
     async with engine.begin() as conn:
+        # Эта команда создаст все таблицы, включая новую "adjustments"
         await conn.run_sync(Base.metadata.create_all)
 
     # -------------------------------------------------

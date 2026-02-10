@@ -1,3 +1,5 @@
+/* static/style.css */
+
 :root {
     --primary-color: #4a90e2;
     --primary-hover: #357abd;
@@ -7,6 +9,7 @@
     --border-color: #e0e0e0;
     --danger-color: #e74c3c;
     --success-color: #2ecc71;
+    --warning-color: #f39c12;
 }
 
 * {
@@ -20,14 +23,16 @@ body {
     background-color: var(--bg-color);
     color: var(--text-color);
     padding: 20px;
+    line-height: 1.6;
 }
 
 .container {
     max-width: 1200px;
     margin: 0 auto;
+    width: 100%;
 }
 
-/* Header */
+/* --- Header --- */
 header {
     display: flex;
     justify-content: space-between;
@@ -52,18 +57,20 @@ h1 {
     border-radius: 5px;
     cursor: pointer;
     font-weight: bold;
-    transition: background 0.3s;
+    transition: opacity 0.2s;
 }
 
 .logout-btn:hover {
-    background-color: #c0392b;
+    opacity: 0.9;
 }
 
-/* Tabs Navigation */
+/* --- Tabs --- */
 .tabs {
     display: flex;
     gap: 10px;
     margin-bottom: 20px;
+    overflow-x: auto;
+    padding-bottom: 5px;
 }
 
 .tab-btn {
@@ -72,19 +79,21 @@ h1 {
     padding: 10px 20px;
     border-radius: 5px;
     cursor: pointer;
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 500;
-    transition: all 0.3s;
+    white-space: nowrap;
+    transition: all 0.2s;
 }
 
 .tab-btn.active {
     background: var(--primary-color);
     color: white;
+    box-shadow: 0 2px 5px rgba(74, 144, 226, 0.4);
 }
 
 .tab-content {
     display: none;
-    animation: fadeIn 0.4s;
+    animation: fadeIn 0.3s;
 }
 
 .tab-content.active {
@@ -92,32 +101,50 @@ h1 {
 }
 
 @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(10px); }
+    from { opacity: 0; transform: translateY(5px); }
     to { opacity: 1; transform: translateY(0); }
 }
 
-/* Cards & Layout */
+/* --- Cards --- */
 .card {
     background: var(--card-bg);
     padding: 25px;
     border-radius: 10px;
-    box-shadow: 0 4px 10px rgba(0,0,0,0.05);
+    box-shadow: 0 2px 10px rgba(0,0,0,0.03);
     margin-bottom: 20px;
+    border: 1px solid #f0f0f0;
 }
 
 h2 {
     margin-bottom: 20px;
-    border-bottom: 2px solid var(--bg-color);
+    border-bottom: 1px solid #eee;
     padding-bottom: 10px;
     font-size: 18px;
-    color: #555;
+    color: #444;
 }
 
-/* Forms */
+/* --- Controls Header (Сводка, Сверка и Пользователи) --- */
+.controls-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.controls-group {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+/* --- Forms & Inputs --- */
 .form-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 15px;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 20px;
 }
 
 .form-group {
@@ -127,7 +154,7 @@ h2 {
 
 label {
     font-size: 13px;
-    font-weight: bold;
+    font-weight: 600;
     margin-bottom: 5px;
     color: #666;
 }
@@ -135,9 +162,9 @@ label {
 input, select {
     padding: 10px;
     border: 1px solid var(--border-color);
-    border-radius: 5px;
+    border-radius: 6px;
     font-size: 14px;
-    transition: border 0.3s;
+    width: 100%;
 }
 
 input:focus, select:focus {
@@ -145,25 +172,40 @@ input:focus, select:focus {
     border-color: var(--primary-color);
 }
 
-.full-width {
-    grid-column: 1 / -1;
+/* --- Tariffs Grid (Исправлено выравнивание) --- */
+.tariffs-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
 }
 
+.tariff-item {
+    background: #fafafa;
+    border: 1px solid #eee;
+    padding: 15px;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column; /* Подпись сверху, инпут снизу */
+}
+
+/* --- Buttons --- */
 .action-btn {
     background-color: var(--primary-color);
     color: white;
     border: none;
-    padding: 12px;
-    border-radius: 5px;
+    padding: 10px 20px;
+    border-radius: 6px;
     cursor: pointer;
-    font-size: 16px;
-    margin-top: 15px;
-    width: 100%;
-    transition: background 0.3s;
+    font-size: 14px;
+    font-weight: 500;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 0.2s;
 }
 
 .action-btn:hover {
-    background-color: var(--primary-hover);
+    opacity: 0.9;
 }
 
 .refresh-btn {
@@ -171,55 +213,123 @@ input:focus, select:focus {
     color: white;
     border: none;
     padding: 8px 15px;
-    border-radius: 4px;
+    border-radius: 6px;
     cursor: pointer;
-    margin-bottom: 10px;
-    font-size: 13px;
+    font-size: 14px;
 }
 
-/* Table */
+/* Кнопки в таблице (Маленькие иконки) */
+.btn-icon {
+    width: 34px;
+    height: 34px;
+    padding: 0;
+    border-radius: 6px;
+    font-size: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    border: none;
+    color: white;
+    margin-right: 5px;
+    transition: transform 0.1s;
+}
+
+.btn-icon:hover {
+    transform: scale(1.1);
+}
+
+.btn-icon:last-child {
+    margin-right: 0;
+}
+
+.btn-edit { background-color: #3498db; }
+.btn-delete { background-color: #e74c3c; }
+.btn-check { background-color: #4a90e2; }
+.btn-adjust { background-color: #9b59b6; }
+.btn-doc { color: #3498db; background: none; font-size: 20px; border: 1px solid transparent; }
+.btn-doc:hover { background: #f0f8ff; border-color: #b3d7ff; }
+
+/* --- Tables --- */
 .table-container {
     overflow-x: auto;
+    border: 1px solid #eee;
+    border-radius: 6px;
 }
 
 table {
     width: 100%;
     border-collapse: collapse;
-    margin-top: 10px;
+    min-width: 700px;
 }
 
 th, td {
     padding: 12px 15px;
     text-align: left;
-    border-bottom: 1px solid var(--border-color);
+    border-bottom: 1px solid #eee;
+    font-size: 14px;
+    vertical-align: middle;
 }
 
 th {
     background-color: #f8f9fa;
-    color: #444;
+    color: #555;
     font-weight: 600;
+    white-space: nowrap;
 }
 
 tr:hover {
-    background-color: #f1f1f1;
+    background-color: #f9fbfd;
 }
 
-/* Tariffs Grid */
-.tariffs-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-    gap: 20px;
+/* --- Badges --- */
+.role-badge {
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: bold;
+    color: white;
+    text-transform: uppercase;
 }
 
-.tariff-item {
-    background: #fafafa;
-    border: 1px solid var(--border-color);
-    padding: 15px;
-    border-radius: 8px;
+.role-badge.user { background-color: #3498db; }
+.role-badge.accountant { background-color: #f39c12; }
+.role-badge.admin { background-color: #e74c3c; }
+
+/* --- Login Form Specific --- */
+#loginForm {
+    background: white;
+    padding: 30px;
+    border-radius: 10px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+    width: 100%;
+    max-width: 400px;
+    margin: 40px auto;
 }
 
-.unit {
-    font-size: 12px;
-    color: #888;
-    margin-left: 5px;
+#loginForm h1 {
+    text-align: center;
+    margin-bottom: 20px;
+    color: var(--primary-color);
+}
+
+/* --- Modals Buttons --- */
+.close-btn {
+    background: #95a5a6;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.confirm-btn {
+    background: #27ae60;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
 }

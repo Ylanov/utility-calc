@@ -1,26 +1,33 @@
+// static/js/login.js
 import { Auth } from './core/auth.js';
+import { toast, setLoading } from './core/dom.js';
 
 document.addEventListener('DOMContentLoaded', () => {
+    // Если пользователь уже авторизован — сразу кидаем внутрь
+    if (Auth.isAuthenticated()) {
+        // Пытаемся угадать роль по прошлому заходу или просто кидаем на главную
+        // (Бэкенд все равно проверит права при загрузке данных)
+        window.location.href = 'index.html';
+        return;
+    }
+
     const loginForm = document.getElementById('loginForm');
-    const errorMsg = document.getElementById('errorMsg');
 
     if (loginForm) {
         loginForm.addEventListener('submit', async (e) => {
             e.preventDefault();
 
-            const username = document.getElementById('username').value;
-            const password = document.getElementById('password').value;
+            const usernameInput = document.getElementById('username');
+            const passwordInput = document.getElementById('password');
             const btn = loginForm.querySelector('button');
 
             // Блокируем кнопку
-            btn.disabled = true;
-            btn.innerText = "Вход...";
-            errorMsg.innerText = "";
+            setLoading(btn, true, 'Вход...');
 
             // FastAPI OAuth2 требует данные в формате application/x-www-form-urlencoded
             const formData = new URLSearchParams();
-            formData.append('username', username);
-            formData.append('password', password);
+            formData.append('username', usernameInput.value.trim());
+            formData.append('password', passwordInput.value);
 
             try {
                 const response = await fetch('/token', {
@@ -33,23 +40,40 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 if (response.ok) {
                     const data = await response.json();
-                    Auth.setToken(data.access_token);
 
-                    // Редирект в зависимости от роли
-                    if (data.role === 'accountant') {
-                        window.location.href = 'admin.html';
+                    if (data.access_token) {
+                        Auth.setToken(data.access_token);
+                        toast('Вход выполнен успешно!', 'success');
+
+                        // Небольшая задержка перед редиректом для красоты
+                        setTimeout(() => {
+                            if (data.role === 'accountant' || data.role === 'admin') {
+                                window.location.href = 'admin.html';
+                            } else {
+                                window.location.href = 'index.html';
+                            }
+                        }, 500);
                     } else {
-                        window.location.href = 'index.html';
+                        throw new Error("Сервер не вернул токен");
                     }
                 } else {
-                    errorMsg.innerText = "Неверный логин или пароль";
-                    btn.disabled = false;
-                    btn.innerText = "Войти";
+                    // Пытаемся прочитать текст ошибки от сервера
+                    let errorText = "Неверный логин или пароль";
+                    try {
+                        const errData = await response.json();
+                        if (errData.detail) errorText = errData.detail;
+                    } catch (e) { /* ignore json parse error */ }
+
+                    throw new Error(errorText);
                 }
+
             } catch (e) {
-                errorMsg.innerText = "Ошибка соединения с сервером";
-                btn.disabled = false;
-                btn.innerText = "Войти";
+                toast(e.message, 'error');
+                // Сбрасываем пароль при ошибке, чтобы пользователь ввел заново
+                passwordInput.value = '';
+                passwordInput.focus();
+            } finally {
+                setLoading(btn, false, 'Войти');
             }
         });
     }

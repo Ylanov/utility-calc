@@ -15,13 +15,23 @@ export const Auth = {
     logout() {
         console.log('Logging out...');
         localStorage.removeItem('token');
+        // Редирект на логин
         window.location.href = 'login.html';
     },
 
     // Проверка, вошел ли пользователь
     isAuthenticated() {
         const token = this.getToken();
-        // Здесь можно добавить проверку срока действия JWT, если нужно
-        return !!token;
+        if (!token) return false;
+
+        // Базовая проверка структуры JWT (три части, разделенные точкой)
+        // Это не гарантирует валидность подписи, но отсекает явный мусор
+        const parts = token.split('.');
+        if (parts.length !== 3) {
+            this.logout(); // Токен битый - удаляем и выходим
+            return false;
+        }
+
+        return true;
     }
 };

@@ -1,17 +1,34 @@
 // static/js/modules/users.js
 import { api } from '../core/api.js';
-import { el, clear, setLoading } from '../core/dom.js';
+import { el, clear, setLoading, toast } from '../core/dom.js';
 
 export const UsersModule = {
+    // Флаг для защиты от повторной инициализации событий
+    isInitialized: false,
+
     // ============================================================
     // ИНИЦИАЛИЗАЦИЯ
     // ============================================================
     init() {
+        // 1. Навешиваем события ТОЛЬКО один раз при первой загрузке модуля
+        if (!this.isInitialized) {
+            this.setupEventListeners();
+            this.isInitialized = true;
+        }
+
+        // 2. Данные загружаем каждый раз при открытии вкладки
+        this.load();
+    },
+
+    /**
+     * Установка обработчиков событий (выполняется единожды)
+     */
+    setupEventListeners() {
+        console.log('UsersModule: Event listeners setup.');
+
         // --- Кнопка обновления таблицы ---
         const btnRefresh = document.getElementById('btnRefreshUsers');
         if (btnRefresh) {
-            // Удаляем старые листенеры через клонирование (если были) или просто вешаем новый
-            // Так как init запускается один раз, просто вешаем:
             btnRefresh.addEventListener('click', () => this.load());
         }
 
@@ -28,7 +45,6 @@ export const UsersModule = {
         }
 
         // --- Кнопки закрытия модального окна ---
-        // Ищем по классу close-btn внутри модалки редактирования
         const editModal = document.getElementById('userEditModal');
         if (editModal) {
             const closeBtns = editModal.querySelectorAll('.close-btn');
@@ -36,30 +52,24 @@ export const UsersModule = {
         }
 
         // --- Импорт Excel ---
-        // Ищем кнопку по onclick="importUsers()" или добавляем ID в HTML
-        // Для надежности лучше добавить ID в HTML, но пока найдем по селектору кнопки рядом с инпутом
-        const importBtn = document.querySelector('button[onclick="importUsers()"]');
+        const importBtn = document.querySelector('button[onclick="importUsers()"]'); // Ищем кнопку по старому атрибуту, если ID нет
+        // Либо лучше добавьте id="btnImportUsers" в HTML и ищите по нему
         if (importBtn) {
-            // Убираем старый атрибут onclick, чтобы не двоилось
-            importBtn.removeAttribute('onclick');
+            importBtn.removeAttribute('onclick'); // Убираем inline-обработчик, чтобы не было дублей
             importBtn.addEventListener('click', () => this.importUsers(importBtn));
         }
-
-        // Первичная загрузка
-        this.load();
     },
 
     // ============================================================
     // ЗАГРУЗКА И ОТОБРАЖЕНИЕ
     // ============================================================
     async load() {
-        const tbody = clear('usersTableBody'); // Убедись, что в HTML у tbody есть этот ID
-
-        // Если ID не найден, пробуем найти по селектору (для совместимости)
+        const tbody = clear('usersTableBody');
         const targetBody = tbody || document.querySelector('#usersTable tbody');
+
         if (!targetBody) return;
 
-        targetBody.innerHTML = ''; // Очистка на всякий случай
+        targetBody.innerHTML = '';
         targetBody.appendChild(el('tr', {}, el('td', { colspan: 8, style: { textAlign: 'center', padding: '20px' } }, 'Загрузка...')));
 
         try {
@@ -137,11 +147,11 @@ export const UsersModule = {
 
         try {
             await api.post('/users', data);
-            alert('Пользователь создан!');
+            toast('Пользователь успешно создан!', 'success');
             form.reset();
             this.load();
         } catch (error) {
-            alert('Ошибка: ' + error.message);
+            toast('Ошибка создания: ' + error.message, 'error');
         } finally {
             setLoading(btn, false);
         }
@@ -169,7 +179,7 @@ export const UsersModule = {
             document.getElementById('userEditModal').classList.add('open');
 
         } catch (error) {
-            alert('Не удалось загрузить данные: ' + error.message);
+            toast('Не удалось загрузить данные: ' + error.message, 'error');
         }
     },
 
@@ -201,11 +211,11 @@ export const UsersModule = {
 
         try {
             await api.put(`/users/${userId}`, data);
-            alert('Данные обновлены!');
+            toast('Данные пользователя обновлены!', 'success');
             this.closeEditModal();
             this.load();
         } catch (error) {
-            alert('Ошибка: ' + error.message);
+            toast('Ошибка обновления: ' + error.message, 'error');
         } finally {
             setLoading(btn, false);
         }
@@ -221,10 +231,10 @@ export const UsersModule = {
 
         try {
             await api.delete(`/users/${userId}`);
-            alert('Пользователь удален.');
+            toast('Пользователь удален.', 'success');
             this.load();
         } catch (error) {
-            alert('Ошибка удаления: ' + error.message);
+            toast('Ошибка удаления: ' + error.message, 'error');
         }
     },
 
@@ -236,7 +246,7 @@ export const UsersModule = {
         const file = fileInput.files[0];
 
         if (!file) {
-            alert("Выберите файл .xlsx");
+            toast("Выберите файл .xlsx", 'info');
             return;
         }
 
@@ -246,18 +256,24 @@ export const UsersModule = {
         setLoading(btnElement, true, 'Загрузка...');
 
         try {
-            // api.js автоматически определит FormData и не будет ставить JSON хедеры
             const res = await api.post('/users/import_excel', formData);
 
-            let msg = `Успешно добавлено: ${res.added}\n`;
+            let msg = `Успешно добавлено: ${res.added}`;
             if (res.errors && res.errors.length > 0) {
-                msg += `Ошибки (${res.errors.length}):\n` + res.errors.slice(0, 5).join('\n') + (res.errors.length > 5 ? '\n...' : '');
+                toast(msg, 'success');
+                // Ошибки покажем отдельным тостом или алертом, так как их может быть много
+                setTimeout(() => {
+                    const errorMsg = `Ошибки (${res.errors.length}):\n` + res.errors.slice(0, 5).join('\n') + (res.errors.length > 5 ? '\n...' : '');
+                    alert(errorMsg); // Тут оставим alert, так как текста может быть много для тоста
+                }, 500);
+            } else {
+                toast(msg, 'success');
             }
-            alert(msg);
+
             this.load();
             fileInput.value = '';
         } catch (error) {
-            alert("Ошибка импорта: " + error.message);
+            toast("Ошибка импорта: " + error.message, 'error');
         } finally {
             setLoading(btnElement, false);
         }

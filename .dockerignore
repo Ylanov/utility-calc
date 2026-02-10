@@ -1,7 +1,13 @@
 .git
 __pycache__
+.pytest_cache
 .env
 .venv
-*.pyc
+venv
+node_modules
 .idea
-.vscode
+.vSCode
+*.log
+backups
+dist
+build

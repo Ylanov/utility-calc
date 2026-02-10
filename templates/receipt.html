@@ -376,6 +376,23 @@ td {
     <td>{{ reading.cost_waste|round(2) }}</td>
 </tr>
 
+<!-- ============================================
+     НОВЫЙ БЛОК: КОРРЕКТИРОВКИ
+============================================ -->
+{% for adj in adjustments %}
+<tr style="background: #fffbef;">
+    <td class="col-left" colspan="4">
+        <strong>Корректировка:</strong> {{ adj.description }}
+    </td>
+    <td>
+        <!-- Отрицательные числа будут с минусом автоматически -->
+        {{ adj.amount|round(2) }}
+    </td>
+</tr>
+{% endfor %}
+<!-- ============================================ -->
+
+
 </tbody>
 
 </table>

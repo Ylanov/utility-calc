@@ -1,44 +1,86 @@
-# Используем slim версию
-FROM python:3.10-slim
+# ================================
+# BUILDER
+# ================================
+FROM python:3.12-slim-bookworm AS builder
 
-# Рабочая директория
+ENV DEBIAN_FRONTEND=noninteractive
 WORKDIR /app
 
-# 1. УСТАНОВКА СИСТЕМНЫХ ЗАВИСИМОСТЕЙ
-RUN apt-get update && apt-get install -y \
-    postgresql-client \
+# Зависимости для сборки
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    python3-dev \
-    python3-pip \
-    python3-cffi \
-    python3-brotli \
-    libpango-1.0-0 \
-    libpangoft2-1.0-0 \
-    libharfbuzz-subset0 \
-    libpangocairo-1.0-0 \
-    libcairo2 \
-    libgdk-pixbuf-2.0-0 \
+    libpq-dev \
     libffi-dev \
-    shared-mime-info \
+    libcairo2-dev \
+    libpango1.0-dev \
+    libgdk-pixbuf2.0-dev \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Установка Python библиотек
+# Устанавливаем uv
+RUN pip install --upgrade pip setuptools wheel uv
+
+# Копируем зависимости
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 
-# 3. Копируем код
-COPY . .
+# Устанавливаем зависимости максимально быстро
+RUN uv pip install --system -r requirements.txt
 
-# --- НОВЫЙ БЛОК: Создание не-рутового пользователя ---
-# Создаем группу и пользователя 'appuser'
-RUN groupadd -r appuser && useradd --no-log-init -r -g appuser appuser
 
-# Меняем владельца всех файлов приложения на нашего нового пользователя
-RUN chown -R appuser:appuser /app
+# ================================
+# FINAL BASE
+# ================================
+FROM python:3.12-slim-bookworm AS base
 
-# Переключаемся на этого пользователя. Все последующие команды будут выполняться от его имени.
+ENV DEBIAN_FRONTEND=noninteractive
+WORKDIR /app
+
+# Только runtime-зависимости
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    libffi8 \
+    libcairo2 \
+    libpango-1.0-0 \
+    libpangoft2-1.0-0 \
+    libgdk-pixbuf-2.0-0 \
+    shared-mime-info \
+    fonts-liberation \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Копируем Python + пакеты
+COPY --from=builder /usr/local /usr/local
+
+# Безопасный пользователь
+RUN useradd -m appuser
 USER appuser
-# --- КОНЕЦ НОВОГО БЛОКА ---
 
-# Запуск. Теперь uvicorn и celery будут запускаться от имени 'appuser'
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# ================================
+# WEB
+# ================================
+FROM base AS web
+
+WORKDIR /app
+
+COPY app app
+COPY templates templates
+COPY static static
+COPY alembic alembic
+
+EXPOSE 8000
+
+CMD ["gunicorn", "app.main:app", "-k", "uvicorn.workers.UvicornWorker", "-w", "4", "-b", "0.0.0.0:8000"]
+
+
+# ================================
+# WORKER
+# ================================
+FROM base AS worker
+
+WORKDIR /app
+
+COPY app app
+COPY templates templates
+
+CMD ["celery", "-A", "app.worker.celery", "worker", "--loglevel=info", "--concurrency=4", "--prefetch-multiplier=1"]

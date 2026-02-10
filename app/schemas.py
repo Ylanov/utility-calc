@@ -39,11 +39,11 @@ class UserResponse(BaseModel):
     id: int
     username: str
     role: str
-    dormitory: Optional[str]
-    workplace: Optional[str]
+    dormitory: Optional[str] = None
+    workplace: Optional[str] = None
     residents_count: int
     total_room_residents: int
-    apartment_area: Decimal
+    apartment_area: Optional[Decimal] = None
 
     class Config:
         from_attributes = True
@@ -89,6 +89,25 @@ class PeriodResponse(BaseModel):
     id: int
     name: str
     is_active: bool
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+# =================================================================
+# СХЕМЫ КОРРЕКТИРОВОК (ADJUSTMENTS) - НОВОЕ
+# =================================================================
+class AdjustmentCreate(BaseModel):
+    user_id: int
+    amount: DecimalAmount  # Может быть отрицательным (например -500.00)
+    description: str
+
+
+class AdjustmentResponse(BaseModel):
+    id: int
+    amount: Decimal
+    description: str
     created_at: datetime
 
     class Config:

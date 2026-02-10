@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import delete  # ДОБАВЛЕНО для удаления связанных записей
+from sqlalchemy import delete
 from app.database import get_db
-from app.models import User, MeterReading  # ДОБАВЛЕНО MeterReading для обработки зависимостей
+from app.models import User, MeterReading
 from app.schemas import UserCreate, UserResponse, UserUpdate
 from app.dependencies import get_current_user
 from app.auth import get_password_hash
@@ -11,6 +11,49 @@ from app.services.excel_service import import_users_from_excel
 
 router = APIRouter(prefix="/api/users", tags=["Users"])
 
+
+# =================================================================
+# СПЕЦИАЛЬНЫЕ МАРШРУТЫ (ДОЛЖНЫ БЫТЬ ВНАЧАЛЕ)
+# =================================================================
+
+@router.get("/me", response_model=UserResponse)
+async def get_me(current_user: User = Depends(get_current_user)):
+    """
+    Получение профиля текущего пользователя.
+    Этот маршрут должен быть ОБЪЯВЛЕН РАНЬШЕ, чем /{user_id},
+    иначе FastAPI попытается прочитать "me" как user_id (int).
+    """
+    return current_user
+
+
+@router.post("/import_excel", summary="Массовый импорт пользователей из Excel")
+async def import_users(
+        file: UploadFile = File(...),
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db)
+):
+    """
+    Массовый импорт пользователей из файла Excel.
+    Доступно только для пользователей с ролью 'accountant'.
+    """
+    if current_user.role != "accountant":
+        raise HTTPException(status_code=403, detail="Доступ запрещен")
+
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="Поддерживаются только файлы Excel (.xlsx, .xls)")
+
+    # Чтение содержимого файла
+    content = await file.read()
+
+    # Импорт пользователей из Excel
+    result = await import_users_from_excel(content, db)
+
+    return result
+
+
+# =================================================================
+# ОБЩИЕ МАРШРУТЫ
+# =================================================================
 
 @router.post("", response_model=UserResponse)
 async def create_user(
@@ -63,6 +106,10 @@ async def read_users(
     result = await db.execute(select(User).order_by(User.id))
     return result.scalars().all()
 
+
+# =================================================================
+# ДИНАМИЧЕСКИЕ МАРШРУТЫ (С ПАРАМЕТРАМИ)
+# =================================================================
 
 @router.get("/{user_id}", response_model=UserResponse)
 async def read_user(
@@ -146,19 +193,9 @@ async def delete_user(
 
     try:
         # 1. Сначала удаляем все связанные записи показаний (readings)
-        # Вариант А: Использование delete() с where (более эффективно)
         await db.execute(
             delete(MeterReading).where(MeterReading.user_id == user_id)
         )
-
-        # Вариант Б: Через цикл (если нужна дополнительная логика обработки)
-        # stmt = select(MeterReading).where(MeterReading.user_id == user_id)
-        # result = await db.execute(stmt)
-        # readings = result.scalars().all()
-        # deleted_count = 0
-        # for reading in readings:
-        #     await db.delete(reading)
-        #     deleted_count += 1
 
         # 2. Теперь удаляем самого пользователя
         await db.delete(db_user)
@@ -183,43 +220,10 @@ async def delete_user(
         if "foreign key" in error_str or "violates foreign key constraint" in error_str:
             raise HTTPException(
                 status_code=400,
-                detail="Невозможно удалить пользователя, так как существуют связанные данные. "
-                       "Убедитесь, что все связанные записи были удалены."
+                detail="Невозможно удалить пользователя, так как существуют связанные данные."
             )
 
         raise HTTPException(
             status_code=500,
             detail=f"Внутренняя ошибка сервера при удалении пользователя: {str(e)}"
         )
-
-
-@router.post("/import_excel", summary="Массовый импорт пользователей из Excel")
-async def import_users(
-        file: UploadFile = File(...),
-        current_user: User = Depends(get_current_user),
-        db: AsyncSession = Depends(get_db)
-):
-    """
-    Массовый импорт пользователей из файла Excel.
-    Доступно только для пользователей с ролью 'accountant'.
-    """
-    if current_user.role != "accountant":
-        raise HTTPException(status_code=403, detail="Доступ запрещен")
-
-    if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="Поддерживаются только файлы Excel (.xlsx, .xls)")
-
-    # Чтение содержимого файла
-    content = await file.read()
-
-    # Импорт пользователей из Excel
-    result = await import_users_from_excel(content, db)
-
-    return result
-
-@router.get("/me", response_model=UserResponse)
-async def get_me(current_user: User = Depends(get_current_user)):
-    """
-    Получение профиля текущего пользователя
-    """
-    return current_user

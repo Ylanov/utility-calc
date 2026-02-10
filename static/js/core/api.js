@@ -69,9 +69,23 @@ class ApiClient {
             if (!response.ok) {
                 // Пытаемся извлечь понятное сообщение об ошибке из ответа FastAPI (поле "detail").
                 // Если его нет, показываем общую ошибку.
-                const errorMessage = (typeof data === 'object' && data.detail)
-                    ? data.detail
-                    : `Ошибка сервера (${response.status})`;
+                let errorMessage;
+                if (typeof data === 'object') {
+                    // Если есть поле detail (стандарт FastAPI), используем его
+                    if (data.detail) {
+                        // Если detail это массив (ошибки валидации Pydantic), превращаем в строку
+                        errorMessage = typeof data.detail === 'object'
+                            ? JSON.stringify(data.detail)
+                            : data.detail;
+                    } else {
+                        // Если detail нет, но это объект, просто сериализуем
+                        errorMessage = JSON.stringify(data);
+                    }
+                } else {
+                    // Если это строка или что-то другое
+                    errorMessage = data || `Ошибка сервера (${response.status})`;
+                }
+
                 throw new Error(errorMessage);
             }
 

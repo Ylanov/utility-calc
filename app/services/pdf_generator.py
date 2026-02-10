@@ -9,7 +9,8 @@ from pathlib import Path
 from jinja2 import Environment, FileSystemLoader
 from weasyprint import HTML
 
-from app.models import User, MeterReading, Tariff, BillingPeriod
+# ИЗМЕНЕНИЕ: Добавлен импорт Adjustment
+from app.models import User, MeterReading, Tariff, BillingPeriod, Adjustment
 
 
 # =====================================================
@@ -109,6 +110,7 @@ def generate_receipt_pdf(
     period: BillingPeriod,
     tariff: Tariff,
     prev_reading: MeterReading | None,
+    adjustments: list = [],  # ИЗМЕНЕНИЕ: Добавлен аргумент для корректировок
     output_dir: str | None = None
 ) -> str:
     """
@@ -123,11 +125,13 @@ def generate_receipt_pdf(
     prev_cold = Decimal(prev_reading.cold_water) if prev_reading else Decimal("0")
     prev_elect = Decimal(prev_reading.electricity) if prev_reading else Decimal("0")
 
+    # Приводим к Decimal, так как из базы могут прийти float или None
     hot_corr = Decimal(reading.hot_correction or "0")
     cold_corr = Decimal(reading.cold_correction or "0")
     elect_corr = Decimal(reading.electricity_correction or "0")
     sewage_corr = Decimal(reading.sewage_correction or "0")
 
+    # Расчет чистых объемов потребления за период
     vol_hot = max(Decimal("0"), reading.hot_water - prev_hot - hot_corr)
     vol_cold = max(Decimal("0"), reading.cold_water - prev_cold - cold_corr)
     vol_elect = max(Decimal("0"), reading.electricity - prev_elect - elect_corr)
@@ -183,6 +187,9 @@ def generate_receipt_pdf(
 
         # Начисление
         "reading": reading,
+
+        # Корректировки (ИЗМЕНЕНИЕ)
+        "adjustments": adjustments,
 
         # Объёмы
         "vol_hot": vol_hot,

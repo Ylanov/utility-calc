@@ -1,32 +1,29 @@
 #!/bin/bash
-set -e # Прерываем выполнение при любой ошибке
 
-# Настройки
+# Устанавливаем переменные для удобства
 BACKUP_DIR="/backups"
-DATE=$(date +"%Y-%m-%d_%H-%M-%S")
-FILE="$BACKUP_DIR/backup_$DATE.sql"
+TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
+FILENAME="$BACKUP_DIR/utility_db_backup_$TIMESTAMP.sql.gz"
 
-echo "--- [START] Backup Routine: $DATE ---"
+echo "Starting database backup..."
 
-# 1. Создание дампа
-# Используем переменные окружения PGHOST, PGUSER, PGPASSWORD, переданные через Docker
-echo "Creating dump from host: $PGHOST, db: $PGDB..."
-pg_dump -h "$PGHOST" -U "$PGUSER" -d "$PGDB" > "$FILE"
+# Используем pg_dump для создания дампа.
+# -h $PGHOST: хост базы данных (возьмется из environment: db)
+# -U $PGUSER: пользователь (postgres)
+# -d $PGDB: имя базы (utility_db)
+# gzip -c: сжимаем дамп на лету
+# > $FILENAME: и сохраняем в файл
 
-if [ -f "$FILE" ]; then
-    echo "✅ Backup created successfully: $FILE"
+pg_dump -h $PGHOST -U $PGUSER -d $PGDB | gzip > $FILENAME
 
-    # Размер файла для логов
-    SIZE=$(du -h "$FILE" | cut -f1)
-    echo "Size: $SIZE"
-
-    # 2. Очистка старых бэкапов (старше 30 дней)
-    echo "Checking for old backups..."
-    find "$BACKUP_DIR" -name "backup_*.sql" -mtime +30 -print -delete
-    echo "🧹 Old backups cleaned up."
+# Проверяем, что файл создан
+if [ -f "$FILENAME" ]; then
+    echo "Backup successful: $FILENAME"
 else
-    echo "❌ Error: Backup file was not created!"
-    exit 1
+    echo "Backup FAILED!"
 fi
 
-echo "--- [END] Backup Routine ---"
+# (Опционально) Удаление старых бэкапов, оставляем последние 7
+echo "Cleaning up old backups..."
+find $BACKUP_DIR -type f -name "*.sql.gz" -mtime +7 -delete
+echo "Cleanup complete."

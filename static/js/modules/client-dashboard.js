@@ -1,21 +1,33 @@
 // static/js/modules/client-dashboard.js
 import { api } from '../core/api.js';
-import { el, clear } from '../core/dom.js';
+import { el, clear, toast } from '../core/dom.js'; // Используем глобальный toast
 
 /**
  * ClientDashboard - Модуль, управляющий всем интерфейсом
  * личного кабинета жильца.
  */
 export const ClientDashboard = {
+    isInitialized: false,
+
     // Внутреннее состояние модуля для хранения данных
     state: {
         lastReadings: { hot: 0, cold: 0, elect: 0 }
     },
 
     /**
-     * Инициализация модуля. Вызывается один раз при загрузке страницы.
+     * Инициализация модуля.
      */
     init() {
+        if (this.isInitialized) return;
+        this.isInitialized = true;
+
+        this.setupEventListeners();
+
+        // Запускаем асинхронную загрузку всех необходимых данных
+        this.loadAllData();
+    },
+
+    setupEventListeners() {
         // Привязываем обработчик к форме отправки показаний
         const form = document.getElementById('meterForm');
         if (form) form.addEventListener('submit', (e) => this.submit(e));
@@ -25,26 +37,26 @@ export const ClientDashboard = {
             const input = document.getElementById(id);
             if (input) input.addEventListener('input', () => this.validateInputs());
         });
-
-        // Запускаем асинхронную загрузку всех необходимых данных
-        this.loadAllData();
     },
 
     /**
      * Главная функция для загрузки всех данных страницы.
      */
     async loadAllData() {
-        // Promise.all позволяет выполнять несколько независимых запросов одновременно,
-        // что ускоряет загрузку страницы.
-        await Promise.all([
-            this.loadUserProfile(),     // Загрузка данных профиля (имя, адрес)
-            this.loadInitialState(),    // Загрузка состояния счетчиков и периода
-            this.loadHistory()          // Загрузка истории начислений
-        ]);
+        try {
+            await Promise.all([
+                this.loadUserProfile(),     // Загрузка данных профиля (имя, адрес)
+                this.loadInitialState(),    // Загрузка состояния счетчиков и периода
+                this.loadHistory()          // Загрузка истории начислений
+            ]);
 
-        // После загрузки всех данных убираем "экран загрузки" (прозрачность)
-        const appContainer = document.getElementById('app-container');
-        if (appContainer) appContainer.classList.remove('opacity-0');
+            // После загрузки всех данных убираем "экран загрузки" (прозрачность)
+            const appContainer = document.getElementById('app-container');
+            if (appContainer) appContainer.classList.remove('opacity-0');
+        } catch (e) {
+            console.error(e);
+            toast("Ошибка инициализации кабинета", "error");
+        }
     },
 
     // ============================================================
@@ -52,22 +64,19 @@ export const ClientDashboard = {
     // ============================================================
 
     /**
-     * Загружает и отображает данные профиля пользователя (имя, адрес и т.д.).
-     * ВАЖНО: Требует наличия эндпоинта /api/users/me на бэкенде.
+     * Загружает и отображает данные профиля пользователя.
      */
     async loadUserProfile() {
         try {
-            // Этот эндпоинт стандартен для получения информации о текущем пользователе
             const user = await api.get('/users/me');
 
-            // Безопасно обновляем DOM через textContent
-            document.getElementById('pUser').textContent = user.username || '-';
-            document.getElementById('pAddress').textContent = user.dormitory || '-';
-            document.getElementById('pArea').textContent = `${user.apartment_area} м²`;
-            document.getElementById('pResidents').textContent = user.residents_count;
+            document.getElementById('pUser').textContent = user.username ?? 'Неизвестно';
+            document.getElementById('pAddress').textContent = user.dormitory ?? 'Не указано';
+            document.getElementById('pArea').textContent = `${user.apartment_area ?? 0} м²`;
+            document.getElementById('pResidents').textContent = user.residents_count ?? 1;
+
         } catch (error) {
             console.warn("Could not load user profile:", error.message);
-            // Если эндпоинт не найден, просто оставляем "Загрузка..." или ставим прочерки
             document.getElementById('pUser').textContent = '-';
             document.getElementById('pAddress').textContent = '-';
             document.getElementById('pArea').textContent = '-';
@@ -80,18 +89,16 @@ export const ClientDashboard = {
      */
     async loadInitialState() {
         try {
-            // ИСПРАВЛЕНО: Единственный правильный вызов эндпоинта
             const stateData = await api.get('/readings/state');
 
             this.updateStatus(stateData);
             this.updateMeters(stateData);
             this.updateResults(stateData);
 
-            // Также обновляем информацию о периоде в шапке
             document.getElementById('pPeriod').textContent = stateData.period_name || 'Прием закрыт';
 
         } catch (error) {
-            this.showToast(error.message, true);
+            toast(error.message, "error");
         }
     },
 
@@ -140,9 +147,6 @@ export const ClientDashboard = {
     // ОБНОВЛЕНИЕ UI
     // ============================================================
 
-    /**
-     * Отображает статус-бар (период открыт/закрыт/черновик).
-     */
     updateStatus(data) {
         const statusArea = clear('statusArea');
         const fieldset = document.getElementById('meterFieldset');
@@ -170,9 +174,6 @@ export const ClientDashboard = {
         statusArea.appendChild(statusBlock);
     },
 
-    /**
-     * Заполняет поля счетчиков предыдущими и текущими значениями.
-     */
     updateMeters(data) {
         this.state.lastReadings = { hot: data.prev_hot, cold: data.prev_cold, elect: data.prev_elect };
 
@@ -187,9 +188,6 @@ export const ClientDashboard = {
         }
     },
 
-    /**
-     * Отображает блок с предварительным расчетом стоимости.
-     */
     updateResults(data) {
         const resultDiv = document.getElementById('result');
         if (!data.total_cost && data.total_cost !== 0) {
@@ -215,9 +213,6 @@ export const ClientDashboard = {
     // ЛОГИКА ФОРМЫ И ДЕЙСТВИЙ
     // ============================================================
 
-    /**
-     * Проверяет корректность введенных данных в полях счетчиков.
-     */
     validateInputs() {
         let isFormValid = true;
         const inputs = [
@@ -245,9 +240,6 @@ export const ClientDashboard = {
         return isFormValid;
     },
 
-    /**
-     * Обрабатывает отправку формы с показаниями.
-     */
     async submit(e) {
         e.preventDefault();
         if (!this.validateInputs()) return;
@@ -268,10 +260,10 @@ export const ClientDashboard = {
 
         try {
             await api.post('/calculate', data);
-            this.showToast('Показания успешно сохранены!', false);
-            await this.loadInitialState(); // Перезагружаем только основное состояние
+            toast('Показания успешно сохранены!', 'success');
+            await this.loadInitialState();
         } catch (error) {
-            this.showToast(error.message, true);
+            toast(error.message, 'error');
         } finally {
             btn.disabled = false;
             btnText.textContent = '💾 Сохранить';
@@ -279,41 +271,13 @@ export const ClientDashboard = {
         }
     },
 
-    /**
-     * Инициирует скачивание PDF-квитанции для конкретной записи.
-     */
     async downloadReceipt(id) {
         try {
             // Используем безопасный эндпоинт для клиента
             await api.download(`/client/receipts/${id}`, `receipt_${id}.pdf`);
+            toast("Квитанция скачивается", "success");
         } catch (e) {
-            this.showToast('Ошибка скачивания: ' + e.message, true);
+            toast('Ошибка скачивания: ' + e.message, 'error');
         }
-    },
-
-    // ============================================================
-    // УТИЛИТЫ UI (Всплывающие уведомления)
-    // ============================================================
-    showToast(message, isError = false) {
-        const container = document.getElementById('toast-container');
-        if (!container) return;
-
-        const toastType = isError ? 'bg-red-600' : 'bg-green-600';
-        const toast = el('div', {
-            class: `toast ${toastType} text-white px-6 py-3 rounded-lg shadow-lg`
-        }, message);
-
-        container.appendChild(toast);
-
-        // Показать с анимацией
-        requestAnimationFrame(() => {
-            toast.classList.add('show');
-        });
-
-        // Скрыть и удалить через 3 секунды
-        setTimeout(() => {
-            toast.classList.remove('show');
-            toast.addEventListener('transitionend', () => toast.remove());
-        }, 3000);
     }
 };

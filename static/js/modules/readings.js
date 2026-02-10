@@ -1,6 +1,6 @@
 // static/js/modules/readings.js
 import { api } from '../core/api.js';
-import { el, clear, setLoading } from '../core/dom.js';
+import { el, clear, setLoading, toast } from '../core/dom.js';
 import { store } from '../core/store.js';
 
 // Конфигурация цветов и текстов для аномалий
@@ -23,10 +23,26 @@ const ANOMALY_MAP = {
 };
 
 export const ReadingsModule = {
+    isInitialized: false,
+    controller: null, // Для хранения AbortController для отмены старых запросов
+
     // ============================================================
     // ИНИЦИАЛИЗАЦИЯ
     // ============================================================
     init() {
+        if (!this.isInitialized) {
+            this.setupEventListeners();
+            this.isInitialized = true;
+        }
+
+        // Первичная загрузка
+        this.loadActivePeriod();
+        this.load();
+    },
+
+    setupEventListeners() {
+        console.log('ReadingsModule: Event listeners setup.');
+
         // --- Навигация (Пагинация) ---
         const btnPrev = document.getElementById('btnPrev');
         const btnNext = document.getElementById('btnNext');
@@ -56,11 +72,6 @@ export const ReadingsModule = {
         if (btnModalSubmit) btnModalSubmit.addEventListener('click', () => this.submitApproval());
 
         // --- Управление периодом (закрытие/открытие месяца) ---
-        const btnClosePeriod = document.querySelector('button[onclick="closePeriodAction()"]');
-        // Обратите внимание: мы ищем по селектору, если ID не задан, или меняем HTML.
-        // Но лучше, если в HTML у кнопок периода есть ID. Предположим, мы их добавим или найдем через DOM.
-        // Для совместимости с текущим HTML найдем кнопки внутри блоков.
-
         const periodActiveBlock = document.getElementById('periodActiveState');
         if (periodActiveBlock) {
             const closeBtn = periodActiveBlock.querySelector('button');
@@ -72,16 +83,19 @@ export const ReadingsModule = {
             const openBtn = periodClosedBlock.querySelector('button');
             if (openBtn) openBtn.addEventListener('click', () => this.openPeriodAction(openBtn));
         }
-
-        // --- Первичная загрузка ---
-        this.loadActivePeriod();
-        this.load();
     },
 
     // ============================================================
     // ЗАГРУЗКА И ОТОБРАЖЕНИЕ СПИСКА
     // ============================================================
     async load(page = store.state.pagination.page, anomaliesOnly = null) {
+        // 1. ОТМЕНА ПРЕДЫДУЩЕГО ЗАПРОСА
+        if (this.controller) {
+            this.controller.abort();
+        }
+        this.controller = new AbortController();
+        const signal = this.controller.signal;
+
         const tbody = clear('readingsTableBody');
 
         // Индикатор загрузки
@@ -99,7 +113,8 @@ export const ReadingsModule = {
             const limit = store.state.pagination.limit;
             const query = `/admin/readings?page=${page}&limit=${limit}${anomaliesOnly ? '&anomalies_only=true' : ''}`;
 
-            const data = await api.get(query);
+            // Передаем signal в API (api.js прокидывает options в fetch)
+            const data = await api.get(query, { signal });
 
             // Сохраняем данные в Store
             store.setReadings(data);
@@ -110,6 +125,11 @@ export const ReadingsModule = {
             this.updatePagination(data.length);
 
         } catch (error) {
+            // Если ошибка вызвана отменой запроса — игнорируем её
+            if (error.name === 'AbortError') {
+                return;
+            }
+
             tbody.innerHTML = '';
             tbody.appendChild(el('tr', {},
                 el('td', { colspan: 7, style: { color: 'red', textAlign: 'center', padding: '20px' } }, `Ошибка: ${error.message}`)
@@ -147,13 +167,23 @@ export const ReadingsModule = {
                 el('td', {}, r.cur_elect),
                 // 6. Сумма
                 el('td', { style: { color: 'green', fontWeight: 'bold' } }, `~ ${Number(r.total_cost).toFixed(2)} ₽`),
-                // 7. Действия
+                // 7. Действия (Обновленная структура кнопок)
                 el('td', {},
-                    el('button', {
-                        class: 'action-btn',
-                        style: { padding: '5px 15px', fontSize: '13px', margin: '0', background: '#4a90e2' },
-                        onclick: () => this.openModal(r.id)
-                    }, '📝 Проверить')
+                    el('div', { class: 'controls-group', style: { justifyContent: 'flex-start', gap: '5px' } },
+                        // Кнопка Корректировки
+                        el('button', {
+                            class: 'btn-icon btn-adjust',
+                            title: 'Добавить фин. корректировку',
+                            onclick: () => this.openAdjustmentModal(r.user_id, r.username)
+                        }, '±'),
+
+                        // Кнопка Проверки
+                        el('button', {
+                            class: 'btn-icon btn-check',
+                            title: 'Проверить и утвердить',
+                            onclick: () => this.openModal(r.id)
+                        }, '📝')
+                    )
                 )
             );
             tbody.appendChild(tr);
@@ -198,7 +228,6 @@ export const ReadingsModule = {
         const btnNext = document.getElementById('btnNext');
 
         if (btnPrev) btnPrev.disabled = store.state.pagination.page <= 1;
-        // Если пришло меньше элементов, чем размер страницы, значит дальше данных нет
         if (btnNext) btnNext.disabled = itemsCount < store.state.pagination.limit;
     },
 
@@ -208,7 +237,7 @@ export const ReadingsModule = {
     },
 
     // ============================================================
-    // МОДАЛЬНОЕ ОКНО (ПРОВЕРКА И КОРРЕКЦИЯ)
+    // МОДАЛЬНОЕ ОКНО (ПРОВЕРКА И КОРРЕКЦИЯ ОБЪЕМОВ)
     // ============================================================
     openModal(id) {
         const reading = store.getReadingById(id);
@@ -218,8 +247,7 @@ export const ReadingsModule = {
         document.getElementById('modal_reading_id').value = id;
         document.getElementById('m_username').textContent = reading.username;
 
-        // Рассчитываем дельту (сколько набежало)
-        // ВАЖНО: Приводим к Number для корректной математики
+        // Рассчитываем дельту
         const dHot = (Number(reading.cur_hot) - Number(reading.prev_hot)).toFixed(3);
         const dCold = (Number(reading.cur_cold) - Number(reading.prev_cold)).toFixed(3);
         const dElect = (Number(reading.cur_elect) - Number(reading.prev_elect)).toFixed(3);
@@ -256,14 +284,47 @@ export const ReadingsModule = {
 
         try {
             const res = await api.post(`/admin/approve/${id}`, data);
-
-            alert(`Показания утверждены!\nНовая сумма к оплате: ${Number(res.new_total).toFixed(2)} руб.`);
+            toast(`Показания утверждены! Новая сумма: ${Number(res.new_total).toFixed(2)} ₽`, 'success');
             this.closeModal();
-            this.load(); // Перезагружаем текущую страницу таблицы
+            this.load();
         } catch (e) {
-            alert('Ошибка при утверждении: ' + e.message);
+            toast('Ошибка при утверждении: ' + e.message, 'error');
         } finally {
             setLoading(btn, false);
+        }
+    },
+
+    // ============================================================
+    // ФИНАНСОВЫЕ КОРРЕКТИРОВКИ
+    // ============================================================
+    openAdjustmentModal(userId, username) {
+        // Здесь prompt пока оставим, так как создание модалки "на лету" требует больше кода HTML
+        const amountStr = prompt(`Добавить корректировку для ${username}.\n\nВведите сумму:\n(например: -500 для скидки или 1000 для доплаты)`);
+        if (!amountStr) return;
+
+        const amount = parseFloat(amountStr);
+        if (isNaN(amount)) {
+            toast("Некорректная сумма", 'error');
+            return;
+        }
+
+        const desc = prompt("Введите причину (например: Перерасчет за отсутствие):");
+        if (!desc) return;
+
+        this.sendAdjustment(userId, amount, desc);
+    },
+
+    async sendAdjustment(userId, amount, description) {
+        try {
+            await api.post('/admin/adjustments', {
+                user_id: userId,
+                amount: amount,
+                description: description
+            });
+            toast("Корректировка успешно добавлена!", 'success');
+            this.load();
+        } catch (e) {
+            toast("Ошибка при добавлении корректировки: " + e.message, 'error');
         }
     },
 
@@ -271,7 +332,7 @@ export const ReadingsModule = {
     // МАССОВЫЕ ОПЕРАЦИИ
     // ============================================================
     async bulkApprove() {
-        if (!confirm("ВНИМАНИЕ!\n\nЭто автоматически утвердит все черновики текущего месяца, где показания больше предыдущих.\nРучные коррекции не будут применены.\n\nПродолжить?")) {
+        if (!confirm("ВНИМАНИЕ!\n\nЭто автоматически утвердит все черновики текущего месяца.\nПродолжить?")) {
             return;
         }
 
@@ -279,14 +340,11 @@ export const ReadingsModule = {
         setLoading(btn, true, 'Обработка...');
 
         try {
-            // Эндпоинт для массового утверждения должен быть реализован на бэкенде
-            // Если его нет, этот вызов вернет 404 или ошибку.
             const res = await api.post('/admin/approve-bulk', {});
-
-            alert(`Успешно утверждено записей: ${res.approved_count}`);
-            this.load(1); // Перезагружаем с первой страницы
+            toast(`Успешно утверждено записей: ${res.approved_count}`, 'success');
+            this.load(1);
         } catch (e) {
-            alert("Ошибка при массовом утверждении: " + e.message);
+            toast("Ошибка: " + e.message, 'error');
         } finally {
             setLoading(btn, false);
         }
@@ -304,12 +362,10 @@ export const ReadingsModule = {
             const data = await api.get('/admin/periods/active');
 
             if (data && data.name) {
-                // Период активен
                 if (activeDiv) activeDiv.style.display = 'flex';
                 if (closedDiv) closedDiv.style.display = 'none';
                 if (label) label.textContent = data.name;
             } else {
-                // Периода нет (закрыт)
                 if (activeDiv) activeDiv.style.display = 'none';
                 if (closedDiv) closedDiv.style.display = 'flex';
             }
@@ -319,7 +375,7 @@ export const ReadingsModule = {
     },
 
     async closePeriodAction(btnElement) {
-        if (!confirm(`ВНИМАНИЕ!\n\nВы закрываете текущий месяц.\n\n1. Прием показаний остановится.\n2. Должникам будет начислено "по среднему".\n3. Все черновики утвердятся.\n\nПродолжить?`)) {
+        if (!confirm(`ВНИМАНИЕ!\n\nВы закрываете текущий месяц.\nАвто-расчет для должников будет выполнен.\n\nПродолжить?`)) {
             return;
         }
 
@@ -327,10 +383,12 @@ export const ReadingsModule = {
 
         try {
             const res = await api.post('/admin/periods/close', {});
-            alert(`Месяц успешно закрыт!\nАвто-показаний создано: ${res.auto_generated}`);
-            window.location.reload(); // Перезагружаем страницу полностью, чтобы обновить все состояния
+            toast(`Месяц закрыт! Авто-показаний: ${res.auto_generated}`, 'success');
+
+            // Даем время на чтение тоста перед перезагрузкой
+            setTimeout(() => window.location.reload(), 1500);
         } catch (e) {
-            alert("Ошибка закрытия периода: " + e.message);
+            toast("Ошибка закрытия периода: " + e.message, 'error');
             setLoading(btnElement, false);
         }
     },
@@ -340,7 +398,7 @@ export const ReadingsModule = {
         const newName = nameInput ? nameInput.value.trim() : null;
 
         if (!newName) {
-            alert("Пожалуйста, введите название месяца (например: 'Март 2026')");
+            toast("Введите название месяца", 'info');
             return;
         }
 
@@ -348,10 +406,11 @@ export const ReadingsModule = {
 
         try {
             await api.post('/admin/periods/open', { name: newName });
-            alert(`Новый месяц "${newName}" успешно открыт!\nПользователи могут подавать показания.`);
-            window.location.reload(); // Перезагружаем страницу полностью
+            toast(`Новый месяц "${newName}" открыт!`, 'success');
+
+            setTimeout(() => window.location.reload(), 1500);
         } catch (e) {
-            alert("Ошибка открытия периода: " + e.message);
+            toast("Ошибка открытия периода: " + e.message, 'error');
             setLoading(btnElement, false);
         }
     }
