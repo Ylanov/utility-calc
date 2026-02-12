@@ -4,36 +4,20 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Панель Администратора ЖКХ</title>
+    <!-- Подключаем основной файл стилей (внутри @import всех модулей) -->
     <link rel="stylesheet" href="style.css">
-    <style>
-        /* Стили для модальных окон (оставляем здесь, так как они специфичны для админки) */
-        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); z-index: 1000; justify-content: center; align-items: center; }
-        .modal-overlay.open { display: flex; }
-        .modal-window { background: white; padding: 25px; border-radius: 10px; width: 500px; max-width: 90%; box-shadow: 0 4px 15px rgba(0,0,0,0.2); position: relative; animation: slideDown 0.3s ease-out; }
-        @keyframes slideDown { from { transform: translateY(-30px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-        .modal-header { font-size: 20px; font-weight: bold; margin-bottom: 20px; border-bottom: 1px solid #eee; padding-bottom: 10px; color: #333; }
-        .modal-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
-        .modal-row label { width: 60%; color: #555; font-size: 14px; }
-        .modal-row input { width: 35%; padding: 8px; text-align: center; border: 1px solid #ccc; border-radius: 5px; }
-        .modal-actions { margin-top: 25px; display: flex; justify-content: flex-end; gap: 10px; }
-        .close-btn { background: #95a5a6; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; }
-        .confirm-btn { background: #27ae60; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; }
-        .highlight-calc { background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px; font-size: 14px; border-left: 4px solid #4a90e2; line-height: 1.6; }
-
-        /* Пагинация */
-        .pagination { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-        .pagination button { padding: 5px 12px; font-size: 14px; background: #e0e0e0; border: none; border-radius: 4px; cursor: pointer; }
-        .pagination button:disabled { opacity: 0.5; cursor: not-allowed; }
-    </style>
 </head>
 <body>
 
     <div class="container">
         <!-- HEADER -->
         <header>
-            <h1>Администрирование ЖКХ</h1>
-            <div style="display: flex; align-items: center; gap: 15px;">
-                <span id="adminName" style="font-weight: bold; color: #555;"></span>
+            <div class="header-user-info">
+                <h1>Администрирование ЖКХ</h1>
+            </div>
+            <div class="header-user-info">
+                <span id="adminName" style="font-weight: 600; color: #555;"></span>
+                <!-- Убрал onclick, JS сам найдет кнопку по классу -->
                 <button class="logout-btn">Выйти</button>
             </div>
         </header>
@@ -49,52 +33,51 @@
         <!-- TAB 1: СВЕРКА ПОКАЗАНИЙ -->
         <div id="readings" class="tab-content active">
             <!-- Управление периодом -->
-            <div class="card" style="background: linear-gradient(to right, #eef2f3, #8e9eab); border:none; margin-bottom: 20px;">
+            <div class="card" style="background: linear-gradient(to right, #f8f9fa, #e9ecef); border: 1px solid #dee2e6;">
                 <!-- Блок: Период открыт -->
                 <div id="periodActiveState" style="display:none; justify-content:space-between; align-items:center; flex-wrap: wrap; gap: 15px;">
                     <div>
                         <h2 style="margin:0; border:none; color:#333; font-size: 18px;">
-                            🟢 Открыт сбор показаний: <span id="activePeriodLabel" style="color:#2980b9; font-weight:bold;"></span>
+                            🟢 Открыт сбор: <span id="activePeriodLabel" style="color:#27ae60; font-weight:bold;"></span>
                         </h2>
-                        <small style="color:#555;">Жильцы могут отправлять данные. Нажмите "Закрыть", чтобы завершить месяц.</small>
+                        <small style="color:#666;">Жильцы могут отправлять данные.</small>
                     </div>
-                    <button class="action-btn" style="margin:0; background:#c0392b; width:auto; padding: 8px 15px;">🔒 Закрыть месяц</button>
+                    <button class="action-btn" style="background:#c0392b;">🔒 Закрыть месяц</button>
                 </div>
 
                 <!-- Блок: Период закрыт -->
                 <div id="periodClosedState" style="display:none; justify-content:space-between; align-items:center; flex-wrap: wrap; gap: 15px;">
                     <div>
-                        <h2 style="margin:0; border:none; color:#555; font-size: 18px;">🔴 Прием показаний закрыт</h2>
-                        <small style="color:#555;">Чтобы начать новый месяц, введите название и нажмите "Открыть".</small>
+                        <h2 style="margin:0; border:none; color:#555; font-size: 18px;">🔴 Прием закрыт</h2>
+                        <small style="color:#666;">Начните новый месяц.</small>
                     </div>
                     <div style="display:flex; gap:10px; align-items: center;">
-                        <input type="text" id="newPeriodNameInput" placeholder="Напр. Апрель 2026" style="width: 200px;">
-                        <button class="action-btn" style="margin:0; background:#27ae60; width:auto; padding: 8px 15px;">📂 Открыть новый месяц</button>
+                        <input type="text" id="newPeriodNameInput" placeholder="Напр. Май 2025" style="width: 200px;">
+                        <button class="action-btn" style="background:#27ae60;">📂 Открыть новый</button>
                     </div>
                 </div>
             </div>
 
             <!-- Таблица -->
             <div class="card">
-                <!-- Заголовок и кнопки действий -->
                 <div class="controls-header">
-                    <h2>Поступившие показания (Черновики)</h2>
+                    <h2>Поступившие показания</h2>
                     <div class="controls-group">
-                        <button id="btnBulkApprove" class="action-btn" style="background:#f39c12; margin:0; width: auto; font-size: 13px;">⚡ Утвердить все (Авто)</button>
+                        <button id="btnBulkApprove" class="action-btn" style="background:#f39c12; font-size: 13px;">⚡ Утвердить все (Авто)</button>
                         <button id="btnRefreshReadings" class="refresh-btn">↻</button>
                     </div>
                 </div>
 
-                <div style="margin-bottom: 15px; padding: 10px; background: #fdf8e2; border-radius: 5px; border: 1px solid #f1c40f;">
-                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: bold;">
-                        <input type="checkbox" id="filterAnomalies"> Показать только подозрительные показания
+                <div style="margin-bottom: 15px; padding: 10px; background: #fff3cd; border-radius: 6px; border: 1px solid #ffeeba;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; color: #856404;">
+                        <input type="checkbox" id="filterAnomalies"> Только подозрительные показания
                     </label>
                 </div>
 
-                <div class="pagination">
-                    <button id="btnPrev">← Назад</button>
-                    <span id="pageIndicator" style="font-weight: bold; min-width: 80px; text-align: center;">Стр. 1</span>
-                    <button id="btnNext">Вперед →</button>
+                <div class="pagination" style="display: flex; gap: 10px; margin-bottom: 15px; align-items: center;">
+                    <button id="btnPrev" class="action-btn" style="padding: 5px 10px; background: #bdc3c7;">←</button>
+                    <span id="pageIndicator" style="font-weight: bold; min-width: 60px; text-align: center;">Стр. 1</span>
+                    <button id="btnNext" class="action-btn" style="padding: 5px 10px; background: #bdc3c7;">→</button>
                 </div>
 
                 <div class="table-container">
@@ -113,10 +96,11 @@
         <!-- TAB 2: ПОЛЬЗОВАТЕЛИ -->
         <div id="users" class="tab-content">
             <div class="card" style="border-left: 5px solid #2ecc71;">
-                <h2>📁 Массовая загрузка жильцов (Excel)</h2>
+                <h2>📁 Массовая загрузка (Excel)</h2>
                 <div style="display:flex; gap:10px; align-items:center;">
                     <input type="file" id="importUsersFile" accept=".xlsx" style="padding:5px;">
-                    <button class="action-btn" style="width:auto; margin:0;" onclick="importUsers()">Загрузить</button>
+                    <!-- Убрал onclick, добавил ID для JS -->
+                    <button id="btnImportUsers" class="action-btn">Загрузить</button>
                 </div>
             </div>
 
@@ -133,17 +117,17 @@
                         <div class="form-group"><label>Всего в комнате</label><input type="number" id="totalRoomResidents" value="1"></div>
                         <div class="form-group full-width"><label>Место работы</label><input type="text" id="workplace"></div>
                     </div>
-                    <button type="submit" class="action-btn">Зарегистрировать</button>
+                    <button type="submit" class="action-btn" style="margin-top: 20px;">Зарегистрировать</button>
                 </form>
             </div>
 
             <div class="card">
                 <div class="controls-header">
                     <h2>Список пользователей</h2>
-                    <button id="btnRefreshUsers" class="refresh-btn">↻ Обновить таблицу</button>
+                    <button id="btnRefreshUsers" class="refresh-btn">↻ Обновить</button>
                 </div>
                 <div class="table-container">
-                    <table id="usersTable">
+                    <table>
                         <thead>
                             <tr><th>ID</th><th>Логин</th><th>Роль</th><th>Общ.</th><th>Площ.</th><th>Доля</th><th>Работа</th><th>Действия</th></tr>
                         </thead>
@@ -174,45 +158,45 @@
             </div>
         </div>
 
-        <!-- TAB 5: СВОДКА -->
+        <!-- TAB 4: СВОДКА -->
         <div id="accountant" class="tab-content">
             <div class="card">
-                <!-- ИСПРАВЛЕНО: Используем controls-header и controls-group -->
                 <div class="controls-header">
                     <h2>Финансовая сводка</h2>
-
                     <div class="controls-group">
-                        <!-- JS вставит сюда селект с периодами -->
                         <div id="summaryPeriodSelector"></div>
-
-                        <button id="btnDownloadZip" class="action-btn" style="margin:0; background:#3498db;">🗂 ZIP</button>
-                        <button id="btnDownloadExcel" class="action-btn" style="margin:0; background:#27ae60;">📊 Excel</button>
-                        <button id="btnRefreshSummary" class="refresh-btn" style="margin:0;">↻</button>
+                        <button id="btnDownloadZip" class="action-btn" style="background:#3498db;">🗂 ZIP</button>
+                        <button id="btnDownloadExcel" class="action-btn" style="background:#27ae60;">📊 Excel</button>
+                        <button id="btnRefreshSummary" class="refresh-btn">↻</button>
                     </div>
                 </div>
-
                 <div id="summaryContainer"></div>
             </div>
         </div>
     </div>
 
-    <!-- МОДАЛЬНЫЕ ОКНА -->
+    <!-- МОДАЛЬНЫЕ ОКНА (Сложные формы) -->
 
     <!-- Модалка: Проверка и Коррекция -->
     <div id="approveModal" class="modal-overlay">
         <div class="modal-window">
-            <div class="modal-header">Проверка и Коррекция</div>
+            <div class="modal-header">Проверка показаний</div>
             <input type="hidden" id="modal_reading_id">
-            <div class="highlight-calc">
+
+            <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px; font-size: 14px; border-left: 4px solid #4a90e2;">
                 <strong>Жилец:</strong> <span id="m_username"></span><br>
-                ГВС (набежало): <span id="m_hot_usage"></span> м³<br>
-                ХВС (набежало): <span id="m_cold_usage"></span> м³<br>
-                Свет (общий): <span id="m_elect_usage"></span> кВт
+                ГВС (расход): <span id="m_hot_usage"></span> м³<br>
+                ХВС (расход): <span id="m_cold_usage"></span> м³<br>
+                Свет (расход): <span id="m_elect_usage"></span> кВт
             </div>
-            <div class="modal-row"><label>Коррекция Г.В.:</label><input type="number" step="0.01" id="m_corr_hot" value="0"></div>
-            <div class="modal-row"><label>Коррекция Х.В.:</label><input type="number" step="0.01" id="m_corr_cold" value="0"></div>
-            <div class="modal-row"><label>Коррекция Света:</label><input type="number" step="0.01" id="m_corr_elect" value="0"></div>
-            <div class="modal-row"><label>Корр. Водоотведения:</label><input type="number" step="0.01" id="m_corr_sewage" value="0"></div>
+
+            <div style="display: grid; gap: 10px;">
+                <div class="modal-row"><label>Корр. ГВС:</label><input type="number" step="0.001" id="m_corr_hot"></div>
+                <div class="modal-row"><label>Корр. ХВС:</label><input type="number" step="0.001" id="m_corr_cold"></div>
+                <div class="modal-row"><label>Корр. Свет:</label><input type="number" step="0.001" id="m_corr_elect"></div>
+                <div class="modal-row"><label>Корр. Водоотв.:</label><input type="number" step="0.001" id="m_corr_sewage"></div>
+            </div>
+
             <div class="modal-actions">
                 <button id="btnModalClose" class="close-btn">Отмена</button>
                 <button id="btnModalSubmit" class="confirm-btn">Подтвердить</button>
@@ -228,13 +212,13 @@
                 <input type="hidden" id="editUserId">
                 <div class="form-grid">
                     <div class="form-group"><label>Логин</label><input type="text" id="editUsername" required></div>
-                    <div class="form-group"><label>Пароль</label><input type="text" id="editPassword" placeholder="Оставьте пустым..."></div>
+                    <div class="form-group"><label>Пароль</label><input type="text" id="editPassword" placeholder="Новый пароль (если нужно)"></div>
                     <div class="form-group"><label>Роль</label><select id="editRole"><option value="user">Жилец</option><option value="accountant">Бухгалтер</option></select></div>
                     <div class="form-group"><label>Общежитие</label><input type="text" id="editDormitory"></div>
-                    <div class="form-group"><label>Площадь (м²)</label><input type="number" step="0.1" id="editArea"></div>
-                    <div class="form-group"><label>Платит за</label><input type="number" id="editResidentsCount"></div>
-                    <div class="form-group"><label>Всего в комнате</label><input type="number" id="editTotalRoomResidents"></div>
-                    <div class="form-group"><label>Место работы</label><input type="text" id="editWorkplace"></div>
+                    <div class="form-group"><label>Площадь</label><input type="number" step="0.1" id="editArea"></div>
+                    <div class="form-group"><label>Жильцов</label><input type="number" id="editResidentsCount"></div>
+                    <div class="form-group"><label>Всего мест</label><input type="number" id="editTotalRoomResidents"></div>
+                    <div class="form-group"><label>Работа</label><input type="text" id="editWorkplace"></div>
                 </div>
                 <div class="modal-actions">
                     <button type="button" class="close-btn">Отмена</button>
@@ -244,7 +228,6 @@
         </div>
     </div>
 
-    <!-- ПОДКЛЮЧЕНИЕ ЕДИНОГО МОДУЛЯ -->
     <script type="module" src="js/app.js"></script>
 </body>
 </html>

@@ -1,37 +1,57 @@
 // static/js/core/auth.js
 
 export const Auth = {
-    // Получить токен
+    /**
+     * Сохраняет данные сессии в sessionStorage.
+     * sessionStorage живет, пока открыта вкладка.
+     * При закрытии вкладки данные удаляются (это безопаснее localStorage).
+     */
+    setSession(token, role, username) {
+        if (token) sessionStorage.setItem('token', token);
+        if (role) sessionStorage.setItem('role', role);
+        if (username) sessionStorage.setItem('username', username);
+    },
+
+    /**
+     * Возвращает текущий токен для заголовков API.
+     */
     getToken() {
-        return localStorage.getItem('token');
+        return sessionStorage.getItem('token');
     },
 
-    // Сохранить токен (используется при логине)
-    setToken(token) {
-        localStorage.setItem('token', token);
-    },
-
-    // Выход из системы
-    logout() {
-        console.log('Logging out...');
-        localStorage.removeItem('token');
-        // Редирект на логин
-        window.location.href = 'login.html';
-    },
-
-    // Проверка, вошел ли пользователь
+    /**
+     * Проверяет, авторизован ли пользователь.
+     */
     isAuthenticated() {
         const token = this.getToken();
-        if (!token) return false;
+        // Можно добавить проверку на срок действия токена (JWT exp),
+        // но базовая проверка - наличие строки.
+        return !!token;
+    },
 
-        // Базовая проверка структуры JWT (три части, разделенные точкой)
-        // Это не гарантирует валидность подписи, но отсекает явный мусор
-        const parts = token.split('.');
-        if (parts.length !== 3) {
-            this.logout(); // Токен битый - удаляем и выходим
-            return false;
-        }
+    /**
+     * Возвращает роль (для проверки прав доступа в UI).
+     */
+    getRole() {
+        return sessionStorage.getItem('role');
+    },
 
-        return true;
+    /**
+     * Возвращает логин текущего пользователя.
+     */
+    getUsername() {
+        return sessionStorage.getItem('username');
+    },
+
+    /**
+     * Полный выход из системы.
+     */
+    logout() {
+        console.log('Logging out...');
+        sessionStorage.clear();
+        localStorage.removeItem('token'); // На всякий случай чистим и старое
+
+        // Редирект на вход
+        window.location.replace('login.html');
     }
 };

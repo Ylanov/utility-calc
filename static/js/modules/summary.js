@@ -3,76 +3,48 @@ import { api } from '../core/api.js';
 import { el, clear, setLoading, toast } from '../core/dom.js';
 
 export const SummaryModule = {
-    isInitialized: false,
-    controller: null, // Для отмены предыдущих запросов загрузки
-
-    // Храним текущий выбранный период
     state: {
-        selectedPeriodId: null
+        selectedPeriodId: null,
+        controller: null // Для отмены запросов
     },
 
-    // ============================================================
-    // ИНИЦИАЛИЗАЦИЯ
-    // ============================================================
-    async init() {
-        if (!this.isInitialized) {
-            this.setupEventListeners();
-            this.isInitialized = true;
-        }
-
-        // Загружаем список периодов.
-        // Убрали проверку children.length, чтобы гарантированно перезаписать
-        // текст-плейсхолдер "Загрузка периодов..." на реальный селект.
-        const selectorContainer = document.getElementById('summaryPeriodSelector');
-        if (selectorContainer) {
-            await this.loadPeriods(selectorContainer);
-        }
-
-        // Загружаем данные (используя выбранный период или дефолтный)
-        this.loadData();
+    init() {
+        this.cacheDOM();
+        this.bindEvents();
+        this.loadPeriods();
     },
 
-    setupEventListeners() {
-        console.log('SummaryModule: Event listeners setup.');
-
-        // Кнопка Обновить
-        const btnRefresh = document.getElementById('btnRefreshSummary');
-        if (btnRefresh) {
-            btnRefresh.addEventListener('click', () => this.loadData());
-        }
-
-        // Кнопка Скачать Excel
-        const btnExcel = document.getElementById('btnDownloadExcel');
-        if (btnExcel) {
-            btnExcel.addEventListener('click', (e) => this.downloadExcel(e.target));
-        }
-
-        // Кнопка Скачать ZIP архив
-        const btnZip = document.getElementById('btnDownloadZip');
-        if (btnZip) {
-            btnZip.addEventListener('click', (e) => this.downloadZip(e.target));
-        }
+    cacheDOM() {
+        this.dom = {
+            container: document.getElementById('summaryContainer'),
+            periodSelector: document.getElementById('summaryPeriodSelector'),
+            btnRefresh: document.getElementById('btnRefreshSummary'),
+            btnExcel: document.getElementById('btnDownloadExcel'),
+            btnZip: document.getElementById('btnDownloadZip')
+        };
     },
 
-    // ============================================================
-    // ЗАГРУЗКА ДАННЫХ
-    // ============================================================
-    async loadPeriods(container) {
-        // Очищаем контейнер перед загрузкой, чтобы убрать любой мусор или текст загрузки
-        container.innerHTML = '';
+    bindEvents() {
+        if (this.dom.btnRefresh) this.dom.btnRefresh.addEventListener('click', () => this.loadData());
+        if (this.dom.btnExcel) this.dom.btnExcel.addEventListener('click', () => this.downloadExcel());
+        if (this.dom.btnZip) this.dom.btnZip.addEventListener('click', () => this.downloadZip());
+    },
+
+    async loadPeriods() {
+        this.dom.periodSelector.innerHTML = '<span class="text-gray-500">Загрузка...</span>';
 
         try {
             const periods = await api.get('/admin/periods/history');
+            this.dom.periodSelector.innerHTML = '';
 
-            if (!periods || periods.length === 0) {
-                container.textContent = "Нет доступных периодов";
+            if (!periods || !periods.length) {
+                this.dom.periodSelector.textContent = "Нет периодов";
                 return;
             }
 
-            // Создаем select
             const select = el('select', {
                 class: 'border p-2 rounded',
-                style: { fontSize: '14px', minWidth: '200px', cursor: 'pointer' },
+                style: { fontSize: '14px', minWidth: '200px' },
                 onchange: (e) => {
                     this.state.selectedPeriodId = e.target.value;
                     this.loadData();
@@ -80,249 +52,238 @@ export const SummaryModule = {
             });
 
             periods.forEach(p => {
-                const isActive = p.is_active ? ' (Активен)' : '';
-                const option = el('option', { value: p.id }, `${p.name}${isActive}`);
-                select.appendChild(option);
+                const opt = el('option', { value: p.id }, `${p.name} ${p.is_active ? '(Активен)' : ''}`);
+                select.appendChild(opt);
             });
 
-            // Выбираем первый (самый новый) по умолчанию
-            if (!this.state.selectedPeriodId && periods.length > 0) {
-                this.state.selectedPeriodId = periods[0].id;
-                select.value = periods[0].id;
-            } else if (this.state.selectedPeriodId) {
-                select.value = this.state.selectedPeriodId;
-            }
+            this.dom.periodSelector.appendChild(el('span', { style: { marginRight: '10px', fontWeight: 'bold' } }, 'Период: '));
+            this.dom.periodSelector.appendChild(select);
 
-            container.appendChild(el('span', { class: 'mr-2 font-bold text-gray-600' }, 'Период: '));
-            container.appendChild(select);
+            // Выбираем первый по умолчанию
+            this.state.selectedPeriodId = periods[0].id;
+            select.value = periods[0].id;
+
+            // Загружаем данные для первого периода
+            this.loadData();
 
         } catch (e) {
-            console.error("Ошибка загрузки периодов:", e);
-            container.innerHTML = '<span style="color:red">Ошибка загрузки списка</span>';
-            toast("Не удалось загрузить периоды", "error");
+            console.error(e);
+            this.dom.periodSelector.textContent = "Ошибка загрузки";
         }
     },
 
     async loadData() {
         // Отменяем предыдущий запрос, если он еще идет
-        if (this.controller) {
-            this.controller.abort();
+        if (this.state.controller) {
+            this.state.controller.abort();
         }
-        this.controller = new AbortController();
-        const signal = this.controller.signal;
+        this.state.controller = new AbortController();
 
-        const container = clear('summaryContainer');
-        container.appendChild(el('p', { style: { textAlign: 'center', color: '#888', padding: '40px' } }, '⏳ Загрузка сводки...'));
+        this.dom.container.innerHTML = '<div style="text-align:center; padding:40px; color:#888;">⏳ Загрузка сводки...</div>';
 
         try {
-            let url = '/admin/summary';
-            if (this.state.selectedPeriodId) {
-                url += `?period_id=${this.state.selectedPeriodId}`;
-            }
+            const url = this.state.selectedPeriodId
+                ? `/admin/summary?period_id=${this.state.selectedPeriodId}`
+                : '/admin/summary';
 
-            const data = await api.get(url, { signal });
+            const data = await api.get(url, { signal: this.state.controller.signal });
 
-            container.innerHTML = ''; // Очищаем "Загрузка..."
-
-            if (!data || Object.keys(data).length === 0) {
-                container.appendChild(el('div', { class: 'text-center p-8 bg-gray-50 rounded-lg' },
-                    el('p', { class: 'text-gray-500 text-lg' }, 'Нет начислений за выбранный период.')
-                ));
-                return;
-            }
-
-            for (const [dormName, records] of Object.entries(data)) {
-                this.renderDormBlock(container, dormName, records);
-            }
-
-        } catch (error) {
-            if (error.name === 'AbortError') return; // Игнорируем отмену
-
-            container.innerHTML = '';
-            container.appendChild(el('p', { style: { color: 'red', textAlign: 'center', padding: '20px' } }, 'Ошибка загрузки: ' + error.message));
+            this.renderData(data);
+        } catch (e) {
+            if (e.name === 'AbortError') return; // Игнорируем отмену
+            this.dom.container.innerHTML = `<div style="text-align:center; color:red; padding:20px;">Ошибка: ${e.message}</div>`;
         }
     },
 
-    renderDormBlock(container, dormName, records) {
-        // Используем card для красивого оформления блока
-        const section = el('div', { class: 'card' });
+    renderData(data) {
+        this.dom.container.innerHTML = '';
 
-        section.appendChild(el('h3', {
-            style: { background: "#f8f9fa", padding: "10px", borderRadius: "5px", marginBottom: "15px", borderLeft: "5px solid #4a90e2" }
-        }, `🏠 Общежитие: ${dormName}`));
+        if (!data || Object.keys(data).length === 0) {
+            this.dom.container.innerHTML = '<div style="text-align:center; padding:40px; color:#888;">Нет данных за этот период</div>';
+            return;
+        }
 
-        const table = el('table', { style: { width: "100%", borderCollapse: "collapse", fontSize: "13px" } });
+        const fragment = document.createDocumentFragment();
 
-        const thead = el('thead', {}, el('tr', { style: { background: "#f1f1f1" } },
-            el('th', {}, 'Дата'), el('th', {}, 'Жилец'), el('th', {}, 'Г.В.'), el('th', {}, 'Х.В.'),
-            el('th', {}, 'Свет'), el('th', {}, 'Содерж.'), el('th', {}, 'Наем'),
-            el('th', {}, 'Мусор'), el('th', {}, 'Отопл.'), el('th', {}, 'ИТОГО'), el('th', {}, 'Действия')
-        ));
-        table.appendChild(thead);
+        for (const [dormName, records] of Object.entries(data)) {
+            const card = el('div', { class: 'card' });
 
-        const tbody = el('tbody', {});
-        const totals = { hot: 0, cold: 0, sew: 0, el: 0, main: 0, rent: 0, waste: 0, fix: 0, sum: 0 };
+            // Заголовок общежития
+            card.appendChild(el('h3', {
+                style: {
+                    borderLeft: '4px solid #4a90e2',
+                    paddingLeft: '10px',
+                    marginBottom: '15px'
+                }
+            }, `🏠 ${dormName}`));
 
-        records.forEach(r => {
-            Object.keys(totals).forEach(key => totals[key] += Number(r[key] || r.sewage || r.electric || r.maintenance || r.total || 0));
+            // Таблица
+            const table = el('table', { style: { fontSize: '13px' } });
 
-            const tr = el('tr', {},
-                el('td', {}, r.date.split(' ')[0]),
-                el('td', {},
-                    el('strong', {}, r.username), el('br'),
-                    el('span', { style: {fontSize: '10px', color: '#777'} }, `${r.area}м² / ${r.residents} чел`)
-                ),
-                el('td', {}, Number(r.hot).toFixed(2)), el('td', {}, Number(r.cold).toFixed(2)),
-                el('td', {}, Number(r.electric).toFixed(2)),
-                el('td', {}, Number(r.maintenance).toFixed(2)), el('td', {}, Number(r.rent).toFixed(2)),
-                el('td', {}, Number(r.waste).toFixed(2)), el('td', {}, Number(r.fixed).toFixed(2)),
-                el('td', { style: {fontWeight: 'bold'} }, Number(r.total).toFixed(2)),
-                el('td', {},
-                    // Используем компактные кнопки-иконки для действий
-                    el('div', { class: 'controls-group', style: { gap: '5px' } },
+            // Шапка
+            table.appendChild(el('thead', {}, el('tr', { style: { background: '#f8f9fa' } },
+                el('th', {}, 'Дата'),
+                el('th', {}, 'Жилец'),
+                el('th', {}, 'ГВС'),
+                el('th', {}, 'ХВС'),
+                el('th', {}, 'Свет'),
+                el('th', {}, 'Содерж.'),
+                el('th', {}, 'Наем'),
+                el('th', {}, 'ТКО'),
+                el('th', {}, 'Отопл.'),
+                el('th', {}, 'ИТОГО'),
+                el('th', {}, '')
+            )));
+
+            const tbody = el('tbody', {});
+            const totals = { hot:0, cold:0, el:0, main:0, rent:0, waste:0, fix:0, sum:0 };
+
+            records.forEach(r => {
+                // Суммируем
+                totals.hot += Number(r.hot);
+                totals.cold += Number(r.cold);
+                totals.el += Number(r.electric);
+                totals.main += Number(r.maintenance);
+                totals.rent += Number(r.rent);
+                totals.waste += Number(r.waste);
+                totals.fix += Number(r.fixed);
+                totals.sum += Number(r.total);
+
+                const tr = el('tr', {},
+                    el('td', {}, r.date.split(' ')[0]),
+                    el('td', {},
+                        el('div', { style: { fontWeight: 'bold' } }, r.username),
+                        el('div', { style: { fontSize: '11px', color: '#999' } }, `${r.area}м² / ${r.residents} чел`)
+                    ),
+                    el('td', {}, Number(r.hot).toFixed(2)),
+                    el('td', {}, Number(r.cold).toFixed(2)),
+                    el('td', {}, Number(r.electric).toFixed(2)),
+                    el('td', {}, Number(r.maintenance).toFixed(2)),
+                    el('td', {}, Number(r.rent).toFixed(2)),
+                    el('td', {}, Number(r.waste).toFixed(2)),
+                    el('td', {}, Number(r.fixed).toFixed(2)),
+                    el('td', { style: { fontWeight: 'bold' } }, Number(r.total).toFixed(2)),
+                    el('td', {},
                         el('button', {
                             class: 'btn-icon btn-doc',
                             title: 'Скачать квитанцию',
-                            onclick: (e) => this.downloadReceipt(r.reading_id, e.target)
-                        }, '📄'),
-                        el('button', {
-                            class: 'btn-icon btn-delete',
-                            title: 'Удалить запись',
-                            onclick: () => this.deleteRecord(r.reading_id)
-                        }, '🗑')
+                            onclick: () => this.downloadReceipt(r.reading_id)
+                        }, '📄')
                     )
-                )
-            );
-            tbody.appendChild(tr);
-        });
+                );
+                tbody.appendChild(tr);
+            });
 
-        const footer = el('tr', { style: { background: "#e8f5e9", fontWeight: "bold" } },
-            el('td', { colspan: 2 }, 'ИТОГО:'),
-            el('td', {}, totals.hot.toFixed(2)), el('td', {}, totals.cold.toFixed(2)),
-            el('td', {}, totals.el.toFixed(2)),
-            el('td', {}, totals.main.toFixed(2)), el('td', {}, totals.rent.toFixed(2)),
-            el('td', {}, totals.waste.toFixed(2)), el('td', {}, totals.fix.toFixed(2)),
-            el('td', { style: { color: '#c0392b' } }, totals.sum.toFixed(2)),
-            el('td', {}, '')
-        );
-        tbody.appendChild(footer);
+            // Итоговая строка
+            tbody.appendChild(el('tr', { style: { background: '#e8f5e9', fontWeight: 'bold' } },
+                el('td', { colspan: 2 }, 'ИТОГО ПО ОБЩЕЖИТИЮ:'),
+                el('td', {}, totals.hot.toFixed(2)),
+                el('td', {}, totals.cold.toFixed(2)),
+                el('td', {}, totals.el.toFixed(2)),
+                el('td', {}, totals.main.toFixed(2)),
+                el('td', {}, totals.rent.toFixed(2)),
+                el('td', {}, totals.waste.toFixed(2)),
+                el('td', {}, totals.fix.toFixed(2)),
+                el('td', { style: { color: '#c0392b' } }, totals.sum.toFixed(2)),
+                el('td', {}, '')
+            ));
 
-        table.appendChild(tbody);
-        section.appendChild(table);
-        container.appendChild(section);
-    },
-
-    async deleteRecord(id) {
-        if (!confirm("Удалить эту запись?")) return;
-        try {
-            await api.delete(`/admin/readings/${id}`);
-            toast("Запись удалена", "success");
-            this.loadData();
-        } catch (error) {
-            toast("Ошибка удаления: " + error.message, "error");
+            table.appendChild(tbody);
+            card.appendChild(table);
+            fragment.appendChild(card);
         }
+
+        this.dom.container.appendChild(fragment);
     },
 
-    // ============================================================
-    // СКАЧИВАНИЕ ФАЙЛОВ
-    // ============================================================
-    async downloadReceipt(readingId, btn) {
-        const originalText = btn.innerHTML;
-        btn.disabled = true;
-        btn.innerHTML = '⏳';
+    // --- СКАЧИВАНИЕ ---
 
+    async downloadReceipt(id) {
+        toast('Генерация квитанции...', 'info');
         try {
-            const startData = await api.post(`/admin/receipts/${readingId}/generate`, {});
-            const taskId = startData.task_id;
+            // 1. Запускаем задачу
+            const res = await api.post(`/admin/receipts/${id}/generate`, {});
 
-            // Запускаем опрос статуса задачи
-            const result = await this.pollTaskStatus(taskId);
+            // 2. Ждем готовности (поллинг)
+            const result = await this.pollTask(res.task_id);
 
-            const link = document.createElement('a');
-            link.href = result.download_url;
-            link.download = `receipt_${readingId}.pdf`;
-            link.target = '_blank';
-            document.body.appendChild(link);
-            link.click();
-            link.remove();
-
-            toast("Квитанция скачана", "success");
-        } catch (error) {
-            toast("Ошибка скачивания: " + error.message, "error");
-        } finally {
-            btn.disabled = false;
-            btn.innerHTML = originalText;
-        }
-    },
-
-    async downloadZip(btn) {
-        const originalText = btn.innerHTML;
-        setLoading(btn, true, 'Формирование...');
-
-        try {
-            let url = '/admin/reports/bulk-zip';
-            if (this.state.selectedPeriodId) {
-                url += `?period_id=${this.state.selectedPeriodId}`;
-            }
-
-            const startData = await api.post(url, {});
-            const taskId = startData.task_id;
-
-            toast("Архив формируется, пожалуйста подождите...", "info");
-
-            const result = await this.pollTaskStatus(taskId);
-
-            if (result && result.download_url) {
+            // 3. Скачиваем
+            if (result.download_url) {
+                // Создаем временную ссылку
                 const link = document.createElement('a');
                 link.href = result.download_url;
-                link.download = result.filename || `receipts_${this.state.selectedPeriodId}.zip`;
+                link.target = '_blank';
+                link.download = `receipt_${id}.pdf`;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                toast('Скачивание началось', 'success');
+            }
+        } catch (e) {
+            toast('Ошибка скачивания: ' + e.message, 'error');
+        }
+    },
+
+    async downloadExcel() {
+        if (!this.state.selectedPeriodId) return;
+        setLoading(this.dom.btnExcel, true, 'Скачивание...');
+
+        try {
+            await api.download(`/admin/export_report?period_id=${this.state.selectedPeriodId}`, `report_${this.state.selectedPeriodId}.xlsx`);
+            toast('Отчет скачан', 'success');
+        } catch (e) {
+            toast('Ошибка: ' + e.message, 'error');
+        } finally {
+            setLoading(this.dom.btnExcel, false);
+        }
+    },
+
+    async downloadZip() {
+        if (!this.state.selectedPeriodId) return;
+        setLoading(this.dom.btnZip, true, 'Формирование...');
+
+        try {
+            toast('Архив формируется, это может занять время...', 'info');
+
+            const res = await api.post(`/admin/reports/bulk-zip?period_id=${this.state.selectedPeriodId}`, {});
+            const result = await this.pollTask(res.task_id);
+
+            if (result.download_url) {
+                const link = document.createElement('a');
+                link.href = result.download_url;
                 link.target = '_blank';
                 document.body.appendChild(link);
                 link.click();
                 link.remove();
-                toast(`Архив готов! Файлов: ${result.count}`, "success");
-            } else {
-                throw new Error("Не удалось получить ссылку на скачивание.");
+                toast('Архив готов!', 'success');
             }
-        } catch (error) {
-            toast("Ошибка формирования архива: " + error.message, "error");
+        } catch (e) {
+            toast('Ошибка: ' + e.message, 'error');
         } finally {
-            setLoading(btn, false, originalText);
+            setLoading(this.dom.btnZip, false);
         }
     },
 
-    async pollTaskStatus(taskId) {
-        const pollInterval = 1500;
-        const maxAttempts = 120; // 3 минуты макс
-
-        for (let i = 0; i < maxAttempts; i++) {
+    // Вспомогательная функция ожидания задачи
+    async pollTask(taskId) {
+        const poll = async () => {
             const data = await api.get(`/admin/tasks/${taskId}`);
-
-            if (data.state === 'SUCCESS' || data.status === 'done') {
-                return data.result || data;
+            if (data.status === 'done' || data.state === 'SUCCESS') {
+                return data;
             }
             if (data.state === 'FAILURE') {
-                throw new Error(data.error || "Ошибка генерации на сервере");
+                throw new Error(data.error || 'Ошибка сервера');
             }
-            // Ждем перед следующим опросом
-            await new Promise(r => setTimeout(r, pollInterval));
-        }
-        throw new Error("Таймаут: сервер слишком долго формирует файл.");
-    },
+            // Ждем 1.5 сек и повторяем
+            await new Promise(r => setTimeout(r, 1500));
+            return poll();
+        };
 
-    async downloadExcel(btn) {
-        setLoading(btn, true, 'Скачивание...');
-        try {
-            let url = '/admin/export_report';
-            if (this.state.selectedPeriodId) {
-                url += `?period_id=${this.state.selectedPeriodId}`;
-            }
-            await api.download(url, `report_${this.state.selectedPeriodId}.xlsx`);
-            toast("Отчет Excel скачан", "success");
-        } catch (error) {
-            toast("Ошибка скачивания: " + error.message, "error");
-        } finally {
-            setLoading(btn, false);
-        }
+        // Timeout 3 минуты
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Время ожидания истекло')), 180000)
+        );
+
+        return Promise.race([poll(), timeoutPromise]);
     }
 };

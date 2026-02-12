@@ -1,5 +1,4 @@
 services:
-
   # =============================
   # BACKEND
   # =============================
@@ -9,27 +8,17 @@ services:
       target: web
     container_name: utility_calc_web
     restart: always
-
-    environment:
-      DATABASE_URL_ASYNC: postgresql+asyncpg://postgres:postgres@db:5432/utility_db
-      DATABASE_URL_SYNC: postgresql://postgres:postgres@db:5432/utility_db
-      REDIS_URL: redis://redis:6379/0
-
+    # Указываем, что нужно загрузить переменные из .env файла в контейнер
+    env_file: ./.env
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_started
-
     volumes:
       - shared_data:/app/static/generated_files
-
-    expose:
-      - "8000"
-
     networks:
       - utility_net
-
 
   # =============================
   # WORKER
@@ -40,24 +29,17 @@ services:
       target: worker
     container_name: utility_calc_worker
     restart: always
-
-    environment:
-      DATABASE_URL_ASYNC: postgresql+asyncpg://postgres:postgres@db:5432/utility_db
-      DATABASE_URL_SYNC: postgresql://postgres:postgres@db:5432/utility_db
-      REDIS_URL: redis://redis:6379/0
-
+    # И сюда тоже загружаем переменные
+    env_file: ./.env
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_started
-
     volumes:
       - shared_data:/app/static/generated_files
-
     networks:
       - utility_net
-
 
   # =============================
   # POSTGRES
@@ -66,25 +48,21 @@ services:
     image: postgres:15
     container_name: utility_calc_db
     restart: always
-
+    # Docker Compose сам подставит сюда значения из .env файла
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: utility_db
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
       PGDATA: /var/lib/postgresql/data/pgdata
-
     volumes:
       - postgres_data:/var/lib/postgresql/data
-
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d utility_db"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
-
     networks:
       - utility_net
-
 
   # =============================
   # REDIS
@@ -93,13 +71,10 @@ services:
     image: redis:7-alpine
     container_name: utility_calc_redis
     restart: always
-
     volumes:
       - redis_data:/data
-
     networks:
       - utility_net
-
 
   # =============================
   # NGINX
@@ -108,23 +83,20 @@ services:
     image: nginx:alpine
     container_name: utility_calc_nginx
     restart: always
-
     ports:
       - "8080:80"
       - "8443:443"
-
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d
       - ./nginx/certs:/etc/nginx/certs
-      - ./static:/usr/share/nginx/html/static
-      - shared_data:/usr/share/nginx/html/static/generated_files
-
+      # Монтируем локальную папку static для разработки
+      - ./static:/usr/share/nginx/html
+      # Монтируем volume для сгенерированных файлов (квитанций, отчетов)
+      - shared_data:/usr/share/nginx/html/generated_files
     depends_on:
       - web
-
     networks:
       - utility_net
-
 
   # =============================
   # BACKUP
@@ -133,44 +105,35 @@ services:
     image: postgres:15
     container_name: utility_calc_backup
     restart: always
-
+    # И здесь тоже используем переменные
     environment:
       PGHOST: db
-      PGUSER: postgres
-      PGPASSWORD: postgres
-      PGDB: utility_db
-
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDB: ${POSTGRES_DB}
     volumes:
       - ./backups:/backups
       - ./backup.sh:/usr/local/bin/backup.sh
-
     depends_on:
       db:
         condition: service_healthy
-
     command: >
       bash -c "chmod +x /usr/local/bin/backup.sh &&
       while true; do
         /usr/local/bin/backup.sh;
         sleep 86400;
       done"
-
     networks:
       - utility_net
 
-
 # =============================
-# VOLUMES
+# VOLUMES & NETWORK
 # =============================
 volumes:
   postgres_data:
   redis_data:
   shared_data:
 
-
-# =============================
-# NETWORK
-# =============================
 networks:
   utility_net:
     driver: bridge

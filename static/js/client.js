@@ -2,28 +2,31 @@
 import { Auth } from './core/auth.js';
 import { ClientDashboard } from './modules/client-dashboard.js';
 
-// Проверка авторизации: если токена нет, редирект на вход
+// --- 1. Глобальная проверка авторизации ---
+// Если токена в памяти нет, сразу перенаправляем на вход.
+// Используем replace, чтобы текущая страница не сохранялась в истории.
 if (!Auth.isAuthenticated()) {
-    window.location.href = 'login.html';
+    window.location.replace('login.html');
 }
 
+// --- 2. Инициализация приложения ---
 document.addEventListener('DOMContentLoaded', () => {
     console.log('Client App initialized');
 
-    // Находим кнопку выхода и вешаем обработчик
-    // (удаляем onclick атрибут из HTML, если он был, чтобы использовать модуль Auth)
-    const logoutBtn = document.querySelector('button[onclick="logout()"]');
-    if (logoutBtn) {
-        logoutBtn.removeAttribute('onclick');
-        logoutBtn.addEventListener('click', () => Auth.logout());
-    }
+    setupGlobalEvents();
 
-    // Инициализируем основной модуль дашборда.
-    // Он сам загрузит профиль, показания и историю.
+    // Запускаем основной модуль личного кабинета
     ClientDashboard.init();
 });
 
-// Глобальная функция logout на случай, если где-то в HTML остался вызов onclick="logout()"
-window.logout = function() {
-    Auth.logout();
-};
+function setupGlobalEvents() {
+    // Находим кнопку выхода по ID (добавлен в новом index.html)
+    const logoutBtn = document.getElementById('clientLogoutBtn');
+
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            Auth.logout();
+        });
+    }
+}

@@ -1,89 +1,74 @@
 // static/js/core/api.js
 import { Auth } from './auth.js';
+import { toast } from './dom.js';
 
-/**
- * ApiClient - это централизованный класс для всех запросов к серверу.
- * Он автоматически добавляет токен авторизации и базовый URL ко всем запросам,
- * а также обеспечивает единую обработку ошибок.
- */
 class ApiClient {
     /**
-     * @param {string} baseUrl - Префикс, который добавляется ко всем эндпоинтам.
-     * КРИТИЧЕСКОЕ ИЗМЕНЕНИЕ: Устанавливаем '/api' по умолчанию.
-     * Теперь все запросы (например, get('/users')) будут автоматически отправляться на '/api/users'.
+     * @param {string} baseUrl - Базовый URL (по умолчанию /api, так как основные роуты там)
      */
     constructor(baseUrl = '/api') {
         this.baseUrl = baseUrl;
     }
 
-    // --- Приватный метод для выполнения запросов ---
-    // Этот метод является "сердцем" клиента и вызывается всеми публичными методами (get, post и т.д.)
     async _request(endpoint, options = {}) {
         const token = Auth.getToken();
 
         const headers = {
-            // Добавляем токен авторизации в каждый запрос
-            'Authorization': `Bearer ${token}`,
-            // Позволяем передавать дополнительные заголовки, если это необходимо
+            'Accept': 'application/json',
             ...options.headers
         };
 
-        // Если мы отправляем данные (тело запроса) и это не FormData,
-        // то автоматически преобразуем их в JSON и устанавливаем нужный заголовок.
+        // Добавляем токен, если он есть
+        if (token) {
+            headers['Authorization'] = `Bearer ${token}`;
+        }
+
+        // Автоматически сериализуем тело запроса в JSON
         if (options.body && !(options.body instanceof FormData)) {
             headers['Content-Type'] = 'application/json';
             options.body = JSON.stringify(options.body);
         }
 
-        const config = {
-            ...options,
-            headers
-        };
+        const config = { ...options, headers };
 
         try {
-            // Собираем полный URL и выполняем запрос
+            // Формируем полный URL. Если endpoint начинается с /, baseUrl не дублируется, если настроить правильно.
+            // Но для простоты: constructor('/api') -> get('/users') -> '/api/users'
             const response = await fetch(`${this.baseUrl}${endpoint}`, config);
 
-            // --- Централизованная обработка ошибок ---
-
-            // Если сервер вернул 401 (Unauthorized), значит токен недействителен.
-            // Выходим из системы и прерываем выполнение.
+            // 1. Обработка протухшего токена (401 Unauthorized)
             if (response.status === 401) {
-                Auth.logout();
-                throw new Error('Сессия истекла. Пожалуйста, войдите снова.');
+                // Если мы не на странице логина, делаем логаут
+                if (!window.location.pathname.includes('login.html')) {
+                    toast('Сессия истекла. Пожалуйста, войдите снова.', 'error');
+                    Auth.logout();
+                }
+                throw new Error('Unauthorized');
             }
 
-            // --- Обработка ответа ---
-
+            // 2. Разбор ответа
             const contentType = response.headers.get("content-type");
             let data;
 
-            // Если ответ содержит JSON, парсим его. В противном случае, читаем как текст.
             if (contentType && contentType.includes("application/json")) {
                 data = await response.json();
             } else {
                 data = await response.text();
             }
 
-            // Если ответ не "ok" (статус 200-299), генерируем ошибку.
+            // 3. Обработка ошибок приложения (400, 403, 404, 500)
             if (!response.ok) {
-                // Пытаемся извлечь понятное сообщение об ошибке из ответа FastAPI (поле "detail").
-                // Если его нет, показываем общую ошибку.
-                let errorMessage;
+                let errorMessage = 'Ошибка сервера';
+
                 if (typeof data === 'object') {
-                    // Если есть поле detail (стандарт FastAPI), используем его
+                    // FastAPI возвращает ошибки в поле detail
                     if (data.detail) {
-                        // Если detail это массив (ошибки валидации Pydantic), превращаем в строку
-                        errorMessage = typeof data.detail === 'object'
-                            ? JSON.stringify(data.detail)
-                            : data.detail;
-                    } else {
-                        // Если detail нет, но это объект, просто сериализуем
-                        errorMessage = JSON.stringify(data);
+                        errorMessage = typeof data.detail === 'string'
+                            ? data.detail
+                            : JSON.stringify(data.detail); // Если detail это массив ошибок валидации
                     }
-                } else {
-                    // Если это строка или что-то другое
-                    errorMessage = data || `Ошибка сервера (${response.status})`;
+                } else if (typeof data === 'string') {
+                    errorMessage = data;
                 }
 
                 throw new Error(errorMessage);
@@ -92,38 +77,29 @@ class ApiClient {
             return data;
 
         } catch (error) {
-            // Логируем ошибку в консоль для отладки и пробрасываем ее дальше,
-            // чтобы модуль, вызвавший запрос, мог показать ее пользователю.
-            console.error(`API Error on [${options.method || 'GET'} ${endpoint}]:`, error);
+            // Не логируем ошибку авторизации, так как она уже обработана
+            if (error.message !== 'Unauthorized') {
+                console.error(`API Error [${endpoint}]:`, error);
+            }
             throw error;
         }
     }
 
-    // --- Публичные методы для удобства ---
+    // Методы-обертки
+    get(endpoint, options) { return this._request(endpoint, { ...options, method: 'GET' }); }
+    post(endpoint, body) { return this._request(endpoint, { method: 'POST', body }); }
+    put(endpoint, body) { return this._request(endpoint, { method: 'PUT', body }); }
+    delete(endpoint) { return this._request(endpoint, { method: 'DELETE' }); }
 
-    get(endpoint) {
-        return this._request(endpoint, { method: 'GET' });
-    }
-
-    post(endpoint, body) {
-        return this._request(endpoint, { method: 'POST', body });
-    }
-
-    put(endpoint, body) {
-        return this._request(endpoint, { method: 'PUT', body });
-    }
-
-    delete(endpoint) {
-        return this._request(endpoint, { method: 'DELETE' });
-    }
-
-    // --- Специальный метод для скачивания файлов ---
-    // Он не использует _request, так как работает с бинарными данными (Blob), а не JSON.
+    /**
+     * Метод для скачивания файлов (Blob).
+     */
     async download(endpoint, defaultFilename = 'file') {
         const token = Auth.getToken();
+
         try {
             const response = await fetch(`${this.baseUrl}${endpoint}`, {
-                method: 'GET', // Скачивание всегда GET-запрос
+                method: 'GET',
                 headers: { 'Authorization': `Bearer ${token}` }
             });
 
@@ -133,21 +109,19 @@ class ApiClient {
             }
 
             if (!response.ok) {
-                throw new Error('Не удалось загрузить файл');
+                const errText = await response.text();
+                throw new Error(errText || 'Ошибка скачивания');
             }
 
-            // Пытаемся извлечь имя файла из заголовка Content-Disposition
+            // Пытаемся достать имя файла из заголовков
             let filename = defaultFilename;
             const disposition = response.headers.get('content-disposition');
-            if (disposition && disposition.includes('attachment')) {
-                const filenameRegex = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/;
-                const matches = filenameRegex.exec(disposition);
-                if (matches != null && matches[1]) {
-                    filename = matches[1].replace(/['"]/g, '');
-                }
+            if (disposition && disposition.includes('filename=')) {
+                const match = disposition.match(/filename=['"]?([^'"]+)['"]?/);
+                if (match) filename = match[1];
             }
 
-            // Создаем Blob из ответа и инициируем скачивание в браузере
+            // Создаем ссылку для скачивания
             const blob = await response.blob();
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -155,16 +129,14 @@ class ApiClient {
             a.download = filename;
             document.body.appendChild(a);
             a.click();
-            a.remove(); // Очищаем DOM
-            window.URL.revokeObjectURL(url); // Освобождаем память
+            a.remove();
+            window.URL.revokeObjectURL(url);
 
         } catch (error) {
-            console.error('Download error:', error);
-            alert('Не удалось скачать файл: ' + error.message);
+            toast('Не удалось скачать файл: ' + error.message, 'error');
         }
     }
 }
 
-// Создаем и экспортируем единственный экземпляр клиента,
-// чтобы все модули использовали одно и то же подключение.
+// Экспортируем единственный экземпляр
 export const api = new ApiClient();

@@ -1,0 +1,24 @@
+:root {
+    /* Основная палитра */
+    --primary-color: #4a90e2;
+    --primary-hover: #357abd;
+
+    /* Фоны */
+    --bg-color: #f4f7f6;
+    --card-bg: #ffffff;
+
+    /* Текст и границы */
+    --text-color: #333333;
+    --text-muted: #666666;
+    --border-color: #e0e0e0;
+
+    /* Статусы */
+    --danger-color: #e74c3c;
+    --success-color: #2ecc71;
+    --warning-color: #f39c12;
+    --info-color: #3498db;
+
+    /* Размеры и отступы */
+    --border-radius: 8px;
+    --container-width: 1200px;
+}

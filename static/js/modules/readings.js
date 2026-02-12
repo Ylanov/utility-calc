@@ -1,253 +1,233 @@
 // static/js/modules/readings.js
 import { api } from '../core/api.js';
-import { el, clear, setLoading, toast } from '../core/dom.js';
-import { store } from '../core/store.js';
+import { el, clear, setLoading, toast, showPrompt } from '../core/dom.js';
 
-// Конфигурация цветов и текстов для аномалий
+// Карта цветов для аномалий
 const ANOMALY_MAP = {
-    "NEGATIVE_HOT": { text: "ГВС<0", color: "#e74c3c", title: "Ошибка: Показания ГВС меньше предыдущих!" },
-    "NEGATIVE_COLD": { text: "ХВС<0", color: "#e74c3c", title: "Ошибка: Показания ХВС меньше предыдущих!" },
-    "NEGATIVE_ELECT": { text: "Свет<0", color: "#e74c3c", title: "Ошибка: Показания Света меньше предыдущих!" },
-    "HIGH_VS_PEERS_HOT": { text: "ГВС Peers↑", color: "#9b59b6", title: "Расход ГВС значительно выше среднего по общежитию" },
-    "HIGH_VS_PEERS_COLD": { text: "ХВС Peers↑", color: "#9b59b6", title: "Расход ХВС значительно выше среднего по общежитию" },
-    "HIGH_VS_PEERS_ELECT": { text: "Свет Peers↑", color: "#9b59b6", title: "Расход Света значительно выше среднего по общежитию" },
-    "HIGH_HOT": { text: "ГВС↑", color: "#e74c3c", title: "Очень высокий расход горячей воды" },
-    "HIGH_COLD": { text: "ХВС↑", color: "#e74c3c", title: "Очень высокий расход холодной воды" },
-    "HIGH_ELECT": { text: "Свет↑", color: "#e74c3c", title: "Очень высокий расход электричества" },
-    "ZERO_HOT": { text: "ГВС=0", color: "#f39c12", title: "Нулевой расход горячей воды" },
-    "ZERO_COLD": { text: "ХВС=0", color: "#f39c12", title: "Нулевой расход холодной воды" },
-    "ZERO_ELECT": { text: "Свет=0", color: "#f39c12", title: "Нулевой расход электричества" },
-    "FROZEN_HOT": { text: "ГВС❄️", color: "#3498db", title: "Счетчик ГВС не менялся 3+ мес." },
-    "FROZEN_COLD": { text: "ХВС❄️", color: "#3498db", title: "Счетчик ХВС не менялся 3+ мес." },
-    "FROZEN_ELECT": { text: "Свет❄️", color: "#3498db", title: "Счетчик света не менялся 3+ мес." }
+    "NEGATIVE": { color: "#c0392b", label: "Ошибка (<0)" },
+    "ZERO": { color: "#f39c12", label: "Нулевой" },
+    "HIGH": { color: "#e74c3c", label: "Высокий" },
+    "FROZEN": { color: "#3498db", label: "Замерзший" },
+    "PEERS": { color: "#9b59b6", label: "Аномалия (Группа)" }
 };
 
 export const ReadingsModule = {
-    isInitialized: false,
-    controller: null, // Для хранения AbortController для отмены старых запросов
+    state: {
+        page: 1,
+        limit: 50,
+        anomaliesOnly: false,
+        isLoading: false
+    },
 
-    // ============================================================
-    // ИНИЦИАЛИЗАЦИЯ
-    // ============================================================
     init() {
-        if (!this.isInitialized) {
-            this.setupEventListeners();
-            this.isInitialized = true;
-        }
-
-        // Первичная загрузка
-        this.loadActivePeriod();
+        this.cacheDOM();
+        this.bindEvents();
         this.load();
     },
 
-    setupEventListeners() {
-        console.log('ReadingsModule: Event listeners setup.');
+    cacheDOM() {
+        this.dom = {
+            tbody: document.getElementById('readingsTableBody'),
+            btnRefresh: document.getElementById('btnRefreshReadings'),
+            btnBulk: document.getElementById('btnBulkApprove'),
+            btnPrev: document.getElementById('btnPrev'),
+            btnNext: document.getElementById('btnNext'),
+            pageIndicator: document.getElementById('pageIndicator'),
+            filterCheckbox: document.getElementById('filterAnomalies'),
+            periodActive: document.getElementById('periodActiveState'),
+            periodClosed: document.getElementById('periodClosedState'),
+            periodLabel: document.getElementById('activePeriodLabel'),
+            btnClosePeriod: document.querySelector('#periodActiveState button'),
+            periodNameInput: document.getElementById('newPeriodNameInput'),
+            btnOpenPeriod: document.querySelector('#periodClosedState button')
+        };
+    },
 
-        // --- Навигация (Пагинация) ---
-        const btnPrev = document.getElementById('btnPrev');
-        const btnNext = document.getElementById('btnNext');
-        if (btnPrev) btnPrev.addEventListener('click', () => this.changePage(-1));
-        if (btnNext) btnNext.addEventListener('click', () => this.changePage(1));
+    bindEvents() {
+        if (this.dom.btnRefresh) this.dom.btnRefresh.addEventListener('click', () => this.load());
+        if (this.dom.btnBulk) this.dom.btnBulk.addEventListener('click', () => this.bulkApprove());
 
-        // --- Основные действия ---
-        const btnRefresh = document.getElementById('btnRefreshReadings');
-        if (btnRefresh) btnRefresh.addEventListener('click', () => this.load());
+        if (this.dom.btnPrev) this.dom.btnPrev.addEventListener('click', () => this.changePage(-1));
+        if (this.dom.btnNext) this.dom.btnNext.addEventListener('click', () => this.changePage(1));
 
-        const btnBulk = document.getElementById('btnBulkApprove');
-        if (btnBulk) btnBulk.addEventListener('click', () => this.bulkApprove());
-
-        // --- Фильтры ---
-        const filterCheck = document.getElementById('filterAnomalies');
-        if (filterCheck) {
-            filterCheck.addEventListener('change', (e) => {
-                // При включении фильтра сбрасываем на 1 страницу
-                this.load(1, e.target.checked);
+        if (this.dom.filterCheckbox) {
+            this.dom.filterCheckbox.addEventListener('change', (e) => {
+                this.state.anomaliesOnly = e.target.checked;
+                this.state.page = 1;
+                this.load();
             });
         }
 
-        // --- Модальное окно (Approve) ---
-        const btnModalClose = document.getElementById('btnModalClose');
-        const btnModalSubmit = document.getElementById('btnModalSubmit');
-        if (btnModalClose) btnModalClose.addEventListener('click', () => this.closeModal());
-        if (btnModalSubmit) btnModalSubmit.addEventListener('click', () => this.submitApproval());
-
-        // --- Управление периодом (закрытие/открытие месяца) ---
-        const periodActiveBlock = document.getElementById('periodActiveState');
-        if (periodActiveBlock) {
-            const closeBtn = periodActiveBlock.querySelector('button');
-            if (closeBtn) closeBtn.addEventListener('click', () => this.closePeriodAction(closeBtn));
+        // Управление периодами
+        if (this.dom.btnClosePeriod) {
+            this.dom.btnClosePeriod.addEventListener('click', () => this.closePeriodAction());
         }
-
-        const periodClosedBlock = document.getElementById('periodClosedState');
-        if (periodClosedBlock) {
-            const openBtn = periodClosedBlock.querySelector('button');
-            if (openBtn) openBtn.addEventListener('click', () => this.openPeriodAction(openBtn));
+        if (this.dom.btnOpenPeriod) {
+            this.dom.btnOpenPeriod.addEventListener('click', () => this.openPeriodAction());
         }
     },
 
-    // ============================================================
-    // ЗАГРУЗКА И ОТОБРАЖЕНИЕ СПИСКА
-    // ============================================================
-    async load(page = store.state.pagination.page, anomaliesOnly = null) {
-        // 1. ОТМЕНА ПРЕДЫДУЩЕГО ЗАПРОСА
-        if (this.controller) {
-            this.controller.abort();
-        }
-        this.controller = new AbortController();
-        const signal = this.controller.signal;
+    async load() {
+        if (this.state.isLoading) return;
+        this.state.isLoading = true;
 
-        const tbody = clear('readingsTableBody');
-
-        // Индикатор загрузки
-        tbody.appendChild(el('tr', {},
-            el('td', { colspan: 7, style: { textAlign: 'center', padding: '20px', color: '#666' } }, 'Загрузка данных...')
-        ));
-
-        // Определяем состояние фильтра
-        if (anomaliesOnly === null) {
-            const checkbox = document.getElementById('filterAnomalies');
-            anomaliesOnly = checkbox ? checkbox.checked : false;
-        }
+        // Показываем спиннер в таблице
+        this.dom.tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:20px;">Загрузка данных...</td></tr>';
 
         try {
-            const limit = store.state.pagination.limit;
-            const query = `/admin/readings?page=${page}&limit=${limit}${anomaliesOnly ? '&anomalies_only=true' : ''}`;
-
-            // Передаем signal в API (api.js прокидывает options в fetch)
-            const data = await api.get(query, { signal });
-
-            // Сохраняем данные в Store
-            store.setReadings(data);
-            store.setPage(page);
-
-            // Рендер
-            this.renderTable(data);
-            this.updatePagination(data.length);
-
+            // Параллельно загружаем статус периода и таблицу
+            await Promise.all([
+                this.loadActivePeriod(),
+                this.loadTableData()
+            ]);
         } catch (error) {
-            // Если ошибка вызвана отменой запроса — игнорируем её
-            if (error.name === 'AbortError') {
-                return;
-            }
-
-            tbody.innerHTML = '';
-            tbody.appendChild(el('tr', {},
-                el('td', { colspan: 7, style: { color: 'red', textAlign: 'center', padding: '20px' } }, `Ошибка: ${error.message}`)
-            ));
+            this.dom.tbody.innerHTML = `<tr><td colspan="7" style="color:red; text-align:center; padding:20px;">Ошибка: ${error.message}</td></tr>`;
+        } finally {
+            this.state.isLoading = false;
         }
+    },
+
+    async loadActivePeriod() {
+        try {
+            const data = await api.get('/admin/periods/active');
+
+            if (data && data.name) {
+                this.dom.periodActive.style.display = 'flex';
+                this.dom.periodClosed.style.display = 'none';
+                this.dom.periodLabel.textContent = data.name;
+            } else {
+                this.dom.periodActive.style.display = 'none';
+                this.dom.periodClosed.style.display = 'flex';
+            }
+        } catch (e) {
+            console.warn("Ошибка проверки периода", e);
+        }
+    },
+
+    async loadTableData() {
+        const query = `/admin/readings?page=${this.state.page}&limit=${this.state.limit}${this.state.anomaliesOnly ? '&anomalies_only=true' : ''}`;
+        const data = await api.get(query);
+
+        this.renderTable(data);
+        this.updatePagination(data.length);
     },
 
     renderTable(readings) {
-        const tbody = clear('readingsTableBody');
+        this.dom.tbody.innerHTML = '';
 
         if (!readings || readings.length === 0) {
-            const isFiltered = document.getElementById('filterAnomalies')?.checked;
-            const msg = isFiltered ? "Нет подозрительных показаний" : "Нет данных на этой странице";
-
-            tbody.appendChild(el('tr', {},
-                el('td', { colspan: 7, style: { textAlign: 'center', padding: '20px' } }, msg)
+            this.dom.tbody.appendChild(el('tr', {},
+                el('td', { colspan: 7, style: { textAlign: 'center', padding: '20px', color: '#777' } },
+                    this.state.anomaliesOnly ? "Нет подозрительных показаний" : "Список пуст"
+                )
             ));
             return;
         }
+
+        // 🚀 Optimization: Используем Fragment для вставки
+        const fragment = document.createDocumentFragment();
 
         readings.forEach(r => {
             const tr = el('tr', {},
                 // 1. Жилец
                 el('td', {},
-                    el('strong', {}, r.username),
-                    el('div', { style: { fontSize: '11px', color: '#888' } }, r.dormitory || '')
+                    el('div', { style: { fontWeight: '600' } }, r.username),
+                    el('div', { style: { fontSize: '11px', color: '#888' } }, r.dormitory || 'Общ. не указано')
                 ),
-                // 2. Статус (Аномалии)
-                el('td', {}, this.createAnomalyBadges(r.anomaly_flags)),
-                // 3. ГВС
-                el('td', {}, r.cur_hot),
-                // 4. ХВС
-                el('td', {}, r.cur_cold),
-                // 5. Свет
-                el('td', {}, r.cur_elect),
-                // 6. Сумма
-                el('td', { style: { color: 'green', fontWeight: 'bold' } }, `~ ${Number(r.total_cost).toFixed(2)} ₽`),
-                // 7. Действия (Обновленная структура кнопок)
+                // 2. Статус (Баджи)
+                el('td', {}, this.createBadges(r.anomaly_flags)),
+                // 3. Показания
+                el('td', {}, Number(r.cur_hot).toFixed(3)),
+                el('td', {}, Number(r.cur_cold).toFixed(3)),
+                el('td', {}, Number(r.cur_elect).toFixed(3)),
+                // 4. Деньги
+                el('td', { style: { color: '#27ae60', fontWeight: 'bold' } },
+                    `${Number(r.total_cost).toFixed(2)} ₽`
+                ),
+                // 5. Действия
                 el('td', {},
-                    el('div', { class: 'controls-group', style: { justifyContent: 'flex-start', gap: '5px' } },
-                        // Кнопка Корректировки
-                        el('button', {
-                            class: 'btn-icon btn-adjust',
-                            title: 'Добавить фин. корректировку',
-                            onclick: () => this.openAdjustmentModal(r.user_id, r.username)
-                        }, '±'),
-
-                        // Кнопка Проверки
-                        el('button', {
-                            class: 'btn-icon btn-check',
-                            title: 'Проверить и утвердить',
-                            onclick: () => this.openModal(r.id)
-                        }, '📝')
-                    )
+                    el('button', {
+                        class: 'btn-icon btn-adjust',
+                        title: 'Финансовая корректировка',
+                        onclick: () => this.openAdjustmentModal(r.user_id, r.username)
+                    }, '±'),
+                    el('button', {
+                        class: 'btn-icon btn-check',
+                        title: 'Проверить и утвердить',
+                        onclick: () => this.openApproveModal(r)
+                    }, '✓')
                 )
             );
-            tbody.appendChild(tr);
+            fragment.appendChild(tr);
         });
+
+        this.dom.tbody.appendChild(fragment);
     },
 
-    createAnomalyBadges(flags) {
-        if (!flags) return el('span', { style: { color: '#27ae60', fontWeight: 'bold' } }, 'OK');
+    createBadges(flags) {
+        if (!flags) return el('span', { style: { color: '#ccc' } }, '-');
 
-        const container = document.createDocumentFragment();
+        const container = el('div', { style: { display: 'flex', gap: '4px', flexWrap: 'wrap' } });
 
         flags.split(',').forEach(flag => {
-            const meta = ANOMALY_MAP[flag] || { text: flag, color: '#95a5a6', title: 'Неизвестно' };
+            // Ищем совпадение по части ключа (например NEGATIVE_HOT -> NEGATIVE)
+            let type = "UNKNOWN";
+            for (const key in ANOMALY_MAP) {
+                if (flag.includes(key)) type = key;
+            }
 
-            const badge = el('span', {
-                title: meta.title,
+            const meta = ANOMALY_MAP[type] || { color: '#95a5a6', label: flag };
+
+            container.appendChild(el('span', {
+                title: flag,
                 style: {
-                    display: 'inline-block',
                     background: meta.color,
                     color: 'white',
-                    padding: '2px 5px',
-                    borderRadius: '3px',
+                    padding: '2px 6px',
+                    borderRadius: '4px',
                     fontSize: '10px',
-                    margin: '1px',
                     fontWeight: 'bold',
                     cursor: 'help'
                 }
-            }, meta.text);
-
-            container.appendChild(badge);
-            container.appendChild(document.createTextNode(' '));
+            }, meta.label));
         });
 
         return container;
     },
 
     updatePagination(itemsCount) {
-        const pageInd = document.getElementById('pageIndicator');
-        if (pageInd) pageInd.textContent = `Стр. ${store.state.pagination.page}`;
-
-        const btnPrev = document.getElementById('btnPrev');
-        const btnNext = document.getElementById('btnNext');
-
-        if (btnPrev) btnPrev.disabled = store.state.pagination.page <= 1;
-        if (btnNext) btnNext.disabled = itemsCount < store.state.pagination.limit;
+        if (this.dom.pageIndicator) {
+            this.dom.pageIndicator.textContent = `Стр. ${this.state.page}`;
+        }
+        if (this.dom.btnPrev) {
+            this.dom.btnPrev.disabled = this.state.page <= 1;
+        }
+        if (this.dom.btnNext) {
+            // Если вернулось меньше лимита, значит это последняя страница
+            this.dom.btnNext.disabled = itemsCount < this.state.limit;
+        }
     },
 
     changePage(delta) {
-        const newPage = store.state.pagination.page + delta;
-        if (newPage > 0) this.load(newPage);
+        const newPage = this.state.page + delta;
+        if (newPage > 0) {
+            this.state.page = newPage;
+            this.loadTableData();
+        }
     },
 
-    // ============================================================
-    // МОДАЛЬНОЕ ОКНО (ПРОВЕРКА И КОРРЕКЦИЯ ОБЪЕМОВ)
-    // ============================================================
-    openModal(id) {
-        const reading = store.getReadingById(id);
-        if (!reading) return;
+    // --- МОДАЛЬНЫЕ ОКНА И ДЕЙСТВИЯ ---
 
-        // Заполняем скрытый ID и имя
-        document.getElementById('modal_reading_id').value = id;
+    async openApproveModal(reading) {
+        // Здесь мы используем существующую HTML-модалку (approveModal), так как она сложная
+        // Но заполняем её данными через JS
+        const modal = document.getElementById('approveModal');
+        if (!modal) return;
+
+        // Заполняем поля
+        document.getElementById('modal_reading_id').value = reading.id;
         document.getElementById('m_username').textContent = reading.username;
 
-        // Рассчитываем дельту
         const dHot = (Number(reading.cur_hot) - Number(reading.prev_hot)).toFixed(3);
         const dCold = (Number(reading.cur_cold) - Number(reading.prev_cold)).toFixed(3);
         const dElect = (Number(reading.cur_elect) - Number(reading.prev_elect)).toFixed(3);
@@ -256,21 +236,25 @@ export const ReadingsModule = {
         document.getElementById('m_cold_usage').textContent = dCold;
         document.getElementById('m_elect_usage').textContent = dElect;
 
-        // Сбрасываем поля коррекции в 0
-        ['m_corr_hot', 'm_corr_cold', 'm_corr_elect', 'm_corr_sewage'].forEach(inputId => {
-            const input = document.getElementById(inputId);
-            if (input) input.value = 0;
+        // Сброс инпутов
+        ['m_corr_hot', 'm_corr_cold', 'm_corr_elect', 'm_corr_sewage'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.value = 0;
         });
 
-        document.getElementById('approveModal').classList.add('open');
+        // Показываем
+        modal.classList.add('open');
+
+        // Вешаем обработчик на кнопку "Подтвердить" внутри модалки
+        // (Важно удалить старый обработчик, чтобы не плодить их, или использовать onclick)
+        const btnSubmit = document.getElementById('btnModalSubmit');
+        btnSubmit.onclick = () => this.submitApproval(reading.id);
+
+        const btnClose = document.getElementById('btnModalClose');
+        btnClose.onclick = () => modal.classList.remove('open');
     },
 
-    closeModal() {
-        document.getElementById('approveModal').classList.remove('open');
-    },
-
-    async submitApproval() {
-        const id = document.getElementById('modal_reading_id').value;
+    async submitApproval(id) {
         const btn = document.getElementById('btnModalSubmit');
 
         const data = {
@@ -284,134 +268,94 @@ export const ReadingsModule = {
 
         try {
             const res = await api.post(`/admin/approve/${id}`, data);
-            toast(`Показания утверждены! Новая сумма: ${Number(res.new_total).toFixed(2)} ₽`, 'success');
-            this.closeModal();
-            this.load();
+            toast(`Утверждено! Сумма: ${Number(res.new_total).toFixed(2)} ₽`, 'success');
+
+            document.getElementById('approveModal').classList.remove('open');
+            this.loadTableData(); // Обновляем только таблицу
         } catch (e) {
-            toast('Ошибка при утверждении: ' + e.message, 'error');
+            toast('Ошибка: ' + e.message, 'error');
         } finally {
             setLoading(btn, false);
         }
     },
 
-    // ============================================================
-    // ФИНАНСОВЫЕ КОРРЕКТИРОВКИ
-    // ============================================================
-    openAdjustmentModal(userId, username) {
-        // Здесь prompt пока оставим, так как создание модалки "на лету" требует больше кода HTML
-        const amountStr = prompt(`Добавить корректировку для ${username}.\n\nВведите сумму:\n(например: -500 для скидки или 1000 для доплаты)`);
+    async openAdjustmentModal(userId, username) {
+        // Используем нашу новую красивую модалку из dom.js
+        const amountStr = await showPrompt(
+            `Корректировка: ${username}`,
+            'Введите сумму (например -500 для скидки или 1000 для долга):'
+        );
+
         if (!amountStr) return;
 
         const amount = parseFloat(amountStr);
         if (isNaN(amount)) {
-            toast("Некорректная сумма", 'error');
+            toast('Нужно ввести число!', 'error');
             return;
         }
 
-        const desc = prompt("Введите причину (например: Перерасчет за отсутствие):");
+        const desc = await showPrompt('Причина', 'Укажите основание (например: перерасчет):', 'Перерасчет');
         if (!desc) return;
 
-        this.sendAdjustment(userId, amount, desc);
-    },
-
-    async sendAdjustment(userId, amount, description) {
         try {
             await api.post('/admin/adjustments', {
                 user_id: userId,
                 amount: amount,
-                description: description
+                description: desc
             });
-            toast("Корректировка успешно добавлена!", 'success');
-            this.load();
+            toast('Корректировка сохранена', 'success');
+            this.loadTableData();
         } catch (e) {
-            toast("Ошибка при добавлении корректировки: " + e.message, 'error');
+            toast(e.message, 'error');
         }
     },
 
-    // ============================================================
-    // МАССОВЫЕ ОПЕРАЦИИ
-    // ============================================================
     async bulkApprove() {
-        if (!confirm("ВНИМАНИЕ!\n\nЭто автоматически утвердит все черновики текущего месяца.\nПродолжить?")) {
-            return;
-        }
+        if (!confirm('Вы уверены? Это утвердит ВСЕ текущие черновики без ошибок.')) return;
 
-        const btn = document.getElementById('btnBulkApprove');
-        setLoading(btn, true, 'Обработка...');
-
+        setLoading(this.dom.btnBulk, true);
         try {
             const res = await api.post('/admin/approve-bulk', {});
-            toast(`Успешно утверждено записей: ${res.approved_count}`, 'success');
-            this.load(1);
+            toast(`Утверждено записей: ${res.approved_count}`, 'success');
+            this.loadTableData();
         } catch (e) {
-            toast("Ошибка: " + e.message, 'error');
+            toast(e.message, 'error');
         } finally {
-            setLoading(btn, false);
+            setLoading(this.dom.btnBulk, false);
         }
     },
 
-    // ============================================================
-    // УПРАВЛЕНИЕ ПЕРИОДАМИ
-    // ============================================================
-    async loadActivePeriod() {
-        const activeDiv = document.getElementById('periodActiveState');
-        const closedDiv = document.getElementById('periodClosedState');
-        const label = document.getElementById('activePeriodLabel');
+    // --- ПЕРИОДЫ ---
 
-        try {
-            const data = await api.get('/admin/periods/active');
+    async closePeriodAction() {
+        if (!confirm('Закрыть месяц? Будет произведен авто-расчет для должников.')) return;
 
-            if (data && data.name) {
-                if (activeDiv) activeDiv.style.display = 'flex';
-                if (closedDiv) closedDiv.style.display = 'none';
-                if (label) label.textContent = data.name;
-            } else {
-                if (activeDiv) activeDiv.style.display = 'none';
-                if (closedDiv) closedDiv.style.display = 'flex';
-            }
-        } catch (e) {
-            console.error("Ошибка проверки периода:", e);
-        }
-    },
-
-    async closePeriodAction(btnElement) {
-        if (!confirm(`ВНИМАНИЕ!\n\nВы закрываете текущий месяц.\nАвто-расчет для должников будет выполнен.\n\nПродолжить?`)) {
-            return;
-        }
-
-        setLoading(btnElement, true, 'Закрытие...');
-
+        setLoading(this.dom.btnClosePeriod, true);
         try {
             const res = await api.post('/admin/periods/close', {});
-            toast(`Месяц закрыт! Авто-показаний: ${res.auto_generated}`, 'success');
-
-            // Даем время на чтение тоста перед перезагрузкой
+            toast(`Месяц закрыт. Авто-расчетов: ${res.auto_generated}`, 'success');
             setTimeout(() => window.location.reload(), 1500);
         } catch (e) {
-            toast("Ошибка закрытия периода: " + e.message, 'error');
-            setLoading(btnElement, false);
+            toast(e.message, 'error');
+            setLoading(this.dom.btnClosePeriod, false);
         }
     },
 
-    async openPeriodAction(btnElement) {
-        const nameInput = document.getElementById('newPeriodNameInput');
-        const newName = nameInput ? nameInput.value.trim() : null;
-
-        if (!newName) {
-            toast("Введите название месяца", 'info');
+    async openPeriodAction() {
+        const name = this.dom.periodNameInput.value.trim();
+        if (!name) {
+            toast('Введите название месяца!', 'info');
             return;
         }
 
-        setLoading(btnElement, true, 'Открытие...');
-
+        setLoading(this.dom.btnOpenPeriod, true);
         try {
-            await api.post('/admin/periods/open', { name: newName });
-            toast(`Новый месяц "${newName}" открыт!`, 'success');
-
+            await api.post('/admin/periods/open', { name });
+            toast(`Период "${name}" открыт`, 'success');
             setTimeout(() => window.location.reload(), 1500);
         } catch (e) {
-            toast("Ошибка открытия периода: " + e.message, 'error');
-            setLoading(btnElement, false);
+            toast(e.message, 'error');
+            setLoading(this.dom.btnOpenPeriod, false);
         }
     }
 };
