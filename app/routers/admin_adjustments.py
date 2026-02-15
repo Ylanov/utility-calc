@@ -19,9 +19,11 @@ async def create_adjustment(
 ):
     """
     Создает финансовую корректировку (перерасчет) для пользователя в текущем активном периоде.
-    Автоматически обновляет поле total_cost в текущих показаниях пользователя.
+    Использует блокировку строки для предотвращения Race Condition при обновлении total_cost.
     """
-    if current_user.role != "accountant":
+    # Проверка ролей
+    allowed_roles = ["accountant", "financier"]
+    if current_user.role not in allowed_roles:
         raise HTTPException(status_code=403, detail="Доступ запрещен")
 
     # 1. Находим активный период
@@ -30,34 +32,42 @@ async def create_adjustment(
     if not active_period:
         raise HTTPException(status_code=400, detail="Нет активного периода для внесения корректировок")
 
-    # 2. Создаем запись корректировки
-    adj = Adjustment(
-        user_id=data.user_id,
-        period_id=active_period.id,
-        amount=data.amount,
-        description=data.description
-    )
-    db.add(adj)
-
-    # 3. АВТОМАТИЧЕСКИЙ ПЕРЕСЧЕТ ИТОГА В METER_READING
-    # Находим текущее показание (черновик или уже утвержденное)
-    res_reading = await db.execute(
-        select(MeterReading).where(
-            MeterReading.user_id == data.user_id,
-            MeterReading.period_id == active_period.id
+    # Начинаем явную транзакцию
+    async with db.begin():
+        # 2. Создаем запись корректировки
+        adj = Adjustment(
+            user_id=data.user_id,
+            period_id=active_period.id,
+            amount=data.amount,
+            description=data.description
         )
-    )
-    reading = res_reading.scalars().first()
+        db.add(adj)
+        # Получаем ID корректировки (flush отправляет запрос в БД, но не коммитит)
+        await db.flush()
 
-    if reading:
-        # Если запись с показаниями уже есть, обновляем total_cost
-        # ВАЖНО: Мы просто добавляем сумму корректировки к текущему итогу.
-        # Если amount отрицательный (скидка), итог уменьшится.
-        current_total = reading.total_cost if reading.total_cost is not None else Decimal("0.00")
-        reading.total_cost = current_total + data.amount
+        # 3. ОБНОВЛЕНИЕ ЧЕРНОВИКА (METER_READING) ДЛЯ UI
+        # with_for_update() блокирует строку чтения, чтобы никто другой не мог её изменить
+        # параллельно (предотвращает Race Condition при сложении денег)
+        res_reading = await db.execute(
+            select(MeterReading)
+            .where(
+                MeterReading.user_id == data.user_id,
+                MeterReading.period_id == active_period.id
+            )
+            .with_for_update()
+        )
+        reading = res_reading.scalars().first()
 
-    # Сохраняем изменения
-    await db.commit()
+        if reading:
+            # Обновляем total_cost для визуального отображения текущего итога.
+            # Важно: Полный и окончательный пересчет стоимости с учетом всех корректировок
+            # гарантируется в методе approve_reading, который является "источником истины".
+            current_total = reading.total_cost if reading.total_cost is not None else Decimal("0.00")
+            reading.total_cost = current_total + data.amount
+
+        # Транзакция закоммитится автоматически при выходе из блока async with
+
+    # Обновляем объект из БД, чтобы вернуть актуальные данные (например, ID)
     await db.refresh(adj)
 
     return adj
@@ -72,10 +82,10 @@ async def get_user_adjustments(
     """
     Получает список всех корректировок пользователя в ТЕКУЩЕМ АКТИВНОМ периоде.
     """
-    if current_user.role != "accountant":
+    allowed_roles = ["accountant", "financier"]
+    if current_user.role not in allowed_roles:
         raise HTTPException(status_code=403, detail="Доступ запрещен")
 
-    # Находим активный период
     res_period = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))
     active_period = res_period.scalars().first()
 

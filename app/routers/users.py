@@ -1,9 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import delete
 from app.database import get_db
-from app.models import User, MeterReading
+from app.models import User
 from app.schemas import UserCreate, UserResponse, UserUpdate
 from app.dependencies import get_current_user
 from app.auth import get_password_hash
@@ -45,7 +44,7 @@ async def import_users(
     # Чтение содержимого файла
     content = await file.read()
 
-    # Импорт пользователей из Excel
+    # Импорт пользователей из Excel (логика в сервисе)
     result = await import_users_from_excel(content, db)
 
     return result
@@ -98,12 +97,16 @@ async def read_users(
 ):
     """
     Получение списка всех пользователей.
-    Доступно только для пользователей с ролью 'accountant'.
+    Доступно для бухгалтеров и финансистов.
     """
-    if current_user.role != "accountant":
+    # Разрешаем доступ обеим ролям
+    allowed_roles = ["accountant", "financier"]
+
+    if current_user.role not in allowed_roles:
         raise HTTPException(status_code=403, detail="Доступ запрещен")
 
-    result = await db.execute(select(User).order_by(User.id))
+    # Сортируем по общежитию, чтобы список был аккуратным
+    result = await db.execute(select(User).order_by(User.dormitory, User.username))
     return result.scalars().all()
 
 
@@ -163,67 +166,3 @@ async def update_user(
     await db.commit()
     await db.refresh(db_user)
     return db_user
-
-
-@router.delete("/{user_id}")
-async def delete_user(
-        user_id: int,
-        current_user: User = Depends(get_current_user),
-        db: AsyncSession = Depends(get_db)
-):
-    """
-    Удаление пользователя с предварительным удалением всех связанных записей показаний.
-    Доступно только для пользователей с ролью 'accountant'.
-    Возвращает JSON с сообщением об успешном удалении.
-    """
-    if current_user.role != "accountant":
-        raise HTTPException(status_code=403, detail="Доступ запрещен")
-
-    # Получаем пользователя
-    db_user = await db.get(User, user_id)
-    if not db_user:
-        raise HTTPException(status_code=404, detail="Пользователь не найден")
-
-    # Защита от удаления самого себя или главного админа
-    if db_user.id == current_user.id or db_user.username == "admin":
-        raise HTTPException(
-            status_code=400,
-            detail="Этого пользователя нельзя удалить"
-        )
-
-    try:
-        # 1. Сначала удаляем все связанные записи показаний (readings)
-        await db.execute(
-            delete(MeterReading).where(MeterReading.user_id == user_id)
-        )
-
-        # 2. Теперь удаляем самого пользователя
-        await db.delete(db_user)
-
-        # 3. Коммитим транзакцию
-        await db.commit()
-
-        return {
-            "status": "success",
-            "message": f"Пользователь '{db_user.username}' успешно удален",
-            "deleted_user_id": user_id,
-            "details": "Все связанные записи показаний также были удалены"
-        }
-
-    except Exception as e:
-        # Откатываем транзакцию в случае ошибки
-        await db.rollback()
-        print(f"Ошибка при удалении пользователя {user_id}: {e}")
-
-        # Проверяем, является ли ошибка нарушением внешнего ключа
-        error_str = str(e).lower()
-        if "foreign key" in error_str or "violates foreign key constraint" in error_str:
-            raise HTTPException(
-                status_code=400,
-                detail="Невозможно удалить пользователя, так как существуют связанные данные."
-            )
-
-        raise HTTPException(
-            status_code=500,
-            detail=f"Внутренняя ошибка сервера при удалении пользователя: {str(e)}"
-        )

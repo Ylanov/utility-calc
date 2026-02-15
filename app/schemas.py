@@ -1,28 +1,41 @@
-from pydantic import BaseModel, condecimal
-from typing import Optional
+from pydantic import BaseModel, condecimal, Field
+from typing import Optional, List, Generic, TypeVar
 from datetime import datetime
 from decimal import Decimal
 
-# =================================================================
-# ОПРЕДЕЛЕНИЕ ТИПОВ ДАННЫХ (DECIMAL)
-# =================================================================
-# Используем condecimal для жесткой фиксации точности
-# max_digits - общее количество цифр
-# decimal_places - количество знаков после запятой
 
-# Для денег: точность до копеек (2 знака)
+# ======================================================
+# DECIMAL TYPES
+# ======================================================
+
+# Для денег (2 знака)
 DecimalAmount = condecimal(max_digits=12, decimal_places=2)
 
-# Для объемов (вода, свет): точность до тысячных (3 знака)
+# Для объемов (3 знака)
 DecimalVolume = condecimal(max_digits=12, decimal_places=3)
 
-# Для тарифов: высокая точность для расчетов (4 знака)
+# Для тарифов (4 знака)
 DecimalTariff = condecimal(max_digits=10, decimal_places=4)
 
 
-# =================================================================
-# СХЕМЫ ПОЛЬЗОВАТЕЛЕЙ (USER)
-# =================================================================
+# ======================================================
+# PAGINATION
+# ======================================================
+
+M = TypeVar("M")
+
+
+class PaginatedResponse(BaseModel, Generic[M]):
+    total: int = Field(..., description="Общее количество записей")
+    page: int = Field(..., description="Текущая страница (начиная с 1)")
+    size: int = Field(..., description="Количество элементов на странице")
+    items: List[M] = Field(..., description="Список элементов")
+
+
+# ======================================================
+# USER SCHEMAS
+# ======================================================
+
 class UserCreate(BaseModel):
     username: str
     password: str
@@ -31,7 +44,6 @@ class UserCreate(BaseModel):
     workplace: str = ""
     residents_count: int = 1
     total_room_residents: int = 1
-    # Площадь важна для расчетов, используем Decimal
     apartment_area: DecimalAmount = Decimal("0.00")
 
 
@@ -60,9 +72,10 @@ class UserUpdate(BaseModel):
     apartment_area: Optional[DecimalAmount] = None
 
 
-# =================================================================
-# СХЕМЫ ТАРИФОВ (TARIFF)
-# =================================================================
+# ======================================================
+# TARIFF SCHEMAS
+# ======================================================
+
 class TariffSchema(BaseModel):
     maintenance_repair: DecimalTariff
     social_rent: DecimalTariff
@@ -78,11 +91,12 @@ class TariffSchema(BaseModel):
         from_attributes = True
 
 
-# =================================================================
-# СХЕМЫ ПЕРИОДОВ (PERIODS)
-# =================================================================
+# ======================================================
+# PERIOD SCHEMAS
+# ======================================================
+
 class PeriodCreate(BaseModel):
-    name: str  # Например: "Февраль 2025"
+    name: str
 
 
 class PeriodResponse(BaseModel):
@@ -95,12 +109,13 @@ class PeriodResponse(BaseModel):
         from_attributes = True
 
 
-# =================================================================
-# СХЕМЫ КОРРЕКТИРОВОК (ADJUSTMENTS) - НОВОЕ
-# =================================================================
+# ======================================================
+# ADJUSTMENT SCHEMAS
+# ======================================================
+
 class AdjustmentCreate(BaseModel):
     user_id: int
-    amount: DecimalAmount  # Может быть отрицательным (например -500.00)
+    amount: DecimalAmount
     description: str
 
 
@@ -114,21 +129,19 @@ class AdjustmentResponse(BaseModel):
         from_attributes = True
 
 
-# =================================================================
-# СХЕМЫ ПОКАЗАНИЙ (READINGS)
-# =================================================================
+# ======================================================
+# READING SCHEMAS
+# ======================================================
+
 class ReadingSchema(BaseModel):
-    # Входные данные от пользователя - объемы
     hot_water: DecimalVolume
     cold_water: DecimalVolume
     electricity: DecimalVolume
 
 
 class ReadingStateResponse(BaseModel):
-    # Добавляем информацию о периоде
     period_name: Optional[str] = None
 
-    # Объемы (предыдущие и текущие)
     prev_hot: Decimal
     prev_cold: Decimal
     prev_elect: Decimal
@@ -137,14 +150,11 @@ class ReadingStateResponse(BaseModel):
     current_cold: Optional[Decimal]
     current_elect: Optional[Decimal]
 
-    # Итоговая сумма
     total_cost: Optional[Decimal]
 
-    # Статусы
     is_draft: bool
     is_period_open: bool
 
-    # Детализация стоимости (все поля денежные)
     cost_hot_water: Optional[Decimal] = None
     cost_cold_water: Optional[Decimal] = None
     cost_electricity: Optional[Decimal] = None
@@ -156,8 +166,25 @@ class ReadingStateResponse(BaseModel):
 
 
 class ApproveRequest(BaseModel):
-    # Коррекции - это объемы, которые вычитаются/прибавляются
     hot_correction: DecimalVolume
     cold_correction: DecimalVolume
     electricity_correction: DecimalVolume
     sewage_correction: DecimalVolume
+
+
+# ======================================================
+# FINANCIER RESPONSE (UPDATED)
+# ======================================================
+
+class UserDebtResponse(BaseModel):
+    id: int
+    username: str
+    dormitory: Optional[str] = None
+
+    # Отдаем Decimal без преобразования во float
+    initial_debt: Decimal
+    initial_overpayment: Decimal
+    current_total_cost: Decimal
+
+    class Config:
+        from_attributes = True

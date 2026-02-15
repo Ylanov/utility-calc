@@ -262,7 +262,13 @@ export const ClientDashboard = {
         if (!this.validate()) return;
 
         setLoading(this.dom.btnSubmit, true, 'Расчет...');
-        document.getElementById('submitBtnSpinner').classList.remove('hidden');
+
+        // --- ИСПРАВЛЕНИЕ: Безопасное получение элемента спиннера ---
+        const spinner = document.getElementById('submitBtnSpinner');
+        if (spinner) {
+            spinner.classList.remove('hidden');
+        }
+        // -----------------------------------------------------------
 
         const data = {
             hot_water: parseFloat(this.dom.inputs.hot.value),
@@ -279,7 +285,12 @@ export const ClientDashboard = {
             toast(e.message, 'error');
         } finally {
             setLoading(this.dom.btnSubmit, false, '💾 Сохранить');
-            document.getElementById('submitBtnSpinner').classList.add('hidden');
+
+            // --- ИСПРАВЛЕНИЕ: Безопасное скрытие спиннера ---
+            if (spinner) {
+                spinner.classList.add('hidden');
+            }
+            // ------------------------------------------------
         }
     },
 

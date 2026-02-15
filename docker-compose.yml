@@ -1,14 +1,10 @@
 services:
-  # =============================
-  # BACKEND
-  # =============================
   web:
     build:
       context: .
       target: web
     container_name: utility_calc_web
     restart: always
-    # Указываем, что нужно загрузить переменные из .env файла в контейнер
     env_file: ./.env
     depends_on:
       db:
@@ -17,19 +13,27 @@ services:
         condition: service_started
     volumes:
       - shared_data:/app/static/generated_files
+    command: >
+      sh -c "
+      echo '---> Running database migrations...' &&
+      alembic upgrade head &&
+      echo '---> Seeding initial data (if needed)...' &&
+      python -m app.initial_data &&
+      echo '---> Starting Gunicorn...' &&
+      gunicorn app.main:app
+      -k uvicorn.workers.UvicornWorker
+      -w ${WEB_CONCURRENCY:-4}
+      -b 0.0.0.0:8000
+      "
     networks:
       - utility_net
 
-  # =============================
-  # WORKER
-  # =============================
   worker:
     build:
       context: .
       target: worker
     container_name: utility_calc_worker
     restart: always
-    # И сюда тоже загружаем переменные
     env_file: ./.env
     depends_on:
       db:
@@ -38,17 +42,18 @@ services:
         condition: service_started
     volumes:
       - shared_data:/app/static/generated_files
+    command: >
+      celery -A app.worker worker
+      --loglevel=info
+      --concurrency=${CELERY_WORKER_CONCURRENCY:-4}
+      --prefetch-multiplier=1
     networks:
       - utility_net
 
-  # =============================
-  # POSTGRES
-  # =============================
   db:
     image: postgres:15
     container_name: utility_calc_db
     restart: always
-    # Docker Compose сам подставит сюда значения из .env файла
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -64,48 +69,40 @@ services:
     networks:
       - utility_net
 
-  # =============================
-  # REDIS
-  # =============================
   redis:
     image: redis:7-alpine
     container_name: utility_calc_redis
     restart: always
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
     volumes:
       - redis_data:/data
     networks:
       - utility_net
 
-  # =============================
-  # NGINX
-  # =============================
   nginx:
     image: nginx:alpine
     container_name: utility_calc_nginx
     restart: always
     ports:
       - "8080:80"
-      - "8443:443"
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d
       - ./nginx/certs:/etc/nginx/certs
-      # Монтируем локальную папку static для разработки
-      - ./static:/usr/share/nginx/html
-      # Монтируем volume для сгенерированных файлов (квитанций, отчетов)
-      - shared_data:/usr/share/nginx/html/generated_files
+      - ./static:/usr/share/nginx/html/static
+      - shared_data:/usr/share/nginx/html/static/generated_files
     depends_on:
       - web
     networks:
       - utility_net
 
-  # =============================
-  # BACKUP
-  # =============================
   backup:
     image: postgres:15
     container_name: utility_calc_backup
     restart: always
-    # И здесь тоже используем переменные
     environment:
       PGHOST: db
       PGUSER: ${POSTGRES_USER}
@@ -118,7 +115,8 @@ services:
       db:
         condition: service_healthy
     command: >
-      bash -c "chmod +x /usr/local/bin/backup.sh &&
+      bash -c "
+      chmod +x /usr/local/bin/backup.sh &&
       while true; do
         /usr/local/bin/backup.sh;
         sleep 86400;
@@ -126,9 +124,6 @@ services:
     networks:
       - utility_net
 
-# =============================
-# VOLUMES & NETWORK
-# =============================
 volumes:
   postgres_data:
   redis_data:

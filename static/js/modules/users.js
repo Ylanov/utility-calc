@@ -3,6 +3,7 @@ import { api } from '../core/api.js';
 import { el, clear, setLoading, toast } from '../core/dom.js';
 
 export const UsersModule = {
+
     init() {
         this.cacheDOM();
         this.bindEvents();
@@ -15,13 +16,9 @@ export const UsersModule = {
             btnRefresh: document.getElementById('btnRefreshUsers'),
             addForm: document.getElementById('addUserForm'),
             importInput: document.getElementById('importUsersFile'),
-            // Кнопка импорта (ищем по соседству с инпутом)
-            btnImport: document.querySelector('button[onclick="importUsers()"]')
-                       || document.getElementById('btnImportUsers')
-                       // Если в HTML кнопка без ID, добавим обработчик динамически ниже
+            btnImport: document.getElementById('btnImportUsers')
         };
 
-        // Modal elements
         this.modal = {
             window: document.getElementById('userEditModal'),
             form: document.getElementById('editUserForm'),
@@ -41,75 +38,101 @@ export const UsersModule = {
     },
 
     bindEvents() {
-        if (this.dom.btnRefresh) this.dom.btnRefresh.addEventListener('click', () => this.load());
-        if (this.dom.addForm) this.dom.addForm.addEventListener('submit', (e) => this.handleAdd(e));
 
-        // Обработка кнопки импорта (костыль для старой верстки, если там onclick)
-        const importBtn = document.querySelector('.card button[onclick="importUsers()"]');
-        if (importBtn) {
-            importBtn.removeAttribute('onclick');
-            importBtn.addEventListener('click', () => this.handleImport(importBtn));
+        if (this.dom.btnRefresh) {
+            this.dom.btnRefresh.addEventListener('click', () => {
+                this.load();
+            });
         }
 
-        // Модалка редактирования
-        if (this.modal.form) this.modal.form.addEventListener('submit', (e) => this.handleEditSubmit(e));
-        if (this.modal.btnClose) this.modal.btnClose.addEventListener('click', () => this.closeModal());
+        if (this.dom.addForm) {
+            this.dom.addForm.addEventListener('submit', (event) => {
+                event.preventDefault();
+                this.handleAdd(event);
+            });
+        }
+
+        // ✅ НОРМАЛЬНАЯ ПРИВЯЗКА КНОПКИ ИМПОРТА
+        if (this.dom.btnImport) {
+            this.dom.btnImport.addEventListener('click', (event) => {
+                event.preventDefault();
+                this.handleImport(this.dom.btnImport);
+            });
+        }
+
+        if (this.modal.form) {
+            this.modal.form.addEventListener('submit', (event) => {
+                event.preventDefault();
+                this.handleEditSubmit(event);
+            });
+        }
+
+        if (this.modal.btnClose) {
+            this.modal.btnClose.addEventListener('click', () => {
+                this.closeModal();
+            });
+        }
     },
 
     async load() {
-        this.dom.tbody.innerHTML = '<tr><td colspan="8" class="text-center">Загрузка...</td></tr>';
+        this.dom.tbody.innerHTML =
+            '<tr><td colspan="8" class="text-center">Загрузка...</td></tr>';
 
         try {
             const users = await api.get('/users');
             this.renderTable(users);
-        } catch (e) {
-            this.dom.tbody.innerHTML = `<tr><td colspan="8" class="text-danger">${e.message}</td></tr>`;
+        } catch (error) {
+            this.dom.tbody.innerHTML =
+                `<tr><td colspan="8" class="text-danger">${error.message}</td></tr>`;
         }
     },
 
     renderTable(users) {
-        this.dom.tbody.innerHTML = '';
+        clear(this.dom.tbody);
 
         if (!users.length) {
-            this.dom.tbody.innerHTML = '<tr><td colspan="8" class="text-center">Нет пользователей</td></tr>';
+            this.dom.tbody.innerHTML =
+                '<tr><td colspan="8" class="text-center">Нет пользователей</td></tr>';
             return;
         }
 
         const fragment = document.createDocumentFragment();
 
-        users.forEach(u => {
-            const tr = el('tr', {},
-                el('td', {}, String(u.id)),
-                el('td', {}, el('strong', {}, u.username)),
-                el('td', {}, el('span', { class: `role-badge ${u.role}` }, u.role)),
-                el('td', {}, u.dormitory || '-'),
-                el('td', {}, Number(u.apartment_area).toFixed(1)),
-                el('td', {}, `${u.residents_count} / ${u.total_room_residents}`),
-                el('td', {}, u.workplace || '-'),
+        users.forEach(user => {
+            const row = el('tr', {},
+                el('td', {}, String(user.id)),
+                el('td', {}, el('strong', {}, user.username)),
+                el('td', {}, el('span', {
+                    class: `role-badge ${user.role}`
+                }, user.role)),
+                el('td', {}, user.dormitory || '-'),
+                el('td', {}, Number(user.apartment_area).toFixed(1)),
+                el('td', {}, `${user.residents_count} / ${user.total_room_residents}`),
+                el('td', {}, user.workplace || '-'),
                 el('td', {},
                     el('button', {
                         class: 'btn-icon btn-edit',
                         title: 'Редактировать',
-                        onclick: () => this.openEditModal(u.id)
+                        onclick: () => this.openEditModal(user.id)
                     }, '✎'),
                     el('button', {
                         class: 'btn-icon btn-delete',
                         title: 'Удалить',
-                        onclick: () => this.deleteUser(u.id)
+                        onclick: () => this.deleteUser(user.id)
                     }, '🗑')
                 )
             );
-            fragment.appendChild(tr);
+
+            fragment.appendChild(row);
         });
 
         this.dom.tbody.appendChild(fragment);
     },
 
-    // --- ДОБАВЛЕНИЕ ---
+    // ---------- ДОБАВЛЕНИЕ ----------
 
-    async handleAdd(e) {
-        e.preventDefault();
-        const btn = this.dom.addForm.querySelector('button');
+    async handleAdd(event) {
+        const button = this.dom.addForm.querySelector('button');
 
         const data = {
             username: document.getElementById('newUsername').value,
@@ -122,79 +145,87 @@ export const UsersModule = {
             workplace: document.getElementById('workplace').value
         };
 
-        setLoading(btn, true, 'Создание...');
+        setLoading(button, true, 'Создание...');
 
         try {
             await api.post('/users', data);
             toast('Пользователь создан', 'success');
             this.dom.addForm.reset();
             this.load();
-        } catch (e) {
-            toast(e.message, 'error');
+        } catch (error) {
+            toast(error.message, 'error');
         } finally {
-            setLoading(btn, false);
+            setLoading(button, false);
         }
     },
 
-    // --- ИМПОРТ ---
+    // ---------- ИМПОРТ ----------
 
-    async handleImport(btn) {
+    async handleImport(button) {
         const file = this.dom.importInput.files[0];
+
         if (!file) {
-            toast('Выберите файл .xlsx', 'info');
+            toast('Выберите файл Excel', 'info');
             return;
         }
 
-        // Проверка расширения на клиенте
         if (!file.name.match(/\.(xlsx|xls)$/)) {
-            toast('Только файлы Excel!', 'error');
+            toast('Разрешены только файлы Excel (.xlsx, .xls)', 'error');
             return;
         }
 
         const formData = new FormData();
         formData.append('file', file);
 
-        setLoading(btn, true, 'Загрузка...');
+        setLoading(button, true, 'Загрузка...');
 
         try {
-            const res = await api.post('/users/import_excel', formData);
+            const result = await api.post('/users/import_excel', formData);
 
-            // Если есть ошибки, покажем их, но не будем прерывать успех
-            if (res.errors && res.errors.length > 0) {
-                alert(`Импорт завершен с ошибками (${res.errors.length}):\n` + res.errors.slice(0, 5).join('\n') + '...');
+            if (result.errors && result.errors.length > 0) {
+                alert(
+                    `Импорт завершен с ошибками (${result.errors.length}):\n` +
+                    result.errors.slice(0, 5).join('\n')
+                );
             } else {
-                toast(`Добавлено: ${res.added}, Обновлено: ${res.updated}`, 'success');
+                toast(
+                    `Добавлено: ${result.added}, Обновлено: ${result.updated}`,
+                    'success'
+                );
             }
 
             this.dom.importInput.value = '';
             this.load();
-        } catch (e) {
-            toast(e.message, 'error');
+
+        } catch (error) {
+            toast(error.message, 'error');
         } finally {
-            setLoading(btn, false);
+            setLoading(button, false);
         }
     },
 
-    // --- РЕДАКТИРОВАНИЕ ---
+    // ---------- РЕДАКТИРОВАНИЕ ----------
 
     async openEditModal(id) {
         try {
-            const u = await api.get(`/users/${id}`);
+            const user = await api.get(`/users/${id}`);
 
-            const i = this.modal.inputs;
-            i.id.value = u.id;
-            i.username.value = u.username;
-            i.password.value = ''; // Пароль не показываем
-            i.role.value = u.role;
-            i.dorm.value = u.dormitory || '';
-            i.area.value = u.apartment_area;
-            i.residents.value = u.residents_count;
-            i.total.value = u.total_room_residents;
-            i.work.value = u.workplace || '';
+            const inputs = this.modal.inputs;
+
+            inputs.id.value = user.id;
+            inputs.username.value = user.username;
+            inputs.password.value = '';
+            inputs.role.value = user.role;
+            inputs.dorm.value = user.dormitory || '';
+            inputs.area.value = user.apartment_area;
+            inputs.residents.value = user.residents_count;
+            inputs.total.value = user.total_room_residents;
+            inputs.work.value = user.workplace || '';
 
             this.modal.window.classList.add('open');
-        } catch (e) {
-            toast('Ошибка загрузки данных: ' + e.message, 'error');
+
+        } catch (error) {
+            toast('Ошибка загрузки: ' + error.message, 'error');
         }
     },
 
@@ -202,9 +233,8 @@ export const UsersModule = {
         this.modal.window.classList.remove('open');
     },
 
-    async handleEditSubmit(e) {
-        e.preventDefault();
-        const btn = this.modal.form.querySelector('.confirm-btn');
+    async handleEditSubmit(event) {
+        const button = this.modal.form.querySelector('.confirm-btn');
         const id = this.modal.inputs.id.value;
 
         const data = {
@@ -221,33 +251,31 @@ export const UsersModule = {
             data.password = this.modal.inputs.password.value;
         }
 
-        setLoading(btn, true, 'Сохранение...');
+        setLoading(button, true, 'Сохранение...');
 
         try {
             await api.put(`/users/${id}`, data);
             toast('Обновлено успешно', 'success');
             this.closeModal();
             this.load();
-        } catch (e) {
-            toast(e.message, 'error');
+        } catch (error) {
+            toast(error.message, 'error');
         } finally {
-            setLoading(btn, false);
+            setLoading(button, false);
         }
     },
 
-    // --- УДАЛЕНИЕ ---
+    // ---------- УДАЛЕНИЕ ----------
 
     async deleteUser(id) {
-        if (!confirm('Удалить пользователя? Все его показания тоже будут удалены.')) return;
+        if (!confirm('Удалить пользователя?')) return;
 
         try {
             await api.delete(`/users/${id}`);
             toast('Пользователь удален', 'success');
-            // Удаляем строку из таблицы без перезагрузки всей таблицы (для скорости)
-            // Но проще перезагрузить load(), чтобы ID обновились корректно
             this.load();
-        } catch (e) {
-            toast(e.message, 'error');
+        } catch (error) {
+            toast(error.message, 'error');
         }
     }
 };

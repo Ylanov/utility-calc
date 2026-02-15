@@ -50,9 +50,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 // Редирект в зависимости от роли
                 setTimeout(() => {
-                    if (data.role === 'accountant' || data.role === 'admin') {
+                    if (data.role === 'admin') {
+                        // Главный админ идет в админку
                         window.location.href = 'admin.html';
+                    } else if (data.role === 'accountant') {
+                        // Бухгалтер идет в админку (или можно разделить позже)
+                        window.location.href = 'admin.html';
+                    } else if (data.role === 'financier') {
+                        // <--- ДОБАВЛЕНО: Финансист идет в свое рабочее место
+                        window.location.href = 'financier.html';
                     } else {
+                        // Обычные жильцы
                         window.location.href = 'index.html';
                     }
                 }, 500);

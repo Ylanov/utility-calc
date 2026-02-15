@@ -1,6 +1,6 @@
 /*
    Main Stylesheet
-   Imports all modules in correct order.
+   Импортирует модули из папки css/
 */
 
 @import "css/1-variables.css";

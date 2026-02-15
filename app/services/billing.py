@@ -1,11 +1,10 @@
-# Добавьте эту строку в самый верх файла!
-print("--- LOADING CORRECT VERSION OF BILLING.PY (V3) ---")
-
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy import update
 from datetime import datetime
 from decimal import Decimal
 import logging
+from collections import defaultdict
 
 from app.models import User, MeterReading, BillingPeriod, Tariff
 from app.services.calculations import calculate_utilities, D
@@ -13,57 +12,76 @@ from app.services.calculations import calculate_utilities, D
 logger = logging.getLogger("billing_service")
 
 
-# --- ЛОГИКА ЗАКРЫТИЯ ПЕРИОДА ---
 async def close_current_period(db: AsyncSession, admin_user_id: int):
     """
     Закрывает текущий расчетный период.
-    ВАЖНО: Эта функция теперь ожидает, что транзакция управляется извне (в роутере).
-    Она только подготавливает объекты для сохранения в БД.
+    Ожидает, что транзакция управляется извне.
     """
-    # 1. Получаем активный период
-    res_period = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))
-    active_period = res_period.scalars().first()
+
+    result = await db.execute(
+        select(BillingPeriod)
+        .where(BillingPeriod.is_active.is_(True))
+        .with_for_update()
+    )
+    active_period = result.scalars().first()
 
     if not active_period:
         raise ValueError("Нет активного периода для закрытия.")
 
-    # 2. Получаем тарифы
-    res_tariff = await db.execute(select(Tariff).where(Tariff.id == 1))
-    tariff = res_tariff.scalars().first()
-    if not tariff:
-        raise ValueError("Тарифы не найдены в системе. Невозможно выполнить расчет.")
-
-    # 3. Ищем пользователей БЕЗ показаний
-    res_users = await db.execute(select(User).where(User.role == "user"))
-    all_users = res_users.scalars().all()
-
-    res_readings = await db.execute(
-        select(MeterReading.user_id)
-        .where(MeterReading.period_id == active_period.id)
+    # --- ИСПРАВЛЕНИЕ: Ищем просто активный тариф, так как в модели периода нет ссылки ---
+    tariff_result = await db.execute(
+        select(Tariff).where(Tariff.is_active == True)
     )
-    users_with_readings_ids = set(res_readings.scalars().all())
+    tariff = tariff_result.scalars().first()
 
-    generated_count = 0
+    if not tariff:
+        raise ValueError("Активный тариф не найден.")
+    # ------------------------------------------------------------------------------------
+
+    users_result = await db.execute(
+        select(User).where(User.role == "user")
+    )
+    all_users = users_result.scalars().all()
+
+    readings_result = await db.execute(
+        select(MeterReading)
+        .where(
+            MeterReading.period_id == active_period.id
+        )
+    )
+    period_readings = readings_result.scalars().all()
+
+    users_with_readings = {r.user_id for r in period_readings}
+
+    history_result = await db.execute(
+        select(MeterReading)
+        .where(MeterReading.is_approved.is_(True))
+        .order_by(MeterReading.user_id, MeterReading.created_at.desc())
+    )
+    all_history = history_result.scalars().all()
+
+    history_map = defaultdict(list)
+    for reading in all_history:
+        if len(history_map[reading.user_id]) < 3:
+            history_map[reading.user_id].append(reading)
+
     zero = Decimal("0.000")
+    generated_count = 0
 
     for user in all_users:
-        if user.id in users_with_readings_ids:
+        if user.id in users_with_readings:
             continue
 
-        # --- Генерация по среднему для должника ---
-        last_readings = await db.execute(
-            select(MeterReading)
-            .where(MeterReading.user_id == user.id, MeterReading.is_approved == True)
-            .order_by(MeterReading.created_at.desc())
-            .limit(3)
-        )
-        history = last_readings.scalars().all()
+        history = history_map.get(user.id, [])
 
-        # Расчет среднего прироста
         if len(history) >= 2:
-            deltas_hot, deltas_cold, deltas_elect = [], [], []
+            deltas_hot = []
+            deltas_cold = []
+            deltas_elect = []
+
             for i in range(len(history) - 1):
-                curr, prev = history[i], history[i + 1]
+                curr = history[i]
+                prev = history[i + 1]
                 deltas_hot.append(max(zero, D(curr.hot_water) - D(prev.hot_water)))
                 deltas_cold.append(max(zero, D(curr.cold_water) - D(prev.cold_water)))
                 deltas_elect.append(max(zero, D(curr.electricity) - D(prev.electricity)))
@@ -73,70 +91,115 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
             avg_cold = sum(deltas_cold) / count if deltas_cold else zero
             avg_elect = sum(deltas_elect) / count if deltas_elect else zero
 
-            last_reading = history[0]
-            new_hot = D(last_reading.hot_water) + avg_hot
-            new_cold = D(last_reading.cold_water) + avg_cold
-            new_elect = D(last_reading.electricity) + avg_elect
+            last = history[0]
+            new_hot = D(last.hot_water) + avg_hot
+            new_cold = D(last.cold_water) + avg_cold
+            new_elect = D(last.electricity) + avg_elect
+
         elif len(history) == 1:
-            new_hot = D(history[0].hot_water)
-            new_cold = D(history[0].cold_water)
-            new_elect = D(history[0].electricity)
+            last = history[0]
+            new_hot = D(last.hot_water)
+            new_cold = D(last.cold_water)
+            new_elect = D(last.electricity)
         else:
-            new_hot, new_cold, new_elect = zero, zero, zero
+            new_hot = zero
+            new_cold = zero
+            new_elect = zero
 
-        last_hot_val = D(history[0].hot_water) if history else zero
-        last_cold_val = D(history[0].cold_water) if history else zero
-        last_elect_val = D(history[0].electricity) if history else zero
+        last_hot = D(history[0].hot_water) if history else zero
+        last_cold = D(history[0].cold_water) if history else zero
+        last_elect = D(history[0].electricity) if history else zero
 
-        vol_hot = max(zero, new_hot - last_hot_val)
-        vol_cold = max(zero, new_cold - last_cold_val)
-        d_elect_total = new_elect - last_elect_val
+        vol_hot = max(zero, new_hot - last_hot)
+        vol_cold = max(zero, new_cold - last_cold)
+        delta_elect = new_elect - last_elect
 
         residents = D(user.residents_count)
         total_residents = D(user.total_room_residents if user.total_room_residents > 0 else 1)
-        user_share_kwh = (residents / total_residents) * d_elect_total
+        share_kwh = (residents / total_residents) * delta_elect
 
         costs = calculate_utilities(
-            user=user, tariff=tariff, volume_hot=vol_hot, volume_cold=vol_cold,
-            volume_sewage=vol_hot + vol_cold, volume_electricity_share=max(zero, user_share_kwh)
+            user=user,
+            tariff=tariff,
+            volume_hot=vol_hot,
+            volume_cold=vol_cold,
+            volume_sewage=vol_hot + vol_cold,
+            volume_electricity_share=max(zero, share_kwh)
         )
 
-        auto_reading = MeterReading(user_id=user.id, period_id=active_period.id, hot_water=new_hot,
-                                    cold_water=new_cold, electricity=new_elect, is_approved=True,
-                                    anomaly_flags="AUTO_GENERATED", created_at=datetime.utcnow(), **costs)
-        db.add(auto_reading)
+        new_reading = MeterReading(
+            user_id=user.id,
+            period_id=active_period.id,
+            hot_water=new_hot,
+            cold_water=new_cold,
+            electricity=new_elect,
+            is_approved=True,
+            anomaly_flags="AUTO_GENERATED",
+            created_at=datetime.utcnow(),
+            **costs
+        )
+
+        db.add(new_reading)
         generated_count += 1
 
-    pending_drafts = await db.execute(
-        select(MeterReading).where(MeterReading.period_id == active_period.id, MeterReading.is_approved == False)
+    draft_result = await db.execute(
+        select(MeterReading)
+        .where(
+            MeterReading.period_id == active_period.id,
+            MeterReading.is_approved.is_(False)
+        )
     )
-    for draft in pending_drafts.scalars().all():
+    drafts = draft_result.scalars().all()
+
+    for draft in drafts:
         draft.is_approved = True
 
     active_period.is_active = False
 
-    logger.info(f"Period '{active_period.name}' prepared for closing. Auto-generated: {generated_count}")
+    logger.info(
+        f"Period '{active_period.name}' prepared for closing. "
+        f"Auto-generated: {generated_count}"
+    )
 
-    return {"status": "closed", "closed_period": active_period.name, "auto_generated": generated_count}
+    return {
+        "status": "closed",
+        "closed_period": active_period.name,
+        "auto_generated": generated_count
+    }
 
 
-# --- ЛОГИКА ОТКРЫТИЯ ПЕРИОДА ---
 async def open_new_period(db: AsyncSession, new_name: str):
-    """Открывает новый расчетный период."""
-    res = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))
-    if res.scalars().first():
-        raise ValueError("Сначала закройте текущий активный месяц!")
+    """
+    Открывает новый расчетный период.
+    """
 
-    res_exist = await db.execute(select(BillingPeriod).where(BillingPeriod.name == new_name))
-    if res_exist.scalars().first():
-        raise ValueError(f"Период с именем '{new_name}' уже существует!")
+    active_result = await db.execute(
+        select(BillingPeriod)
+        .where(BillingPeriod.is_active.is_(True))
+        .with_for_update()
+    )
 
-    new_p = BillingPeriod(name=new_name, is_active=True)
-    db.add(new_p)
+    if active_result.scalars().first():
+        raise ValueError("Сначала закройте текущий активный месяц.")
 
+    exist_result = await db.execute(
+        select(BillingPeriod)
+        .where(BillingPeriod.name == new_name)
+    )
+
+    if exist_result.scalars().first():
+        raise ValueError(f"Период с именем '{new_name}' уже существует.")
+
+    new_period = BillingPeriod(
+        name=new_name,
+        is_active=True,
+        created_at=datetime.utcnow()
+    )
+
+    db.add(new_period)
     await db.flush()
-    await db.refresh(new_p)
+    await db.refresh(new_period)
 
-    logger.info(f"New period '{new_name}' opened and prepared for commit.")
+    logger.info(f"New period '{new_name}' opened.")
 
-    return new_p
+    return new_period
