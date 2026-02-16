@@ -4,230 +4,412 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Панель Администратора ЖКХ</title>
-    <!-- Подключаем основной файл стилей (внутри @import всех модулей) -->
+    <!-- Подключаем обновленные стили -->
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-    <div class="container">
+    <!-- Основной контейнер -->
+    <div class="app-container">
+
         <!-- HEADER -->
-        <header>
-            <div class="header-user-info">
-                <h1>Администрирование ЖКХ</h1>
+        <header class="app-header">
+            <div class="header-brand">
+                <div class="brand-icon">🏢</div>
+                <div>
+                    <h1>Администрирование ЖКХ</h1>
+                    <span class="header-subtitle">Система управления ресурсами</span>
+                </div>
             </div>
-            <div class="header-user-info">
-                <span id="adminName" style="font-weight: 600; color: #555;"></span>
-                <!-- Убрал onclick, JS сам найдет кнопку по классу -->
-                <button class="logout-btn">Выйти</button>
+
+            <div class="header-profile">
+                <div class="admin-info">
+                    <span id="adminName">Загрузка...</span>
+                    <span class="role-badge admin">Администратор</span>
+                </div>
+                <button class="logout-btn">
+                    <span>Выйти</span>
+                    <span style="font-size: 1.2em;">&rarr;</span>
+                </button>
             </div>
         </header>
 
         <!-- NAV TABS -->
-        <div class="tabs">
-            <button class="tab-btn active" data-tab="readings">🔍 Сверка</button>
-            <button class="tab-btn" data-tab="users">👥 Пользователи</button>
-            <button class="tab-btn" data-tab="tariffs">⚙️ Тарифы</button>
-            <button class="tab-btn" data-tab="accountant">📊 Сводка</button>
-        </div>
-
-        <!-- TAB 1: СВЕРКА ПОКАЗАНИЙ -->
-        <div id="readings" class="tab-content active">
-            <!-- Управление периодом -->
-            <div class="card" style="background: linear-gradient(to right, #f8f9fa, #e9ecef); border: 1px solid #dee2e6;">
-                <!-- Блок: Период открыт -->
-                <div id="periodActiveState" style="display:none; justify-content:space-between; align-items:center; flex-wrap: wrap; gap: 15px;">
-                    <div>
-                        <h2 style="margin:0; border:none; color:#333; font-size: 18px;">
-                            🟢 Открыт сбор: <span id="activePeriodLabel" style="color:#27ae60; font-weight:bold;"></span>
-                        </h2>
-                        <small style="color:#666;">Жильцы могут отправлять данные.</small>
-                    </div>
-                    <button class="action-btn" style="background:#c0392b;">🔒 Закрыть месяц</button>
-                </div>
-
-                <!-- Блок: Период закрыт -->
-                <div id="periodClosedState" style="display:none; justify-content:space-between; align-items:center; flex-wrap: wrap; gap: 15px;">
-                    <div>
-                        <h2 style="margin:0; border:none; color:#555; font-size: 18px;">🔴 Прием закрыт</h2>
-                        <small style="color:#666;">Начните новый месяц.</small>
-                    </div>
-                    <div style="display:flex; gap:10px; align-items: center;">
-                        <input type="text" id="newPeriodNameInput" placeholder="Напр. Май 2025" style="width: 200px;">
-                        <button class="action-btn" style="background:#27ae60;">📂 Открыть новый</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Таблица -->
-            <div class="card">
-                <div class="controls-header">
-                    <h2>Поступившие показания</h2>
-                    <div class="controls-group">
-                        <button id="btnBulkApprove" class="action-btn" style="background:#f39c12; font-size: 13px;">⚡ Утвердить все (Авто)</button>
-                        <button id="btnRefreshReadings" class="refresh-btn">↻</button>
-                    </div>
-                </div>
-
-                <div style="margin-bottom: 15px; padding: 10px; background: #fff3cd; border-radius: 6px; border: 1px solid #ffeeba;">
-                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 600; color: #856404;">
-                        <input type="checkbox" id="filterAnomalies"> Только подозрительные показания
-                    </label>
-                </div>
-
-                <div class="pagination" style="display: flex; gap: 10px; margin-bottom: 15px; align-items: center;">
-                    <button id="btnPrev" class="action-btn" style="padding: 5px 10px; background: #bdc3c7;">←</button>
-                    <span id="pageIndicator" style="font-weight: bold; min-width: 60px; text-align: center;">Стр. 1</span>
-                    <button id="btnNext" class="action-btn" style="padding: 5px 10px; background: #bdc3c7;">→</button>
-                </div>
-
-                <div class="table-container">
-                    <table id="readingsTable">
-                        <thead>
-                            <tr>
-                                <th>Жилец</th><th>Статус</th><th>Г.Вода</th><th>Х.Вода</th><th>Свет</th><th>Сумма</th><th>Действие</th>
-                            </tr>
-                        </thead>
-                        <tbody id="readingsTableBody"></tbody>
-                    </table>
-                </div>
+        <div class="nav-tabs-container">
+            <div class="tabs">
+                <button class="tab-btn active" data-tab="readings">📊 Сверка показаний</button>
+                <button class="tab-btn" data-tab="users">👥 Жильцы</button>
+                <button class="tab-btn" data-tab="tariffs">⚙️ Тарифы</button>
+                <button class="tab-btn" data-tab="accountant">📑 Сводка</button>
             </div>
         </div>
 
-        <!-- TAB 2: ПОЛЬЗОВАТЕЛИ -->
-        <div id="users" class="tab-content">
-            <div class="card" style="border-left: 5px solid #2ecc71;">
-                <h2>📁 Массовая загрузка (Excel)</h2>
-                <div style="display:flex; gap:10px; align-items:center;">
-                    <input type="file" id="importUsersFile" accept=".xlsx" style="padding:5px;">
-                    <!-- Убрал onclick, добавил ID для JS -->
-                    <button id="btnImportUsers" class="action-btn">Загрузить</button>
-                </div>
-            </div>
+        <!-- CONTENT AREA -->
+        <main class="content-area">
 
-            <div class="card">
-                <h2>Регистрация нового жильца</h2>
-                <form id="addUserForm">
-                    <div class="form-grid">
-                        <div class="form-group"><label>Логин</label><input type="text" id="newUsername" required></div>
-                        <div class="form-group"><label>Пароль</label><input type="password" id="newPassword" required></div>
-                        <div class="form-group"><label>Роль</label><select id="newRole"><option value="user">Жилец</option><option value="accountant">Бухгалтер</option><option value="financier">Финансист</option></select></div>
-                        <div class="form-group"><label>Общежитие</label><input type="text" id="dormitory"></div>
-                        <div class="form-group"><label>Площадь (м²)</label><input type="number" step="0.1" id="area" value="0"></div>
-                        <div class="form-group"><label>Платит за (чел)</label><input type="number" id="residentsCount" value="1"></div>
-                        <div class="form-group"><label>Всего в комнате</label><input type="number" id="totalRoomResidents" value="1"></div>
-                        <div class="form-group full-width"><label>Место работы</label><input type="text" id="workplace"></div>
+            <!-- TAB 1: СВЕРКА ПОКАЗАНИЙ -->
+            <div id="readings" class="tab-content active">
+
+                <!-- Управление периодом (Карточка статуса) -->
+                <div class="status-card">
+                    <!-- Блок: Период открыт -->
+                    <div id="periodActiveState" style="display:none;" class="period-state open">
+                        <div class="state-icon">🟢</div>
+                        <div class="state-info">
+                            <h2>Прием показаний открыт</h2>
+                            <p>Текущий период: <strong id="activePeriodLabel">...</strong>. Жильцы вносят данные.</p>
+                        </div>
+                        <button class="action-btn danger-btn">🔒 Закрыть месяц</button>
                     </div>
-                    <button type="submit" class="action-btn" style="margin-top: 20px;">Зарегистрировать</button>
-                </form>
-            </div>
 
-            <div class="card">
-                <div class="controls-header">
-                    <h2>Список пользователей</h2>
-                    <button id="btnRefreshUsers" class="refresh-btn">↻ Обновить</button>
-                </div>
-                <div class="table-container">
-                    <table>
-                        <thead>
-                            <tr><th>ID</th><th>Логин</th><th>Роль</th><th>Общ.</th><th>Площ.</th><th>Доля</th><th>Работа</th><th>Действия</th></tr>
-                        </thead>
-                        <tbody id="usersTableBody"></tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
-        <!-- TAB 3: ТАРИФЫ -->
-        <div id="tariffs" class="tab-content">
-            <div class="card">
-                <h2>Настройка тарифов (руб.)</h2>
-                <form id="tariffsForm">
-                    <div class="tariffs-grid">
-                        <div class="tariff-item"><label>Содержание и ремонт</label><input type="number" step="0.01" id="t_main" required></div>
-                        <div class="tariff-item"><label>Наем жилья</label><input type="number" step="0.01" id="t_rent" required></div>
-                        <div class="tariff-item"><label>ТКО (Мусор)</label><input type="number" step="0.01" id="t_waste" required></div>
-                        <div class="tariff-item"><label>Отопление</label><input type="number" step="0.01" id="t_heat" required></div>
-                        <div class="tariff-item"><label>Подогрев ГВС</label><input type="number" step="0.01" id="t_w_heat" required></div>
-                        <div class="tariff-item"><label>Подача воды</label><input type="number" step="0.01" id="t_w_sup" required></div>
-                        <div class="tariff-item"><label>Водоотведение</label><input type="number" step="0.01" id="t_sew" required></div>
-                        <div class="tariff-item"><label>Эл. Энергия (тариф)</label><input type="number" step="0.01" id="t_el_rate" required></div>
-                        <div class="tariff-item"><label>Эл. энергия (ОДН)</label><input type="number" step="0.01" id="t_el_sqm" required></div>
-                    </div>
-                    <button type="submit" class="action-btn" style="background-color: #27ae60; margin-top: 30px;">Сохранить тарифы</button>
-                </form>
-            </div>
-        </div>
-
-        <!-- TAB 4: СВОДКА -->
-        <div id="accountant" class="tab-content">
-            <div class="card">
-                <div class="controls-header">
-                    <h2>Финансовая сводка</h2>
-                    <div class="controls-group">
-                        <div id="summaryPeriodSelector"></div>
-                        <button id="btnDownloadZip" class="action-btn" style="background:#3498db;">🗂 ZIP</button>
-                        <button id="btnDownloadExcel" class="action-btn" style="background:#27ae60;">📊 Excel</button>
-                        <button id="btnRefreshSummary" class="refresh-btn">↻</button>
+                    <!-- Блок: Период закрыт -->
+                    <div id="periodClosedState" style="display:none;" class="period-state closed">
+                        <div class="state-icon">🔴</div>
+                        <div class="state-info">
+                            <h2>Прием показаний закрыт</h2>
+                            <p>Внесите изменения или начните новый отчетный период.</p>
+                        </div>
+                        <div class="new-period-form">
+                            <input type="text" id="newPeriodNameInput" placeholder="Название (напр. Апрель 2025)">
+                            <button class="action-btn success-btn">📂 Открыть новый</button>
+                        </div>
                     </div>
                 </div>
-                <div id="summaryContainer"></div>
+
+                <!-- Таблица показаний -->
+                <div class="card table-card">
+                    <div class="card-header">
+                        <h3>Поступившие данные</h3>
+                        <div class="header-controls">
+                            <button id="btnBulkApprove" class="action-btn warning-btn">⚡ Утвердить (Авто)</button>
+                            <button id="btnRefreshReadings" class="icon-btn refresh" title="Обновить">↻</button>
+                        </div>
+                    </div>
+
+                    <!-- Фильтр и Пагинация -->
+                    <div class="toolbar">
+                        <label class="checkbox-filter">
+                            <input type="checkbox" id="filterAnomalies">
+                            <span>Только подозрительные</span>
+                        </label>
+
+                        <div class="pagination">
+                            <button id="btnPrev" class="page-btn">←</button>
+                            <span id="pageIndicator">Стр. 1</span>
+                            <button id="btnNext" class="page-btn">→</button>
+                        </div>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table id="readingsTable">
+                            <thead>
+                                <tr>
+                                    <th>Жилец</th>
+                                    <th>Статус</th>
+                                    <th class="text-right">ГВС</th>
+                                    <th class="text-right">ХВС</th>
+                                    <th class="text-right">Свет</th>
+                                    <th class="text-right">Сумма</th>
+                                    <th class="text-center">Действие</th>
+                                </tr>
+                            </thead>
+                            <tbody id="readingsTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
-        </div>
+
+            <!-- TAB 2: ПОЛЬЗОВАТЕЛИ (ОБНОВЛЕННАЯ ВЕРСИЯ) -->
+            <div id="users" class="tab-content">
+
+                <!-- Структура: Обертка для форм добавления и импорта -->
+                <div class="grid-2-col">
+
+                    <!-- Колонка 1: Добавление жильца -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>➕ Новый жилец</h3>
+                        </div>
+                        <form id="addUserForm" class="styled-form">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Логин</label>
+                                    <input type="text" id="newUsername" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>Пароль</label>
+                                    <input type="password" id="newPassword" required>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Роль</label>
+                                    <select id="newRole">
+                                        <option value="user">Жилец</option>
+                                        <option value="accountant">Бухгалтер</option>
+                                        <option value="financier">Финансист</option>
+                                        <option value="admin">Администратор</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Общежитие</label>
+                                    <input type="text" id="dormitory">
+                                </div>
+                            </div>
+                            <div class="form-row three-col">
+                                <div class="form-group">
+                                    <label>Площадь (м²)</label>
+                                    <input type="number" step="0.1" id="area" value="0">
+                                </div>
+                                <div class="form-group">
+                                    <label>Жильцов</label>
+                                    <input type="number" id="residentsCount" value="1">
+                                </div>
+                                <div class="form-group">
+                                    <label>Всего мест</label>
+                                    <input type="number" id="totalRoomResidents" value="1">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Место работы</label>
+                                <input type="text" id="workplace">
+                            </div>
+                            <button type="submit" class="action-btn primary-btn full-width">Зарегистрировать</button>
+                        </form>
+                    </div>
+
+                    <!-- Колонка 2: Импорт из Excel -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>📂 Импорт (Excel)</h3>
+                        </div>
+                        <div class="import-area">
+                            <p class="hint-text">Загрузите файл .xlsx со списком жильцов для массового добавления или обновления данных.</p>
+                            <div class="file-input-wrapper">
+                                <input type="file" id="importUsersFile" accept=".xlsx">
+                                <button id="btnImportUsers" class="action-btn secondary-btn">Загрузить</button>
+                            </div>
+                        </div>
+                    </div>
+
+                </div> <!-- Конец обертки grid-2-col -->
+
+                <!-- Таблица со списком пользователей (С УПРАВЛЕНИЕМ И ПАГИНАЦИЕЙ) -->
+                <div class="card table-card mt-20">
+                    <div class="card-header">
+                        <h3>Список пользователей</h3>
+
+                        <!-- ПАНЕЛЬ УПРАВЛЕНИЯ ТАБЛИЦЕЙ -->
+                        <div class="toolbar-controls" style="display: flex; gap: 10px; align-items: center;">
+                            <!-- Выбор лимита строк -->
+                            <select id="usersLimitSelect" style="width: auto; padding: 6px;">
+                                <option value="25">25 строк</option>
+                                <option value="50" selected>50 строк</option>
+                                <option value="100">100 строк</option>
+                            </select>
+
+                            <!-- Поиск -->
+                            <input type="text" id="usersSearchInput" placeholder="Поиск по логину/комнате..." style="min-width: 200px; padding: 6px;">
+
+                            <!-- Кнопка обновления -->
+                            <button id="btnRefreshUsers" class="icon-btn refresh" title="Обновить">↻</button>
+                        </div>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="sticky-header-table">
+                            <thead>
+                                <tr>
+                                    <!-- Атрибуты data-sort и класс sortable нужны для TableController -->
+                                    <th data-sort="id" class="sortable">ID</th>
+                                    <th data-sort="username" class="sortable">Логин</th>
+                                    <th data-sort="role" class="sortable">Роль</th>
+                                    <th data-sort="dormitory" class="sortable">Общ.</th>
+                                    <th data-sort="apartment_area" class="sortable">Площ.</th>
+                                    <th>Доля</th> <!-- Вычисляемое поле, пока без сортировки -->
+                                    <th data-sort="workplace" class="sortable">Работа</th>
+                                    <th class="text-center">Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody id="usersTableBody"></tbody>
+                        </table>
+                    </div>
+
+                    <!-- ПОДВАЛ С ПАГИНАЦИЕЙ -->
+                    <div class="pagination-footer" style="padding: 15px; border-top: 1px solid #eee; display: flex; justify-content: center; align-items: center; gap: 15px;">
+                        <button id="btnPrevUsers" class="page-btn">← Назад</button>
+                        <span id="usersPageInfo" style="font-weight: 500; color: #555;">Стр. 1</span>
+                        <button id="btnNextUsers" class="page-btn">Вперед →</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TAB 3: ТАРИФЫ -->
+            <div id="tariffs" class="tab-content">
+                <div class="card">
+                    <div class="card-header">
+                        <h3>🛠 Настройка тарифов</h3>
+                        <span class="hint-text">Цены указываются в рублях за единицу измерения</span>
+                    </div>
+                    <form id="tariffsForm" class="tariffs-grid">
+                        <div class="tariff-item">
+                            <label>Содержание и ремонт (м²)</label>
+                            <input type="number" step="0.01" id="t_main" required>
+                        </div>
+                        <div class="tariff-item">
+                            <label>Наем жилья (м²)</label>
+                            <input type="number" step="0.01" id="t_rent" required>
+                        </div>
+                        <div class="tariff-item">
+                            <label>ТКО / Мусор (чел)</label>
+                            <input type="number" step="0.01" id="t_waste" required>
+                        </div>
+                        <div class="tariff-item">
+                            <label>Отопление (м²)</label>
+                            <input type="number" step="0.01" id="t_heat" required>
+                        </div>
+                        <div class="tariff-item highlight">
+                            <label>🔥 Подогрев ГВС (м³)</label>
+                            <input type="number" step="0.01" id="t_w_heat" required>
+                        </div>
+                        <div class="tariff-item highlight">
+                            <label>💧 Подача воды (м³)</label>
+                            <input type="number" step="0.01" id="t_w_sup" required>
+                        </div>
+                        <div class="tariff-item highlight">
+                            <label>🚽 Водоотведение (м³)</label>
+                            <input type="number" step="0.01" id="t_sew" required>
+                        </div>
+                        <div class="tariff-item highlight">
+                            <label>⚡ Эл. Энергия (кВт)</label>
+                            <input type="number" step="0.01" id="t_el_rate" required>
+                        </div>
+                        <div class="tariff-item">
+                            <label>Эл. энергия ОДН (м²)</label>
+                            <input type="number" step="0.01" id="t_el_sqm" required>
+                        </div>
+
+                        <div class="tariff-actions">
+                            <button type="submit" class="action-btn success-btn large-btn">Сохранить изменения</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- TAB 4: СВОДКА -->
+            <div id="accountant" class="tab-content">
+                <div class="card">
+                    <div class="card-header">
+                        <h3>Финансовая отчетность</h3>
+                        <div class="header-controls">
+                            <div id="summaryPeriodSelector"></div>
+                            <button id="btnDownloadZip" class="action-btn primary-btn">🗂 Скачать всё (ZIP)</button>
+                            <button id="btnDownloadExcel" class="action-btn success-btn">📊 Отчет (Excel)</button>
+                            <button id="btnRefreshSummary" class="icon-btn refresh">↻</button>
+                        </div>
+                    </div>
+                    <div id="summaryContainer" class="summary-wrapper"></div>
+                </div>
+            </div>
+        </main>
     </div>
 
-    <!-- МОДАЛЬНЫЕ ОКНА (Сложные формы) -->
+    <!-- МОДАЛЬНЫЕ ОКНА -->
 
-    <!-- Модалка: Проверка и Коррекция -->
+    <!-- Модалка: Проверка -->
     <div id="approveModal" class="modal-overlay">
         <div class="modal-window">
-            <div class="modal-header">Проверка показаний</div>
+            <div class="modal-header">
+                <h3>Проверка показаний</h3>
+                <button id="btnModalClose" class="close-icon">&times;</button>
+            </div>
             <input type="hidden" id="modal_reading_id">
 
-            <div style="background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 20px; font-size: 14px; border-left: 4px solid #4a90e2;">
-                <strong>Жилец:</strong> <span id="m_username"></span><br>
-                ГВС (расход): <span id="m_hot_usage"></span> м³<br>
-                ХВС (расход): <span id="m_cold_usage"></span> м³<br>
-                Свет (расход): <span id="m_elect_usage"></span> кВт
+            <div class="info-box">
+                <strong>Жилец:</strong> <span id="m_username"></span>
+                <div class="readings-grid">
+                    <div>🔥 ГВС: <span id="m_hot_usage"></span></div>
+                    <div>💧 ХВС: <span id="m_cold_usage"></span></div>
+                    <div>⚡ Свет: <span id="m_elect_usage"></span></div>
+                </div>
             </div>
 
-            <div style="display: grid; gap: 10px;">
-                <div class="modal-row"><label>Корр. ГВС:</label><input type="number" step="0.001" id="m_corr_hot"></div>
-                <div class="modal-row"><label>Корр. ХВС:</label><input type="number" step="0.001" id="m_corr_cold"></div>
-                <div class="modal-row"><label>Корр. Свет:</label><input type="number" step="0.001" id="m_corr_elect"></div>
-                <div class="modal-row"><label>Корр. Водоотв.:</label><input type="number" step="0.001" id="m_corr_sewage"></div>
+            <div class="modal-form">
+                <h4>Корректировка потребления (Разница)</h4>
+                <div class="form-grid-2">
+                    <div class="form-group"><label>ГВС</label><input type="number" step="0.001" id="m_corr_hot"></div>
+                    <div class="form-group"><label>ХВС</label><input type="number" step="0.001" id="m_corr_cold"></div>
+                    <div class="form-group"><label>Свет</label><input type="number" step="0.001" id="m_corr_elect"></div>
+                    <div class="form-group"><label>Водоотв.</label><input type="number" step="0.001" id="m_corr_sewage"></div>
+                </div>
             </div>
 
-            <div class="modal-actions">
-                <button id="btnModalClose" class="close-btn">Отмена</button>
-                <button id="btnModalSubmit" class="confirm-btn">Подтвердить</button>
+            <div class="modal-footer">
+                <button id="btnModalSubmit" class="action-btn primary-btn">Подтвердить и пересчитать</button>
             </div>
         </div>
     </div>
 
-    <!-- Модалка: Редактирование пользователя -->
+    <!-- Модалка: Пользователь -->
     <div id="userEditModal" class="modal-overlay">
-        <div class="modal-window">
-            <div class="modal-header">Редактирование пользователя</div>
+        <div class="modal-window" style="width: 700px;"> <!-- Сделаем модалку шире -->
+            <div class="modal-header">
+                <h3>Редактирование жильца</h3>
+                <button class="close-btn close-icon">&times;</button>
+            </div>
             <form id="editUserForm">
-                <input type="hidden" id="editUserId">
-                <div class="form-grid">
-                    <div class="form-group"><label>Логин</label><input type="text" id="editUsername" required></div>
-                    <div class="form-group"><label>Пароль</label><input type="text" id="editPassword" placeholder="Новый пароль (если нужно)"></div>
-                    <div class="form-group"><label>Роль</label><select id="editRole"><option value="user">Жилец</option><option value="accountant">Бухгалтер</option><option value="financier">Финансист</option></select></div>
-                    <div class="form-group"><label>Общежитие</label><input type="text" id="editDormitory"></div>
-                    <div class="form-group"><label>Площадь</label><input type="number" step="0.1" id="editArea"></div>
-                    <div class="form-group"><label>Жильцов</label><input type="number" id="editResidentsCount"></div>
-                    <div class="form-group"><label>Всего мест</label><input type="number" id="editTotalRoomResidents"></div>
-                    <div class="form-group"><label>Работа</label><input type="text" id="editWorkplace"></div>
+                <div class="modal-form">
+                    <input type="hidden" id="editUserId">
+                    <div class="form-grid-2">
+                        <div class="form-group">
+                            <label>Логин</label>
+                            <input type="text" id="editUsername" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Пароль (оставить пустым, чтобы не менять)</label>
+                            <input type="text" id="editPassword" placeholder="Новый пароль">
+                        </div>
+                        <div class="form-group">
+                            <label>Роль</label>
+                            <select id="editRole">
+                                <option value="user">Жилец</option>
+                                <option value="accountant">Бухгалтер</option>
+                                <option value="financier">Финансист</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Общежитие</label>
+                            <input type="text" id="editDormitory">
+                        </div>
+                    </div>
+                    <div class="form-grid-3">
+                        <div class="form-group">
+                            <label>Площадь</label>
+                            <input type="number" step="0.1" id="editArea">
+                        </div>
+                        <div class="form-group">
+                            <label>Жильцов (платит за)</label>
+                            <input type="number" id="editResidentsCount">
+                        </div>
+                        <div class="form-group">
+                            <label>Всего мест в комнате</label>
+                            <input type="number" id="editTotalRoomResidents">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Место работы</label>
+                        <input type="text" id="editWorkplace">
+                    </div>
                 </div>
-                <div class="modal-actions">
-                    <button type="button" class="close-btn">Отмена</button>
-                    <button type="submit" class="confirm-btn">Сохранить</button>
+                <div class="modal-footer">
+                    <button type="button" class="action-btn secondary-btn close-btn">Отмена</button>
+                    <button type="submit" class="action-btn primary-btn confirm-btn">Сохранить</button>
                 </div>
             </form>
         </div>
     </div>
 
+    <!-- Подключаем скрипты -->
     <script type="module" src="js/app.js"></script>
 </body>
 </html>

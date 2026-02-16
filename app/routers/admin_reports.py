@@ -1,3 +1,5 @@
+# app/routers/admin_reports.py (ФИНАЛЬНАЯ ВЕРСИЯ)
+
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
@@ -22,6 +24,7 @@ async def get_receipt_pdf(
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
 ):
+    # ... (код остается без изменений)
     if current_user.role != "accountant":
         raise HTTPException(status_code=403, detail="Доступ запрещен")
 
@@ -41,7 +44,6 @@ async def get_receipt_pdf(
     if not tariff:
         raise HTTPException(404, "Тариф не найден")
 
-    # Получаем предыдущее показание
     prev_stmt = (
         select(MeterReading)
         .where(
@@ -62,13 +64,12 @@ async def get_receipt_pdf(
     adjustments = adj_res.scalars().all()
 
     try:
-        # --- ВОЗВРАЩАЕМ prev_reading ---
         pdf_path = generate_receipt_pdf(
             user=reading.user,
             reading=reading,
             period=reading.period,
             tariff=tariff,
-            prev_reading=prev,  # <-- ВЕРНУЛИ
+            prev_reading=prev,
             adjustments=adjustments
         )
 
@@ -86,6 +87,7 @@ async def export_report(
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
 ):
+    # ... (код остается без изменений)
     if current_user.role != "accountant": raise HTTPException(status_code=403)
     target_period_id = period_id
 
@@ -111,6 +113,7 @@ async def start_receipt_generation(
         reading_id: int,
         current_user: User = Depends(get_current_user)
 ):
+    # ... (код остается без изменений)
     if current_user.role != "accountant": raise HTTPException(status_code=403)
     task = generate_receipt_task.delay(reading_id)
     return {"task_id": task.id, "status": "processing"}
@@ -118,14 +121,19 @@ async def start_receipt_generation(
 
 @router.get("/api/admin/tasks/{task_id}")
 async def get_task_status(task_id: str, current_user: User = Depends(get_current_user)):
+    # ... (код остается без изменений)
     task_result = AsyncResult(task_id)
     if task_result.state == 'PENDING':
         return {"state": "PENDING", "status": "Pending..."}
     elif task_result.state != 'FAILURE':
         result = task_result.result
-        if isinstance(result, dict) and result.get("status") == "done":
-            filename = result.get('filename', 'archive.zip')
-            return {"state": task_result.state, "status": "done", "download_url": f"/static/generated_files/{filename}"}
+        if isinstance(result, dict) and result.get("status") in ["done", "ok"]:
+            filename = result.get('filename', 'document.pdf')
+            return {
+                "state": task_result.state,
+                "status": "done",
+                "download_url": f"/static/generated_files/{filename}"
+            }
         return {"state": task_result.state, "result": result}
     else:
         return {"state": "FAILURE", "error": str(task_result.info)}
@@ -137,6 +145,7 @@ async def create_bulk_zip(
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
 ):
+    # ... (код остается без изменений)
     if current_user.role != "accountant": raise HTTPException(status_code=403)
     target_period_id = period_id
     if not target_period_id:
@@ -154,3 +163,63 @@ async def create_bulk_zip(
         raise HTTPException(500, "Ошибка запуска массовой генерации")
 
     return {"task_id": final_task_id, "status": "processing", "period_id": target_period_id}
+
+
+# ===== НОВЫЙ БЛОК: ПЕРЕНЕСЕННЫЙ ЭНДПОИНТ =====
+@router.get("/api/admin/summary")
+async def get_accountant_summary(
+        period_id: Optional[int] = Query(None, description="ID периода для фильтрации"),
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db)
+):
+    if current_user.role != "accountant":
+        raise HTTPException(status_code=403, detail="Доступ запрещен")
+
+    stmt = (
+        select(User, MeterReading)
+        .join(MeterReading, User.id == MeterReading.user_id)
+        .where(MeterReading.is_approved == True)
+    )
+
+    if period_id:
+        stmt = stmt.where(MeterReading.period_id == period_id)
+    else:
+        # Если ID периода не передан, ищем последний период в истории (не обязательно активный)
+        last_period_res = await db.execute(select(BillingPeriod).order_by(BillingPeriod.id.desc()).limit(1))
+        last_period = last_period_res.scalars().first()
+        if last_period:
+            stmt = stmt.where(MeterReading.period_id == last_period.id)
+        else:
+            # Если периодов нет вообще, возвращаем пустой результат
+            return {}
+
+    stmt = stmt.order_by(User.dormitory, User.username) # Сортируем для красивого вывода
+
+    result = await db.execute(stmt)
+    summary = {}
+
+    for user, reading in result:
+        dorm = user.dormitory or "Без общежития"
+
+        if dorm not in summary:
+            summary[dorm] = []
+
+        summary[dorm].append({
+            "reading_id": reading.id,
+            "user_id": user.id,
+            "username": user.username,
+            "area": user.apartment_area,
+            "residents": user.residents_count,
+            "hot": reading.cost_hot_water,
+            "cold": reading.cost_cold_water,
+            "sewage": reading.cost_sewage,
+            "electric": reading.cost_electricity,
+            "maintenance": reading.cost_maintenance,
+            "rent": reading.cost_social_rent,
+            "waste": reading.cost_waste,
+            "fixed": reading.cost_fixed_part,
+            "total": reading.total_cost,
+            "date": reading.created_at.strftime("%Y-%m-%d %H:%M")
+        })
+
+    return summary

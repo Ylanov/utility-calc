@@ -1,0 +1,65 @@
+<!-- portal.html -->
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Платформа управления ЖКХ</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Font Awesome для иконок (опционально, но красиво). Если нет интернета, используем emoji -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body class="portal-body">
+
+    <div class="portal-container">
+
+        <header class="portal-header">
+            <h1>Платформа управления</h1>
+            <p>Выберите систему для начала работы</p>
+        </header>
+
+        <div class="portal-grid">
+
+            <!-- Кнопка 1: ЖКХ Лидер -->
+            <a href="login.html" class="portal-card">
+                <div class="card-icon">
+                    <!-- Можно использовать картинку или иконку -->
+                    <i class="fa-solid fa-building-user"></i>
+                </div>
+                <div class="card-title">ЖКХ Лидер</div>
+                <div class="card-desc">Личный кабинет жильца и управление домом</div>
+            </a>
+
+            <!-- Заготовка под будущую кнопку (для примера) -->
+            <!--
+            <a href="#" class="portal-card disabled">
+                <div class="card-icon">
+                    <i class="fa-solid fa-chart-pie"></i>
+                </div>
+                <div class="card-title">CRM Аналитика</div>
+                <div class="card-desc">Скоро появится</div>
+            </a>
+            -->
+
+        </div>
+
+        <footer class="portal-footer">
+            &copy; 2026 Платформа ЖКХ. Все права защищены.
+        </footer>
+
+    </div>
+
+    <!-- Небольшой скрипт: если мы уже залогинены в ЖКХ, сразу предлагаем перейти туда -->
+    <script type="module">
+        import { Auth } from './js/core/auth.js';
+
+        // Если токен есть, можно добавить визуальный маркер "Вы уже вошли"
+        // или сделать авто-редирект (раскомментируйте строчку ниже)
+        /*
+        if (Auth.isAuthenticated()) {
+            window.location.href = 'index.html';
+        }
+        */
+    </script>
+</body>
+</html>

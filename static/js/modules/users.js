@@ -1,24 +1,29 @@
 // static/js/modules/users.js
 import { api } from '../core/api.js';
-import { el, clear, setLoading, toast } from '../core/dom.js';
+import { el, toast, setLoading } from '../core/dom.js';
+import { TableController } from '../core/table-controller.js';
 
 export const UsersModule = {
+    // Здесь будет храниться экземпляр контроллера таблицы
+    table: null,
 
     init() {
         this.cacheDOM();
         this.bindEvents();
-        this.load();
+        // Инициализируем таблицу через универсальный контроллер
+        this.initTable();
     },
 
     cacheDOM() {
+        // Элементы управления вне таблицы (формы, кнопки импорта, кнопка обновления)
         this.dom = {
-            tbody: document.getElementById('usersTableBody'),
-            btnRefresh: document.getElementById('btnRefreshUsers'),
             addForm: document.getElementById('addUserForm'),
             importInput: document.getElementById('importUsersFile'),
-            btnImport: document.getElementById('btnImportUsers')
+            btnImport: document.getElementById('btnImportUsers'),
+            btnRefresh: document.getElementById('btnRefreshUsers')
         };
 
+        // Элементы модального окна редактирования
         this.modal = {
             window: document.getElementById('userEditModal'),
             form: document.getElementById('editUserForm'),
@@ -38,13 +43,14 @@ export const UsersModule = {
     },
 
     bindEvents() {
-
+        // Обновление таблицы при нажатии кнопки Refresh
         if (this.dom.btnRefresh) {
             this.dom.btnRefresh.addEventListener('click', () => {
-                this.load();
+                if (this.table) this.table.refresh();
             });
         }
 
+        // Обработка формы добавления пользователя
         if (this.dom.addForm) {
             this.dom.addForm.addEventListener('submit', (event) => {
                 event.preventDefault();
@@ -52,7 +58,7 @@ export const UsersModule = {
             });
         }
 
-        // ✅ НОРМАЛЬНАЯ ПРИВЯЗКА КНОПКИ ИМПОРТА
+        // Обработка импорта пользователей из Excel
         if (this.dom.btnImport) {
             this.dom.btnImport.addEventListener('click', (event) => {
                 event.preventDefault();
@@ -60,6 +66,7 @@ export const UsersModule = {
             });
         }
 
+        // Обработка формы редактирования (сохранение)
         if (this.modal.form) {
             this.modal.form.addEventListener('submit', (event) => {
                 event.preventDefault();
@@ -67,6 +74,7 @@ export const UsersModule = {
             });
         }
 
+        // Закрытие модального окна
         if (this.modal.btnClose) {
             this.modal.btnClose.addEventListener('click', () => {
                 this.closeModal();
@@ -74,66 +82,75 @@ export const UsersModule = {
         }
     },
 
-    async load() {
-        this.dom.tbody.innerHTML =
-            '<tr><td colspan="8" class="text-center">Загрузка...</td></tr>';
+    // Инициализация TableController для управления таблицей
+    initTable() {
+        this.table = new TableController({
+            endpoint: '/users', // Базовый URL API для получения пользователей
 
-        try {
-            const users = await api.get('/users');
-            this.renderTable(users);
-        } catch (error) {
-            this.dom.tbody.innerHTML =
-                `<tr><td colspan="8" class="text-danger">${error.message}</td></tr>`;
-        }
-    },
+            // Связываем контроллер с HTML-элементами из admin.html
+            dom: {
+                tableBody: 'usersTableBody',
+                searchInput: 'usersSearchInput',
+                limitSelect: 'usersLimitSelect',
+                prevBtn: 'btnPrevUsers',
+                nextBtn: 'btnNextUsers',
+                pageInfo: 'usersPageInfo'
+            },
 
-    renderTable(users) {
-        clear(this.dom.tbody);
+            // Функция отрисовки одной строки таблицы (TR)
+            renderRow: (user) => {
+                return el('tr', { class: 'hover:bg-gray-50 transition-colors' },
+                    // ID
+                    el('td', { class: 'text-gray-500 text-sm' }, `#${user.id}`),
 
-        if (!users.length) {
-            this.dom.tbody.innerHTML =
-                '<tr><td colspan="8" class="text-center">Нет пользователей</td></tr>';
-            return;
-        }
+                    // Логин (жирный шрифт)
+                    el('td', {},
+                        el('div', { style: { fontWeight: '600' } }, user.username)
+                    ),
 
-        const fragment = document.createDocumentFragment();
+                    // Роль (с цветным бейджем)
+                    el('td', {}, el('span', { class: `role-badge ${user.role}` }, user.role)),
 
-        users.forEach(user => {
-            const row = el('tr', {},
-                el('td', {}, String(user.id)),
-                el('td', {}, el('strong', {}, user.username)),
-                el('td', {}, el('span', {
-                    class: `role-badge ${user.role}`
-                }, user.role)),
-                el('td', {}, user.dormitory || '-'),
-                el('td', {}, Number(user.apartment_area).toFixed(1)),
-                el('td', {}, `${user.residents_count} / ${user.total_room_residents}`),
-                el('td', {}, user.workplace || '-'),
-                el('td', {},
-                    el('button', {
-                        class: 'btn-icon btn-edit',
-                        title: 'Редактировать',
-                        onclick: () => this.openEditModal(user.id)
-                    }, '✎'),
-                    el('button', {
-                        class: 'btn-icon btn-delete',
-                        title: 'Удалить',
-                        onclick: () => this.deleteUser(user.id)
-                    }, '🗑')
-                )
-            );
+                    // Общежитие
+                    el('td', {}, user.dormitory || '-'),
 
-            fragment.appendChild(row);
+                    // Площадь (округляем до 1 знака)
+                    el('td', {}, user.apartment_area ? Number(user.apartment_area).toFixed(1) : '-'),
+
+                    // Жильцов / Всего мест
+                    el('td', { class: 'text-center text-sm' }, `${user.residents_count} / ${user.total_room_residents}`),
+
+                    // Место работы
+                    el('td', {}, user.workplace || '-'),
+
+                    // Действия (кнопки редактирования и удаления)
+                    el('td', { class: 'text-center' },
+                        el('button', {
+                            class: 'btn-icon btn-edit',
+                            title: 'Редактировать',
+                            style: { marginRight: '5px' },
+                            onclick: () => this.openEditModal(user.id)
+                        }, '✎'),
+                        el('button', {
+                            class: 'btn-icon btn-delete',
+                            title: 'Удалить',
+                            onclick: () => this.deleteUser(user.id)
+                        }, '🗑')
+                    )
+                );
+            }
         });
 
-        this.dom.tbody.appendChild(fragment);
+        // Запускаем начальную загрузку данных
+        this.table.init();
     },
 
-    // ---------- ДОБАВЛЕНИЕ ----------
+    // ---------- ДОБАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯ ----------
 
     async handleAdd(event) {
         const button = this.dom.addForm.querySelector('button');
 
+        // Сбор данных из формы добавления
         const data = {
             username: document.getElementById('newUsername').value,
             password: document.getElementById('newPassword').value,
@@ -149,9 +166,13 @@ export const UsersModule = {
 
         try {
             await api.post('/users', data);
-            toast('Пользователь создан', 'success');
+            toast('Пользователь успешно создан', 'success');
+
+            // Очищаем форму
             this.dom.addForm.reset();
-            this.load();
+
+            // Обновляем таблицу через контроллер (подтянет новые данные с сервера)
+            this.table.refresh();
         } catch (error) {
             toast(error.message, 'error');
         } finally {
@@ -159,7 +180,7 @@ export const UsersModule = {
         }
     },
 
-    // ---------- ИМПОРТ ----------
+    // ---------- ИМПОРТ ИЗ EXCEL ----------
 
     async handleImport(button) {
         const file = this.dom.importInput.files[0];
@@ -194,8 +215,11 @@ export const UsersModule = {
                 );
             }
 
+            // Очищаем поле ввода файла
             this.dom.importInput.value = '';
-            this.load();
+
+            // Обновляем таблицу, чтобы показать изменения
+            this.table.refresh();
 
         } catch (error) {
             toast(error.message, 'error');
@@ -204,17 +228,34 @@ export const UsersModule = {
         }
     },
 
+    // ---------- УДАЛЕНИЕ ----------
+
+    async deleteUser(id) {
+        if (!confirm('Вы действительно хотите удалить этого пользователя?')) return;
+
+        try {
+            await api.delete(`/users/${id}`);
+            toast('Пользователь удален', 'success');
+
+            // Обновляем таблицу через контроллер
+            this.table.refresh();
+        } catch (error) {
+            toast(error.message, 'error');
+        }
+    },
+
     // ---------- РЕДАКТИРОВАНИЕ ----------
 
     async openEditModal(id) {
         try {
+            // Загружаем актуальные данные пользователя перед открытием формы
             const user = await api.get(`/users/${id}`);
-
             const inputs = this.modal.inputs;
 
+            // Заполняем поля формы
             inputs.id.value = user.id;
             inputs.username.value = user.username;
-            inputs.password.value = '';
+            inputs.password.value = ''; // Пароль не показываем, поле служит для его смены
             inputs.role.value = user.role;
             inputs.dorm.value = user.dormitory || '';
             inputs.area.value = user.apartment_area;
@@ -225,7 +266,7 @@ export const UsersModule = {
             this.modal.window.classList.add('open');
 
         } catch (error) {
-            toast('Ошибка загрузки: ' + error.message, 'error');
+            toast('Ошибка загрузки данных пользователя: ' + error.message, 'error');
         }
     },
 
@@ -237,6 +278,7 @@ export const UsersModule = {
         const button = this.modal.form.querySelector('.confirm-btn');
         const id = this.modal.inputs.id.value;
 
+        // Сбор данных из формы редактирования
         const data = {
             username: this.modal.inputs.username.value,
             role: this.modal.inputs.role.value,
@@ -247,6 +289,7 @@ export const UsersModule = {
             workplace: this.modal.inputs.work.value
         };
 
+        // Если пароль введен, добавляем его в запрос, иначе не отправляем (чтобы не затереть старый)
         if (this.modal.inputs.password.value) {
             data.password = this.modal.inputs.password.value;
         }
@@ -255,27 +298,16 @@ export const UsersModule = {
 
         try {
             await api.put(`/users/${id}`, data);
-            toast('Обновлено успешно', 'success');
+            toast('Данные обновлены успешно', 'success');
+
             this.closeModal();
-            this.load();
+
+            // Обновляем таблицу через контроллер, чтобы увидеть изменения
+            this.table.refresh();
         } catch (error) {
             toast(error.message, 'error');
         } finally {
             setLoading(button, false);
-        }
-    },
-
-    // ---------- УДАЛЕНИЕ ----------
-
-    async deleteUser(id) {
-        if (!confirm('Удалить пользователя?')) return;
-
-        try {
-            await api.delete(`/users/${id}`);
-            toast('Пользователь удален', 'success');
-            this.load();
-        } catch (error) {
-            toast(error.message, 'error');
         }
     }
 };

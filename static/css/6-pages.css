@@ -33,3 +33,118 @@
 #loginForm button:hover {
     background: var(--primary-hover);
 }
+
+/* ================= PORTAL PAGE ================= */
+
+.portal-body {
+    background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-family: 'Segoe UI', sans-serif;
+    margin: 0;
+}
+
+.portal-container {
+    max-width: 1000px;
+    width: 100%;
+    padding: 20px;
+    text-align: center;
+    animation: fadeIn 0.8s ease-out;
+}
+
+.portal-header h1 {
+    font-size: 2.5rem;
+    color: #2c3e50;
+    margin-bottom: 10px;
+    font-weight: 300; /* Тонкий стильный шрифт */
+}
+
+.portal-header p {
+    color: #7f8c8d;
+    font-size: 1.1rem;
+    margin-bottom: 50px;
+}
+
+/* Сетка для кнопок */
+.portal-grid {
+    display: flex;
+    justify-content: center;
+    gap: 30px;
+    flex-wrap: wrap;
+}
+
+/* Стиль Карточки-Кнопки */
+.portal-card {
+    background: white;
+    width: 220px;
+    height: 220px;
+    border-radius: 20px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-decoration: none;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.05);
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    position: relative;
+    overflow: hidden;
+    border: 1px solid rgba(255,255,255,0.5);
+}
+
+/* Эффект при наведении */
+.portal-card:hover {
+    transform: translateY(-10px); /* Всплытие */
+    box-shadow: 0 20px 40px rgba(74, 144, 226, 0.2); /* Цветная тень */
+    border-color: var(--primary-color);
+}
+
+.card-icon {
+    font-size: 4rem;
+    color: var(--primary-color);
+    margin-bottom: 20px;
+    transition: transform 0.3s;
+}
+
+.portal-card:hover .card-icon {
+    transform: scale(1.1);
+}
+
+.card-title {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: #34495e;
+    margin-bottom: 5px;
+}
+
+.card-desc {
+    font-size: 0.85rem;
+    color: #95a5a6;
+    padding: 0 15px;
+    line-height: 1.2;
+}
+
+/* Стиль для отключенных кнопок (на будущее) */
+.portal-card.disabled {
+    opacity: 0.6;
+    cursor: default;
+    background: #fdfdfd;
+}
+.portal-card.disabled:hover {
+    transform: none;
+    box-shadow: none;
+    border-color: transparent;
+}
+
+.portal-footer {
+    margin-top: 60px;
+    color: #bdc3c7;
+    font-size: 0.9rem;
+}
+
+/* Анимация появления */
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}

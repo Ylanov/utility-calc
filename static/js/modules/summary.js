@@ -1,12 +1,14 @@
 // static/js/modules/summary.js
 import { api } from '../core/api.js';
-import { el, clear, setLoading, toast } from '../core/dom.js';
+import { el, setLoading, toast } from '../core/dom.js';
 
 export const SummaryModule = {
     state: {
         selectedPeriodId: null,
-        controller: null // Для отмены запросов
+        controller: null // Контроллер для отмены предыдущих HTTP-запросов
     },
+
+    dom: {},
 
     init() {
         this.cacheDOM();
@@ -25,25 +27,34 @@ export const SummaryModule = {
     },
 
     bindEvents() {
-        if (this.dom.btnRefresh) this.dom.btnRefresh.addEventListener('click', () => this.loadData());
-        if (this.dom.btnExcel) this.dom.btnExcel.addEventListener('click', () => this.downloadExcel());
-        if (this.dom.btnZip) this.dom.btnZip.addEventListener('click', () => this.downloadZip());
+        if (this.dom.btnRefresh) {
+            this.dom.btnRefresh.addEventListener('click', () => this.loadData());
+        }
+        if (this.dom.btnExcel) {
+            this.dom.btnExcel.addEventListener('click', () => this.downloadExcel());
+        }
+        if (this.dom.btnZip) {
+            this.dom.btnZip.addEventListener('click', () => this.downloadZip());
+        }
     },
 
     async loadPeriods() {
-        this.dom.periodSelector.innerHTML = '<span class="text-gray-500">Загрузка...</span>';
+        if (!this.dom.periodSelector) return;
+
+        this.dom.periodSelector.innerHTML = '<span class="text-gray-500">Загрузка периодов...</span>';
 
         try {
             const periods = await api.get('/admin/periods/history');
             this.dom.periodSelector.innerHTML = '';
 
             if (!periods || !periods.length) {
-                this.dom.periodSelector.textContent = "Нет периодов";
+                this.dom.periodSelector.textContent = "Нет доступных периодов";
                 return;
             }
 
+            // Создаем выпадающий список
             const select = el('select', {
-                class: 'border p-2 rounded',
+                class: 'border p-2 rounded bg-white',
                 style: { fontSize: '14px', minWidth: '200px' },
                 onchange: (e) => {
                     this.state.selectedPeriodId = e.target.value;
@@ -52,46 +63,70 @@ export const SummaryModule = {
             });
 
             periods.forEach(p => {
-                const opt = el('option', { value: p.id }, `${p.name} ${p.is_active ? '(Активен)' : ''}`);
+                const isActiveText = p.is_active ? ' (Активен)' : '';
+                const opt = el('option', { value: p.id }, `${p.name}${isActiveText}`);
                 select.appendChild(opt);
             });
 
-            this.dom.periodSelector.appendChild(el('span', { style: { marginRight: '10px', fontWeight: 'bold' } }, 'Период: '));
-            this.dom.periodSelector.appendChild(select);
+            // Контейнер для лейбла и селекта
+            const wrapper = el('div', { class: 'flex items-center gap-2' },
+                el('span', { class: 'font-bold' }, 'Период: '),
+                select
+            );
 
-            // Выбираем первый по умолчанию
-            this.state.selectedPeriodId = periods[0].id;
-            select.value = periods[0].id;
+            this.dom.periodSelector.appendChild(wrapper);
 
-            // Загружаем данные для первого периода
-            this.loadData();
+            // Выбираем первый (самый новый) период по умолчанию
+            if (periods.length > 0) {
+                this.state.selectedPeriodId = periods[0].id;
+                select.value = periods[0].id;
+                this.loadData();
+            }
 
         } catch (e) {
             console.error(e);
-            this.dom.periodSelector.textContent = "Ошибка загрузки";
+            this.dom.periodSelector.textContent = "Ошибка загрузки периодов";
         }
     },
 
     async loadData() {
-        // Отменяем предыдущий запрос, если он еще идет
+        // 1. Отменяем предыдущий запрос, если он еще выполняется
         if (this.state.controller) {
             this.state.controller.abort();
         }
+        // 2. Создаем новый контроллер
         this.state.controller = new AbortController();
 
-        this.dom.container.innerHTML = '<div style="text-align:center; padding:40px; color:#888;">⏳ Загрузка сводки...</div>';
+        this.dom.container.innerHTML = `
+            <div style="text-align:center; padding:40px; color:#666;">
+                <div class="spinner mb-2"></div>
+                ⏳ Загрузка сводной таблицы...
+            </div>`;
 
         try {
-            const url = this.state.selectedPeriodId
-                ? `/admin/summary?period_id=${this.state.selectedPeriodId}`
-                : '/admin/summary';
+            const periodParam = this.state.selectedPeriodId
+                ? `?period_id=${this.state.selectedPeriodId}`
+                : '';
 
+            const url = `/admin/summary${periodParam}`;
+
+            // Передаем signal в запрос
             const data = await api.get(url, { signal: this.state.controller.signal });
 
             this.renderData(data);
+
         } catch (e) {
-            if (e.name === 'AbortError') return; // Игнорируем отмену
-            this.dom.container.innerHTML = `<div style="text-align:center; color:red; padding:20px;">Ошибка: ${e.message}</div>`;
+            // Если ошибка вызвана отменой запроса — ничего не делаем
+            if (e.name === 'AbortError') {
+                console.log('Запрос отменен пользователем');
+                return;
+            }
+            // Реальные ошибки показываем
+            this.dom.container.innerHTML = `
+                <div style="text-align:center; color:#e74c3c; padding:20px; border:1px solid #e74c3c; border-radius:8px; margin:20px;">
+                    <strong>Ошибка загрузки данных:</strong><br>
+                    ${e.message}
+                </div>`;
         }
     },
 
@@ -99,73 +134,83 @@ export const SummaryModule = {
         this.dom.container.innerHTML = '';
 
         if (!data || Object.keys(data).length === 0) {
-            this.dom.container.innerHTML = '<div style="text-align:center; padding:40px; color:#888;">Нет данных за этот период</div>';
+            this.dom.container.innerHTML = '<div style="text-align:center; padding:40px; color:#888;">Нет данных для отображения за выбранный период</div>';
             return;
         }
 
         const fragment = document.createDocumentFragment();
 
-        for (const [dormName, records] of Object.entries(data)) {
-            const card = el('div', { class: 'card' });
+        // Сортируем общежития по алфавиту
+        const sortedDorms = Object.keys(data).sort();
+
+        for (const dormName of sortedDorms) {
+            const records = data[dormName];
+            const card = el('div', { class: 'bg-white shadow rounded-lg mb-6 overflow-hidden' });
 
             // Заголовок общежития
-            card.appendChild(el('h3', {
-                style: {
-                    borderLeft: '4px solid #4a90e2',
-                    paddingLeft: '10px',
-                    marginBottom: '15px'
-                }
-            }, `🏠 ${dormName}`));
+            const header = el('div', { class: 'bg-gray-100 px-4 py-3 border-b' },
+                el('h3', { class: 'font-bold text-lg text-gray-700' }, `🏠 ${dormName}`)
+            );
+            card.appendChild(header);
 
             // Таблица
-            const table = el('table', { style: { fontSize: '13px' } });
+            const tableContainer = el('div', { class: 'overflow-x-auto' });
+            const table = el('table', { class: 'min-w-full text-sm' });
 
-            // Шапка
-            table.appendChild(el('thead', {}, el('tr', { style: { background: '#f8f9fa' } },
-                el('th', {}, 'Дата'),
-                el('th', {}, 'Жилец'),
-                el('th', {}, 'ГВС'),
-                el('th', {}, 'ХВС'),
-                el('th', {}, 'Свет'),
-                el('th', {}, 'Содерж.'),
-                el('th', {}, 'Наем'),
-                el('th', {}, 'ТКО'),
-                el('th', {}, 'Отопл.'),
-                el('th', {}, 'ИТОГО'),
-                el('th', {}, '')
+            // Шапка таблицы
+            table.appendChild(el('thead', { class: 'bg-gray-50' }, el('tr', {},
+                el('th', { class: 'px-3 py-2 text-left' }, 'Дата'),
+                el('th', { class: 'px-3 py-2 text-left' }, 'Жилец'),
+                el('th', { class: 'px-3 py-2 text-right' }, 'ГВС'),
+                el('th', { class: 'px-3 py-2 text-right' }, 'ХВС'),
+                el('th', { class: 'px-3 py-2 text-right' }, 'Свет'),
+                el('th', { class: 'px-3 py-2 text-right' }, 'Содерж.'),
+                el('th', { class: 'px-3 py-2 text-right' }, 'Наем'),
+                el('th', { class: 'px-3 py-2 text-right' }, 'ТКО'),
+                el('th', { class: 'px-3 py-2 text-right' }, 'Отопл.'),
+                el('th', { class: 'px-3 py-2 text-right font-bold' }, 'ИТОГО'),
+                el('th', { class: 'px-3 py-2 text-center' }, 'Действия')
             )));
 
-            const tbody = el('tbody', {});
-            const totals = { hot:0, cold:0, el:0, main:0, rent:0, waste:0, fix:0, sum:0 };
+            const tbody = el('tbody', { class: 'divide-y divide-gray-200' });
+
+            // Инициализация сумм
+            const totals = {
+                hot: 0, cold: 0, el: 0,
+                main: 0, rent: 0, waste: 0, fix: 0,
+                sum: 0
+            };
 
             records.forEach(r => {
-                // Суммируем
-                totals.hot += Number(r.hot);
-                totals.cold += Number(r.cold);
-                totals.el += Number(r.electric);
-                totals.main += Number(r.maintenance);
-                totals.rent += Number(r.rent);
-                totals.waste += Number(r.waste);
-                totals.fix += Number(r.fixed);
-                totals.sum += Number(r.total);
+                // Приводим к числу для суммирования
+                totals.hot += Number(r.hot || 0);
+                totals.cold += Number(r.cold || 0);
+                totals.el += Number(r.electric || 0);
+                totals.main += Number(r.maintenance || 0);
+                totals.rent += Number(r.rent || 0);
+                totals.waste += Number(r.waste || 0);
+                totals.fix += Number(r.fixed || 0);
+                totals.sum += Number(r.total || 0);
 
-                const tr = el('tr', {},
-                    el('td', {}, r.date.split(' ')[0]),
-                    el('td', {},
-                        el('div', { style: { fontWeight: 'bold' } }, r.username),
-                        el('div', { style: { fontSize: '11px', color: '#999' } }, `${r.area}м² / ${r.residents} чел`)
+                const dateStr = r.date ? r.date.split(' ')[0] : '-';
+
+                const tr = el('tr', { class: 'hover:bg-gray-50' },
+                    el('td', { class: 'px-3 py-2' }, dateStr),
+                    el('td', { class: 'px-3 py-2' },
+                        el('div', { class: 'font-medium' }, r.username),
+                        el('div', { class: 'text-xs text-gray-500' }, `${r.area}м² / ${r.residents} чел`)
                     ),
-                    el('td', {}, Number(r.hot).toFixed(2)),
-                    el('td', {}, Number(r.cold).toFixed(2)),
-                    el('td', {}, Number(r.electric).toFixed(2)),
-                    el('td', {}, Number(r.maintenance).toFixed(2)),
-                    el('td', {}, Number(r.rent).toFixed(2)),
-                    el('td', {}, Number(r.waste).toFixed(2)),
-                    el('td', {}, Number(r.fixed).toFixed(2)),
-                    el('td', { style: { fontWeight: 'bold' } }, Number(r.total).toFixed(2)),
-                    el('td', {},
+                    el('td', { class: 'px-3 py-2 text-right' }, Number(r.hot).toFixed(2)),
+                    el('td', { class: 'px-3 py-2 text-right' }, Number(r.cold).toFixed(2)),
+                    el('td', { class: 'px-3 py-2 text-right' }, Number(r.electric).toFixed(2)),
+                    el('td', { class: 'px-3 py-2 text-right' }, Number(r.maintenance).toFixed(2)),
+                    el('td', { class: 'px-3 py-2 text-right' }, Number(r.rent).toFixed(2)),
+                    el('td', { class: 'px-3 py-2 text-right' }, Number(r.waste).toFixed(2)),
+                    el('td', { class: 'px-3 py-2 text-right' }, Number(r.fixed).toFixed(2)),
+                    el('td', { class: 'px-3 py-2 text-right font-bold' }, Number(r.total).toFixed(2)),
+                    el('td', { class: 'px-3 py-2 text-center' },
                         el('button', {
-                            class: 'btn-icon btn-doc',
+                            class: 'text-blue-600 hover:text-blue-900',
                             title: 'Скачать квитанцию',
                             onclick: () => this.downloadReceipt(r.reading_id)
                         }, '📄')
@@ -174,116 +219,156 @@ export const SummaryModule = {
                 tbody.appendChild(tr);
             });
 
-            // Итоговая строка
-            tbody.appendChild(el('tr', { style: { background: '#e8f5e9', fontWeight: 'bold' } },
-                el('td', { colspan: 2 }, 'ИТОГО ПО ОБЩЕЖИТИЮ:'),
-                el('td', {}, totals.hot.toFixed(2)),
-                el('td', {}, totals.cold.toFixed(2)),
-                el('td', {}, totals.el.toFixed(2)),
-                el('td', {}, totals.main.toFixed(2)),
-                el('td', {}, totals.rent.toFixed(2)),
-                el('td', {}, totals.waste.toFixed(2)),
-                el('td', {}, totals.fix.toFixed(2)),
-                el('td', { style: { color: '#c0392b' } }, totals.sum.toFixed(2)),
+            // Строка итогов
+            tbody.appendChild(el('tr', { class: 'bg-blue-50 font-bold' },
+                el('td', { colspan: 2, class: 'px-3 py-2 text-right' }, 'ИТОГО:'),
+                el('td', { class: 'px-3 py-2 text-right' }, totals.hot.toFixed(2)),
+                el('td', { class: 'px-3 py-2 text-right' }, totals.cold.toFixed(2)),
+                el('td', { class: 'px-3 py-2 text-right' }, totals.el.toFixed(2)),
+                el('td', { class: 'px-3 py-2 text-right' }, totals.main.toFixed(2)),
+                el('td', { class: 'px-3 py-2 text-right' }, totals.rent.toFixed(2)),
+                el('td', { class: 'px-3 py-2 text-right' }, totals.waste.toFixed(2)),
+                el('td', { class: 'px-3 py-2 text-right' }, totals.fix.toFixed(2)),
+                el('td', { class: 'px-3 py-2 text-right text-red-600' }, totals.sum.toFixed(2)),
                 el('td', {}, '')
             ));
 
             table.appendChild(tbody);
-            card.appendChild(table);
+            tableContainer.appendChild(table);
+            card.appendChild(tableContainer);
             fragment.appendChild(card);
         }
 
         this.dom.container.appendChild(fragment);
     },
 
-    // --- СКАЧИВАНИЕ ---
+    // --- ФУНКЦИОНАЛ СКАЧИВАНИЯ ---
 
     async downloadReceipt(id) {
-        toast('Генерация квитанции...', 'info');
+        toast('Генерация квитанции, подождите...', 'info');
         try {
-            // 1. Запускаем задачу
+            // 1. Инициируем задачу на бэкенде
             const res = await api.post(`/admin/receipts/${id}/generate`, {});
 
-            // 2. Ждем готовности (поллинг)
+            // 2. Ждем завершения задачи
             const result = await this.pollTask(res.task_id);
 
-            // 3. Скачиваем
+            // 3. Скачиваем файл (ИСПРАВЛЕННЫЙ МЕТОД)
             if (result.download_url) {
-                // Создаем временную ссылку
-                const link = document.createElement('a');
-                link.href = result.download_url;
-                link.target = '_blank';
-                link.download = `receipt_${id}.pdf`;
-                document.body.appendChild(link);
-                link.click();
-                link.remove();
-                toast('Скачивание началось', 'success');
+                this.triggerFileDownload(result.download_url, `receipt_${id}.pdf`);
+                toast('Файл скачивается', 'success');
+            } else {
+                throw new Error('Ссылка на файл не получена');
             }
+
         } catch (e) {
-            toast('Ошибка скачивания: ' + e.message, 'error');
+            console.error(e);
+            toast('Ошибка при скачивании: ' + e.message, 'error');
         }
     },
 
     async downloadExcel() {
-        if (!this.state.selectedPeriodId) return;
-        setLoading(this.dom.btnExcel, true, 'Скачивание...');
+        if (!this.state.selectedPeriodId) {
+            toast('Выберите период', 'warning');
+            return;
+        }
+
+        const btn = this.dom.btnExcel;
+        setLoading(btn, true, 'Скачивание...');
 
         try {
-            await api.download(`/admin/export_report?period_id=${this.state.selectedPeriodId}`, `report_${this.state.selectedPeriodId}.xlsx`);
-            toast('Отчет скачан', 'success');
+            // Excel скачивается напрямую через StreamingResponse, здесь полинг не нужен
+            // Но используем triggerFileDownload для безопасности
+            const url = `/api/admin/export_report?period_id=${this.state.selectedPeriodId}`;
+
+            // Вариант 1: Прямой переход (может блокироваться)
+            // window.location.href = url;
+
+            // Вариант 2: Через api.download (blob)
+            await api.download(url.replace('/api', ''), `report_${this.state.selectedPeriodId}.xlsx`);
+
+            toast('Отчет скачан успешно', 'success');
+
         } catch (e) {
-            toast('Ошибка: ' + e.message, 'error');
+            console.error(e);
+            toast('Ошибка скачивания Excel: ' + e.message, 'error');
         } finally {
-            setLoading(this.dom.btnExcel, false);
+            setLoading(btn, false);
         }
     },
 
     async downloadZip() {
-        if (!this.state.selectedPeriodId) return;
-        setLoading(this.dom.btnZip, true, 'Формирование...');
+        if (!this.state.selectedPeriodId) {
+            toast('Выберите период', 'warning');
+            return;
+        }
+
+        const btn = this.dom.btnZip;
+        setLoading(btn, true, 'Формирование...');
 
         try {
-            toast('Архив формируется, это может занять время...', 'info');
+            toast('Архив формируется. Это может занять до минуты...', 'info');
 
+            // 1. Старт задачи
             const res = await api.post(`/admin/reports/bulk-zip?period_id=${this.state.selectedPeriodId}`, {});
+
+            // 2. Ожидание
             const result = await this.pollTask(res.task_id);
 
+            // 3. Скачивание
             if (result.download_url) {
-                const link = document.createElement('a');
-                link.href = result.download_url;
-                link.target = '_blank';
-                document.body.appendChild(link);
-                link.click();
-                link.remove();
-                toast('Архив готов!', 'success');
+                this.triggerFileDownload(result.download_url, `archive_${this.state.selectedPeriodId}.zip`);
+                toast('Архив готов и скачивается', 'success');
             }
+
         } catch (e) {
+            console.error(e);
             toast('Ошибка: ' + e.message, 'error');
         } finally {
-            setLoading(this.dom.btnZip, false);
+            setLoading(btn, false);
         }
     },
 
-    // Вспомогательная функция ожидания задачи
+    /**
+     * Создает невидимую ссылку и кликает по ней.
+     * Это обходит блокировку "Insecure Content" в некоторых браузерах при скачивании по HTTP.
+     */
+    triggerFileDownload(url, filename) {
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', filename || ''); // Атрибут download важен!
+        link.style.display = 'none';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    },
+
+    /**
+     * Опрашивает сервер о статусе задачи Celery.
+     */
     async pollTask(taskId) {
-        const poll = async () => {
+        const check = async () => {
             const data = await api.get(`/admin/tasks/${taskId}`);
-            if (data.status === 'done' || data.state === 'SUCCESS') {
+
+            // Поддержка разных статусов успеха
+            if (data.status === 'done' || data.status === 'ok' || data.state === 'SUCCESS') {
                 return data;
             }
+
             if (data.state === 'FAILURE') {
-                throw new Error(data.error || 'Ошибка сервера');
+                throw new Error(data.error || 'Ошибка выполнения задачи на сервере');
             }
-            // Ждем 1.5 сек и повторяем
-            await new Promise(r => setTimeout(r, 1500));
-            return poll();
+
+            // Если еще выполняется - ждем 1 секунду и повторяем
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            return check();
         };
 
-        // Timeout 3 минуты
-        const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Время ожидания истекло')), 180000)
+        // Таймаут 5 минут (300000 мс) для больших архивов
+        const timeout = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Время ожидания задачи истекло')), 300000)
         );
 
-        return Promise.race([poll(), timeoutPromise]);
+        return Promise.race([check(), timeout]);
     }
 };

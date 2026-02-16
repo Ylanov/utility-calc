@@ -42,7 +42,9 @@ class RoleChecker:
             )
         return user
 
-# Создаем алиасы для удобства
-allow_admin = RoleChecker(["accountant", "financier"]) # или "admin"
-allow_accountant = RoleChecker(["accountant"])
-allow_financier = RoleChecker(["financier", "accountant"])
+# --- ИСПРАВЛЕНИЕ ЗДЕСЬ ---
+# Мы добавляем 'admin' в список ролей, которые могут выполнять действия бухгалтера.
+# Теперь и 'admin', и 'accountant' смогут создавать/редактировать/удалять пользователей.
+
+allow_accountant = RoleChecker(["accountant", "admin"])
+allow_financier = RoleChecker(["financier", "accountant", "admin"])
