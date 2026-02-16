@@ -11,6 +11,7 @@ from fastapi import (
     HTTPException,
     UploadFile,
     File,
+    Form,  # <--- Добавлено
     Query
 )
 
@@ -63,12 +64,13 @@ os.makedirs(TEMP_DIR, exist_ok=True)
     summary="Фоновый импорт долгов из 1С"
 )
 async def upload_debts_1c(
+        account_type: str = Form(..., pattern="^(209|205)$", description="Тип счета: 209 (Коммуналка) или 205 (Найм)"),
         file: UploadFile = File(...),
         current_user: User = Depends(get_current_user)
 ):
     """
     Загружает Excel-файл и запускает фоновый импорт через Celery.
-    Содержит проверку размера файла.
+    Требует указания типа счета (account_type): '209' или '205'.
     """
 
     # --- Access control ---
@@ -118,14 +120,15 @@ async def upload_debts_1c(
         )
 
     # --- Run Celery task ---
+    # Передаем account_type в задачу, чтобы парсер знал, в какие поля писать
+    task = import_debts_task.delay(file_path, account_type)
 
-    task = import_debts_task.delay(file_path)
-
-    logger.info(f"[IMPORT] Started task={task.id}")
+    logger.info(f"[IMPORT] Started task={task.id} for account={account_type}")
 
     return {
         "task_id": task.id,
-        "status": "processing"
+        "status": "processing",
+        "account_type": account_type
     }
 
 
@@ -149,6 +152,7 @@ async def get_users_with_debts(
     """
     Возвращает список пользователей с долгами за активный период
     (с пагинацией и поиском).
+    Возвращает раздельные данные по счетам 209 и 205.
     """
 
     # --- Access control ---
@@ -177,16 +181,23 @@ async def get_users_with_debts(
     # Base query
     # --------------------------------------------------
 
-    # Используем Left Join (User -> MeterReading), чтобы видеть всех пользователей,
-    # даже если у них еще нет записи показаний.
+    # Используем Left Join (User -> MeterReading), чтобы видеть всех пользователей.
+    # Выбираем новые раздельные поля для 209 и 205 счетов.
     stmt = (
         select(
             User.id,
             User.username,
             User.dormitory,
 
-            MeterReading.initial_debt,
-            MeterReading.initial_overpayment,
+            # Счет 209 (Коммуналка)
+            MeterReading.debt_209,
+            MeterReading.overpayment_209,
+
+            # Счет 205 (Найм)
+            MeterReading.debt_205,
+            MeterReading.overpayment_205,
+
+            # Общий текущий итог квитанции
             MeterReading.total_cost
         )
         .outerjoin(
@@ -210,10 +221,8 @@ async def get_users_with_debts(
     # Optimized Count Query
     # --------------------------------------------------
 
-    # Вместо subquery() делаем прямой подсчет по ID, что быстрее
     count_stmt = select(func.count(User.id))
 
-    # Применяем тот же фильтр поиска для подсчета
     if search:
         count_stmt = count_stmt.where(func.lower(User.username).like(search_value))
 
@@ -251,8 +260,13 @@ async def get_users_with_debts(
                 "username": row.username,
                 "dormitory": row.dormitory,
 
-                "initial_debt": row.initial_debt or 0,
-                "initial_overpayment": row.initial_overpayment or 0,
+                # Возвращаем раздельные данные. Если записи нет, ставим 0.
+                "debt_209": row.debt_209 or 0,
+                "overpayment_209": row.overpayment_209 or 0,
+
+                "debt_205": row.debt_205 or 0,
+                "overpayment_205": row.overpayment_205 or 0,
+
                 "current_total_cost": row.total_cost or 0
             }
         )

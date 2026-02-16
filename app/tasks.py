@@ -75,13 +75,12 @@ def generate_receipt_task(reading_id: int) -> dict:
             .all()
         )
 
-        # --- ИСПРАВЛЕНИЕ: Передаем prev_reading ---
         final_path = generate_receipt_pdf(
             user=reading.user,
             reading=reading,
             period=period,
             tariff=tariff,
-            prev_reading=prev_reading,  # <--- ВОТ ЭТО ВАЖНО
+            prev_reading=prev_reading,
             adjustments=adjustments,
             output_dir=SHARED_STORAGE_PATH
         )
@@ -211,12 +210,17 @@ def start_bulk_receipt_generation(period_id: int):
     retry_kwargs={"max_retries": 2, "countdown": 15},
     retry_backoff=True
 )
-def import_debts_task(file_path: str) -> dict:
-    logger.info(f"[IMPORT] Start {file_path}")
+def import_debts_task(file_path: str, account_type: str) -> dict:
+    """
+    Фоновая задача импорта долгов.
+    Принимает путь к файлу и тип счета ('209' или '205').
+    """
+    logger.info(f"[IMPORT] Start {file_path} for Account {account_type}")
     db = get_sync_db()
 
     try:
-        result = sync_import_debts_process(file_path, db)
+        # Передаем тип счета в функцию импорта
+        result = sync_import_debts_process(file_path, db, account_type)
         return result
 
     except Exception:

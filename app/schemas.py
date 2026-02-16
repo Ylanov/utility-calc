@@ -117,12 +117,15 @@ class AdjustmentCreate(BaseModel):
     user_id: int
     amount: DecimalAmount
     description: str
+    # Тип счета: "209" (коммуналка) или "205" (найм)
+    account_type: str = "209"
 
 
 class AdjustmentResponse(BaseModel):
     id: int
     amount: Decimal
     description: str
+    account_type: str
     created_at: datetime
 
     class Config:
@@ -151,6 +154,9 @@ class ReadingStateResponse(BaseModel):
     current_elect: Optional[Decimal]
 
     total_cost: Optional[Decimal]
+    # Новые поля для раздельного учета
+    total_209: Optional[Decimal] = None
+    total_205: Optional[Decimal] = None
 
     is_draft: bool
     is_period_open: bool
@@ -173,7 +179,7 @@ class ApproveRequest(BaseModel):
 
 
 # ======================================================
-# FINANCIER RESPONSE (UPDATED)
+# FINANCIER RESPONSE (UPDATED FOR SPLIT BILLING)
 # ======================================================
 
 class UserDebtResponse(BaseModel):
@@ -181,9 +187,15 @@ class UserDebtResponse(BaseModel):
     username: str
     dormitory: Optional[str] = None
 
-    # Отдаем Decimal без преобразования во float
-    initial_debt: Decimal
-    initial_overpayment: Decimal
+    # Раздельные долги/переплаты для счета 209 (Коммуналка)
+    debt_209: Decimal
+    overpayment_209: Decimal
+
+    # Раздельные долги/переплаты для счета 205 (Найм)
+    debt_205: Decimal
+    overpayment_205: Decimal
+
+    # Текущий общий итог квитанции (для справки)
     current_total_cost: Decimal
 
     class Config:

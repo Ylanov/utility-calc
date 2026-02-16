@@ -106,6 +106,10 @@ class Adjustment(Base):
 
     description = Column(String, nullable=False)
 
+    # НОВОЕ ПОЛЕ: Тип счета ('209' - коммуналка, '205' - найм)
+    # По умолчанию '209', чтобы старые корректировки считались коммуналкой
+    account_type = Column(String, default="209", nullable=False)
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Связи
@@ -144,11 +148,16 @@ class MeterReading(Base):
     electricity = Column(Numeric(12, 3))
 
     # ==================================================
-    # САЛЬДО ИЗ 1С
+    # САЛЬДО ИЗ 1С (РАЗДЕЛЬНЫЙ УЧЕТ)
     # ==================================================
-    initial_debt = Column(Numeric(12, 2), default=0.00)
 
-    initial_overpayment = Column(Numeric(12, 2), default=0.00)
+    # СЧЕТ 209: Коммунальные услуги + Содержание и ремонт
+    debt_209 = Column(Numeric(12, 2), default=0.00)
+    overpayment_209 = Column(Numeric(12, 2), default=0.00)
+
+    # СЧЕТ 205: Найм жилого помещения
+    debt_205 = Column(Numeric(12, 2), default=0.00)
+    overpayment_205 = Column(Numeric(12, 2), default=0.00)
 
     # ==================================================
     # КОРРЕКЦИИ ОБЪЕМОВ
@@ -164,7 +173,17 @@ class MeterReading(Base):
     # ==================================================
     # ДЕНЕЖНЫЕ РАСЧЕТЫ (2 знака)
     # ==================================================
+
+    # Итоговая сумма по счету 209 (Начисления 209 + Долг 209 - Переплата 209 + Корр 209)
+    total_209 = Column(Numeric(12, 2), default=0.00)
+
+    # Итоговая сумма по счету 205 (Начисления 205 + Долг 205 - Переплата 205 + Корр 205)
+    total_205 = Column(Numeric(12, 2), default=0.00)
+
+    # Общий итог к оплате (total_209 + total_205)
     total_cost = Column(Numeric(12, 2), default=0.00)
+
+    # --- Детализация начислений за текущий месяц ---
 
     cost_hot_water = Column(Numeric(12, 2), default=0.00)
 
@@ -176,6 +195,7 @@ class MeterReading(Base):
 
     cost_maintenance = Column(Numeric(12, 2), default=0.00)
 
+    # cost_social_rent относится к счету 205, остальные к 209
     cost_social_rent = Column(Numeric(12, 2), default=0.00)
 
     cost_waste = Column(Numeric(12, 2), default=0.00)

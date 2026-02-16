@@ -60,7 +60,7 @@ async def get_reading_state(current_user: User = Depends(get_current_user), db: 
         "current_cold": draft.cold_water if draft else None,
         "current_elect": draft.electricity if draft else None,
 
-        # total_cost здесь уже будет включать долг, если он был рассчитан при сохранении
+        # total_cost берется напрямую из базы, так как теперь он хранится и обновляется при сохранении
         "total_cost": draft.total_cost if draft else None,
 
         "is_draft": True if draft else False,
@@ -85,7 +85,7 @@ async def save_reading(
         db: AsyncSession = Depends(get_db)
 ):
     """
-    Расчет и сохранение показаний (Черновик).
+    Расчет и сохранение показаний (Черновик) с поддержкой раздельного учета (Счета 209 и 205).
     """
 
     # 0. Проверяем, открыт ли период
@@ -144,6 +144,13 @@ async def save_reading(
         volume_electricity_share=user_share_kwh
     )
 
+    # <--- РАЗДЕЛЕНИЕ НАЧИСЛЕНИЙ ПО ТИПАМ СЧЕТОВ --->
+    # Счет 205 (Найм)
+    cost_rent_205 = costs['cost_social_rent']
+
+    # Счет 209 (Коммуналка = Общий итог - Найм)
+    cost_utils_209 = costs['total_cost'] - cost_rent_205
+
     # <--- БЛОК ПРОВЕРКИ АНОМАЛИЙ --->
     history_res = await db.execute(
         select(MeterReading)
@@ -171,19 +178,45 @@ async def save_reading(
     )
     draft = draft_res.scalars().first()
 
-    # === РАСЧЕТ ИТОГОВОЙ СУММЫ С УЧЕТОМ ДОЛГОВ И КОРРЕКТИРОВОК ===
-    current_debt = draft.initial_debt if draft and draft.initial_debt else Decimal("0.00")
-    current_overpay = draft.initial_overpayment if draft and draft.initial_overpayment else Decimal("0.00")
-
-    # Считаем корректировки (Adjustments), добавленные администратором
-    adj_res = await db.execute(
-        select(func.sum(Adjustment.amount))
-        .where(Adjustment.user_id == current_user.id, Adjustment.period_id == active_period.id)
+    # <--- ПОЛУЧЕНИЕ КОРРЕКТИРОВОК ПО ТИПАМ СЧЕТОВ --->
+    adj_stmt = (
+        select(Adjustment.account_type, func.sum(Adjustment.amount))
+        .where(
+            Adjustment.user_id == current_user.id,
+            Adjustment.period_id == active_period.id
+        )
+        .group_by(Adjustment.account_type)
     )
-    total_adjustments = adj_res.scalar() or Decimal("0.00")
+    adj_res = await db.execute(adj_stmt)
 
-    # Формула: Начисления за месяц + Долг - Переплата + Корректировки
-    total_bill = costs["total_cost"] + current_debt - current_overpay + total_adjustments
+    # Формируем словарь корректировок: {'209': 100.00, '205': 50.00}
+    adj_map = {row[0]: (row[1] or Decimal("0.00")) for row in adj_res.all()}
+
+    adj_209 = adj_map.get('209', Decimal("0.00"))
+    adj_205 = adj_map.get('205', Decimal("0.00"))
+
+    # <--- ОПРЕДЕЛЕНИЕ ТЕКУЩИХ ДОЛГОВ --->
+    if draft:
+        d_209 = draft.debt_209 or Decimal("0.00")
+        o_209 = draft.overpayment_209 or Decimal("0.00")
+        d_205 = draft.debt_205 or Decimal("0.00")
+        o_205 = draft.overpayment_205 or Decimal("0.00")
+    else:
+        # Если черновика нет, долги считаем нулевыми (они появятся после импорта финансистом)
+        d_209 = Decimal("0.00")
+        o_209 = Decimal("0.00")
+        d_205 = Decimal("0.00")
+        o_205 = Decimal("0.00")
+
+    # <--- РАСЧЕТ ИТОГОВЫХ СУММ ПО СЧЕТАМ --->
+    # Итог 209 = Начисления (без найма) + Долг 209 - Переплата 209 + Корректировки 209
+    total_209 = cost_utils_209 + d_209 - o_209 + adj_209
+
+    # Итог 205 = Начисления (найм) + Долг 205 - Переплата 205 + Корректировки 205
+    total_205 = cost_rent_205 + d_205 - o_205 + adj_205
+
+    # Общий итог
+    grand_total = total_209 + total_205
 
     # 7. Сохранение / Обновление в БД
     if draft:
@@ -196,8 +229,11 @@ async def save_reading(
             if hasattr(draft, k):
                 setattr(draft, k, v)
 
-        # Обновляем ИТОГОВУЮ сумму
-        draft.total_cost = total_bill
+        # Обновляем ИТОГОВЫЕ суммы
+        draft.total_209 = total_209
+        draft.total_205 = total_205
+        draft.total_cost = grand_total
+
         draft.anomaly_flags = anomaly_flags
     else:
         new_reading = MeterReading(
@@ -207,26 +243,35 @@ async def save_reading(
             cold_water=data.cold_water,
             electricity=data.electricity,
 
-            # При создании новой записи клиентом долги по нулям,
-            # если финансист еще не создал запись импортом
-            initial_debt=Decimal("0.00"),
-            initial_overpayment=Decimal("0.00"),
+            # При создании новой записи клиентом долги по нулям
+            debt_209=Decimal("0.00"),
+            overpayment_209=Decimal("0.00"),
+            debt_205=Decimal("0.00"),
+            overpayment_205=Decimal("0.00"),
 
             # Сохраняем стоимости услуг
             **costs,
 
+            # Итоговые суммы
+            total_209=total_209,
+            total_205=total_205,
+            total_cost=grand_total,
+
             is_approved=False,
             anomaly_flags=anomaly_flags
         )
-        # Явно перезаписываем total_cost, чтобы включить adjustments и долги
-        new_reading.total_cost = total_bill
 
         db.add(new_reading)
 
     # !!! ЯВНЫЙ КОММИТ !!!
     await db.commit()
 
-    return {"status": "success", "total_cost": total_bill}
+    return {
+        "status": "success",
+        "total_cost": grand_total,
+        "total_209": total_209,
+        "total_205": total_205
+    }
 
 
 @router.get("/api/readings/history")

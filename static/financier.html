@@ -1,423 +1,127 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-    <title>Рабочее место Финансиста</title>
-
-    <!-- Основные стили -->
-    <link rel="stylesheet" href="style.css">
-
-    <style>
-        /* ===== ROLE BADGE ===== */
-
-        .role-badge.financier {
-            background-color: #9b59b6;
-            color: white;
-        }
-
-        /* ===== UPLOAD AREA ===== */
-
-        .upload-area {
-            display: flex;
-            gap: 15px;
-            align-items: center;
-            background: #f9f9f9;
-            padding: 20px;
-            border-radius: 8px;
-            border: 1px dashed #ccc;
-        }
-
-        .upload-result-box {
-            margin-top: 15px;
-            display: none;
-            animation: fadeIn 0.3s ease-in-out;
-        }
-
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-                transform: translateY(-5px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        /* ===== PAGINATION ===== */
-
-        .pagination {
-            margin-top: 15px;
-            display: flex;
-            align-items: center;
-            gap: 15px;
-            justify-content: center;
-        }
-
-        .pagination button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        /* ===== SEARCH INPUT ===== */
-
-        #userSearchInput {
-            padding: 6px 8px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            min-width: 200px;
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Рабочее место Финансиста</title>
+<link rel="stylesheet" href="style.css">
+<style>
+.role-badge.financier{background-color:#9b59b6;color:white}
+.upload-area{display:flex;flex-direction:column;gap:15px;background:#f9f9f9;padding:20px;border-radius:8px;border:1px dashed #ccc}
+.upload-row{display:flex;gap:15px;align-items:center;width:100%}
+.upload-result-box{margin-top:15px;display:none;animation:fadeIn 0.3s ease-in-out}
+@keyframes fadeIn{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:translateY(0)}}
+.pagination{margin-top:15px;display:flex;align-items:center;gap:15px;justify-content:center}
+.pagination button:disabled{opacity:0.5;cursor:not-allowed}
+#userSearchInput{padding:6px 8px;border:1px solid #ccc;border-radius:4px;min-width:200px}
+.account-selector{display:flex;gap:20px;margin-bottom:5px;align-items:center}
+.radio-label{cursor:pointer;display:flex;align-items:center;gap:5px;font-weight:600}
+</style>
 </head>
-
 <body>
-
-<!-- ================================================== -->
-<!-- TOAST CONTAINER -->
-<!-- ================================================== -->
-
 <div id="toast-container"></div>
-
-
-<!-- ================================================== -->
-<!-- MAIN CONTAINER -->
-<!-- ================================================== -->
-
 <div class="container">
-
-
-    <!-- ================= HEADER ================= -->
-
     <header>
-
+        <div class="header-user-info"><h1>💰 Финансы ЖКХ</h1></div>
         <div class="header-user-info">
-            <h1>💰 Финансы ЖКХ</h1>
-        </div>
-
-        <div class="header-user-info">
-            <span
-                id="financierName"
-                style="font-weight: 600; color: #555;"
-            >
-                Финансист
-            </span>
-
+            <span id="financierName" style="font-weight:600;color:#555">Финансист</span>
             <button class="logout-btn">Выйти</button>
         </div>
-
     </header>
-
-
-    <!-- ================= TABS ================= -->
-
     <div class="tabs">
-
-        <button
-            class="tab-btn active"
-            data-tab="debts"
-        >
-            📉 Управление долгами
-        </button>
-
-        <button
-            class="tab-btn"
-            data-tab="users"
-        >
-            👥 Личный состав
-        </button>
-
+        <button class="tab-btn active" data-tab="debts">📉 Управление долгами</button>
+        <button class="tab-btn" data-tab="users">👥 Личный состав</button>
     </div>
 
-
-    <!-- ================================================== -->
-    <!-- TAB: DEBTS IMPORT -->
-    <!-- ================================================== -->
-
-    <div
-        id="debts"
-        class="tab-content active"
-    >
-
-        <div class="card" style="border-left: 5px solid #8e44ad;">
-
+    <!-- TAB: IMPORT -->
+    <div id="debts" class="tab-content active">
+        <div class="card" style="border-left:5px solid #8e44ad">
             <h2>📂 Импорт из 1С (Excel)</h2>
-
-            <p
-                style="
-                    color: #666;
-                    font-size: 14px;
-                    margin-bottom: 15px;
-                    line-height: 1.5;
-                "
-            >
-                Загрузите файл "Оборотно-сальдовая ведомость" (.xlsx).<br>
-                Система автоматически обновит входящее сальдо.
-            </p>
-
+            <p style="color:#666;font-size:14px;margin-bottom:15px">Загрузите файл "Оборотно-сальдовая ведомость" (.xlsx).<br>Система обновит сальдо для выбранного счета.</p>
             <div class="upload-area">
-
-                <input
-                    type="file"
-                    id="debtFile1C"
-                    accept=".xlsx, .xls"
-                    style="flex: 1; padding: 5px;"
-                >
-
-                <button
-                    id="btnUploadDebts"
-                    class="action-btn"
-                    style="background: #8e44ad;"
-                >
-                    ⬆ Загрузить долги
-                </button>
-
-            </div>
-
-            <div
-                id="uploadResult"
-                class="upload-result-box"
-            ></div>
-
-        </div>
-
-
-        <div class="card">
-
-            <h3>ℹ️ Справка</h3>
-
-            <ul
-                style="
-                    color: #555;
-                    font-size: 13px;
-                    padding-left: 20px;
-                "
-            >
-                <li>Файл должен содержать ФИО и сальдо.</li>
-                <li>Импорт только для активного месяца.</li>
-                <li>Квитанции пересчитываются автоматически.</li>
-            </ul>
-
-        </div>
-
-    </div>
-
-
-    <!-- ================================================== -->
-    <!-- TAB: USERS -->
-    <!-- ================================================== -->
-
-    <div
-        id="users"
-        class="tab-content"
-    >
-
-        <div class="card">
-
-
-            <!-- ===== CONTROLS ===== -->
-
-            <div class="controls-header">
-
-                <h2>Список жильцов</h2>
-
-                <div
-                    style="
-                        display: flex;
-                        gap: 10px;
-                        align-items: center;
-                    "
-                >
-
-                    <input
-                        type="text"
-                        id="userSearchInput"
-                        placeholder="Поиск по ФИО..."
-                    >
-
-                    <button
-                        id="btnRefreshUsers"
-                        class="refresh-btn"
-                    >
-                        ↻ Обновить
-                    </button>
-
+                <div class="account-selector">
+                    <span style="font-weight:bold">1. Счет:</span>
+                    <label class="radio-label"><input type="radio" name="accountType" value="209" checked> <span style="color:#27ae60">209 (Коммуналка)</span></label>
+                    <label class="radio-label"><input type="radio" name="accountType" value="205"> <span style="color:#e67e22">205 (Найм)</span></label>
                 </div>
-
+                <div class="upload-row">
+                    <span style="font-weight:bold;min-width:60px">2. Файл:</span>
+                    <input type="file" id="debtFile1C" accept=".xlsx,.xls" style="flex:1;padding:5px;border:1px solid #ddd;border-radius:4px">
+                    <button id="btnUploadDebts" class="action-btn" style="background:#8e44ad">⬆ Загрузить</button>
+                </div>
             </div>
-
-
-            <!-- ===== TABLE ===== -->
-
-            <div class="table-container">
-
-                <table>
-
-                    <thead>
-
-                        <tr>
-
-                            <th style="width: 50px;">ID</th>
-
-                            <th>ФИО (Логин)</th>
-
-                            <th>Общежитие</th>
-
-                            <th style="color: #c0392b;">
-                                Долг (вх.)
-                            </th>
-
-                            <th style="color: #27ae60;">
-                                Переплата (вх.)
-                            </th>
-
-                            <th>
-                                Квитанция (итог)
-                            </th>
-
-                            <th style="text-align: right;">
-                                Действия
-                            </th>
-
-                        </tr>
-
-                    </thead>
-
-
-                    <tbody id="usersTableBody">
-
-                        <tr>
-                            <td
-                                colspan="7"
-                                style="
-                                    text-align: center;
-                                    padding: 20px;
-                                    color: #888;
-                                "
-                            >
-                                Загрузка данных...
-                            </td>
-                        </tr>
-
-                    </tbody>
-
-                </table>
-
-            </div>
-
-
-            <!-- ===== PAGINATION ===== -->
-
-            <div class="pagination">
-
-                <button
-                    id="btnPrevPage"
-                    class="action-btn"
-                    disabled
-                >
-                    ← Назад
-                </button>
-
-                <span id="pageInfo">
-                    Страница 1
-                </span>
-
-                <button
-                    id="btnNextPage"
-                    class="action-btn"
-                >
-                    Вперед →
-                </button>
-
-            </div>
-
+            <div id="uploadResult" class="upload-result-box"></div>
         </div>
-
+        <div class="card">
+            <h3>ℹ️ Справка</h3>
+            <ul style="color:#555;font-size:13px;padding-left:20px">
+                <li>Файл должен содержать ФИО, Дебет (Долг) и Кредит (Переплата).</li>
+                <li>Импорт производится только для активного месяца.</li>
+            </ul>
+        </div>
     </div>
 
+    <!-- TAB: USERS -->
+    <div id="users" class="tab-content">
+        <div class="card">
+            <div class="controls-header">
+                <h2>Список жильцов</h2>
+                <div style="display:flex;gap:10px;align-items:center">
+                    <input type="text" id="userSearchInput" placeholder="Поиск по ФИО...">
+                    <button id="btnRefreshUsers" class="refresh-btn">↻ Обновить</button>
+                </div>
+            </div>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th style="width:50px">ID</th>
+                            <th>ФИО (Логин)</th>
+                            <th>Общ.</th>
+                            <th style="color:#c0392b;border-left:2px solid #eee">Д 209</th>
+                            <th style="color:#27ae60">П 209</th>
+                            <th style="color:#d35400;border-left:2px solid #eee">Д 205</th>
+                            <th style="color:#27ae60">П 205</th>
+                            <th>Итог</th>
+                            <th style="text-align:right">Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody id="usersTableBody">
+                        <tr><td colspan="9" style="text-align:center;padding:20px;color:#888">Загрузка данных...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="pagination">
+                <button id="btnPrevPage" class="action-btn" disabled>← Назад</button>
+                <span id="pageInfo">Страница 1</span>
+                <button id="btnNextPage" class="action-btn">Вперед →</button>
+            </div>
+        </div>
+    </div>
 </div>
 
-
-<!-- ================================================== -->
-<!-- SCRIPTS -->
-<!-- ================================================== -->
-
 <script type="module">
-
-    import { Auth } from './js/core/auth.js';
-    import { FinancierApp } from './js/modules/financier.js';
-
-
-    /* ===== AUTH CHECK ===== */
-
-    if (!Auth.isAuthenticated()) {
-        window.location.replace('login.html');
-    }
-
-
-    /* ===== USER NAME ===== */
-
-    const username = Auth.getUsername();
-
-    const nameEl = document.getElementById('financierName');
-
-    if (nameEl) {
-        nameEl.textContent = `Финансист: ${username || ''}`;
-    }
-
-
-    /* ===== LOGOUT ===== */
-
-    const logoutBtn = document.querySelector('.logout-btn');
-
-    if (logoutBtn) {
-        logoutBtn.addEventListener(
-            'click',
-            () => Auth.logout()
-        );
-    }
-
-
-    /* ===== TABS ===== */
-
-    const tabs = document.querySelectorAll('.tab-btn');
-    const contents = document.querySelectorAll('.tab-content');
-
-    tabs.forEach(btn => {
-
-        btn.addEventListener('click', () => {
-
-            tabs.forEach(
-                t => t.classList.remove('active')
-            );
-
-            contents.forEach(
-                c => c.classList.remove('active')
-            );
-
-            btn.classList.add('active');
-
-            const tabId = btn.dataset.tab;
-
-            const tabContent = document.getElementById(tabId);
-
-            if (tabContent) {
-                tabContent.classList.add('active');
-            }
-
-        });
-
+import {Auth} from './js/core/auth.js';
+import {FinancierApp} from './js/modules/financier.js';
+if(!Auth.isAuthenticated()){window.location.replace('login.html');}
+const username=Auth.getUsername();
+const nameEl=document.getElementById('financierName');
+if(nameEl){nameEl.textContent=`Финансист: ${username||''}`;}
+const logoutBtn=document.querySelector('.logout-btn');
+if(logoutBtn){logoutBtn.addEventListener('click',()=>Auth.logout());}
+const tabs=document.querySelectorAll('.tab-btn');
+const contents=document.querySelectorAll('.tab-content');
+tabs.forEach(btn=>{
+    btn.addEventListener('click',()=>{
+        tabs.forEach(t=>t.classList.remove('active'));
+        contents.forEach(c=>c.classList.remove('active'));
+        btn.classList.add('active');
+        const tabId=btn.dataset.tab;
+        const tabContent=document.getElementById(tabId);
+        if(tabContent) tabContent.classList.add('active');
     });
-
-
-    /* ===== INIT APP ===== */
-
-    document.addEventListener('DOMContentLoaded', () => {
-        FinancierApp.init();
-    });
-
+});
+document.addEventListener('DOMContentLoaded',()=>FinancierApp.init());
 </script>
-
 </body>
 </html>
