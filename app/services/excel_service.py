@@ -1,32 +1,22 @@
 import io
 from typing import Dict, List, Tuple
 from decimal import Decimal
-
 from openpyxl import Workbook, load_workbook
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-
 from app.models import User, MeterReading, BillingPeriod
 from app.auth import get_password_hash
-
 
 ZERO = Decimal("0.00")
 
 
 async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict:
     try:
-        workbook = load_workbook(
-            filename=io.BytesIO(file_content),
-            read_only=True,
-            data_only=True
-        )
+        workbook = load_workbook(filename=io.BytesIO(file_content), read_only=True, data_only=True)
         worksheet = workbook.active
 
         users_result = await db.execute(select(User))
-        existing_users: Dict[str, User] = {
-            user.username: user
-            for user in users_result.scalars().all()
-        }
+        existing_users: Dict[str, User] = {user.username: user for user in users_result.scalars().all()}
 
         added_count = 0
         updated_count = 0
@@ -78,7 +68,10 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
                     user.workplace = workplace
                     if password:
                         user.hashed_password = hashed_password
-                    updated_count += 1
+
+                    # Обновляем счетчик только если это не дубль внутри текущего файла
+                    if user not in new_users:
+                        updated_count += 1
                 else:
                     new_user = User(
                         username=username,
@@ -125,14 +118,8 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
         }
 
 
-async def generate_billing_report_xlsx(
-    db: AsyncSession,
-    period_id: int
-) -> Tuple[io.BytesIO, str]:
-
-    period_result = await db.execute(
-        select(BillingPeriod).where(BillingPeriod.id == period_id)
-    )
+async def generate_billing_report_xlsx(db: AsyncSession, period_id: int) -> Tuple[io.BytesIO, str]:
+    period_result = await db.execute(select(BillingPeriod).where(BillingPeriod.id == period_id))
     period = period_result.scalars().first()
 
     if not period:
@@ -141,10 +128,7 @@ async def generate_billing_report_xlsx(
     statement = (
         select(User, MeterReading)
         .join(MeterReading, User.id == MeterReading.user_id)
-        .where(
-            MeterReading.period_id == period_id,
-            MeterReading.is_approved.is_(True)
-        )
+        .where(MeterReading.period_id == period_id, MeterReading.is_approved.is_(True))
         .order_by(User.dormitory, User.username)
     )
 
@@ -155,28 +139,25 @@ async def generate_billing_report_xlsx(
     worksheet.title = "Сводная ведомость"
 
     headers = [
-        "Общежитие/Комната",
-        "ФИО (Логин)",
-        "Площадь",
-        "Жильцов",
-        "ГВС (руб)",
-        "ХВС (руб)",
-        "Водоотв. (руб)",
-        "Электроэнергия (руб)",
-        "Содержание (руб)",
-        "Наем (руб)",
-        "ТКО (руб)",
-        "Отопление + ОДН (руб)",
-        "ИТОГО (руб)"
+        "Общежитие/Комната", "ФИО (Логин)", "Площадь", "Жильцов",
+        "ГВС (руб)", "ХВС (руб)", "Водоотв. (руб)", "Электроэнергия (руб)",
+        "Содержание (руб)", "Наем (руб)", "ТКО (руб)", "Отопление + ОДН (руб)",
+        "Счет 209 (Комм.)", "Счет 205 (Найм)", "ИТОГО (руб)"
     ]
-
     worksheet.append(headers)
 
     total_sum = ZERO
+    total_209_sum = ZERO
+    total_205_sum = ZERO
 
     for user, reading in result:
         total_cost = Decimal(reading.total_cost or 0)
+        t_209 = Decimal(reading.total_209 or 0)
+        t_205 = Decimal(reading.total_205 or 0)
+
         total_sum += total_cost
+        total_209_sum += t_209
+        total_205_sum += t_205
 
         worksheet.append([
             user.dormitory,
@@ -191,15 +172,16 @@ async def generate_billing_report_xlsx(
             reading.cost_social_rent,
             reading.cost_waste,
             reading.cost_fixed_part,
+            t_209,
+            t_205,
             total_cost
         ])
 
-    worksheet.append([""] * 11 + ["ИТОГО:", total_sum])
+    worksheet.append([""] * 11 + ["ИТОГО:", total_209_sum, total_205_sum, total_sum])
 
     output = io.BytesIO()
     workbook.save(output)
     output.seek(0)
 
     filename = f"Report_{period.name}".replace(" ", "_") + ".xlsx"
-
     return output, filename

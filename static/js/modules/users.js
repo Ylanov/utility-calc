@@ -6,11 +6,19 @@ import { TableController } from '../core/table-controller.js';
 export const UsersModule = {
     // Здесь будет храниться экземпляр контроллера таблицы
     table: null,
+    isInitialized: false, // <--- ВАЖНО: Флаг инициализации
 
     init() {
         this.cacheDOM();
-        this.bindEvents();
-        // Инициализируем таблицу через универсальный контроллер
+
+        // Вешаем обработчики событий ТОЛЬКО ОДИН РАЗ
+        if (!this.isInitialized) {
+            this.bindEvents();
+            this.isInitialized = true;
+        }
+
+        // Инициализируем (или пересоздаем) таблицу при каждом заходе,
+        // чтобы данные обновились
         this.initTable();
     },
 
@@ -84,6 +92,9 @@ export const UsersModule = {
 
     // Инициализация TableController для управления таблицей
     initTable() {
+        // Если контроллер уже есть, можно просто обновить данные
+        // Но для надежности при переключении вкладок создаем новый,
+        // так как DOM таблицы мог быть перерисован
         this.table = new TableController({
             endpoint: '/users', // Базовый URL API для получения пользователей
 

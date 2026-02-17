@@ -1,5 +1,3 @@
-# app/routers/admin_reports.py (ФИНАЛЬНАЯ ВЕРСИЯ)
-
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
@@ -24,7 +22,6 @@ async def get_receipt_pdf(
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
 ):
-    # ... (код остается без изменений)
     if current_user.role != "accountant":
         raise HTTPException(status_code=403, detail="Доступ запрещен")
 
@@ -72,10 +69,8 @@ async def get_receipt_pdf(
             prev_reading=prev,
             adjustments=adjustments
         )
-
         filename = f"receipt_{reading.user.username}_{reading.period.name}.pdf"
         return FileResponse(path=pdf_path, filename=filename, media_type="application/pdf")
-
     except Exception as e:
         print("PDF error:", e)
         raise HTTPException(500, f"Ошибка генерации PDF: {e}")
@@ -87,17 +82,18 @@ async def export_report(
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
 ):
-    # ... (код остается без изменений)
-    if current_user.role != "accountant": raise HTTPException(status_code=403)
-    target_period_id = period_id
+    if current_user.role != "accountant":
+        raise HTTPException(status_code=403)
 
+    target_period_id = period_id
     if not target_period_id:
         res = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))
         period = res.scalars().first()
         if not period:
             res = await db.execute(select(BillingPeriod).order_by(BillingPeriod.id.desc()).limit(1))
             period = res.scalars().first()
-        if not period: raise HTTPException(404, "Нет периодов для отчета")
+        if not period:
+            raise HTTPException(404, "Нет периодов для отчета")
         target_period_id = period.id
 
     output, filename = await generate_billing_report_xlsx(db, target_period_id)
@@ -113,15 +109,14 @@ async def start_receipt_generation(
         reading_id: int,
         current_user: User = Depends(get_current_user)
 ):
-    # ... (код остается без изменений)
-    if current_user.role != "accountant": raise HTTPException(status_code=403)
+    if current_user.role != "accountant":
+        raise HTTPException(status_code=403)
     task = generate_receipt_task.delay(reading_id)
     return {"task_id": task.id, "status": "processing"}
 
 
 @router.get("/api/admin/tasks/{task_id}")
 async def get_task_status(task_id: str, current_user: User = Depends(get_current_user)):
-    # ... (код остается без изменений)
     task_result = AsyncResult(task_id)
     if task_result.state == 'PENDING':
         return {"state": "PENDING", "status": "Pending..."}
@@ -145,13 +140,15 @@ async def create_bulk_zip(
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
 ):
-    # ... (код остается без изменений)
-    if current_user.role != "accountant": raise HTTPException(status_code=403)
+    if current_user.role != "accountant":
+        raise HTTPException(status_code=403)
+
     target_period_id = period_id
     if not target_period_id:
         res = await db.execute(select(BillingPeriod).order_by(BillingPeriod.id.desc()).limit(1))
         period = res.scalars().first()
-        if not period: raise HTTPException(404, "Нет периодов")
+        if not period:
+            raise HTTPException(404, "Нет периодов")
         target_period_id = period.id
 
     task = start_bulk_receipt_generation.delay(target_period_id)
@@ -165,7 +162,6 @@ async def create_bulk_zip(
     return {"task_id": final_task_id, "status": "processing", "period_id": target_period_id}
 
 
-# ===== НОВЫЙ БЛОК: ПЕРЕНЕСЕННЫЙ ЭНДПОИНТ =====
 @router.get("/api/admin/summary")
 async def get_accountant_summary(
         period_id: Optional[int] = Query(None, description="ID периода для фильтрации"),
@@ -184,23 +180,19 @@ async def get_accountant_summary(
     if period_id:
         stmt = stmt.where(MeterReading.period_id == period_id)
     else:
-        # Если ID периода не передан, ищем последний период в истории (не обязательно активный)
         last_period_res = await db.execute(select(BillingPeriod).order_by(BillingPeriod.id.desc()).limit(1))
         last_period = last_period_res.scalars().first()
         if last_period:
             stmt = stmt.where(MeterReading.period_id == last_period.id)
         else:
-            # Если периодов нет вообще, возвращаем пустой результат
             return {}
 
-    stmt = stmt.order_by(User.dormitory, User.username) # Сортируем для красивого вывода
-
+    stmt = stmt.order_by(User.dormitory, User.username)
     result = await db.execute(stmt)
     summary = {}
 
     for user, reading in result:
         dorm = user.dormitory or "Без общежития"
-
         if dorm not in summary:
             summary[dorm] = []
 
@@ -210,15 +202,17 @@ async def get_accountant_summary(
             "username": user.username,
             "area": user.apartment_area,
             "residents": user.residents_count,
-            "hot": reading.cost_hot_water,
-            "cold": reading.cost_cold_water,
-            "sewage": reading.cost_sewage,
-            "electric": reading.cost_electricity,
-            "maintenance": reading.cost_maintenance,
-            "rent": reading.cost_social_rent,
-            "waste": reading.cost_waste,
-            "fixed": reading.cost_fixed_part,
-            "total": reading.total_cost,
+            "hot": reading.cost_hot_water or 0,
+            "cold": reading.cost_cold_water or 0,
+            "sewage": reading.cost_sewage or 0,
+            "electric": reading.cost_electricity or 0,
+            "maintenance": reading.cost_maintenance or 0,
+            "rent": reading.cost_social_rent or 0,
+            "waste": reading.cost_waste or 0,
+            "fixed": reading.cost_fixed_part or 0,
+            "total_cost": reading.total_cost or 0,
+            "total_209": reading.total_209 or 0,
+            "total_205": reading.total_205 or 0,
             "date": reading.created_at.strftime("%Y-%m-%d %H:%M")
         })
 

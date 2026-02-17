@@ -3,7 +3,7 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import desc, asc, func, or_
+from sqlalchemy import desc, asc, func, or_, update, case
 
 from app.database import get_db
 from app.models import User, MeterReading, Tariff, BillingPeriod, Adjustment
@@ -25,7 +25,8 @@ ANOMALY_MAP: Dict[str, Dict[str, str]] = {
     "HIGH_ELECT": {"message": "Очень высокий расход электричества по сравнению с историей.", "severity": "medium"},
     "HIGH_VS_PEERS_HOT": {"message": "Расход ГВС значительно выше среднего по общежитию.", "severity": "medium"},
     "HIGH_VS_PEERS_COLD": {"message": "Расход ХВС значительно выше среднего по общежитию.", "severity": "medium"},
-    "HIGH_VS_PEERS_ELECT": {"message": "Расход электричества значительно выше среднего по общежитию.", "severity": "medium"},
+    "HIGH_VS_PEERS_ELECT": {"message": "Расход электричества значительно выше среднего по общежитию.",
+                            "severity": "medium"},
     "ZERO_HOT": {"message": "Нулевой расход горячей воды (возможно, комната пустует).", "severity": "low"},
     "ZERO_COLD": {"message": "Нулевой расход холодной воды (возможно, комната пустует).", "severity": "low"},
     "ZERO_ELECT": {"message": "Нулевой расход электричества (возможно, ком-та пустует).", "severity": "low"},
@@ -52,7 +53,7 @@ async def get_admin_readings(
 ):
     """
     Получение списка неутвержденных показаний (черновиков) за текущий период.
-    Поддерживает пагинацию, поиск, фильтрацию по аномалиям и сортировку.
+    Оптимизировано для больших объемов данных (избегает тяжелых JOIN подзапросов).
     """
     allowed_roles = ["accountant", "admin", "financier"]
     if current_user.role not in allowed_roles:
@@ -62,41 +63,26 @@ async def get_admin_readings(
     res_period = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))
     active_period = res_period.scalars().first()
 
-    # Если периода нет, возвращаем пустой список в правильном формате
     if not active_period:
         return {"total": 0, "page": page, "size": limit, "items": []}
 
-    # 2. Подзапрос для предыдущих показаний (для дельты)
-    prev_subq = (
-        select(
-            MeterReading.user_id,
-            MeterReading.hot_water.label("prev_hot"),
-            MeterReading.cold_water.label("prev_cold"),
-            MeterReading.electricity.label("prev_elect")
-        )
-        .where(MeterReading.is_approved == True)
-        .distinct(MeterReading.user_id)
-        .order_by(MeterReading.user_id, MeterReading.created_at.desc())
-        .subquery()
-    )
-
-    # 3. Базовый запрос
+    # 2. Формируем запрос для списка текущих показаний
     query = (
-        select(MeterReading, User, prev_subq)
+        select(MeterReading, User)
         .join(User, MeterReading.user_id == User.id)
-        .outerjoin(prev_subq, MeterReading.user_id == prev_subq.c.user_id)
         .where(
             MeterReading.is_approved == False,
             MeterReading.period_id == active_period.id
         )
     )
 
-    # 4. Фильтры
+    # Фильтры
     if anomalies_only:
         query = query.where(MeterReading.anomaly_flags != None)
 
     if search:
         search_fmt = f"%{search}%"
+        # Для PostgreSQL и больших данных здесь желателен индекс pg_trgm
         query = query.where(
             or_(
                 User.username.ilike(search_fmt),
@@ -104,12 +90,12 @@ async def get_admin_readings(
             )
         )
 
-    # 5. Подсчет общего количества (Total)
+    # 3. Подсчет общего количества (Total) - быстрый count
     count_query = select(func.count()).select_from(query.subquery())
     total_res = await db.execute(count_query)
     total = total_res.scalar_one()
 
-    # 6. Сортировка
+    # 4. Сортировка
     if sort_by == "username":
         sort_col = User.username
     elif sort_by == "dormitory":
@@ -117,39 +103,62 @@ async def get_admin_readings(
     elif sort_by == "total_cost":
         sort_col = MeterReading.total_cost
     else:
-        sort_col = MeterReading.created_at  # По умолчанию
+        sort_col = MeterReading.created_at
 
     if sort_dir == "asc":
         query = query.order_by(asc(sort_col))
     else:
         query = query.order_by(desc(sort_col))
 
-    # 7. Пагинация
+    # 5. Пагинация и получение основной выборки
     offset = (page - 1) * limit
     query = query.offset(offset).limit(limit)
 
-    # 8. Выполнение запроса
     results = await db.execute(query)
     rows = results.all()
 
-    # 9. Формирование ответа
+    if not rows:
+        return {"total": total, "page": page, "size": limit, "items": []}
+
+    # 6. Эффективная подгрузка предыдущих показаний (Batch Fetching)
+    # Вместо JOIN подзапроса, берем ID юзеров текущей страницы и делаем один запрос IN (...)
+    user_ids = [row[1].id for row in rows]
+
+    subq_max_prev = (
+        select(
+            MeterReading.user_id,
+            func.max(MeterReading.created_at).label("max_created")
+        )
+        .where(
+            MeterReading.user_id.in_(user_ids),
+            MeterReading.is_approved == True
+        )
+        .group_by(MeterReading.user_id)
+        .subquery()
+    )
+
+    stmt_prev = (
+        select(MeterReading)
+        .join(
+            subq_max_prev,
+            (MeterReading.user_id == subq_max_prev.c.user_id) &
+            (MeterReading.created_at == subq_max_prev.c.max_created)
+        )
+    )
+
+    res_prev = await db.execute(stmt_prev)
+    prev_map = {r.user_id: r for r in res_prev.scalars().all()}
+
+    # 7. Формирование ответа
     items = []
     zero = Decimal("0.000")
 
-    for row in rows:
-        current = row[0]  # MeterReading
-        user = row[1]     # User
+    for current, user in rows:
+        prev = prev_map.get(user.id)
 
-        # Безопасное извлечение предыдущих показаний
-        # prev_subq.c.* могут не быть в row, если join не сработал (хотя outerjoin вернет NULL)
-        # SQLAlchemy возвращает их как элементы кортежа после User
-        p_hot = getattr(row, "prev_hot", None)
-        p_cold = getattr(row, "prev_cold", None)
-        p_elect = getattr(row, "prev_elect", None)
-
-        prev_hot = p_hot if p_hot is not None else zero
-        prev_cold = p_cold if p_cold is not None else zero
-        prev_elect = p_elect if p_elect is not None else zero
+        prev_hot = prev.hot_water if prev else zero
+        prev_cold = prev.cold_water if prev else zero
+        prev_elect = prev.electricity if prev else zero
 
         # Детализация аномалий
         anomaly_details = []
@@ -193,7 +202,7 @@ async def get_admin_readings(
 
 
 # ===================================================================
-# МАССОВОЕ УТВЕРЖДЕНИЕ
+# МАССОВОЕ УТВЕРЖДЕНИЕ (BULK UPDATE)
 # ===================================================================
 @router.post("/api/admin/approve-bulk")
 async def bulk_approve_readings(
@@ -201,26 +210,25 @@ async def bulk_approve_readings(
         db: AsyncSession = Depends(get_db)
 ):
     """
-    Массовое утверждение всех черновиков в активном периоде,
-    которые не имеют критических ошибок (снижение показаний).
+    Массовое утверждение всех черновиков в активном периоде.
+    Использует Bulk Update Mappings для максимальной производительности.
     """
     allowed_roles = ["accountant", "admin"]
     if current_user.role not in allowed_roles:
         raise HTTPException(status_code=403, detail="Доступ запрещен")
 
-    # 1. Активный период
+    # 1. Активный период и тариф
     res_period = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))
     active_period = res_period.scalars().first()
     if not active_period:
         raise HTTPException(status_code=400, detail="Нет активного периода")
 
-    # 2. Активный тариф
     res_tariff = await db.execute(select(Tariff).where(Tariff.is_active == True))
     tariff = res_tariff.scalars().first()
     if not tariff:
         raise HTTPException(500, detail="Активный тариф не найден")
 
-    # 3. Все черновики
+    # 2. Получаем все черновики
     stmt_drafts = (
         select(MeterReading, User)
         .join(User, MeterReading.user_id == User.id)
@@ -237,7 +245,7 @@ async def bulk_approve_readings(
 
     user_ids = [row[0].user_id for row in drafts_rows]
 
-    # 4. Последние утвержденные показания для этих пользователей
+    # 3. Получаем предыдущие показания (Batch Fetch)
     subq_max_date = (
         select(
             MeterReading.user_id,
@@ -259,30 +267,34 @@ async def bulk_approve_readings(
             (MeterReading.created_at == subq_max_date.c.max_created)
         )
     )
-
     res_prev = await db.execute(stmt_prev)
     prev_readings_map = {r.user_id: r for r in res_prev.scalars().all()}
 
-    # 5. Корректировки (Adjustments)
-    stmt_adj = select(Adjustment).where(
+    # 4. Получаем корректировки, сгруппированные по user_id и account_type
+    stmt_adj = select(
+        Adjustment.user_id,
+        Adjustment.account_type,
+        func.sum(Adjustment.amount).label("total")
+    ).where(
         Adjustment.period_id == active_period.id,
         Adjustment.user_id.in_(user_ids)
-    )
+    ).group_by(Adjustment.user_id, Adjustment.account_type)
+
     res_adj = await db.execute(stmt_adj)
 
+    # Карта: user_id -> {'209': Decimal, '205': Decimal}
     adj_map = {}
     zero = Decimal("0.000")
-    for adj in res_adj.scalars().all():
-        adj_map.setdefault(adj.user_id, zero)
-        adj_map[adj.user_id] += adj.amount
 
-    approved_count = 0
+    for uid, acc_type, amount in res_adj.all():
+        if uid not in adj_map:
+            adj_map[uid] = {'209': zero, '205': zero}
+        adj_map[uid][str(acc_type)] = amount or zero
 
-    # 6. Обработка
+    # 5. Подготовка данных для Bulk Update
+    update_mappings = []
+
     for reading, user in drafts_rows:
-        if reading.is_approved:
-            continue
-
         prev = prev_readings_map.get(reading.user_id)
 
         p_hot = D(prev.hot_water) if prev else zero
@@ -293,7 +305,7 @@ async def bulk_approve_readings(
         cur_cold = D(reading.cold_water)
         cur_elect = D(reading.electricity)
 
-        # Пропускаем, если показания меньше предыдущих (это ошибка)
+        # Пропускаем ошибочные показания (меньше предыдущих)
         if cur_hot < p_hot or cur_cold < p_cold or cur_elect < p_elect:
             continue
 
@@ -314,20 +326,39 @@ async def bulk_approve_readings(
             volume_electricity_share=user_elect_share
         )
 
-        total_adj = adj_map.get(user.id, zero)
-        final_total = costs["total_cost"] + total_adj
+        # Финансовые расчеты (с учетом разделения счетов)
+        user_adjs = adj_map.get(user.id, {'209': zero, '205': zero})
 
-        reading.total_cost = final_total
-        for k, v in costs.items():
-            if hasattr(reading, k):
-                setattr(reading, k, v)
+        cost_rent_205 = costs['cost_social_rent']
+        cost_utils_209 = costs['total_cost'] - cost_rent_205
 
-        reading.is_approved = True
-        approved_count += 1
+        # Долги уже есть в reading (подтянуты при создании или импорте)
+        d_209 = reading.debt_209 or zero
+        o_209 = reading.overpayment_209 or zero
+        d_205 = reading.debt_205 or zero
+        o_205 = reading.overpayment_205 or zero
 
-    await db.commit()
+        total_209 = cost_utils_209 + d_209 - o_209 + user_adjs['209']
+        total_205 = cost_rent_205 + d_205 - o_205 + user_adjs['205']
+        grand_total = total_209 + total_205
 
-    return {"status": "success", "approved_count": approved_count}
+        # Собираем словарь обновлений для этой строки
+        update_data = {
+            "id": reading.id,
+            "is_approved": True,
+            "total_cost": grand_total,
+            "total_209": total_209,
+            "total_205": total_205,
+            **costs  # Распаковка полей стоимости (cost_hot_water и т.д.)
+        }
+        update_mappings.append(update_data)
+
+    # 6. Выполняем массовое обновление одним запросом
+    if update_mappings:
+        await db.execute(update(MeterReading), update_mappings)
+        await db.commit()
+
+    return {"status": "success", "approved_count": len(update_mappings)}
 
 
 # ===================================================================
@@ -382,7 +413,7 @@ async def approve_reading(
     d_cold_raw = cur_cold - p_cold
     d_elect_total = cur_elect - p_elect
 
-    # Применяем коррекции
+    # Применяем ручные коррекции объема
     d_hot_final = d_hot_raw - correction_data.hot_correction
     d_cold_final = d_cold_raw - correction_data.cold_correction
 
@@ -406,17 +437,33 @@ async def approve_reading(
         volume_electricity_share=d_elect_final
     )
 
-    # Финансовые корректировки (Adjustments)
-    adj_res = await db.execute(
-        select(func.sum(Adjustment.amount))
-        .where(
-            Adjustment.user_id == user.id,
-            Adjustment.period_id == reading.period_id
-        )
-    )
-    total_adjustment_amount = adj_res.scalar() or zero
+    # Финансовые корректировки (Adjustments), сгруппированные по типу счета
+    adj_stmt = select(
+        Adjustment.account_type,
+        func.sum(Adjustment.amount)
+    ).where(
+        Adjustment.user_id == user.id,
+        Adjustment.period_id == reading.period_id
+    ).group_by(Adjustment.account_type)
 
-    final_total_cost = costs["total_cost"] + total_adjustment_amount
+    adj_res = await db.execute(adj_stmt)
+    adj_map = {row[0]: (row[1] or zero) for row in adj_res.all()}
+
+    adj_209 = adj_map.get('209', zero)
+    adj_205 = adj_map.get('205', zero)
+
+    # Разделение по счетам
+    cost_rent_205 = costs['cost_social_rent']
+    cost_utils_209 = costs['total_cost'] - cost_rent_205
+
+    d_209 = reading.debt_209 or zero
+    o_209 = reading.overpayment_209 or zero
+    d_205 = reading.debt_205 or zero
+    o_205 = reading.overpayment_205 or zero
+
+    total_209 = cost_utils_209 + d_209 - o_209 + adj_209
+    total_205 = cost_rent_205 + d_205 - o_205 + adj_205
+    final_total_cost = total_209 + total_205
 
     # Сохраняем результаты
     reading.hot_correction = correction_data.hot_correction
@@ -424,7 +471,10 @@ async def approve_reading(
     reading.electricity_correction = correction_data.electricity_correction
     reading.sewage_correction = correction_data.sewage_correction
 
+    reading.total_209 = total_209
+    reading.total_205 = total_205
     reading.total_cost = final_total_cost
+
     for k, v in costs.items():
         if hasattr(reading, k):
             setattr(reading, k, v)

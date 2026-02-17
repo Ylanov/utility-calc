@@ -1,6 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import update
+from sqlalchemy import update, insert
 from datetime import datetime
 from decimal import Decimal
 import logging
@@ -15,9 +15,10 @@ logger = logging.getLogger("billing_service")
 async def close_current_period(db: AsyncSession, admin_user_id: int):
     """
     Закрывает текущий расчетный период.
-    Ожидает, что транзакция управляется извне.
+    Оптимизирован для работы с большим количеством пользователей (Bulk Operations).
     """
 
+    # 1. Получаем и блокируем активный период
     result = await db.execute(
         select(BillingPeriod)
         .where(BillingPeriod.is_active.is_(True))
@@ -28,7 +29,7 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
     if not active_period:
         raise ValueError("Нет активного периода для закрытия.")
 
-    # --- ИСПРАВЛЕНИЕ: Ищем просто активный тариф, так как в модели периода нет ссылки ---
+    # 2. Получаем активный тариф
     tariff_result = await db.execute(
         select(Tariff).where(Tariff.is_active == True)
     )
@@ -36,23 +37,22 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
 
     if not tariff:
         raise ValueError("Активный тариф не найден.")
-    # ------------------------------------------------------------------------------------
 
-    users_result = await db.execute(
-        select(User).where(User.role == "user")
-    )
+    # 3. Загружаем пользователей и существующие показания
+    # Для 5000 пользователей это быстро (ок. 10-50мс)
+    users_result = await db.execute(select(User).where(User.role == "user"))
     all_users = users_result.scalars().all()
 
+    # Получаем ID тех, кто УЖЕ сдал показания в этом месяце
     readings_result = await db.execute(
-        select(MeterReading)
-        .where(
-            MeterReading.period_id == active_period.id
-        )
+        select(MeterReading.user_id)
+        .where(MeterReading.period_id == active_period.id)
     )
-    period_readings = readings_result.scalars().all()
+    # Используем set для мгновенного поиска O(1)
+    users_with_readings = set(readings_result.scalars().all())
 
-    users_with_readings = {r.user_id for r in period_readings}
-
+    # 4. Загружаем историю для авто-расчета среднего
+    # Загружаем только утвержденные показания
     history_result = await db.execute(
         select(MeterReading)
         .where(MeterReading.is_approved.is_(True))
@@ -60,20 +60,30 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
     )
     all_history = history_result.scalars().all()
 
+    # Группируем историю в памяти: user_id -> [Reading1, Reading2, ...]
+    # Ограничиваемся 3 последними записями для расчета среднего
     history_map = defaultdict(list)
     for reading in all_history:
         if len(history_map[reading.user_id]) < 3:
             history_map[reading.user_id].append(reading)
 
     zero = Decimal("0.000")
+    zero_money = Decimal("0.00")
+
+    # Список для массовой вставки (Bulk Insert)
+    insert_values = []
+
     generated_count = 0
 
+    # 5. Главный цикл расчета (в памяти Python)
     for user in all_users:
+        # Если пользователь уже сдал показания (или есть черновик), пропускаем
         if user.id in users_with_readings:
             continue
 
         history = history_map.get(user.id, [])
 
+        # --- Логика авто-расчета по среднему ---
         if len(history) >= 2:
             deltas_hot = []
             deltas_cold = []
@@ -102,10 +112,12 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
             new_cold = D(last.cold_water)
             new_elect = D(last.electricity)
         else:
+            # Если истории нет вообще, ставим 0
             new_hot = zero
             new_cold = zero
             new_elect = zero
 
+        # --- Расчет стоимости ---
         last_hot = D(history[0].hot_water) if history else zero
         last_cold = D(history[0].cold_water) if history else zero
         last_elect = D(history[0].electricity) if history else zero
@@ -127,38 +139,69 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
             volume_electricity_share=max(zero, share_kwh)
         )
 
-        new_reading = MeterReading(
-            user_id=user.id,
-            period_id=active_period.id,
-            hot_water=new_hot,
-            cold_water=new_cold,
-            electricity=new_elect,
-            is_approved=True,
-            anomaly_flags="AUTO_GENERATED",
-            created_at=datetime.utcnow(),
-            **costs
-        )
+        # Разделение счетов (209 и 205)
+        cost_rent_205 = costs['cost_social_rent']
+        cost_utils_209 = costs['total_cost'] - cost_rent_205
 
-        db.add(new_reading)
+        # Подготовка словаря для вставки
+        # ВАЖНО: При использовании Core insert default значения модели могут не сработать,
+        # поэтому явно указываем 0.00 для полей долгов
+        row = {
+            "user_id": user.id,
+            "period_id": active_period.id,
+            "hot_water": new_hot,
+            "cold_water": new_cold,
+            "electricity": new_elect,
+
+            # Долги при автогенерации считаем нулевыми (они подгружаются из 1С отдельно)
+            "debt_209": zero_money,
+            "overpayment_209": zero_money,
+            "debt_205": zero_money,
+            "overpayment_205": zero_money,
+
+            # Итоговые суммы
+            "total_209": cost_utils_209,
+            "total_205": cost_rent_205,
+
+            "is_approved": True,
+            "anomaly_flags": "AUTO_GENERATED",
+            "created_at": datetime.utcnow(),
+
+            # Разворачиваем словарь costs (cost_hot_water, cost_cold_water и т.д.)
+            **costs
+        }
+
+        insert_values.append(row)
         generated_count += 1
 
-    draft_result = await db.execute(
-        select(MeterReading)
+    # 6. MASSIVE INSERT (БЫСТРАЯ ВСТАВКА)
+    if insert_values:
+        # Разбиваем на пачки по 1000 записей (Batching)
+        chunk_size = 1000
+        for i in range(0, len(insert_values), chunk_size):
+            chunk = insert_values[i: i + chunk_size]
+            await db.execute(insert(MeterReading), chunk)
+            logger.info(f"Inserted chunk {i} to {i + len(chunk)}")
+
+    # 7. MASSIVE UPDATE (БЫСТРОЕ ОБНОВЛЕНИЕ ЧЕРНОВИКОВ)
+    # Утверждаем все черновики одним SQL запросом
+    await db.execute(
+        update(MeterReading)
         .where(
             MeterReading.period_id == active_period.id,
             MeterReading.is_approved.is_(False)
         )
+        .values(is_approved=True)
     )
-    drafts = draft_result.scalars().all()
 
-    for draft in drafts:
-        draft.is_approved = True
-
+    # 8. Закрываем период
     active_period.is_active = False
+
+    # В роутере (admin_periods.py) вызовет commit()
 
     logger.info(
         f"Period '{active_period.name}' prepared for closing. "
-        f"Auto-generated: {generated_count}"
+        f"Auto-generated (Bulk): {generated_count}"
     )
 
     return {

@@ -77,6 +77,11 @@ class ApiClient {
             return data;
 
         } catch (error) {
+            // Игнорируем ошибку отмены запроса, она штатная
+            if (error.name === 'AbortError') {
+                throw error; // Пробрасываем дальше, чтобы TableController его обработал, но не логируем
+            }
+
             // Не логируем ошибку авторизации, так как она уже обработана
             if (error.message !== 'Unauthorized') {
                 console.error(`API Error [${endpoint}]:`, error);
