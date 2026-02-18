@@ -1,11 +1,10 @@
-# app/arsenal/auth.py
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.database import get_arsenal_db
 from app.arsenal.models import ArsenalUser
-from app.auth import verify_password, create_access_token # Используем утилиты из общего ядра
+from app.auth import verify_password, create_access_token
 
 router = APIRouter(tags=["Arsenal Auth"])
 
@@ -14,17 +13,16 @@ async def arsenal_login(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_arsenal_db)
 ):
-    # Ищем пользователя ТОЛЬКО в базе Арсенала
     result = await db.execute(select(ArsenalUser).where(ArsenalUser.username == form_data.username))
     user = result.scalars().first()
 
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Неверные учетные данные Арсенала"
+            detail="Неверные учетные данные Арсенала",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Создаем токен, в payload указываем scope, чтобы отличать токены
     access_token = create_access_token(
         data={
             "sub": user.username,

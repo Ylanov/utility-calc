@@ -13,11 +13,12 @@ services:
         condition: service_started
     volumes:
       - shared_data:/app/static/generated_files
-    # Команда выполняет миграции, сидинг данных и запуск сервера последовательно
     command: >
       sh -c "
-      echo '---> Running database migrations...' &&
+      echo '---> Running Utility DB migrations...' &&
       alembic upgrade head &&
+      echo '---> Running Arsenal DB migrations...' &&
+      alembic -c alembic_arsenal.ini upgrade head &&
       echo '---> Seeding initial data (if needed)...' &&
       python -m app.initial_data &&
       echo '---> Starting Gunicorn...' &&
@@ -62,6 +63,8 @@ services:
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Эта строка выполнит ваш скрипт при старте контейнера ---
+      - ./init_db.sh:/docker-entrypoint-initdb.d/init_db.sh
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -115,7 +118,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    # Даем права на выполнение скрипта и запускаем бесконечный цикл с интервалом 24 часа (86400 сек)
     command: >
       bash -c "
       chmod +x /usr/local/bin/backup.sh &&

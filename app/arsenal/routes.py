@@ -1,4 +1,3 @@
-# app/arsenal/routes.py
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -8,15 +7,32 @@ from pydantic import BaseModel
 from datetime import datetime
 
 from app.database import get_arsenal_db
-from app.arsenal.models import AccountingObject, Nomenclature, Document, DocumentItem, OperationType
+from app.arsenal.models import (
+    AccountingObject,
+    Nomenclature,
+    Document,
+    DocumentItem,
+    WeaponRegistry
+)
+from app.arsenal.services import WeaponService
 
 
-# --- Pydantic схемы (валидация данных) ---
+# ======================================================
+# PYDANTIC СХЕМЫ (Валидация входящих данных)
+# ======================================================
 
 class ObjCreate(BaseModel):
     name: str
     obj_type: str
     parent_id: Optional[int] = None
+
+
+class NomenclatureCreate(BaseModel):
+    code: Optional[str] = None
+    name: str
+    category: Optional[str] = None
+    # Флаг: True - номерной учет (автоматы), False - партионный (патроны)
+    is_numbered: bool = True
 
 
 class DocItemCreate(BaseModel):
@@ -27,30 +43,45 @@ class DocItemCreate(BaseModel):
 
 class DocCreate(BaseModel):
     doc_number: str
-    operation_type: str  # Принимаем строку, pydantic/sqlalchemy сами разберутся с Enum если совпадает
-    source_id: Optional[int]
-    target_id: Optional[int]
-    operation_date: Optional[datetime]
+    operation_type: str
+    source_id: Optional[int] = None
+    target_id: Optional[int] = None
+    operation_date: Optional[datetime] = None
     items: List[DocItemCreate]
 
 
-# --- Роутер ---
+# ======================================================
+# РОУТЕР
+# ======================================================
 
 router = APIRouter(prefix="/api/arsenal", tags=["STROB Arsenal"])
 
 
-# --- 1. Объекты учета (Склады, Подразделения) ---
+# ======================================================
+# 1. ОБЪЕКТЫ УЧЕТА (Склады, Подразделения)
+# ======================================================
 
 @router.get("/objects")
 async def get_objects(db: AsyncSession = Depends(get_arsenal_db)):
     """Получить список всех объектов учета"""
-    result = await db.execute(select(AccountingObject))
+    result = await db.execute(
+        select(AccountingObject).order_by(AccountingObject.name)
+    )
     return result.scalars().all()
 
 
 @router.post("/objects")
 async def create_object(data: ObjCreate, db: AsyncSession = Depends(get_arsenal_db)):
     """Создать новый объект учета"""
+    existing = await db.execute(
+        select(AccountingObject).where(AccountingObject.name == data.name)
+    )
+    if existing.scalars().first():
+        raise HTTPException(
+            status_code=400,
+            detail="Объект с таким именем уже существует"
+        )
+
     obj = AccountingObject(**data.dict())
     db.add(obj)
     await db.commit()
@@ -65,90 +96,200 @@ async def delete_object(obj_id: int, db: AsyncSession = Depends(get_arsenal_db))
     if not obj:
         raise HTTPException(status_code=404, detail="Объект не найден")
 
-    # Проверка: нельзя удалять, если есть связанные документы
-    # (упрощенно, в реальной системе нужна проверка связей)
-
     await db.delete(obj)
     await db.commit()
     return {"status": "deleted"}
 
 
-# --- 2. Номенклатура (Справочник изделий) ---
+# ======================================================
+# 2. НОМЕНКЛАТУРА (Справочник изделий)
+# ======================================================
 
 @router.get("/nomenclature")
 async def get_nomenclature(db: AsyncSession = Depends(get_arsenal_db)):
     """Получить список номенклатуры"""
-    result = await db.execute(select(Nomenclature))
+    result = await db.execute(
+        select(Nomenclature).order_by(Nomenclature.name)
+    )
     return result.scalars().all()
 
 
-# --- 3. Документы (Приход, Расход и т.д.) ---
+@router.post("/nomenclature")
+async def create_nomenclature(
+        data: NomenclatureCreate,
+        db: AsyncSession = Depends(get_arsenal_db)
+):
+    """Добавить новый тип вооружения или боеприпасов"""
+    existing = await db.execute(
+        select(Nomenclature).where(Nomenclature.name == data.name)
+    )
+    if existing.scalars().first():
+        raise HTTPException(
+            status_code=400,
+            detail="Изделие с таким наименованием уже существует"
+        )
+
+    new_item = Nomenclature(**data.dict())
+    db.add(new_item)
+    await db.commit()
+    await db.refresh(new_item)
+    return new_item
+
+
+# ======================================================
+# 3. ДОКУМЕНТЫ (Приход, Перемещение, Списание)
+# ======================================================
 
 @router.get("/documents")
 async def get_documents(db: AsyncSession = Depends(get_arsenal_db)):
     """Получить журнал документов"""
     stmt = (
         select(Document)
-        .options(selectinload(Document.source), selectinload(Document.target))
-        .order_by(Document.created_at.desc())
+        .options(
+            selectinload(Document.source),
+            selectinload(Document.target)
+        )
+        .order_by(
+            Document.operation_date.desc(),
+            Document.created_at.desc()
+        )
     )
+
     result = await db.execute(stmt)
     docs = result.scalars().all()
 
-    # Преобразуем в удобный формат для JSON ответа
     response_data = []
     for d in docs:
         response_data.append({
             "id": d.id,
             "doc_number": d.doc_number,
-            "date": d.operation_date.strftime("%d.%m.%Y") if d.operation_date else "-",
-            "type": d.operation_type.value if hasattr(d.operation_type, 'value') else str(d.operation_type),
+            "date": d.operation_date.strftime("%d.%m.%Y")
+            if d.operation_date else "-",
+            "type": d.operation_type,
             "source": d.source.name if d.source else "-",
-            "target": d.target.name if d.target else "-",
-            "comment": d.comment
+            "target": d.target.name if d.target else "-"
         })
+
     return response_data
 
 
-@router.post("/documents")
-async def create_document(data: DocCreate, db: AsyncSession = Depends(get_arsenal_db)):
-    """Создать новый документ"""
-    try:
-        # Создаем шапку документа
-        new_doc = Document(
-            doc_number=data.doc_number,
-            operation_type=data.operation_type,
-            source_id=data.source_id,
-            target_id=data.target_id,
-            operation_date=data.operation_date or datetime.utcnow()
+@router.get("/documents/{doc_id}")
+async def get_document_details(
+        doc_id: int,
+        db: AsyncSession = Depends(get_arsenal_db)
+):
+    """Получить подробную информацию о документе"""
+    stmt = (
+        select(Document)
+        .where(Document.id == doc_id)
+        .options(
+            selectinload(Document.source),
+            selectinload(Document.target),
+            selectinload(Document.items)
+            .selectinload(DocumentItem.nomenclature),
+            selectinload(Document.items)
+            .selectinload(DocumentItem.weapon)
         )
-        db.add(new_doc)
-        await db.flush()  # Получаем ID нового документа
+    )
+    doc = (await db.execute(stmt)).scalars().first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Документ не найден")
 
-        # Создаем строки (изделия в документе)
-        for item in data.items:
-            doc_item = DocumentItem(
-                document_id=new_doc.id,
-                nomenclature_id=item.nomenclature_id,
-                serial_number=item.serial_number,
-                quantity=item.quantity
-            )
-            db.add(doc_item)
+    return doc
 
-        await db.commit()
-        return {"status": "created", "id": new_doc.id}
+
+@router.post("/documents")
+async def create_document(
+        data: DocCreate,
+        db: AsyncSession = Depends(get_arsenal_db)
+):
+    """
+    Создать документ с автоматической проводкой по реестру оружия.
+    Операция выполняется атомарно через WeaponService.
+    """
+    try:
+        # Вся бизнес-логика (включая партионный учет) инкапсулирована в сервисе
+        new_doc = await WeaponService.process_document(
+            db,
+            data,
+            data.items
+        )
+
+        return {
+            "status": "created",
+            "id": new_doc.id
+        }
+
+    except HTTPException as he:
+        raise he
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
+        # В реальном продакшене здесь нужно логирование (logger.error)
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ошибка проведения документа: {str(e)}"
+        )
 
 
 @router.delete("/documents/{doc_id}")
 async def delete_document(doc_id: int, db: AsyncSession = Depends(get_arsenal_db)):
-    """Удалить документ"""
+    """
+    Удалить документ.
+    Внимание: это не выполняет сторнирование движений (возврат остатков).
+    Для полноценного учета нужно делать сторнирующие документы, но для MVP удаляем.
+    """
     doc = await db.get(Document, doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Документ не найден")
 
-    await db.delete(doc)  # Строки удалятся каскадно (если настроено в моделях)
+    await db.delete(doc)
     await db.commit()
     return {"status": "deleted"}
+
+
+# ======================================================
+# 4. ОСТАТКИ (РЕЕСТР)
+# ======================================================
+
+@router.get("/balance/{obj_id}")
+async def get_object_balance(
+        obj_id: int,
+        db: AsyncSession = Depends(get_arsenal_db)
+):
+    """
+    Получить текущие остатки по объекту.
+    Берем данные напрямую из WeaponRegistry.
+    Учитывает и поштучный, и партионный учет.
+    """
+    stmt = (
+        select(WeaponRegistry)
+        .join(Nomenclature)  # Джойн для сортировки по имени
+        .options(selectinload(WeaponRegistry.nomenclature))
+        .where(
+            WeaponRegistry.current_object_id == obj_id,
+            WeaponRegistry.status == 1
+        )
+        .order_by(Nomenclature.name, WeaponRegistry.serial_number)
+    )
+
+    weapons = (await db.execute(stmt)).scalars().all()
+
+    balance = []
+    for weapon in weapons:
+        # Определяем, как отображать серийник
+        is_numbered = weapon.nomenclature.is_numbered
+        display_serial = weapon.serial_number
+
+        # Если учет партионный, серийник - это номер партии
+        if not is_numbered:
+            display_serial = f"Партия {weapon.serial_number}"
+
+        balance.append({
+            "nomenclature": weapon.nomenclature.name,
+            "code": weapon.nomenclature.code,
+            "serial_number": display_serial,
+            "quantity": weapon.quantity,  # Теперь здесь реальное количество
+            "is_numbered": is_numbered
+        })
+
+    return balance

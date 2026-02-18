@@ -1,42 +1,76 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8">
-    <title>Вход в СТРОБ Арсенал</title>
-    <link rel="stylesheet" href="style.css">
-    <style>
-        body { background: #1f2937; display: flex; align-items: center; justify-content: center; height: 100vh; }
-        .login-box { background: white; padding: 40px; border-radius: 4px; width: 400px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); border-top: 5px solid #ef4444; }
-        .logo-area { text-align: center; margin-bottom: 20px; color: #1f2937; }
-        .logo-area h1 { margin: 0; font-size: 24px; text-transform: uppercase; letter-spacing: 1px; }
-        .logo-area p { color: #6b7280; font-size: 14px; margin-top: 5px; }
-        input { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #d1d5db; border-radius: 4px; background: #f9fafb; }
-        button { width: 100%; padding: 12px; background: #1f2937; color: white; border: none; font-weight: bold; cursor: pointer; text-transform: uppercase; letter-spacing: 1px; }
-        button:hover { background: #111827; }
-        .back-link { display: block; text-align: center; margin-top: 15px; color: #6b7280; font-size: 13px; text-decoration: none; }
-    </style>
+<meta charset="UTF-8">
+<title>Вход в СТРОБ Арсенал</title>
+<link rel="stylesheet" href="style.css">
+<style>
+body{background:#1f2937;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-family:'Segoe UI',sans-serif}
+.login-box{background:white;padding:40px;border-radius:4px;width:400px;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);border-top:5px solid #ef4444}
+.logo-area{text-align:center;margin-bottom:20px;color:#1f2937}
+.logo-area h1{margin:0;font-size:24px;text-transform:uppercase;letter-spacing:1px}
+.logo-area p{color:#6b7280;font-size:14px;margin-top:5px}
+input{width:100%;padding:10px;margin-bottom:15px;border:1px solid #d1d5db;border-radius:4px;background:#f9fafb;box-sizing:border-box}
+button{width:100%;padding:12px;background:#1f2937;color:white;border:none;font-weight:bold;cursor:pointer;text-transform:uppercase;letter-spacing:1px;border-radius:4px;transition:background 0.2s}
+button:hover{background:#111827}
+button:disabled{background:#6b7280;cursor:not-allowed}
+.back-link{display:block;text-align:center;margin-top:15px;color:#6b7280;font-size:13px;text-decoration:none}
+.error-msg{color:#dc2626;background:#fee2e2;padding:10px;border-radius:4px;margin-bottom:15px;text-align:center;font-size:13px;display:none}
+</style>
 </head>
 <body>
-    <div class="login-box">
-        <div class="logo-area">
-            <h1>СТРОБ.Арсенал</h1>
-            <p>Система номерного учета ВВСТ</p>
-        </div>
-        <form id="arsenalLoginForm">
-            <input type="text" id="username" placeholder="Имя пользователя" required>
-            <input type="password" id="password" placeholder="Пароль" required>
-            <button type="submit">Войти в систему</button>
-        </form>
-        <a href="portal.html" class="back-link">← Вернуться на портал</a>
-    </div>
-
-    <script>
-        document.getElementById('arsenalLoginForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            // Здесь будет fetch запрос к /api/arsenal/login
-            // Для демо просто редирект:
-            window.location.href = 'arsenal_dashboard.html';
-        });
-    </script>
+<div class="login-box">
+<div class="logo-area">
+<h1>СТРОБ.Арсенал</h1>
+<p>Система номерного учета ВВСТ</p>
+</div>
+<div id="errorMsg" class="error-msg"></div>
+<form id="arsenalLoginForm">
+<input type="text" id="username" placeholder="Имя пользователя" required autocomplete="username">
+<input type="password" id="password" placeholder="Пароль" required autocomplete="current-password">
+<button type="submit" id="loginBtn">Войти в систему</button>
+</form>
+<a href="portal.html" class="back-link">← Вернуться на портал</a>
+</div>
+<script>
+document.getElementById('arsenalLoginForm').addEventListener('submit', async (e) => {
+e.preventDefault();
+const userInp = document.getElementById('username');
+const passInp = document.getElementById('password');
+const btn = document.getElementById('loginBtn');
+const errDiv = document.getElementById('errorMsg');
+errDiv.style.display = 'none';
+btn.disabled = true;
+const originalText = btn.innerText;
+btn.innerText = 'ВХОД...';
+try {
+const formData = new URLSearchParams();
+formData.append('username', userInp.value);
+formData.append('password', passInp.value);
+const response = await fetch('/api/arsenal/login', {
+method: 'POST',
+headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+body: formData
+});
+if (response.ok) {
+const data = await response.json();
+localStorage.setItem('arsenal_token', data.access_token);
+window.location.href = data.redirect_url || 'arsenal_dashboard.html';
+} else {
+const errorData = await response.json();
+errDiv.innerText = errorData.detail || 'Неверные имя пользователя или пароль';
+errDiv.style.display = 'block';
+btn.disabled = false;
+btn.innerText = originalText;
+}
+} catch (error) {
+console.error(error);
+errDiv.innerText = 'Ошибка подключения к серверу';
+errDiv.style.display = 'block';
+btn.disabled = false;
+btn.innerText = originalText;
+}
+});
+</script>
 </body>
 </html>

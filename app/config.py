@@ -2,6 +2,7 @@ from pydantic_settings import BaseSettings
 from pydantic import ConfigDict, field_validator
 from typing import Literal
 
+
 class Settings(BaseSettings):
     DB_USER: str = "postgres"
     DB_PASS: str = "postgres"
@@ -49,6 +50,13 @@ class Settings(BaseSettings):
             f"@{self.DB_HOST}:{self.DB_PORT}/{self.ARSENAL_DB_NAME}"
         )
 
+    @property
+    def ARSENAL_DATABASE_URL_SYNC(self) -> str:
+        return (
+            f"postgresql://{self.DB_USER}:{self.DB_PASS}"
+            f"@{self.DB_HOST}:{self.DB_PORT}/{self.ARSENAL_DB_NAME}"
+        )
+
     @field_validator("SECRET_KEY")
     @classmethod
     def validate_secret_key(cls, value: str) -> str:
@@ -62,7 +70,9 @@ class Settings(BaseSettings):
         extra="ignore"
     )
 
+
 settings = Settings()
+
 
 if settings.ENVIRONMENT == "production":
     if settings.SECRET_KEY.lower().startswith("default"):
