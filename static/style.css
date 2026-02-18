@@ -1,7 +1,3 @@
-/* =================================================================== */
-/*                     STYLE.CSS (ПОЛНАЯ ВЕРСИЯ)                       */
-/* =================================================================== */
-
 /* --- 1. ПЕРЕМЕННЫЕ (VARIABLES) --- */
 :root {
     /* Цветовая палитра */
@@ -166,6 +162,8 @@ a {
     display: inline-flex; align-items: center; gap: 8px; justify-content: center;
 }
 .action-btn:hover { opacity: 0.9; transform: translateY(-1px); }
+.action-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+
 
 .primary-btn { background: var(--primary-color); }
 .success-btn { background: var(--success-color); }
@@ -178,7 +176,8 @@ a {
     background: white; color: var(--text-secondary); cursor: pointer;
     display: flex; align-items: center; justify-content: center; transition: all 0.2s;
 }
-.icon-btn:hover { background: #f9fafb; border-color: var(--primary-color); color: var(--primary-color); transform: rotate(15deg); }
+.icon-btn.refresh:hover { transform: rotate(90deg); }
+
 
 .logout-btn {
     background: transparent; border: 1px solid #fee2e2; color: var(--danger-color); padding: 8px 16px;
@@ -196,8 +195,9 @@ tr:hover td { background: #f9fafb; }
 .text-center { text-align: center; }
 
 /* ФОРМЫ */
-.form-row { display: flex; gap: 20px; margin-bottom: 15px; }
-.form-group { flex: 1; display: flex; flex-direction: column; gap: 6px; margin-bottom: 15px; }
+.styled-form .form-row { display: flex; gap: 20px; margin-bottom: 15px; }
+.styled-form .form-group { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.styled-form .form-row.three-col { display: grid; grid-template-columns: 1fr 1fr 1fr; }
 .form-group label { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
 input, select { padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 14px; transition: border 0.2s; width: 100%; }
 input:focus, select:focus { outline: none; border-color: var(--primary-color); box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1); }
@@ -254,11 +254,10 @@ input:focus, select:focus { outline: none; border-color: var(--primary-color); b
 #loginForm {
     background: white; padding: 40px; border-radius: 12px;
     box-shadow: 0 15px 35px rgba(0,0,0,0.1); width: 100%; max-width: 400px;
-    display: flex; flex-direction: column; gap: 15px;
 }
 #loginForm h1 { text-align: center; color: var(--text-main); font-size: 24px; margin-bottom: 5px; }
-#loginForm p { text-align: center; color: var(--text-secondary); margin-bottom: 20px; }
-#loginForm button { margin-top: 10px; padding: 12px; font-size: 16px; background: var(--primary-color); }
+#loginForm .form-group { margin-bottom: 15px; }
+#loginForm button { margin-top: 10px; padding: 12px; font-size: 16px; background: var(--primary-color); width: 100%;}
 #loginForm button:hover { background: var(--primary-hover); }
 
 /* СТРАНИЦА ПОРТАЛА */
@@ -304,7 +303,8 @@ input:focus, select:focus { outline: none; border-color: var(--primary-color); b
 
 .pagination { display: flex; align-items: center; gap: 10px; }
 .page-btn { border: 1px solid var(--border-color); background: white; padding: 5px 12px; border-radius: 4px; cursor: pointer; }
-.page-btn:hover { background: #f3f4f6; }
+.page-btn:hover:not(:disabled) { background: #f3f4f6; }
+.page-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .tariffs-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 20px; }
 .tariff-item { background: #f9fafb; padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); }

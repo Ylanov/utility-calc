@@ -1,63 +1,45 @@
-<!-- portal.html -->
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Платформа управления ЖКХ</title>
+    <title>Единая Платформа Управления</title>
     <link rel="stylesheet" href="style.css">
-    <!-- Font Awesome для иконок (опционально, но красиво). Если нет интернета, используем emoji -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body class="portal-body">
-
     <div class="portal-container">
-
         <header class="portal-header">
-            <h1>Платформа управления</h1>
-            <p>Выберите систему для начала работы</p>
+            <h1>Единая Платформа</h1>
+            <p>Выберите информационную систему для начала работы</p>
         </header>
-
         <div class="portal-grid">
-
             <!-- Кнопка 1: ЖКХ Лидер -->
             <a href="login.html" class="portal-card">
-                <div class="card-icon">
-                    <!-- Можно использовать картинку или иконку -->
+                <div class="card-icon" style="color: #3b82f6;">
                     <i class="fa-solid fa-building-user"></i>
                 </div>
                 <div class="card-title">ЖКХ Лидер</div>
-                <div class="card-desc">Личный кабинет жильца и управление домом</div>
+                <div class="card-desc">Управление жилфондом, тарифами и начислениями</div>
             </a>
-
-            <!-- Заготовка под будущую кнопку (для примера) -->
-            <!--
-            <a href="#" class="portal-card disabled">
-                <div class="card-icon">
-                    <i class="fa-solid fa-chart-pie"></i>
+            <!-- Кнопка 2: СТРОБ Арсенал Лидер -->
+            <a href="arsenal_login.html" class="portal-card">
+                <div class="card-icon" style="color: #ef4444;">
+                    <i class="fa-solid fa-shield-halved"></i>
                 </div>
-                <div class="card-title">CRM Аналитика</div>
-                <div class="card-desc">Скоро появится</div>
+                <div class="card-title">СТРОБ Арсенал</div>
+                <div class="card-desc">Автоматизированная система ведения номерного учета вооружения</div>
             </a>
-            -->
-
         </div>
-
         <footer class="portal-footer">
-            &copy; 2026 Платформа ЖКХ. Все права защищены.
+            &copy; 2026 ФКУ ЦСООР "Лидер". Все права защищены.
         </footer>
-
     </div>
-
-    <!-- Небольшой скрипт: если мы уже залогинены в ЖКХ, сразу предлагаем перейти туда -->
     <script type="module">
         import { Auth } from './js/core/auth.js';
-
-        // Если токен есть, можно добавить визуальный маркер "Вы уже вошли"
-        // или сделать авто-редирект (раскомментируйте строчку ниже)
         /*
         if (Auth.isAuthenticated()) {
-            window.location.href = 'index.html';
+           // Логику редиректа лучше убрать, так как теперь две разные системы
         }
         */
     </script>

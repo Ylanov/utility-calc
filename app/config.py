@@ -2,13 +2,13 @@ from pydantic_settings import BaseSettings
 from pydantic import ConfigDict, field_validator
 from typing import Literal
 
-
 class Settings(BaseSettings):
     DB_USER: str = "postgres"
     DB_PASS: str = "postgres"
     DB_HOST: str = "db"
     DB_PORT: str = "5432"
     DB_NAME: str = "utility_db"
+    ARSENAL_DB_NAME: str = "arsenal_db"
 
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
@@ -42,6 +42,13 @@ class Settings(BaseSettings):
             f"@{self.DB_HOST}:{self.DB_PORT}/{self.DB_NAME}"
         )
 
+    @property
+    def ARSENAL_DATABASE_URL_ASYNC(self) -> str:
+        return (
+            f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASS}"
+            f"@{self.DB_HOST}:{self.DB_PORT}/{self.ARSENAL_DB_NAME}"
+        )
+
     @field_validator("SECRET_KEY")
     @classmethod
     def validate_secret_key(cls, value: str) -> str:
@@ -55,15 +62,12 @@ class Settings(BaseSettings):
         extra="ignore"
     )
 
-
 settings = Settings()
 
 if settings.ENVIRONMENT == "production":
     if settings.SECRET_KEY.lower().startswith("default"):
         raise RuntimeError("В production запрещено использовать default SECRET_KEY")
-
     if settings.DB_USER == "postgres" and settings.DB_PASS == "postgres":
         raise RuntimeError("В production запрещено использовать стандартные DB credentials")
-
     if not settings.REDIS_URL.startswith("redis://"):
         raise RuntimeError("Некорректный REDIS_URL для production")

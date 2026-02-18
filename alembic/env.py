@@ -7,27 +7,25 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 
-# --- ИМПОРТЫ ИЗ ТВОЕГО ПРОЕКТА ---
-# Импортируем Base, чтобы Alembic видел твои модели (User, MeterReading и т.д.)
+# Импорт моделей и настроек проекта
+# Убедитесь, что пути app.models и app.config верны относительно корня проекта
 from app.models import Base
-# Импортируем настройки, чтобы взять URL базы данных
 from app.config import settings
 
-# это объект конфигурации Alembic, который дает доступ к значениям из .ini файла
+# Конфигурация Alembic
 config = context.config
 
 # Настройка логирования
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# --- ВАЖНО: Связываем метаданные моделей ---
+# Метаданные моделей для автогенерации миграций
 target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
-    """Запуск миграций в 'offline' режиме (без подключения к БД)."""
-    # Используем синхронный URL для оффлайн режима (если нужно)
-    url = settings.DATABASE_URL_SYNC
+    """Запуск миграций в 'offline' режиме."""
+    url = settings.DATABASE_URL_SYNC  # Для оффлайн режима можно использовать синхронный URL
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -40,6 +38,7 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
+    """Вспомогательная функция для запуска миграций в синхронном контексте."""
     context.configure(connection=connection, target_metadata=target_metadata)
 
     with context.begin_transaction():
@@ -47,13 +46,15 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_migrations_online() -> None:
-    """Запуск миграций в 'online' режиме (с подключением к БД)."""
+    """Запуск миграций в 'online' режиме с использованием AsyncEngine."""
 
-    # Мы подменяем URL из alembic.ini на наш URL из config.py
+    # Получаем конфигурацию из .ini файла
     configuration = config.get_section(config.config_ini_section)
+
+    # ПОДМЕНА URL: Заменяем URL из alembic.ini на URL из settings.py
+    # Это критически важно, чтобы Docker контейнер видел правильный хост 'db'
     configuration["sqlalchemy.url"] = settings.DATABASE_URL_ASYNC
 
-    # Создаем асинхронный движок только для миграций
     connectable = async_engine_from_config(
         configuration,
         prefix="sqlalchemy.",
@@ -61,7 +62,7 @@ async def run_migrations_online() -> None:
     )
 
     async with connectable.connect() as connection:
-        # Alembic работает синхронно внутри асинхронного потока
+        # Запускаем синхронную функцию миграции внутри асинхронного соединения
         await connection.run_sync(do_run_migrations)
 
     await connectable.dispose()

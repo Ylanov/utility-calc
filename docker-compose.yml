@@ -13,6 +13,7 @@ services:
         condition: service_started
     volumes:
       - shared_data:/app/static/generated_files
+    # Команда выполняет миграции, сидинг данных и запуск сервера последовательно
     command: >
       sh -c "
       echo '---> Running database migrations...' &&
@@ -114,6 +115,7 @@ services:
     depends_on:
       db:
         condition: service_healthy
+    # Даем права на выполнение скрипта и запускаем бесконечный цикл с интервалом 24 часа (86400 сек)
     command: >
       bash -c "
       chmod +x /usr/local/bin/backup.sh &&

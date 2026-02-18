@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Вход в СТРОБ Арсенал</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        body { background: #1f2937; display: flex; align-items: center; justify-content: center; height: 100vh; }
+        .login-box { background: white; padding: 40px; border-radius: 4px; width: 400px; box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5); border-top: 5px solid #ef4444; }
+        .logo-area { text-align: center; margin-bottom: 20px; color: #1f2937; }
+        .logo-area h1 { margin: 0; font-size: 24px; text-transform: uppercase; letter-spacing: 1px; }
+        .logo-area p { color: #6b7280; font-size: 14px; margin-top: 5px; }
+        input { width: 100%; padding: 10px; margin-bottom: 15px; border: 1px solid #d1d5db; border-radius: 4px; background: #f9fafb; }
+        button { width: 100%; padding: 12px; background: #1f2937; color: white; border: none; font-weight: bold; cursor: pointer; text-transform: uppercase; letter-spacing: 1px; }
+        button:hover { background: #111827; }
+        .back-link { display: block; text-align: center; margin-top: 15px; color: #6b7280; font-size: 13px; text-decoration: none; }
+    </style>
+</head>
+<body>
+    <div class="login-box">
+        <div class="logo-area">
+            <h1>СТРОБ.Арсенал</h1>
+            <p>Система номерного учета ВВСТ</p>
+        </div>
+        <form id="arsenalLoginForm">
+            <input type="text" id="username" placeholder="Имя пользователя" required>
+            <input type="password" id="password" placeholder="Пароль" required>
+            <button type="submit">Войти в систему</button>
+        </form>
+        <a href="portal.html" class="back-link">← Вернуться на портал</a>
+    </div>
+
+    <script>
+        document.getElementById('arsenalLoginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            // Здесь будет fetch запрос к /api/arsenal/login
+            // Для демо просто редирект:
+            window.location.href = 'arsenal_dashboard.html';
+        });
+    </script>
+</body>
+</html>

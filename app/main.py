@@ -18,6 +18,11 @@ from app.routers import (
     admin_adjustments,
     financier
 )
+from app.arsenal import routes as arsenal_routes
+
+# --- ВАЖНО: Импортируем движки и метаданные моделей ---
+from app.database import engine, Base  # Для ЖКХ
+from app.database import arsenal_engine, ArsenalBase  # Для Арсенала
 
 # -------------------------------------------------
 # LOGGING
@@ -47,6 +52,8 @@ app.include_router(admin_user_ops.router)
 app.include_router(admin_adjustments.router)
 app.include_router(financier.router)
 
+app.include_router(arsenal_routes.router)
+
 # -------------------------------------------------
 # STATIC
 # -------------------------------------------------
@@ -56,15 +63,32 @@ app.mount(
     name="static"
 )
 
+
 # -------------------------------------------------
 # STARTUP
 # -------------------------------------------------
 @app.on_event("startup")
 async def startup_event():
     """
-    Startup logic for each worker:
-    1. Initialize Redis rate limiter connection
+    Выполняется при старте приложения:
+    1. Создает таблицы в обеих базах данных.
+    2. Инициализирует Redis.
     """
+
+    # --- ШАГ 1: Создание таблиц (если их нет) ---
+    logger.info("Initializing database tables...")
+
+    # 1.1 Создаем таблицы для ЖКХ (utility_db)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        logger.info("Utility DB tables checked/created.")
+
+    # 1.2 Создаем таблицы для Арсенала (arsenal_db)
+    async with arsenal_engine.begin() as conn:
+        await conn.run_sync(ArsenalBase.metadata.create_all)
+        logger.info("Arsenal DB tables checked/created.")
+
+    # --- ШАГ 2: Инициализация Redis ---
     try:
         redis_client = redis.from_url(
             settings.REDIS_URL,
