@@ -9,7 +9,7 @@ from app.models import User, BillingPeriod
 from app.schemas import PeriodCreate, PeriodResponse
 from app.dependencies import get_current_user
 from app.services.billing import close_current_period, open_new_period
-
+from fastapi_cache.decorator import cache
 router = APIRouter(tags=["Admin Periods"])
 
 
@@ -67,7 +67,8 @@ async def api_open_period(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/api/admin/periods/active", response_model=Optional[PeriodResponse], summary="Текущий активный месяц")
+@router.get("/api/admin/periods/active", response_model=Optional[PeriodResponse])
+@cache(expire=300) # Кэшируем на 5 минут. Этого достаточно, чтобы снять пиковую нагрузку.
 async def get_active_period(
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)

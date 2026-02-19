@@ -3,10 +3,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 from typing import List, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, validator
 from datetime import datetime
 
+# ======================================================
+# ИМПОРТЫ ДЛЯ АУТЕНТИФИКАЦИИ
+# ======================================================
 from app.database import get_arsenal_db
+from app.auth import get_current_user  # <-- 1. ДОБАВЛЕН ИМПОРТ
+# ======================================================
+
 from app.arsenal.models import (
     AccountingObject,
     Nomenclature,
@@ -49,6 +55,21 @@ class DocCreate(BaseModel):
     operation_date: Optional[datetime] = None
     items: List[DocItemCreate]
 
+    @validator("operation_date", pre=True, always=True)
+    def normalize_date(cls, value):
+        if not value:
+            return datetime.utcnow()
+
+        if isinstance(value, str):
+            # Если приходит только дата без времени
+            if len(value) == 10:
+                return datetime.strptime(value, "%Y-%m-%d")
+
+            # Если ISO формат
+            return datetime.fromisoformat(value)
+
+        return value
+
 
 # ======================================================
 # РОУТЕР
@@ -62,7 +83,10 @@ router = APIRouter(prefix="/api/arsenal", tags=["STROB Arsenal"])
 # ======================================================
 
 @router.get("/objects")
-async def get_objects(db: AsyncSession = Depends(get_arsenal_db)):
+async def get_objects(
+    db: AsyncSession = Depends(get_arsenal_db),
+    current_user=Depends(get_current_user)  # <-- 2. ДОБАВЛЕНА ЗАЩИТА
+):
     """Получить список всех объектов учета"""
     result = await db.execute(
         select(AccountingObject).order_by(AccountingObject.name)
@@ -71,7 +95,11 @@ async def get_objects(db: AsyncSession = Depends(get_arsenal_db)):
 
 
 @router.post("/objects")
-async def create_object(data: ObjCreate, db: AsyncSession = Depends(get_arsenal_db)):
+async def create_object(
+    data: ObjCreate,
+    db: AsyncSession = Depends(get_arsenal_db),
+    current_user=Depends(get_current_user)  # <-- 2. ДОБАВЛЕНА ЗАЩИТА
+):
     """Создать новый объект учета"""
     existing = await db.execute(
         select(AccountingObject).where(AccountingObject.name == data.name)
@@ -90,7 +118,11 @@ async def create_object(data: ObjCreate, db: AsyncSession = Depends(get_arsenal_
 
 
 @router.delete("/objects/{obj_id}")
-async def delete_object(obj_id: int, db: AsyncSession = Depends(get_arsenal_db)):
+async def delete_object(
+    obj_id: int,
+    db: AsyncSession = Depends(get_arsenal_db),
+    current_user=Depends(get_current_user)  # <-- 2. ДОБАВЛЕНА ЗАЩИТА
+):
     """Удалить объект учета"""
     obj = await db.get(AccountingObject, obj_id)
     if not obj:
@@ -106,7 +138,10 @@ async def delete_object(obj_id: int, db: AsyncSession = Depends(get_arsenal_db))
 # ======================================================
 
 @router.get("/nomenclature")
-async def get_nomenclature(db: AsyncSession = Depends(get_arsenal_db)):
+async def get_nomenclature(
+    db: AsyncSession = Depends(get_arsenal_db),
+    current_user=Depends(get_current_user)  # <-- 2. ДОБАВЛЕНА ЗАЩИТА
+):
     """Получить список номенклатуры"""
     result = await db.execute(
         select(Nomenclature).order_by(Nomenclature.name)
@@ -116,8 +151,9 @@ async def get_nomenclature(db: AsyncSession = Depends(get_arsenal_db)):
 
 @router.post("/nomenclature")
 async def create_nomenclature(
-        data: NomenclatureCreate,
-        db: AsyncSession = Depends(get_arsenal_db)
+    data: NomenclatureCreate,
+    db: AsyncSession = Depends(get_arsenal_db),
+    current_user=Depends(get_current_user)  # <-- 2. ДОБАВЛЕНА ЗАЩИТА
 ):
     """Добавить новый тип вооружения или боеприпасов"""
     existing = await db.execute(
@@ -141,7 +177,10 @@ async def create_nomenclature(
 # ======================================================
 
 @router.get("/documents")
-async def get_documents(db: AsyncSession = Depends(get_arsenal_db)):
+async def get_documents(
+    db: AsyncSession = Depends(get_arsenal_db),
+    current_user=Depends(get_current_user)  # <-- 2. ДОБАВЛЕНА ЗАЩИТА
+):
     """Получить журнал документов"""
     stmt = (
         select(Document)
@@ -175,8 +214,9 @@ async def get_documents(db: AsyncSession = Depends(get_arsenal_db)):
 
 @router.get("/documents/{doc_id}")
 async def get_document_details(
-        doc_id: int,
-        db: AsyncSession = Depends(get_arsenal_db)
+    doc_id: int,
+    db: AsyncSession = Depends(get_arsenal_db),
+    current_user=Depends(get_current_user)  # <-- 2. ДОБАВЛЕНА ЗАЩИТА
 ):
     """Получить подробную информацию о документе"""
     stmt = (
@@ -200,8 +240,9 @@ async def get_document_details(
 
 @router.post("/documents")
 async def create_document(
-        data: DocCreate,
-        db: AsyncSession = Depends(get_arsenal_db)
+    data: DocCreate,
+    db: AsyncSession = Depends(get_arsenal_db),
+    current_user=Depends(get_current_user)  # <-- 2. ДОБАВЛЕНА ЗАЩИТА
 ):
     """
     Создать документ с автоматической проводкой по реестру оружия.
@@ -232,7 +273,11 @@ async def create_document(
 
 
 @router.delete("/documents/{doc_id}")
-async def delete_document(doc_id: int, db: AsyncSession = Depends(get_arsenal_db)):
+async def delete_document(
+    doc_id: int,
+    db: AsyncSession = Depends(get_arsenal_db),
+    current_user=Depends(get_current_user)  # <-- 2. ДОБАВЛЕНА ЗАЩИТА
+):
     """
     Удалить документ.
     Внимание: это не выполняет сторнирование движений (возврат остатков).
@@ -241,6 +286,10 @@ async def delete_document(doc_id: int, db: AsyncSession = Depends(get_arsenal_db
     doc = await db.get(Document, doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Документ не найден")
+
+    # В будущем здесь можно добавить проверку прав:
+    # if current_user.role != "admin":
+    #     raise HTTPException(status_code=403, detail="Недостаточно прав для удаления")
 
     await db.delete(doc)
     await db.commit()
@@ -253,8 +302,9 @@ async def delete_document(doc_id: int, db: AsyncSession = Depends(get_arsenal_db
 
 @router.get("/balance/{obj_id}")
 async def get_object_balance(
-        obj_id: int,
-        db: AsyncSession = Depends(get_arsenal_db)
+    obj_id: int,
+    db: AsyncSession = Depends(get_arsenal_db),
+    current_user=Depends(get_current_user)  # <-- 2. ДОБАВЛЕНА ЗАЩИТА
 ):
     """
     Получить текущие остатки по объекту.

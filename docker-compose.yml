@@ -1,4 +1,5 @@
 services:
+  # === ОСНОВНОЕ ВЕБ-ПРИЛОЖЕНИЕ ===
   web:
     build:
       context: .
@@ -6,15 +7,23 @@ services:
     container_name: utility_calc_web
     restart: always
     env_file: ./.env
+    environment:
+      # Подключаемся к пулеру соединений, а не к базе напрямую
+      - DB_HOST=pgbouncer
+      - DB_PORT=5432
     depends_on:
       db:
         condition: service_healthy
+      pgbouncer:
+        condition: service_started
       redis:
         condition: service_started
     volumes:
       - shared_data:/app/static/generated_files
     command: >
       sh -c "
+      echo '---> Waiting for PgBouncer...' &&
+      sleep 5 &&
       echo '---> Running Utility DB migrations...' &&
       alembic upgrade head &&
       echo '---> Running Arsenal DB migrations...' &&
@@ -30,28 +39,94 @@ services:
     networks:
       - utility_net
 
-  worker:
+  # === ВОРКЕР ДЛЯ ЛЕГКИХ ЗАДАЧ (Default) ===
+  # Обрабатывает: отправку писем, простые расчеты, системные уведомления
+  worker_default:
     build:
       context: .
       target: worker
-    container_name: utility_calc_worker
+    container_name: utility_calc_worker_default
     restart: always
     env_file: ./.env
+    environment:
+      - DB_HOST=pgbouncer
+      - DB_PORT=5432
     depends_on:
       db:
         condition: service_healthy
+      pgbouncer:
+        condition: service_started
       redis:
         condition: service_started
-    volumes:
-      - shared_data:/app/static/generated_files
+    # Запускаем обработку только очереди 'default'
     command: >
       celery -A app.worker worker
       --loglevel=info
+      --queues=default
+      --hostname=default@%h
       --concurrency=${CELERY_WORKER_CONCURRENCY:-4}
-      --prefetch-multiplier=1
     networks:
       - utility_net
 
+  # === ВОРКЕР ДЛЯ ТЯЖЕЛЫХ ЗАДАЧ (Heavy) ===
+  # Обрабатывает: Генерацию PDF, создание ZIP архивов, Импорт Excel
+  worker_heavy:
+    build:
+      context: .
+      target: worker
+    container_name: utility_calc_worker_heavy
+    restart: always
+    env_file: ./.env
+    environment:
+      - DB_HOST=pgbouncer
+      - DB_PORT=5432
+    depends_on:
+      db:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_started
+      redis:
+        condition: service_started
+    volumes:
+      # Важно: общий том для сохранения сгенерированных отчетов
+      - shared_data:/app/static/generated_files
+    # Запускаем обработку только очереди 'heavy'.
+    # Ставим concurrency=2, так как WeasyPrint требует много RAM.
+    command: >
+      celery -A app.worker worker
+      --loglevel=info
+      --queues=heavy
+      --hostname=heavy@%h
+      --concurrency=2
+    networks:
+      - utility_net
+
+  # === ПУЛЕР СОЕДИНЕНИЙ PGBOUNCER ===
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: utility_calc_pgbouncer
+    restart: always
+    environment:
+      # Параметры подключения к реальной БД
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=${POSTGRES_USER}
+      - DB_PASSWORD=${POSTGRES_PASSWORD}
+      # Настройки пула
+      - POOL_MODE=transaction # Режим Transaction для максимальной эффективности
+      - MAX_CLIENT_CONN=2000  # Максимум входящих соединений от воркеров и веба
+      - DEFAULT_POOL_SIZE=40  # Размер пула к реальной БД
+      - RESERVE_POOL_SIZE=10
+      - ADMIN_USERS=${POSTGRES_USER}
+      - AUTH_TYPE=plain
+      - AUTH_USER=${POSTGRES_USER}
+      - AUTH_FILE=/etc/pgbouncer/userlist.txt
+    depends_on:
+      - db
+    networks:
+      - utility_net
+
+  # === БАЗА ДАННЫХ ===
   db:
     image: postgres:15
     container_name: utility_calc_db
@@ -63,7 +138,6 @@ services:
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      # --- ИСПРАВЛЕНИЕ ЗДЕСЬ: Эта строка выполнит ваш скрипт при старте контейнера ---
       - ./init_db.sh:/docker-entrypoint-initdb.d/init_db.sh
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
@@ -73,6 +147,7 @@ services:
     networks:
       - utility_net
 
+  # === REDIS (КЭШ + БРОКЕР) ===
   redis:
     image: redis:7-alpine
     container_name: utility_calc_redis
@@ -80,13 +155,14 @@ services:
     command: >
       redis-server
       --appendonly yes
-      --maxmemory 256mb
+      --maxmemory 512mb
       --maxmemory-policy allkeys-lru
     volumes:
       - redis_data:/data
     networks:
       - utility_net
 
+  # === NGINX (ПРОКСИ + СТАТИКА) ===
   nginx:
     image: nginx:alpine
     container_name: utility_calc_nginx
@@ -103,11 +179,13 @@ services:
     networks:
       - utility_net
 
+  # === БЭКАПЫ ===
   backup:
     image: postgres:15
     container_name: utility_calc_backup
     restart: always
     environment:
+      # Бэкапим напрямую с базы, минуя пулер, для надежности dump
       PGHOST: db
       PGUSER: ${POSTGRES_USER}
       PGPASSWORD: ${POSTGRES_PASSWORD}

@@ -31,7 +31,6 @@ alembic
 redis
 fastapi-limiter[redis]==0.1.5
 
-
 # Background tasks
 celery
 
@@ -40,3 +39,9 @@ pytest
 pytest-asyncio
 httpx
 gunicorn
+
+# Monitoring & Logs
+sentry-sdk[fastapi,celery,sqlalchemy]
+
+fastapi-cache2[redis]
+orjson

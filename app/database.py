@@ -6,6 +6,12 @@ from app.config import settings
 # --- 1. Конфигурация БД ЖКХ (Utility DB) ---
 Base = declarative_base()
 
+# Для PgBouncer в режиме Transaction Pooling нужно отключить prepared statements в asyncpg
+asyncpg_connect_args = {
+    "prepare_threshold": None,
+    "statement_cache_size": 0
+}
+
 engine = create_async_engine(
     settings.DATABASE_URL_ASYNC,
     echo=False,
@@ -15,7 +21,8 @@ engine = create_async_engine(
     max_overflow=settings.DB_MAX_OVERFLOW,
     pool_timeout=settings.DB_POOL_TIMEOUT,
     pool_recycle=1800,
-    isolation_level="READ COMMITTED"
+    isolation_level="READ COMMITTED",
+    connect_args=asyncpg_connect_args  # <-- ВАЖНО ДЛЯ PGBOUNCER
 )
 
 AsyncSessionLocal = sessionmaker(
@@ -69,7 +76,8 @@ arsenal_engine = create_async_engine(
     max_overflow=settings.DB_MAX_OVERFLOW,
     pool_timeout=settings.DB_POOL_TIMEOUT,
     pool_recycle=1800,
-    isolation_level="READ COMMITTED"
+    isolation_level="READ COMMITTED",
+    connect_args=asyncpg_connect_args # <-- ТОЖЕ ЧЕРЕЗ PGBOUNCER
 )
 
 ArsenalSessionLocal = sessionmaker(
@@ -80,7 +88,6 @@ ArsenalSessionLocal = sessionmaker(
 )
 
 async def get_arsenal_db():
-    """Dependency для получения сессии базы Арсенала"""
     async with ArsenalSessionLocal() as session:
         try:
             yield session
