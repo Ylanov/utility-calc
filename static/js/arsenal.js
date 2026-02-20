@@ -1,6 +1,6 @@
 /**
  * СТРОБ.Арсенал - Клиентская логика
- * Версия: Финальная, объединенная (с поддержкой партионного и серийного учета)
+ * Версия: Финальная (Переведена на HttpOnly Cookies)
  */
 
 // Глобальные переменные для хранения справочников
@@ -8,38 +8,31 @@ let nomenclatures = [];
 let objects = [];
 
 /**
- * Централизованная функция для выполнения запросов к API с автоматическим
- * добавлением токена аутентификации и обработкой ошибки 401.
- * @param {string} url - URL эндпоинта API
- * @param {object} options - Опции для fetch (method, body, etc.)
- * @returns {Promise<Response|null>} - Возвращает объект Response или null в случае ошибки 401
+ * Централизованная функция для выполнения запросов к API.
+ * Использует credentials: 'same-origin' для автоматической отправки HttpOnly Cookies.
  */
 async function apiFetch(url, options = {}) {
-    const token = localStorage.getItem('arsenal_token');
     const defaultHeaders = {
         'Content-Type': 'application/json'
     };
 
-    if (token) {
-        defaultHeaders['Authorization'] = 'Bearer ' + token;
-    }
-
     options.headers = { ...defaultHeaders, ...options.headers };
+
+    // ВАЖНО: Указываем браузеру отправлять куки (токен) вместе с запросом
+    options.credentials = 'same-origin';
 
     try {
         const response = await fetch(url, options);
 
         if (response.status === 401) {
-            // Если токен недействителен, очищаем его и перенаправляем на страницу входа
-            localStorage.removeItem('arsenal_token');
+            // Если сессия истекла, перенаправляем на вход
             window.location.href = 'arsenal_login.html';
-            return null; // Прерываем дальнейшее выполнение
+            return null;
         }
 
         return response;
     } catch (error) {
         console.error("Сетевая ошибка или ошибка fetch:", error);
-        // Можно показать пользователю уведомление о проблемах с сетью
         return null;
     }
 }
@@ -110,9 +103,13 @@ function bindEvents() {
     document.getElementById('btnSaveObject')?.addEventListener('click', createObject);
     document.getElementById('btnSaveNom')?.addEventListener('click', createNomenclature);
 
-    // Выход из системы
-    document.getElementById('logoutBtn')?.addEventListener('click', () => {
-        localStorage.removeItem('arsenal_token');
+    // Выход из системы (Server-side logout)
+    document.getElementById('logoutBtn')?.addEventListener('click', async () => {
+        try {
+            await fetch('/api/arsenal/logout', { method: 'POST' });
+        } catch (e) {
+            console.warn("Ошибка при выходе", e);
+        }
         window.location.href = 'arsenal_login.html';
     });
 }
@@ -202,14 +199,15 @@ async function loadDocuments() {
             };
 
             let icon = '<i class="fa-solid fa-file text-gray-400"></i>';
-            if (document.type === 'Первичный ввод') icon = '<i class="fa-solid fa-file-import text-green-600"></i>';
-            else if (['Отправка', 'Перемещение', 'Прием'].includes(document.type)) icon = '<i class="fa-solid fa-truck-arrow-right text-orange-600"></i>';
-            else if (document.type === 'Списание') icon = '<i class="fa-solid fa-ban text-red-600"></i>';
+            // ВАЖНО: Используем переменную doc, а не document (DOM)
+            if (doc.type === 'Первичный ввод') icon = '<i class="fa-solid fa-file-import text-green-600"></i>';
+            else if (['Отправка', 'Перемещение', 'Прием'].includes(doc.type)) icon = '<i class="fa-solid fa-truck-arrow-right text-orange-600"></i>';
+            else if (doc.type === 'Списание') icon = '<i class="fa-solid fa-ban text-red-600"></i>';
 
             tableRow.innerHTML = `
                 <td class="text-center text-lg py-3">${icon}</td>
                 <td class="text-sm">${doc.date}</td>
-                <td class="font-bold text-blue-900 text-sm">${document.doc_number}</td>
+                <td class="font-bold text-blue-900 text-sm">${doc.doc_number}</td>
                 <td>${getTypeBadge(doc.type)}</td>
                 <td class="text-sm text-gray-600">${doc.source || '---'}</td>
                 <td class="text-sm text-gray-600">${doc.target || '---'}</td>

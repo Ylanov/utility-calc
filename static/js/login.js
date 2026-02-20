@@ -4,6 +4,7 @@ import { toast, setLoading } from './core/dom.js';
 
 document.addEventListener('DOMContentLoaded', () => {
     // Чистим старые данные при заходе на страницу логина
+    sessionStorage.clear();
     localStorage.removeItem('token');
 
     const loginForm = document.getElementById('loginForm');
@@ -17,14 +18,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
             setLoading(btn, true, 'Вход...');
 
-            // Используем URLSearchParams для application/x-www-form-urlencoded
             const formData = new URLSearchParams();
             formData.append('username', usernameInput.value.trim());
             formData.append('password', passwordInput.value);
 
             try {
-                // Используем fetch напрямую, так как базовый api.js настроен на /api,
-                // а эндпоинт токена обычно лежит в корне /token
                 const response = await fetch('/token', {
                     method: 'POST',
                     headers: {
@@ -39,28 +37,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
                 const data = await response.json();
 
-                // Сохраняем токен в память
-                // Бэкенд возвращает: access_token, token_type, role
-                Auth.setSession(data.access_token, data.role, usernameInput.value);
+                // Сохраняем только роль и имя пользователя.
+                // Токен браузер сохранил автоматически в куках!
+                Auth.setSession(data.role, data.username || usernameInput.value.trim());
 
                 toast('Успешный вход!', 'success');
-
-                // Очищаем пароль из DOM
                 passwordInput.value = '';
 
                 // Редирект в зависимости от роли
                 setTimeout(() => {
-                    if (data.role === 'admin') {
-                        // Главный админ идет в админку
-                        window.location.href = 'admin.html';
-                    } else if (data.role === 'accountant') {
-                        // Бухгалтер идет в админку (или можно разделить позже)
+                    if (data.role === 'admin' || data.role === 'accountant') {
                         window.location.href = 'admin.html';
                     } else if (data.role === 'financier') {
-                        // <--- ДОБАВЛЕНО: Финансист идет в свое рабочее место
                         window.location.href = 'financier.html';
                     } else {
-                        // Обычные жильцы
                         window.location.href = 'index.html';
                     }
                 }, 500);

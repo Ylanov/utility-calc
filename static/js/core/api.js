@@ -11,17 +11,10 @@ class ApiClient {
     }
 
     async _request(endpoint, options = {}) {
-        const token = Auth.getToken();
-
         const headers = {
             'Accept': 'application/json',
             ...options.headers
         };
-
-        // Добавляем токен, если он есть
-        if (token) {
-            headers['Authorization'] = `Bearer ${token}`;
-        }
 
         // Автоматически сериализуем тело запроса в JSON
         if (options.body && !(options.body instanceof FormData)) {
@@ -29,14 +22,19 @@ class ApiClient {
             options.body = JSON.stringify(options.body);
         }
 
-        const config = { ...options, headers };
+        // ВАЖНО: 'same-origin' указывает браузеру автоматически прикреплять
+        // нашу HttpOnly куку (access_token) к запросу
+        const config = {
+            ...options,
+            headers,
+            credentials: 'include' // ПОПРОБУЙТЕ 'include' ВМЕСТО 'same-origin'
+        };
 
         try {
-            // Формируем полный URL. Если endpoint начинается с /, baseUrl не дублируется, если настроить правильно.
-            // Но для простоты: constructor('/api') -> get('/users') -> '/api/users'
+            // Формируем полный URL
             const response = await fetch(`${this.baseUrl}${endpoint}`, config);
 
-            // 1. Обработка протухшего токена (401 Unauthorized)
+            // 1. Обработка протухшего токена или отсутствия куки (401 Unauthorized)
             if (response.status === 401) {
                 // Если мы не на странице логина, делаем логаут
                 if (!window.location.pathname.includes('login.html')) {
@@ -100,12 +98,11 @@ class ApiClient {
      * Метод для скачивания файлов (Blob).
      */
     async download(endpoint, defaultFilename = 'file') {
-        const token = Auth.getToken();
-
         try {
+            // При скачивании файлов также обязательно указываем credentials
             const response = await fetch(`${this.baseUrl}${endpoint}`, {
                 method: 'GET',
-                headers: { 'Authorization': `Bearer ${token}` }
+                credentials: 'same-origin'
             });
 
             if (response.status === 401) {
@@ -123,7 +120,7 @@ class ApiClient {
             const disposition = response.headers.get('content-disposition');
             if (disposition && disposition.includes('filename=')) {
                 const match = disposition.match(/filename=['"]?([^'"]+)['"]?/);
-                if (match) filename = match[1];
+                if (match) filename = match;
             }
 
             // Создаем ссылку для скачивания

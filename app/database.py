@@ -6,9 +6,9 @@ from app.config import settings
 # --- 1. Конфигурация БД ЖКХ (Utility DB) ---
 Base = declarative_base()
 
-# Для PgBouncer в режиме Transaction Pooling нужно отключить prepared statements в asyncpg
+# Для PgBouncer в режиме Transaction Pooling нужно отключить кэширование
+# подготовленных выражений в драйвере asyncpg.
 asyncpg_connect_args = {
-    "prepare_threshold": None,
     "statement_cache_size": 0
 }
 

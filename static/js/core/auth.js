@@ -2,43 +2,25 @@
 
 export const Auth = {
     /**
-     * Сохраняет данные сессии в sessionStorage.
-     * sessionStorage живет, пока открыта вкладка.
-     * При закрытии вкладки данные удаляются (это безопаснее localStorage).
+     * Сохраняет данные сессии.
+     * Токен больше не сохраняем, он автоматически хранится браузером в HttpOnly куке!
      */
-    setSession(token, role, username) {
-        if (token) sessionStorage.setItem('token', token);
+    setSession(role, username) {
         if (role) sessionStorage.setItem('role', role);
         if (username) sessionStorage.setItem('username', username);
     },
 
     /**
-     * Возвращает текущий токен для заголовков API.
-     */
-    getToken() {
-        return sessionStorage.getItem('token');
-    },
-
-    /**
-     * Проверяет, авторизован ли пользователь.
+     * Проверяем авторизацию по наличию роли в хранилище.
      */
     isAuthenticated() {
-        const token = this.getToken();
-        // Можно добавить проверку на срок действия токена (JWT exp),
-        // но базовая проверка - наличие строки.
-        return !!token;
+        return !!sessionStorage.getItem('role');
     },
 
-    /**
-     * Возвращает роль (для проверки прав доступа в UI).
-     */
     getRole() {
         return sessionStorage.getItem('role');
     },
 
-    /**
-     * Возвращает логин текущего пользователя.
-     */
     getUsername() {
         return sessionStorage.getItem('username');
     },
@@ -46,10 +28,17 @@ export const Auth = {
     /**
      * Полный выход из системы.
      */
-    logout() {
+    async logout() {
         console.log('Logging out...');
+        try {
+            // Если эндпоинт в корне
+            await fetch('/api/logout', { method: 'POST' }); // <---- Исправлено здесь
+        } catch (e) {
+            console.warn('Ошибка при выходе:', e);
+        }
+
         sessionStorage.clear();
-        localStorage.removeItem('token'); // На всякий случай чистим и старое
+        localStorage.removeItem('token'); // Зачищаем старые артефакты
 
         // Редирект на вход
         window.location.replace('login.html');

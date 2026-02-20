@@ -3,13 +3,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import desc
+from fastapi_cache.decorator import cache
+from fastapi_cache import FastAPICache
 
 from app.database import get_db
 from app.models import User, BillingPeriod
 from app.schemas import PeriodCreate, PeriodResponse
 from app.dependencies import get_current_user
 from app.services.billing import close_current_period, open_new_period
-from fastapi_cache.decorator import cache
+
 router = APIRouter(tags=["Admin Periods"])
 
 
@@ -22,20 +24,17 @@ async def api_close_period(
         raise HTTPException(status_code=403, detail="Доступ запрещен")
 
     try:
-        # --- ИЗМЕНЕНИЕ: Переход на ручное управление транзакцией ---
-        # Вызываем сервис, который готовит все изменения
         result = await close_current_period(db=db, admin_user_id=current_user.id)
-
-        # Если все прошло без ошибок, явно коммитим изменения
         await db.commit()
+
+        # При закрытии периода меняется статус "активный", сбрасываем кэш
+        await FastAPICache.clear(namespace="periods")
 
         return result
     except ValueError as e:
-        # Если сервис вернул ошибку, откатываем все изменения
         await db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        # При любой другой ошибке тоже откатываем
         await db.rollback()
         print(f"!!! Critical Error in api_close_period: {e}")
         raise HTTPException(status_code=500, detail=f"Внутренняя ошибка сервера: {e}")
@@ -51,11 +50,11 @@ async def api_open_period(
         raise HTTPException(status_code=403, detail="Доступ запрещен")
 
     try:
-        # --- И ЗДЕСЬ ТОЖЕ ПЕРЕХОДИМ НА РУЧНОЕ УПРАВЛЕНИЕ ---
         new_period = await open_new_period(db=db, new_name=data.name)
-
-        # Коммитим создание нового периода
         await db.commit()
+
+        # Появился новый активный период, сбрасываем кэш
+        await FastAPICache.clear(namespace="periods")
 
         return {"status": "opened", "period": new_period.name}
     except ValueError as e:
@@ -68,7 +67,7 @@ async def api_open_period(
 
 
 @router.get("/api/admin/periods/active", response_model=Optional[PeriodResponse])
-@cache(expire=300) # Кэшируем на 5 минут. Этого достаточно, чтобы снять пиковую нагрузку.
+@cache(expire=300, namespace="periods")
 async def get_active_period(
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)

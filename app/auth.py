@@ -1,9 +1,7 @@
-# app/auth.py
-
 from datetime import datetime, timedelta
 from typing import Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
 from passlib.context import CryptContext
@@ -13,7 +11,6 @@ from sqlalchemy.future import select
 from app.config import settings
 from app.database import get_db
 from app.models import User
-
 
 # =====================================================
 # НАСТРОЙКИ ХЕШИРОВАНИЯ ПАРОЛЕЙ
@@ -25,10 +22,7 @@ pwd_context = CryptContext(
 )
 
 
-def verify_password(
-        plain_password: str,
-        hashed_password: str
-) -> bool:
+def verify_password(plain_password: str, hashed_password: str) -> bool:
     """
     Проверка пароля
     """
@@ -43,20 +37,37 @@ def get_password_hash(password: str) -> str:
 
 
 # =====================================================
-# JWT / OAUTH2
+# JWT / OAUTH2 С ПОДДЕРЖКОЙ HTTPONLY COOKIES
 # =====================================================
 
-oauth2_scheme = OAuth2PasswordBearer(
-    tokenUrl="/api/token"
-)
+class OAuth2PasswordBearerWithCookie(OAuth2PasswordBearer):
+    """
+    Кастомный класс для извлечения токена из HttpOnly Cookies.
+    """
 
+    async def __call__(self, request: Request) -> Optional:
+        # 1. Сначала ищем токен в защищенной куке
+        token = request.cookies.get("access_token")
+
+        if token:
+            # ЖЕЛЕЗОБЕТОННОЕ ИСПРАВЛЕНИЕ:
+            # Если токен начинается с "Bearer ", мы это обрезаем.
+            # Если нет - оставляем как есть.
+            if token.startswith("Bearer "):
+                return token.split(" ")[1]  # Берем вторую часть после пробела
+            return token
+
+        # 2. Если куки нет, проверяем заголовок (для Swagger)
+        return await super().__call__(request)
+
+
+oauth2_scheme = OAuth2PasswordBearerWithCookie(tokenUrl="/token")
 
 
 def create_access_token(data: dict) -> str:
     """
     Создание JWT токена
     """
-
     to_encode = data.copy()
 
     expire = datetime.utcnow() + timedelta(
@@ -85,14 +96,16 @@ async def get_current_user(
         db: AsyncSession = Depends(get_db)
 ) -> User:
     """
-    Получение текущего авторизованного пользователя по JWT
+    Получение текущего авторизованного пользователя
     """
-
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Не удалось проверить учетные данные",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+    if not token:
+        raise credentials_exception
 
     try:
         payload = jwt.decode(
@@ -109,7 +122,6 @@ async def get_current_user(
     except JWTError:
         raise credentials_exception
 
-
     result = await db.execute(
         select(User).where(User.username == username)
     )
@@ -118,6 +130,5 @@ async def get_current_user(
 
     if user is None:
         raise credentials_exception
-
 
     return user

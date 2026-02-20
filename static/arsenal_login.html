@@ -34,42 +34,46 @@ button:disabled{background:#6b7280;cursor:not-allowed}
 </div>
 <script>
 document.getElementById('arsenalLoginForm').addEventListener('submit', async (e) => {
-e.preventDefault();
-const userInp = document.getElementById('username');
-const passInp = document.getElementById('password');
-const btn = document.getElementById('loginBtn');
-const errDiv = document.getElementById('errorMsg');
-errDiv.style.display = 'none';
-btn.disabled = true;
-const originalText = btn.innerText;
-btn.innerText = 'ВХОД...';
-try {
-const formData = new URLSearchParams();
-formData.append('username', userInp.value);
-formData.append('password', passInp.value);
-const response = await fetch('/api/arsenal/login', {
-method: 'POST',
-headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-body: formData
-});
-if (response.ok) {
-const data = await response.json();
-localStorage.setItem('arsenal_token', data.access_token);
-window.location.href = data.redirect_url || 'arsenal_dashboard.html';
-} else {
-const errorData = await response.json();
-errDiv.innerText = errorData.detail || 'Неверные имя пользователя или пароль';
-errDiv.style.display = 'block';
-btn.disabled = false;
-btn.innerText = originalText;
-}
-} catch (error) {
-console.error(error);
-errDiv.innerText = 'Ошибка подключения к серверу';
-errDiv.style.display = 'block';
-btn.disabled = false;
-btn.innerText = originalText;
-}
+    e.preventDefault();
+    const userInp = document.getElementById('username');
+    const passInp = document.getElementById('password');
+    const btn = document.getElementById('loginBtn');
+    const errDiv = document.getElementById('errorMsg');
+
+    errDiv.style.display = 'none';
+    btn.disabled = true;
+    const originalText = btn.innerText;
+    btn.innerText = 'ВХОД...';
+
+    try {
+        const formData = new URLSearchParams();
+        formData.append('username', userInp.value);
+        formData.append('password', passInp.value);
+
+        const response = await fetch('/api/arsenal/login', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: formData
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            // ИСПРАВЛЕНИЕ: Токен больше не сохраняется в JS, он автоматически в Cookie
+            window.location.href = data.redirect_url || 'arsenal_dashboard.html';
+        } else {
+            const errorData = await response.json();
+            errDiv.innerText = errorData.detail || 'Неверные имя пользователя или пароль';
+            errDiv.style.display = 'block';
+            btn.disabled = false;
+            btn.innerText = originalText;
+        }
+    } catch (error) {
+        console.error(error);
+        errDiv.innerText = 'Ошибка подключения к серверу';
+        errDiv.style.display = 'block';
+        btn.disabled = false;
+        btn.innerText = originalText;
+    }
 });
 </script>
 </body>

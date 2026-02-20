@@ -1,15 +1,17 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.database import get_arsenal_db
 from app.arsenal.models import ArsenalUser
 from app.auth import verify_password, create_access_token
+from app.config import settings
 
 router = APIRouter(tags=["Arsenal Auth"])
 
 @router.post("/api/arsenal/login")
 async def arsenal_login(
+    response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: AsyncSession = Depends(get_arsenal_db)
 ):
@@ -30,8 +32,28 @@ async def arsenal_login(
         }
     )
 
+    # ИСПРАВЛЕНИЕ ЗДЕСЬ: Убрали 'Bearer ' из value
+    response.set_cookie(
+        key="access_token",
+        value=access_token, # <-- Только токен
+        httponly=True,
+        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        samesite="lax",
+        secure=settings.ENVIRONMENT == "production"
+    )
+
     return {
         "access_token": access_token,
         "token_type": "bearer",
         "redirect_url": "arsenal_dashboard.html"
     }
+
+@router.post("/api/arsenal/logout")
+async def arsenal_logout(response: Response):
+    response.delete_cookie(
+        key="access_token",
+        samesite="lax",
+        httponly=True,
+        secure=settings.ENVIRONMENT == "production"
+    )
+    return {"status": "success"}
