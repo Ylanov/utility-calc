@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi import Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import ORJSONResponse  # <-- Быстрый JSON
 import redis.asyncio as redis
@@ -14,6 +15,7 @@ from app.routers import (
 )
 from app.arsenal import routes as arsenal_routes
 from app.arsenal import auth as arsenal_auth
+from app.arsenal import reports as arsenal_reports
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -44,9 +46,29 @@ app.include_router(admin_adjustments.router)
 app.include_router(financier.router)
 app.include_router(arsenal_routes.router)
 app.include_router(arsenal_auth.router)
+app.include_router(arsenal_reports.router)
 
 app.mount("/static", StaticFiles(directory="static", html=False), name="static")
 
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+
+    # Запрещает браузеру "угадывать" тип контента (защита от маскировки скриптов под картинки)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+
+    # Запрещает встраивать ваш сайт в <iframe> на других доменах (защита от Clickjacking)
+    response.headers["X-Frame-Options"] = "DENY"
+
+    # Включает встроенную в браузер фильтрацию XSS
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+
+    # Строгий HTTPS (HSTS) - раскомментируйте, если у вас настроен SSL-сертификат
+    if settings.ENVIRONMENT == "production":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+    return response
 
 @app.on_event("startup")
 async def startup_event():

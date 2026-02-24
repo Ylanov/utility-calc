@@ -12,10 +12,12 @@ ZERO = Decimal("0.00")
 
 async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict:
     try:
+        # Загружаем Excel-файл из байтов в режиме только для чтения (оптимизация памяти)
         workbook = load_workbook(filename=io.BytesIO(file_content), read_only=True, data_only=True)
         worksheet = workbook.active
 
-        users_result = await db.execute(select(User))
+        # ИСПРАВЛЕНИЕ: Загружаем ТОЛЬКО активных пользователей (исключаем удаленных - Soft Delete)
+        users_result = await db.execute(select(User).where(User.is_deleted == False))
         existing_users: Dict[str, User] = {user.username: user for user in users_result.scalars().all()}
 
         added_count = 0
@@ -25,10 +27,12 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
         new_users: List[User] = []
         password_cache: Dict[str, str] = {}
 
+        # Читаем строки, пропуская заголовок (min_row=2)
         rows = worksheet.iter_rows(min_row=2, values_only=True)
 
         for row_index, row in enumerate(rows, start=2):
             try:
+                # Пропускаем пустые строки
                 if not row or not row[0]:
                     skipped_count += 1
                     continue
@@ -38,6 +42,7 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
                     skipped_count += 1
                     continue
 
+                # Если пароль не указан, используем логин в качестве пароля
                 password = str(row[1]).strip() if len(row) > 1 and row[1] else username
                 dormitory = str(row[2]).strip() if len(row) > 2 and row[2] else None
 
@@ -49,16 +54,18 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
                     apartment_area = ZERO
                     residents_count = 1
                     total_room_residents = 1
-                    errors.append(f"Строка {row_index}: Ошибка числовых значений")
+                    errors.append(f"Строка {row_index}: Ошибка числовых значений. Установлены значения по умолчанию.")
 
                 workplace = str(row[6]).strip() if len(row) > 6 and row[6] else None
 
+                # Кэширование хэшей паролей (ускоряет работу, если у многих одинаковый дефолтный пароль)
                 if password in password_cache:
                     hashed_password = password_cache[password]
                 else:
                     hashed_password = get_password_hash(password)
                     password_cache[password] = hashed_password
 
+                # Если пользователь уже существует — обновляем его данные
                 if username in existing_users:
                     user = existing_users[username]
                     user.dormitory = dormitory
@@ -66,12 +73,15 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
                     user.residents_count = residents_count
                     user.total_room_residents = total_room_residents
                     user.workplace = workplace
+
                     if password:
                         user.hashed_password = hashed_password
 
-                    # Обновляем счетчик только если это не дубль внутри текущего файла
+                    # Обновляем счетчик только если это не дубль внутри текущего загружаемого файла
                     if user not in new_users:
                         updated_count += 1
+
+                # Если пользователя нет — создаем нового
                 else:
                     new_user = User(
                         username=username,
@@ -81,7 +91,8 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
                         apartment_area=apartment_area,
                         residents_count=residents_count,
                         total_room_residents=total_room_residents,
-                        workplace=workplace
+                        workplace=workplace,
+                        is_deleted=False
                     )
                     new_users.append(new_user)
                     existing_users[username] = new_user
@@ -91,6 +102,7 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
                 skipped_count += 1
                 errors.append(f"Строка {row_index}: {str(error)}")
 
+        # Массовое добавление новых пользователей
         if new_users:
             db.add_all(new_users)
 
@@ -125,6 +137,9 @@ async def generate_billing_report_xlsx(db: AsyncSession, period_id: int) -> Tupl
     if not period:
         raise ValueError("Период не найден")
 
+    # ВАЖНО: Здесь мы СПЕЦИАЛЬНО не фильтруем по User.is_deleted == False.
+    # Потому что если жилец съехал (и был мягко удален), его исторические
+    # начисления за закрытые периоды всё равно ДОЛЖНЫ быть в отчетах бухгалтерии.
     statement = (
         select(User, MeterReading)
         .join(MeterReading, User.id == MeterReading.user_id)
@@ -159,9 +174,15 @@ async def generate_billing_report_xlsx(db: AsyncSession, period_id: int) -> Tupl
         total_209_sum += t_209
         total_205_sum += t_205
 
+        # Если пользователь удален, помечаем это в отчете (опционально, для удобства бухгалтера)
+        username_display = user.username
+        if user.is_deleted:
+            # Убираем системный суффикс "_deleted_ID" для красивого отображения
+            username_display = username_display.split("_deleted_")[0] + " (Выселен)"
+
         worksheet.append([
             user.dormitory,
-            user.username,
+            username_display,
             user.apartment_area,
             f"{user.residents_count}/{user.total_room_residents}",
             reading.cost_hot_water,
@@ -183,5 +204,7 @@ async def generate_billing_report_xlsx(db: AsyncSession, period_id: int) -> Tupl
     workbook.save(output)
     output.seek(0)
 
+    # Формируем безопасное имя файла
     filename = f"Report_{period.name}".replace(" ", "_") + ".xlsx"
+
     return output, filename

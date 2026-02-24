@@ -1,6 +1,7 @@
 // static/js/app.js
 import { Auth } from './core/auth.js';
 import { toast } from './core/dom.js';
+import { TotpSetup } from './core/totp.js';
 
 // Подключаем все модули бизнес-логики
 import { ReadingsModule } from './modules/readings.js';
@@ -40,6 +41,9 @@ document.addEventListener('DOMContentLoaded', () => {
     setupHeader();
     setupGlobalEvents();
     setupRouting();
+
+    // Инициализируем 2FA логику
+    TotpSetup.init();
 });
 
 function setupHeader() {

@@ -1,6 +1,8 @@
+import os
+import uuid
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -11,6 +13,7 @@ from app.models import User, MeterReading, Tariff, BillingPeriod, Adjustment
 from app.dependencies import get_current_user
 from app.services.pdf_generator import generate_receipt_pdf
 from app.services.excel_service import generate_billing_report_xlsx
+from app.services.s3_client import s3_service
 from app.tasks import generate_receipt_task, start_bulk_receipt_generation
 
 router = APIRouter(tags=["Admin Reports"])
@@ -22,6 +25,10 @@ async def get_receipt_pdf(
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
 ):
+    """
+    Генерация квитанции "на лету" (синхронно).
+    Генерирует PDF во временную папку -> Загружает в S3 -> Редиректит на скачивание.
+    """
     if current_user.role != "accountant":
         raise HTTPException(status_code=403, detail="Доступ запрещен")
 
@@ -61,16 +68,35 @@ async def get_receipt_pdf(
     adjustments = adj_res.scalars().all()
 
     try:
+        # 1. Генерируем во временную папку ОС (чтобы не забивать диск контейнера)
+        temp_dir = "/tmp"
         pdf_path = generate_receipt_pdf(
             user=reading.user,
             reading=reading,
             period=reading.period,
             tariff=tariff,
             prev_reading=prev,
-            adjustments=adjustments
+            adjustments=adjustments,
+            output_dir=temp_dir
         )
+
+        # 2. Формируем ключ S3
         filename = f"receipt_{reading.user.username}_{reading.period.name}.pdf"
-        return FileResponse(path=pdf_path, filename=filename, media_type="application/pdf")
+        s3_key = f"receipts/{reading.period.id}/admin_view_{reading.user.id}_{uuid.uuid4().hex[:8]}.pdf"
+
+        # 3. Загружаем в S3
+        if s3_service.upload_file(pdf_path, s3_key):
+            # 4. Удаляем локальный файл
+            os.remove(pdf_path)
+
+            # 5. Генерируем временную ссылку (5 минут)
+            download_url = s3_service.get_presigned_url(s3_key, expiration=300)
+
+            # 6. Перенаправляем администратора на скачивание
+            return RedirectResponse(url=download_url)
+        else:
+            raise HTTPException(500, "Ошибка загрузки файла в хранилище")
+
     except Exception as e:
         print("PDF error:", e)
         raise HTTPException(500, f"Ошибка генерации PDF: {e}")
@@ -82,6 +108,9 @@ async def export_report(
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
 ):
+    """
+    Генерация Excel-отчета (пока остается в памяти, т.к. файлы небольшие).
+    """
     if current_user.role != "accountant":
         raise HTTPException(status_code=403)
 
@@ -117,19 +146,41 @@ async def start_receipt_generation(
 
 @router.get("/api/admin/tasks/{task_id}")
 async def get_task_status(task_id: str, current_user: User = Depends(get_current_user)):
+    """
+    Проверка статуса фоновой задачи.
+    Если задача выполнена и вернула s3_key, генерирует ссылку на скачивание.
+    """
     task_result = AsyncResult(task_id)
+
     if task_result.state == 'PENDING':
         return {"state": "PENDING", "status": "Pending..."}
+
     elif task_result.state != 'FAILURE':
         result = task_result.result
+
+        # Если задача завершилась успешно и вернула ключ S3
         if isinstance(result, dict) and result.get("status") in ["done", "ok"]:
+            s3_key = result.get("s3_key")
+
+            if s3_key:
+                # Генерируем временную ссылку (действует 5 минут)
+                download_url = s3_service.get_presigned_url(s3_key, expiration=300)
+                return {
+                    "state": task_result.state,
+                    "status": "done",
+                    "download_url": download_url
+                }
+
+            # Фоллбэк для старых задач (если вдруг остались локальные файлы)
             filename = result.get('filename', 'document.pdf')
             return {
                 "state": task_result.state,
                 "status": "done",
-                "download_url": f"/static/generated_files/{filename}"
+                "download_url": f"/static/generated_files/{filename}"  # Устаревший путь
             }
+
         return {"state": task_result.state, "result": result}
+
     else:
         return {"state": "FAILURE", "error": str(task_result.info)}
 
@@ -153,6 +204,7 @@ async def create_bulk_zip(
 
     task = start_bulk_receipt_generation.delay(target_period_id)
     try:
+        # Ждем запуска цепочки задач, чтобы получить ID
         result_data = task.get(timeout=10)
         final_task_id = result_data['task_id']
     except Exception as e:

@@ -52,7 +52,7 @@ tr:hover{background-color:#f9fafb}
     <div class="menu-item" id="menuDocs"><i class="fa-solid fa-folder-open mr-2 text-yellow-600"></i>Документы</div>
     <div class="menu-item" id="menuObjects"><i class="fa-solid fa-sitemap mr-2 text-blue-600"></i>Объекты</div>
     <div class="menu-item" id="menuNomenclature"><i class="fa-solid fa-list mr-2 text-green-600"></i>Номенклатура</div>
-    <div class="menu-item"><i class="fa-solid fa-chart-pie mr-2 text-purple-600"></i>Отчеты</div>
+    <div class="menu-item" id="menuReports"><i class="fa-solid fa-chart-pie mr-2 text-purple-600"></i>Отчеты</div>
 </div>
 <div class="main-layout">
     <!-- Левая панель: Структура -->
@@ -106,7 +106,7 @@ tr:hover{background-color:#f9fafb}
             <form id="newDocForm" class="grid grid-cols-2 gap-4 text-sm">
                 <div>
                     <label class="block text-gray-700 font-bold mb-1">Номер документа</label>
-                    <input type="text" id="newDocNumber" class="w-full border border-gray-300 p-2 rounded focus:border-blue-500 outline-none" placeholder="001/26">
+                    <input type="text" id="newDocNumber" class="w-full border border-gray-300 p-2 rounded focus:border-blue-500 outline-none" placeholder="Генерируется автоматически" disabled>
                 </div>
                 <div>
                     <label class="block text-gray-700 font-bold mb-1">Дата операции</label>
@@ -301,6 +301,44 @@ tr:hover{background-color:#f9fafb}
                     <tbody id="viewDocItems"></tbody>
                 </table>
             </div>
+        </div>
+    </div>
+</div>
+
+<!-- МОДАЛКА: История движения (Lifecycle) -->
+<div id="reportModal" class="modal">
+    <div class="modal-content" style="height: 80vh; width: 800px;">
+        <div class="modal-header bg-purple-700">
+            <span><i class="fa-solid fa-clock-rotate-left mr-2"></i>История движения средства</span>
+            <button class="modal-close-btn text-white hover:text-gray-300 text-xl" onclick="document.getElementById('reportModal').style.display='none'">&times;</button>
+        </div>
+        <div class="modal-body flex flex-col h-full">
+
+            <!-- Поиск -->
+            <div class="flex gap-2 mb-4 border-b pb-4">
+                <input type="text" id="reportSearchInput" placeholder="Введите номер (например: 12345) или название..." class="flex-1 border p-2 rounded">
+                <button id="btnReportSearch" class="bg-purple-600 text-white px-4 rounded hover:bg-purple-800">Найти</button>
+            </div>
+
+            <!-- Результаты поиска (Список) -->
+            <div id="reportSearchResults" class="mb-4 hidden">
+                <h4 class="text-xs font-bold text-gray-500 uppercase mb-2">Найденные изделия:</h4>
+                <div id="reportSearchList" class="flex flex-wrap gap-2"></div>
+            </div>
+
+            <!-- Текущий статус -->
+            <div id="reportCurrentStatus" class="bg-gray-100 p-3 rounded mb-4 text-center font-bold text-gray-700 hidden">
+                <!-- Здесь будет текст: В наличии на Складе 1 -->
+            </div>
+
+            <!-- Timeline -->
+            <div class="flex-1 overflow-y-auto pr-2">
+                <div id="reportTimeline" class="relative border-l-2 border-gray-300 ml-4 space-y-6">
+                    <!-- Сюда JS будет вставлять события -->
+                    <div class="text-gray-400 text-center mt-10">Выберите изделие для просмотра истории</div>
+                </div>
+            </div>
+
         </div>
     </div>
 </div>

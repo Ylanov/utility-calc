@@ -1,3 +1,7 @@
+# app/arsenal/services.py
+import random
+import string
+from datetime import datetime
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from fastapi import HTTPException
@@ -6,11 +10,37 @@ from app.arsenal.models import Document, DocumentItem, WeaponRegistry, Nomenclat
 
 class WeaponService:
     @staticmethod
+    def _generate_doc_number():
+        """
+        Генерирует номер формата YYXXXX (например 26A1F9).
+        YY - год (26)
+        XXXX - случайные буквы и цифры
+        """
+        year = datetime.now().strftime("%y")
+        # Исключаем буквы I, O, чтобы не путать с 1 и 0
+        chars = "ABCDEFGHJKLMNPQRSTUVWXYZ0123456789"
+        suffix = ''.join(random.choices(chars, k=4))
+        return f"{year}{suffix}"
+
+    @staticmethod
     async def process_document(db: AsyncSession, doc_data, items_data):
         """
         Главный метод проводки документа.
         Атомарно создает документ и обновляет положение имущества в Реестре.
         """
+        # --- ГЕНЕРАЦИЯ НОМЕРА (АВТОМАТИЧЕСКИ) ---
+        # Если номер не пришел с фронта или равен "АВТО"
+        if not doc_data.doc_number or doc_data.doc_number == "АВТО":
+            for _ in range(10): # 10 попыток на случай коллизии (крайне маловероятно)
+                new_num = WeaponService._generate_doc_number()
+                # Проверяем, есть ли такой в базе
+                exists = await db.execute(select(Document).where(Document.doc_number == new_num))
+                if not exists.scalars().first():
+                    doc_data.doc_number = new_num
+                    break
+            else:
+                raise HTTPException(500, "Не удалось сгенерировать уникальный номер документа. Попробуйте еще раз.")
+
         # 1. Создаем шапку документа
         new_doc = Document(
             doc_number=doc_data.doc_number,

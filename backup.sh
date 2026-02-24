@@ -1,29 +1,31 @@
 #!/bin/bash
+set -e
 
-# Устанавливаем переменные для удобства
 BACKUP_DIR="/backups"
-TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
-FILENAME="$BACKUP_DIR/utility_db_backup_$TIMESTAMP.sql.gz"
 
-echo "Starting database backup..."
+# Имена файлов для базы ЖКХ (Utility)
+UTILITY_LATEST="$BACKUP_DIR/utility_db_latest.sql.gz"
+UTILITY_PREV="$BACKUP_DIR/utility_db_previous.sql.gz"
 
-# Используем pg_dump для создания дампа.
-# -h $PGHOST: хост базы данных (возьмется из environment: db)
-# -U $PGUSER: пользователь (postgres)
-# -d $PGDB: имя базы (utility_db)
-# gzip -c: сжимаем дамп на лету
-# > $FILENAME: и сохраняем в файл
+# Имена файлов для базы Оружия (Arsenal)
+ARSENAL_LATEST="$BACKUP_DIR/arsenal_db_latest.sql.gz"
+ARSENAL_PREV="$BACKUP_DIR/arsenal_db_previous.sql.gz"
 
-pg_dump -h $PGHOST -U $PGUSER -d $PGDB | gzip > $FILENAME
+echo "[$(date +'%Y-%m-%d %H:%M:%S')] Starting database backups..."
 
-# Проверяем, что файл создан
-if [ -f "$FILENAME" ]; then
-    echo "Backup successful: $FILENAME"
-else
-    echo "Backup FAILED!"
+# 1. Сдвигаем старые бэкапы (сохраняем вчерашние копии)
+if [ -f "$UTILITY_LATEST" ]; then
+    mv "$UTILITY_LATEST" "$UTILITY_PREV"
+fi
+if [ -f "$ARSENAL_LATEST" ]; then
+    mv "$ARSENAL_LATEST" "$ARSENAL_PREV"
 fi
 
-# (Опционально) Удаление старых бэкапов, оставляем последние 7
-echo "Cleaning up old backups..."
-find $BACKUP_DIR -type f -name "*.sql.gz" -mtime +7 -delete
-echo "Cleanup complete."
+# 2. Создаем новые бэкапы (PGHOST берется из docker-compose, минуя PgBouncer)
+echo "Dumping utility_db..."
+pg_dump -h $PGHOST -U $PGUSER -d $PGDB | gzip > "$UTILITY_LATEST"
+
+echo "Dumping arsenal_db..."
+pg_dump -h $PGHOST -U $PGUSER -d arsenal_db | gzip > "$ARSENAL_LATEST"
+
+echo "[$(date +'%Y-%m-%d %H:%M:%S')] Backup process completed successfully. Disk space is protected."

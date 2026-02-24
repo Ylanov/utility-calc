@@ -1,6 +1,7 @@
 // static/js/client.js
 import { Auth } from './core/auth.js';
 import { ClientDashboard } from './modules/client-dashboard.js';
+import { TotpSetup } from './core/totp.js'; // <-- Добавлен импорт логики 2FA
 
 // --- 1. Глобальная проверка авторизации ---
 // Если токена в памяти нет, сразу перенаправляем на вход.
@@ -17,6 +18,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Запускаем основной модуль личного кабинета
     ClientDashboard.init();
+
+    // Инициализируем 2FA
+    TotpSetup.init(); // <-- Запуск логики 2FA
 });
 
 function setupGlobalEvents() {

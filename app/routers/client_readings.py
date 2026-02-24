@@ -1,6 +1,8 @@
+import os
+import uuid
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -14,8 +16,10 @@ from app.dependencies import get_current_user
 from app.services.calculations import calculate_utilities
 from app.services.anomaly_detector import check_reading_for_anomalies
 from app.services.pdf_generator import generate_receipt_pdf
+from app.services.s3_client import s3_service
 
 router = APIRouter(tags=["Client Readings"])
+
 
 @router.get("/api/readings/state", response_model=ReadingStateResponse)
 async def get_reading_state(
@@ -70,6 +74,7 @@ async def get_reading_state(
         "cost_waste": draft.cost_waste if draft else None,
         "cost_fixed_part": draft.cost_fixed_part if draft else None,
     }
+
 
 @router.post("/api/calculate")
 async def save_reading(
@@ -149,7 +154,7 @@ async def save_reading(
         draft.total_209, draft.total_205, draft.total_cost = total_209, total_205, grand_total
         draft.anomaly_flags = anomaly_flags
     else:
-        # Исправлено: Удаляем дублирующийся ключ перед распаковкой
+        # Удаляем дублирующийся ключ перед распаковкой
         costs.pop('total_cost', None)
         new_reading = MeterReading(
             user_id=current_user.id, period_id=active_period.id,
@@ -166,6 +171,7 @@ async def save_reading(
 
     return {"status": "success", "total_cost": grand_total, "total_209": total_209, "total_205": total_205}
 
+
 @router.get("/api/readings/history")
 async def get_client_history(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     stmt = (
@@ -173,7 +179,7 @@ async def get_client_history(current_user: User = Depends(get_current_user), db:
         .options(selectinload(MeterReading.period))
         .where(MeterReading.user_id == current_user.id, MeterReading.is_approved == True)
         .order_by(MeterReading.created_at.desc())
-        .limit(24) # Ограничиваем историю
+        .limit(24)  # Ограничиваем историю
     )
     result = await db.execute(stmt)
     readings = result.scalars().all()
@@ -186,12 +192,18 @@ async def get_client_history(current_user: User = Depends(get_current_user), db:
         })
     return history
 
+
 @router.get("/api/client/receipts/{reading_id}")
 async def download_client_receipt(
     reading_id: int,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    """
+    Генерация и скачивание квитанции.
+    Файл генерируется во временной папке, загружается в S3,
+    а клиенту возвращается временная ссылка на скачивание.
+    """
     stmt = (
         select(MeterReading)
         .options(selectinload(MeterReading.user), selectinload(MeterReading.period))
@@ -200,17 +212,25 @@ async def download_client_receipt(
     res = await db.execute(stmt)
     reading = res.scalars().first()
 
-    if not reading: raise HTTPException(404, "Квитанция не найдена")
-    if reading.user_id != current_user.id: raise HTTPException(403, "Это не ваша квитанция")
-    if not reading.is_approved: raise HTTPException(400, "Квитанция еще не сформирована")
+    if not reading:
+        raise HTTPException(404, "Квитанция не найдена")
+    if reading.user_id != current_user.id:
+        raise HTTPException(403, "Это не ваша квитанция")
+    if not reading.is_approved:
+        raise HTTPException(400, "Квитанция еще не сформирована")
 
     tariff_res = await db.execute(select(Tariff).where(Tariff.is_active == True))
     tariff = tariff_res.scalars().first()
-    if not tariff: raise HTTPException(500, "Активный тариф не найден")
+    if not tariff:
+        raise HTTPException(500, "Активный тариф не найден")
 
     prev_stmt = (
         select(MeterReading)
-        .where(MeterReading.user_id == reading.user_id, MeterReading.is_approved == True, MeterReading.created_at < reading.created_at)
+        .where(
+            MeterReading.user_id == reading.user_id,
+            MeterReading.is_approved == True,
+            MeterReading.created_at < reading.created_at
+        )
         .order_by(MeterReading.created_at.desc()).limit(1)
     )
     prev_res = await db.execute(prev_stmt)
@@ -221,12 +241,35 @@ async def download_client_receipt(
     adjustments = adj_res.scalars().all()
 
     try:
+        # 1. Генерируем PDF во временную директорию ОС
+        temp_dir = "/tmp"
         pdf_path = generate_receipt_pdf(
-            user=reading.user, reading=reading, period=reading.period,
-            tariff=tariff, prev_reading=prev, adjustments=adjustments
+            user=reading.user,
+            reading=reading,
+            period=reading.period,
+            tariff=tariff,
+            prev_reading=prev,
+            adjustments=adjustments,
+            output_dir=temp_dir
         )
-        filename = f"receipt_{reading.period.name}.pdf"
-        return FileResponse(path=pdf_path, filename=filename, media_type="application/pdf")
+
+        # 2. Формируем ключ для S3
+        # Добавляем UUID для уникальности, чтобы не было конфликтов
+        s3_key = f"receipts/{reading.period.id}/client_view_{reading.user.id}_{uuid.uuid4().hex[:8]}.pdf"
+
+        # 3. Загружаем файл в S3
+        if s3_service.upload_file(pdf_path, s3_key):
+            # 4. Удаляем локальный файл после успешной загрузки
+            os.remove(pdf_path)
+
+            # 5. Генерируем временную ссылку на скачивание (5 минут)
+            download_url = s3_service.get_presigned_url(s3_key, expiration=300)
+
+            # 6. Редиректим браузер пользователя на MinIO/S3
+            return RedirectResponse(url=download_url)
+        else:
+            raise HTTPException(500, "Ошибка сохранения файла в облаке")
+
     except Exception as e:
         print(f"Error generating PDF for client: {e}")
         raise HTTPException(500, "Ошибка формирования файла")

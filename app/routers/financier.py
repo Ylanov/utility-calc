@@ -31,6 +31,11 @@ async def upload_debts_1c(
     if not file.filename.lower().endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Поддерживаются только Excel-файлы")
 
+    header = await file.read(8)
+    await file.seek(0)
+    if not (header.startswith(b"PK\x03\x04") or header.startswith(b"\xd0\xcf\x11\xe0")):
+        raise HTTPException(status_code=400, detail="Вредоносный файл или поддельное расширение!")
+
     file.file.seek(0, 2)
     file_size = file.file.tell()
     await file.seek(0)

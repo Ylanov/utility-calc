@@ -48,7 +48,7 @@ class DocItemCreate(BaseModel):
 
 
 class DocCreate(BaseModel):
-    doc_number: str
+    doc_number: Optional[str] = None
     operation_type: str
     source_id: Optional[int] = None
     target_id: Optional[int] = None

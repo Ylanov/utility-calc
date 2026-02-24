@@ -3,7 +3,6 @@ from typing import Optional, List, Generic, TypeVar
 from datetime import datetime
 from decimal import Decimal
 
-
 # ======================================================
 # DECIMAL TYPES
 # ======================================================
@@ -16,7 +15,6 @@ DecimalVolume = condecimal(max_digits=12, decimal_places=3)
 
 # Для тарифов (4 знака)
 DecimalTariff = condecimal(max_digits=10, decimal_places=4)
-
 
 # ======================================================
 # PAGINATION
@@ -57,6 +55,9 @@ class UserResponse(BaseModel):
     total_room_residents: int
     apartment_area: Optional[Decimal] = None
 
+    # Флаг, включена ли 2FA у пользователя (для отображения в UI)
+    is_2fa_enabled: bool = False
+
     class Config:
         from_attributes = True
 
@@ -70,6 +71,23 @@ class UserUpdate(BaseModel):
     residents_count: Optional[int] = None
     total_room_residents: Optional[int] = None
     apartment_area: Optional[DecimalAmount] = None
+
+
+# ======================================================
+# 2FA (TOTP) SCHEMAS
+# ======================================================
+
+class TotpSetupResponse(BaseModel):
+    secret: str
+    qr_code: str  # Base64 string картинки
+
+
+class TotpVerify(BaseModel):
+    code: str
+    # Временный токен нужен при входе, но при активации из профиля он не обязателен
+    temp_token: Optional[str] = None
+    # Секрет нужен при активации (первичной настройке), чтобы подтвердить сохранение
+    secret: Optional[str] = None
 
 
 # ======================================================

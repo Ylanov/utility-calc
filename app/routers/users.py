@@ -32,13 +32,18 @@ async def get_me(current_user: User = Depends(get_current_user)):
 
 @router.post("/import_excel", summary="Массовый импорт пользователей из Excel",
              dependencies=[Depends(allow_accountant)])
-async def import_users(
-        file: UploadFile = File(...),
-        db: AsyncSession = Depends(get_db)
-):
-    """Массовый импорт пользователей из файла Excel."""
+async def import_users(file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="Поддерживаются только файлы Excel (.xlsx, .xls)")
+
+    # --- ДОБАВЛЕНО: Проверка Magic Numbers ---
+    header = await file.read(8)
+    await file.seek(0)  # Обязательно возвращаем курсор в начало файла
+
+    if not (header.startswith(b"PK\x03\x04") or header.startswith(b"\xd0\xcf\x11\xe0")):
+        raise HTTPException(status_code=400,
+                            detail="Файл поврежден или содержит вредоносный код (Неверная сигнатура Excel)")
+    # -----------------------------------------
 
     content = await file.read()
     result = await import_users_from_excel(content, db)
@@ -93,8 +98,8 @@ async def read_users(
 ):
     """Получение списка пользователей с пагинацией, поиском и сортировкой."""
 
-    items_query = select(User)
-    count_query = select(func.count(User.id))
+    items_query = select(User).where(User.is_deleted == False)
+    count_query = select(func.count(User.id)).where(User.is_deleted == False)
 
     if search:
         search_filter = f"%{search}%"

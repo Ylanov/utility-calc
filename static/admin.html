@@ -27,6 +27,10 @@
                     <span id="adminName">Загрузка...</span>
                     <span class="role-badge admin">Администратор</span>
                 </div>
+                <!-- ДОБАВЛЕНО: Кнопка настройки 2FA -->
+                <button id="btnOpenTotp" class="action-btn secondary-btn" style="margin-right: 10px; background: #4b5563; color: white;">
+                    🔐 Настроить 2FA
+                </button>
                 <button class="logout-btn">
                     <span>Выйти</span>
                     <span style="font-size: 1.2em;">&rarr;</span>
@@ -406,6 +410,32 @@
                     <button type="submit" class="action-btn primary-btn confirm-btn">Сохранить</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- ДОБАВЛЕНО: Модалка Настройка 2FA -->
+    <div id="totpModal" class="modal-overlay">
+        <div class="modal-window" style="width: 400px; text-align: center;">
+            <div class="modal-header">
+                <h3>Защита аккаунта (2FA)</h3>
+                <button id="btnTotpClose" class="close-icon">&times;</button>
+            </div>
+            <div class="modal-form">
+                <p style="font-size: 13px; color: #555; margin-bottom: 15px;">
+                    Отсканируйте QR-код в приложении <b>Яндекс.Ключ</b> или <b>Google Authenticator</b>:
+                </p>
+                <img id="totpQrImage" src="" alt="QR Code" style="width: 200px; height: 200px; margin: 0 auto; display: none; border: 1px solid #ddd; border-radius: 8px;">
+                <p style="font-size: 12px; color: #888; margin-top: 10px;">
+                    Или введите ключ вручную:<br> <strong id="totpSecretText" style="color: #333; letter-spacing: 1px; font-size: 14px;"></strong>
+                </p>
+                <div class="form-group" style="margin-top: 20px; text-align: left;">
+                    <label>Введите код из приложения для подтверждения:</label>
+                    <input type="text" id="totpCodeInput" placeholder="123456" maxlength="6" style="font-size: 24px; text-align: center; letter-spacing: 8px; font-weight: bold;">
+                </div>
+            </div>
+            <div class="modal-footer" style="justify-content: center;">
+                <button id="btnTotpActivate" class="action-btn success-btn full-width">Включить 2FA</button>
+            </div>
         </div>
     </div>
 

@@ -1,129 +1,81 @@
 /**
  * СТРОБ.Арсенал - Клиентская логика
- * Версия: Финальная (Переведена на HttpOnly Cookies)
  */
 
-// Глобальные переменные для хранения справочников
 let nomenclatures = [];
 let objects = [];
 
-/**
- * Централизованная функция для выполнения запросов к API.
- * Использует credentials: 'same-origin' для автоматической отправки HttpOnly Cookies.
- */
 async function apiFetch(url, options = {}) {
-    const defaultHeaders = {
-        'Content-Type': 'application/json'
-    };
-
+    const defaultHeaders = {'Content-Type': 'application/json'};
     options.headers = { ...defaultHeaders, ...options.headers };
-
-    // ВАЖНО: Указываем браузеру отправлять куки (токен) вместе с запросом
     options.credentials = 'same-origin';
-
     try {
         const response = await fetch(url, options);
-
         if (response.status === 401) {
-            // Если сессия истекла, перенаправляем на вход
             window.location.href = 'arsenal_login.html';
             return null;
         }
-
         return response;
     } catch (error) {
-        console.error("Сетевая ошибка или ошибка fetch:", error);
+        console.error("Сетевая ошибка:", error);
         return null;
     }
 }
 
-
-// Основная функция, запускаемая после загрузки страницы
 document.addEventListener('DOMContentLoaded', async () => {
-    // 1. Динамически добавляем недостающие элементы интерфейса для надежности
     injectSourceSelectIfNeeded();
-
-    // 2. Привязываем все обработчики событий к элементам
     bindEvents();
-
-    // 3. Устанавливаем текущую дату в поле даты документа
     const dateInput = document.getElementById('newDocDate');
     if (dateInput) dateInput.valueAsDate = new Date();
-
-    // 4. Параллельно загружаем основные справочники (номенклатура и объекты)
-    await Promise.all([
-        loadNomenclature(),
-        loadObjectsTree()
-    ]);
-
-    // 5. Настраиваем начальное состояние формы и загружаем журнал документов
+    await Promise.all([loadNomenclature(), loadObjectsTree()]);
     updateFormState();
     loadDocuments();
 });
 
-/**
- * Привязка всех обработчиков событий в одном месте.
- */
 function bindEvents() {
-    // Навигация по главному меню
     document.getElementById('menuDocs')?.addEventListener('click', loadDocuments);
     document.getElementById('menuObjects')?.addEventListener('click', loadObjectsTree);
     document.getElementById('menuNomenclature')?.addEventListener('click', openNomenclatureModal);
 
-    // Кнопки для открытия модальных окон
+    // ОТЧЕТЫ (НОВОЕ)
+    document.getElementById('menuReports')?.addEventListener('click', () => openModal('reportModal'));
+    document.getElementById('btnReportSearch')?.addEventListener('click', searchForReport);
+    document.getElementById('reportSearchInput')?.addEventListener('keyup', (e) => {
+        if (e.key === 'Enter') searchForReport();
+    });
+
     document.getElementById('btnAddObject')?.addEventListener('click', () => openModal('newObjectModal'));
     document.getElementById('btnOpenCreateModal')?.addEventListener('click', openNewDocModal);
 
-    // Кнопки для закрытия всех модальных окон по крестику
     document.querySelectorAll('.modal-close-btn').forEach(button => {
         button.addEventListener('click', () => closeModal(button.closest('.modal').id));
     });
-
-    // Улучшенное закрытие модальных окон (клик вне окна, Escape)
     document.querySelectorAll('.modal').forEach(modal => {
         modal.addEventListener('click', event => {
-            if (event.target === modal) {
-                closeModal(modal.id);
-            }
+            if (event.target === modal) closeModal(modal.id);
         });
     });
     document.addEventListener('keydown', event => {
-        if (event.key === 'Escape') {
-            document.querySelectorAll('.modal').forEach(modal => closeModal(modal.id));
-        }
+        if (event.key === 'Escape') document.querySelectorAll('.modal').forEach(modal => closeModal(modal.id));
     });
 
-    // Изменение типа документа в форме создания
     document.getElementById('newDocType')?.addEventListener('change', updateFormState);
-
-    // Действия на формах
     document.getElementById('btnRefreshDocs')?.addEventListener('click', loadDocuments);
     document.getElementById('btnSaveDoc')?.addEventListener('click', createDocument);
     document.getElementById('btnAddRow')?.addEventListener('click', addDocRow);
     document.getElementById('btnSaveObject')?.addEventListener('click', createObject);
     document.getElementById('btnSaveNom')?.addEventListener('click', createNomenclature);
 
-    // Выход из системы (Server-side logout)
     document.getElementById('logoutBtn')?.addEventListener('click', async () => {
-        try {
-            await fetch('/api/arsenal/logout', { method: 'POST' });
-        } catch (e) {
-            console.warn("Ошибка при выходе", e);
-        }
+        try { await fetch('/api/arsenal/logout', { method: 'POST' }); } catch (e) {}
         window.location.href = 'arsenal_login.html';
     });
 }
 
-/**
- * Проверяет наличие поля "Отправитель". Если его нет в HTML, создает его
- * динамически для обеспечения работы логики перемещений.
- */
 function injectSourceSelectIfNeeded() {
     if (document.getElementById('newDocSource')) return;
-
     const targetContainer = document.getElementById('targetSelectContainer');
     if (!targetContainer) return;
-
     const formGrid = targetContainer.parentElement;
     const sourceContainer = document.createElement('div');
     sourceContainer.id = 'sourceSelectContainer';
@@ -136,74 +88,45 @@ function injectSourceSelectIfNeeded() {
     formGrid.insertBefore(sourceContainer, targetContainer);
 }
 
-
-/**
- * Управляет видимостью полей "Отправитель" и "Получатель"
- * в зависимости от выбранного типа документа.
- */
 function updateFormState() {
     const type = document.getElementById('newDocType').value;
     const sourceContainer = document.getElementById('sourceSelectContainer');
     const targetContainer = document.getElementById('targetSelectContainer');
-
     if (!sourceContainer || !targetContainer) return;
-
-    // По умолчанию показываем оба поля
     sourceContainer.style.display = 'grid';
     targetContainer.style.display = 'grid';
-
     if (type === 'Первичный ввод') {
-        // Скрываем отправителя, так как имущество появляется извне
         sourceContainer.style.display = 'none';
         document.getElementById('newDocSource').value = "";
     } else if (type === 'Списание') {
-        // Скрываем получателя, так как имущество списывается в никуда
         targetContainer.style.display = 'none';
         document.getElementById('newDocTarget').value = "";
     }
 }
 
-// ==========================================
 // 1. ДОКУМЕНТЫ
-// ==========================================
-
-/**
- * Загружает и отображает список документов с сервера.
- */
 async function loadDocuments() {
     const tableBody = document.getElementById('docsTableBody');
     const counter = document.getElementById('docsCount');
     tableBody.innerHTML = '<tr><td colspan="7" class="text-center p-8"><i class="fa-solid fa-spinner fa-spin text-blue-600"></i> Загрузка журнала...</td></tr>';
-
     try {
         const response = await apiFetch('/api/arsenal/documents');
-        if (!response || !response.ok) throw new Error('Ошибка сети при загрузке документов');
+        if (!response || !response.ok) throw new Error('Ошибка сети');
         const documents = await response.json();
-
         counter.innerText = `Всего документов: ${documents.length}`;
         tableBody.innerHTML = '';
-
         if (documents.length === 0) {
-            tableBody.innerHTML = '<tr><td colspan="7" class="text-center p-8 text-gray-400">Журнал пуст. Создайте первый документ.</td></tr>';
+            tableBody.innerHTML = '<tr><td colspan="7" class="text-center p-8 text-gray-400">Журнал пуст.</td></tr>';
             return;
         }
-
         documents.forEach(doc => {
             const tableRow = document.createElement('tr');
             tableRow.className = "cursor-pointer hover:bg-blue-50 transition border-b";
-
-            tableRow.onclick = (event) => {
-                if (!event.target.closest('.delete-btn')) {
-                    openViewDocModal(doc.id);
-                }
-            };
-
+            tableRow.onclick = (e) => { if (!e.target.closest('.delete-btn')) openViewDocModal(doc.id); };
             let icon = '<i class="fa-solid fa-file text-gray-400"></i>';
-            // ВАЖНО: Используем переменную doc, а не document (DOM)
             if (doc.type === 'Первичный ввод') icon = '<i class="fa-solid fa-file-import text-green-600"></i>';
             else if (['Отправка', 'Перемещение', 'Прием'].includes(doc.type)) icon = '<i class="fa-solid fa-truck-arrow-right text-orange-600"></i>';
             else if (doc.type === 'Списание') icon = '<i class="fa-solid fa-ban text-red-600"></i>';
-
             tableRow.innerHTML = `
                 <td class="text-center text-lg py-3">${icon}</td>
                 <td class="text-sm">${doc.date}</td>
@@ -212,469 +135,271 @@ async function loadDocuments() {
                 <td class="text-sm text-gray-600">${doc.source || '---'}</td>
                 <td class="text-sm text-gray-600">${doc.target || '---'}</td>
                 <td class="text-center">
-                    <button class="delete-btn text-gray-400 hover:text-red-600 p-2 rounded transition" data-id="${doc.id}" title="Удалить документ">
-                        <i class="fa-solid fa-trash"></i>
-                    </button>
-                </td>
-            `;
+                    <button class="delete-btn text-gray-400 hover:text-red-600 p-2 rounded transition" data-id="${doc.id}"><i class="fa-solid fa-trash"></i></button>
+                </td>`;
             tableBody.appendChild(tableRow);
         });
-
-        // Привязываем события удаления к новым кнопкам
-        document.querySelectorAll('.delete-btn').forEach(button => {
-            button.addEventListener('click', function (event) {
-                event.stopPropagation(); // Предотвращаем всплытие события, чтобы не открылось модальное окно
-                deleteDocument(this.dataset.id);
-            });
+        document.querySelectorAll('.delete-btn').forEach(btn => {
+            btn.addEventListener('click', function(e) { e.stopPropagation(); deleteDocument(this.dataset.id); });
         });
     } catch (error) {
-        console.error(error);
-        tableBody.innerHTML = '<tr><td colspan="7" class="text-center text-red-500 p-4">Ошибка загрузки данных. Проверьте подключение к серверу.</td></tr>';
+        tableBody.innerHTML = '<tr><td colspan="7" class="text-center text-red-500 p-4">Ошибка загрузки.</td></tr>';
     }
 }
 
-/**
- * Собирает данные из формы и отправляет на сервер для создания нового документа.
- */
 async function createDocument() {
     const button = document.getElementById('btnSaveDoc');
-    const docNumber = document.getElementById('newDocNumber').value;
     const docType = document.getElementById('newDocType').value;
     const sourceId = document.getElementById('newDocSource')?.value;
     const targetId = document.getElementById('newDocTarget')?.value;
-
-    // --- Валидация формы ---
     if (!docNumber) return alert('Введите номер документа.');
     if (docType === 'Первичный ввод' && !targetId) return alert('Укажите получателя.');
-    if (docType === 'Списание' && !sourceId) return alert('Укажите источник списания.');
-    if (['Перемещение', 'Отправка', 'Прием'].includes(docType) && (!sourceId || !targetId)) {
-        return alert('Укажите и отправителя, и получателя.');
-    }
-
-    // --- Сбор позиций документа ---
+    if (docType === 'Списание' && !sourceId) return alert('Укажите источник.');
+    if (['Перемещение', 'Отправка', 'Прием'].includes(docType) && (!sourceId || !targetId)) return alert('Укажите и отправителя, и получателя.');
     const items = [];
     let validationPassed = true;
     document.querySelectorAll('#docItemsTable tbody tr').forEach(row => {
         const nomenclatureId = row.querySelector('.nom-select').value;
         const serial = row.querySelector('.serial-input').value;
         const quantity = row.querySelector('.qty-input').value;
-
-        if (nomenclatureId && !serial) {
-            validationPassed = false; // Если выбрана номенклатура, но нет номера/партии
-        }
-
-        if (nomenclatureId && serial) {
-            items.push({
-                nomenclature_id: parseInt(nomenclatureId),
-                serial_number: serial,
-                quantity: parseInt(quantity) || 1
-            });
-        }
+        if (nomenclatureId && !serial) validationPassed = false;
+        if (nomenclatureId && serial) items.push({ nomenclature_id: parseInt(nomenclatureId), serial_number: serial, quantity: parseInt(quantity) || 1 });
     });
-
-    if (!validationPassed) return alert('Для каждого выбранного изделия необходимо указать Серийный номер или Номер партии.');
-    if (items.length === 0) return alert('Добавьте хотя бы одно изделие в спецификацию.');
-
-    // Блокировка кнопки на время запроса
+    if (!validationPassed) return alert('Укажите Серийный номер или Партию.');
+    if (items.length === 0) return alert('Добавьте изделия.');
     button.disabled = true;
     const originalText = button.innerHTML;
     button.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Сохранение...';
-
-    const documentData = {
-        doc_number: docNumber,
-        operation_date: document.getElementById('newDocDate').value,
-        operation_type: docType,
-        source_id: sourceId ? parseInt(sourceId) : null,
-        target_id: targetId ? parseInt(targetId) : null,
-        items: items
-    };
-
     try {
         const response = await apiFetch('/api/arsenal/documents', {
             method: 'POST',
-            body: JSON.stringify(documentData)
+            body: JSON.stringify({ doc_number: null, operation_date: document.getElementById('newDocDate').value, operation_type: docType, source_id: sourceId ? parseInt(sourceId) : null, target_id: targetId ? parseInt(targetId) : null, items: items })
         });
-
         if (response && response.ok) {
             closeModal('newDocModal');
-            loadDocuments(); // Обновляем журнал
+            loadDocuments();
         } else {
             const error = await response.json();
-            alert('Ошибка создания документа: ' + (error.detail || 'Неизвестная ошибка сервера.'));
+            alert('Ошибка: ' + (error.detail || 'Серверная ошибка.'));
         }
-    } catch (error) {
-        alert('Сетевая ошибка. Не удалось отправить данные.');
-        console.error(error);
-    } finally {
-        // Возвращаем кнопку в исходное состояние
-        button.disabled = false;
-        button.innerHTML = originalText;
-    }
+    } catch (error) { alert('Сетевая ошибка.'); }
+    finally { button.disabled = false; button.innerHTML = originalText; }
 }
 
-/**
- * Отправляет запрос на удаление документа по его ID.
- */
 async function deleteDocument(id) {
-    if (!confirm('Вы уверены, что хотите удалить этот документ? Это действие необратимо.')) return;
+    if (!confirm('Удалить документ?')) return;
     try {
         const response = await apiFetch(`/api/arsenal/documents/${id}`, { method: 'DELETE' });
-        if (response && response.ok) {
-            loadDocuments(); // Обновляем журнал после удаления
-        } else {
-            const error = await response.json();
-            alert('Не удалось удалить документ: ' + (error.detail || 'Возможно, он связан с другими операциями.'));
-        }
-    } catch (error) {
-        alert('Сетевая ошибка при удалении.');
-        console.error(error);
-    }
+        if (response && response.ok) loadDocuments();
+        else { const error = await response.json(); alert('Ошибка: ' + error.detail); }
+    } catch (error) { alert('Ошибка удаления.'); }
 }
 
-/**
- * Открывает модальное окно с детальной информацией о документе.
- */
 async function openViewDocModal(id) {
     const tableBody = document.getElementById('viewDocItems');
-    tableBody.innerHTML = '<tr><td colspan="3" class="text-center p-4"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка деталей...</td></tr>';
+    tableBody.innerHTML = '<tr><td colspan="3" class="text-center p-4"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка...</td></tr>';
     openModal('viewDocModal');
-
     try {
         const response = await apiFetch(`/api/arsenal/documents/${id}`);
-        if (!response || !response.ok) throw new Error('Document not found');
-        const documentData = await response.json();
-
-        // Заполнение шапки
-        document.getElementById('viewDocNumber').innerText = documentData.doc_number;
-        document.getElementById('viewDocDate').innerText = new Date(documentData.operation_date).toLocaleDateString();
-        document.getElementById('viewDocType').innerText = documentData.operation_type;
-        document.getElementById('viewDocSource').innerText = documentData.source ? documentData.source.name : '---';
-        document.getElementById('viewDocTarget').innerText = documentData.target ? documentData.target.name : '---';
-
-        // Заполнение таблицы позиций
+        if (!response || !response.ok) throw new Error('Doc not found');
+        const doc = await response.json();
+        document.getElementById('viewDocNumber').innerText = doc.doc_number;
+        document.getElementById('viewDocDate').innerText = new Date(doc.operation_date).toLocaleDateString();
+        document.getElementById('viewDocType').innerText = doc.operation_type;
+        document.getElementById('viewDocSource').innerText = doc.source ? doc.source.name : '---';
+        document.getElementById('viewDocTarget').innerText = doc.target ? doc.target.name : '---';
         tableBody.innerHTML = '';
-        if (documentData.items.length === 0) {
-            tableBody.innerHTML = '<tr><td colspan="3" class="text-center p-4 text-gray-500">В документе нет позиций.</td></tr>';
-            return;
-        }
-        documentData.items.forEach(item => {
-            tableBody.innerHTML += `
-                <tr class="border-b last:border-0">
-                    <td class="p-2">
-                        <div class="font-bold text-gray-800">${item.nomenclature.name}</div>
-                        <div class="text-xs text-gray-500 font-mono">${item.nomenclature.code || ''}</div>
-                    </td>
-                    <td class="p-2 font-mono text-blue-700">${item.serial_number || '-'}</td>
-                    <td class="p-2 text-center font-bold">${item.quantity}</td>
-                </tr>
-            `;
+        if (doc.items.length === 0) tableBody.innerHTML = '<tr><td colspan="3" class="text-center text-gray-500">Нет позиций.</td></tr>';
+        doc.items.forEach(item => {
+            tableBody.innerHTML += `<tr class="border-b last:border-0"><td class="p-2"><div class="font-bold text-gray-800">${item.nomenclature.name}</div><div class="text-xs text-gray-500 font-mono">${item.nomenclature.code || ''}</div></td><td class="p-2 font-mono text-blue-700">${item.serial_number || '-'}</td><td class="p-2 text-center font-bold">${item.quantity}</td></tr>`;
         });
-    } catch (error) {
-        tableBody.innerHTML = '<tr><td colspan="3" class="text-red-500 text-center p-4">Ошибка загрузки деталей документа.</td></tr>';
-        console.error(error);
-    }
+    } catch (error) { tableBody.innerHTML = '<tr><td colspan="3" class="text-red-500 text-center">Ошибка.</td></tr>'; }
 }
 
-
-// ==========================================
-// 2. ОБЪЕКТЫ УЧЕТА
-// ==========================================
-
-/**
- * Загружает дерево объектов и обновляет связанные выпадающие списки.
- */
+// 2. ОБЪЕКТЫ
 async function loadObjectsTree() {
     const container = document.getElementById('orgTree');
     const targetSelect = document.getElementById('newDocTarget');
     const sourceSelect = document.getElementById('newDocSource');
-
     try {
         const response = await apiFetch('/api/arsenal/objects');
         if (!response || !response.ok) return;
-
         objects = await response.json();
-
         if (objects.length === 0) {
-            container.innerHTML = '<div class="p-4 text-sm text-gray-500">Нет объектов. Нажмите "+", чтобы добавить.</div>';
-            const emptyOption = '<option value="">Нет объектов для выбора</option>';
+            container.innerHTML = '<div class="p-4 text-sm text-gray-500">Нет объектов.</div>';
+            const emptyOption = '<option value="">Нет объектов</option>';
             if (targetSelect) targetSelect.innerHTML = emptyOption;
             if (sourceSelect) sourceSelect.innerHTML = emptyOption;
             return;
         }
-
-        // Рендеринг дерева объектов
-        container.innerHTML = objects.map(object => `
+        container.innerHTML = objects.map(o => `
             <div class="tree-node pl-4 transition hover:bg-blue-50 flex justify-between items-center group">
-                <div class="flex-grow cursor-pointer py-1" onclick="showBalanceModal(${object.id}, '${object.name}')">
-                    <i class="fa-solid fa-layer-group text-blue-500 mr-2"></i>
-                    <span class="text-gray-700 ml-1 font-medium text-sm">${object.name}</span>
-                    <span class="text-xs text-gray-400 ml-2">(${object.obj_type})</span>
+                <div class="flex-grow cursor-pointer py-1" onclick="showBalanceModal(${o.id}, '${o.name}')">
+                    <i class="fa-solid fa-layer-group text-blue-500 mr-2"></i><span class="text-gray-700 ml-1 font-medium text-sm">${o.name}</span><span class="text-xs text-gray-400 ml-2">(${o.obj_type})</span>
                 </div>
-                <button onclick="showBalanceModal(${object.id}, '${object.name}')" class="text-gray-300 hover:text-green-600 px-2 py-1 text-xs opacity-0 group-hover:opacity-100 transition" title="Показать остатки">
-                    <i class="fa-solid fa-box-archive"></i>
-                </button>
-            </div>
-        `).join('');
-
-        // Обновление выпадающих списков в форме создания документа
+                <button onclick="showBalanceModal(${o.id}, '${o.name}')" class="text-gray-300 hover:text-green-600 px-2 py-1 text-xs opacity-0 group-hover:opacity-100 transition"><i class="fa-solid fa-box-archive"></i></button>
+            </div>`).join('');
         const optionsHtml = '<option value="">-- Выберите объект --</option>' + objects.map(o => `<option value="${o.id}">${o.name}</option>`).join('');
         if (targetSelect) targetSelect.innerHTML = optionsHtml;
         if (sourceSelect) sourceSelect.innerHTML = optionsHtml;
-    } catch (error) {
-        console.error(error);
-    }
+    } catch (error) {}
 }
 
-/**
- * Создает новый объект учета.
- */
 async function createObject() {
     const name = document.getElementById('newObjName').value;
     const type = document.getElementById('newObjType').value;
-    if (!name) return alert("Введите название объекта.");
-
+    if (!name) return alert("Введите название.");
     try {
-        const response = await apiFetch('/api/arsenal/objects', {
-            method: 'POST',
-            body: JSON.stringify({ name: name, obj_type: type })
-        });
-        if (response && response.ok) {
-            closeModal('newObjectModal');
-            document.getElementById('newObjName').value = ''; // Очистка поля
-            loadObjectsTree(); // Перезагрузка дерева и списков
-        } else {
-            const error = await response.json();
-            alert("Ошибка создания: " + (error.detail || "Не удалось создать объект."));
-        }
-    } catch (error) {
-        console.error(error);
-    }
+        const response = await apiFetch('/api/arsenal/objects', { method: 'POST', body: JSON.stringify({ name, obj_type: type }) });
+        if (response && response.ok) { closeModal('newObjectModal'); document.getElementById('newObjName').value = ''; loadObjectsTree(); }
+        else { const error = await response.json(); alert("Ошибка: " + error.detail); }
+    } catch (error) {}
 }
 
-
-// ==========================================
 // 3. НОМЕНКЛАТУРА
-// ==========================================
-
-/**
- * Загружает справочник номенклатуры с сервера.
- */
 async function loadNomenclature() {
     try {
         const response = await apiFetch('/api/arsenal/nomenclature');
         if (!response || !response.ok) return;
         nomenclatures = await response.json();
-        renderNomenclatureList(); // Обновляем список в модальном окне
-    } catch (error) {
-        console.error(error);
-    }
+        renderNomenclatureList();
+    } catch (error) {}
 }
 
-/**
- * Отображает список номенклатуры в модальном окне.
- */
 function renderNomenclatureList() {
     const tableBody = document.getElementById('nomenclatureListBody');
     if (!tableBody) return;
-    if (nomenclatures.length === 0) {
-        tableBody.innerHTML = '<tr><td colspan="2" class="p-4 text-center text-gray-400">Справочник пуст.</td></tr>';
-        return;
-    }
-    tableBody.innerHTML = nomenclatures.map(n => `
-        <tr class="hover:bg-gray-100 border-b last:border-0">
-            <td class="p-2 border-r font-mono text-xs text-blue-600">${n.code || '-'}</td>
-            <td class="p-2 font-bold text-gray-700 text-sm">${n.name}</td>
-        </tr>
-    `).join('');
+    if (nomenclatures.length === 0) { tableBody.innerHTML = '<tr><td colspan="2" class="p-4 text-center">Пусто.</td></tr>'; return; }
+    tableBody.innerHTML = nomenclatures.map(n => `<tr class="hover:bg-gray-100 border-b last:border-0"><td class="p-2 border-r font-mono text-xs text-blue-600">${n.code || '-'}</td><td class="p-2 font-bold text-gray-700 text-sm">${n.name}</td></tr>`).join('');
 }
 
-/**
- * Открывает модальное окно для работы с номенклатурой.
- */
 function openNomenclatureModal() {
-    // Очистка формы перед открытием
-    document.getElementById('newNomCode').value = '';
-    document.getElementById('newNomName').value = '';
-    document.getElementById('newNomCat').value = '';
-    document.getElementById('newNomIsNumbered').checked = true;
-    openModal('nomenclatureModal');
+    document.getElementById('newNomCode').value = ''; document.getElementById('newNomName').value = ''; document.getElementById('newNomCat').value = ''; document.getElementById('newNomIsNumbered').checked = true; openModal('nomenclatureModal');
 }
 
-/**
- * Создает новую позицию номенклатуры.
- */
 async function createNomenclature() {
     const code = document.getElementById('newNomCode').value;
     const name = document.getElementById('newNomName').value;
     const category = document.getElementById('newNomCat').value;
     const isNumbered = document.getElementById('newNomIsNumbered').checked;
-    if (!name) return alert("Наименование является обязательным полем.");
-
+    if (!name) return alert("Наименование обязательно.");
     try {
-        const response = await apiFetch('/api/arsenal/nomenclature', {
-            method: 'POST',
-            body: JSON.stringify({ code, name, category: category, is_numbered: isNumbered })
-        });
-        if (response && response.ok) {
-            // Очистка полей в случае успеха
-            document.getElementById('newNomName').value = '';
-            document.getElementById('newNomCode').value = '';
-            await loadNomenclature(); // Перезагрузка списка
-        } else {
-            const error = await response.json();
-            alert("Ошибка создания номенклатуры: " + error.detail);
-        }
-    } catch (error) {
-        console.error(error);
-    }
+        const response = await apiFetch('/api/arsenal/nomenclature', { method: 'POST', body: JSON.stringify({ code, name, category, is_numbered: isNumbered }) });
+        if (response && response.ok) { document.getElementById('newNomName').value = ''; document.getElementById('newNomCode').value = ''; await loadNomenclature(); }
+        else { const error = await response.json(); alert("Ошибка: " + error.detail); }
+    } catch (error) {}
 }
 
-// ==========================================
-// 4. ОСТАТКИ (РЕЕСТР)
-// ==========================================
-
-/**
- * Запрашивает и отображает остатки по конкретному объекту.
- */
+// 4. ОСТАТКИ
 async function showBalanceModal(objectId, objectName) {
     const title = document.getElementById('balanceModalTitle');
     const tableBody = document.getElementById('balanceTableBody');
     if (!title || !tableBody) return;
-
     title.innerText = `Остатки: ${objectName}`;
-    tableBody.innerHTML = '<tr><td colspan="4" class="text-center p-8"><i class="fa-solid fa-spinner fa-spin text-green-600"></i> Загрузка реестра...</td></tr>';
+    tableBody.innerHTML = '<tr><td colspan="4" class="text-center p-8"><i class="fa-solid fa-spinner fa-spin text-green-600"></i> Загрузка...</td></tr>';
     openModal('balanceModal');
-
     try {
         const response = await apiFetch(`/api/arsenal/balance/${objectId}`);
-        if (!response || !response.ok) throw new Error('Ошибка сервера при загрузке остатков');
-        const balanceItems = await response.json();
-
-        if (balanceItems.length === 0) {
-            tableBody.innerHTML = '<tr><td colspan="4" class="text-center p-8 text-gray-500">На данном объекте нет закрепленного имущества.</td></tr>';
-            return;
-        }
-
+        if (!response || !response.ok) throw new Error('Ошибка');
+        const items = await response.json();
+        if (items.length === 0) { tableBody.innerHTML = '<tr><td colspan="4" class="text-center p-8 text-gray-500">Пусто.</td></tr>'; return; }
         tableBody.innerHTML = '';
-        balanceItems.forEach(item => {
-            const tableRow = document.createElement('tr');
-            tableRow.innerHTML = `
-                <td class="p-2 border-b font-medium text-gray-800">${item.nomenclature}</td>
-                <td class="p-2 border-b font-mono text-xs text-gray-500">${item.code || '-'}</td>
-                <td class="p-2 border-b font-mono text-blue-700">${item.serial_number}</td>
-                <td class="p-2 border-b text-center font-bold bg-green-50">${item.quantity}</td>
-            `;
-            tableBody.appendChild(tableRow);
+        items.forEach(item => {
+            tableBody.innerHTML += `<tr><td class="p-2 border-b font-medium text-gray-800">${item.nomenclature}</td><td class="p-2 border-b font-mono text-xs text-gray-500">${item.code || '-'}</td><td class="p-2 border-b font-mono text-blue-700">${item.serial_number}</td><td class="p-2 border-b text-center font-bold bg-green-50">${item.quantity}</td></tr>`;
         });
-    } catch (error) {
-        console.error(error);
-        tableBody.innerHTML = '<tr><td colspan="4" class="text-center p-8 text-red-500">Не удалось загрузить остатки.</td></tr>';
-    }
+    } catch (error) { tableBody.innerHTML = '<tr><td colspan="4" class="text-center p-8 text-red-500">Ошибка.</td></tr>'; }
 }
 
+// 5. ОТЧЕТЫ (LIFECYCLE)
+async function searchForReport() {
+    const query = document.getElementById('reportSearchInput').value.trim();
+    if (query.length < 2) return alert("Минимум 2 символа");
+    const listContainer = document.getElementById('reportSearchList');
+    const resultsBlock = document.getElementById('reportSearchResults');
+    listContainer.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    resultsBlock.classList.remove('hidden');
+    try {
+        const response = await apiFetch(`/api/arsenal/reports/search-weapon?q=${encodeURIComponent(query)}`);
+        const items = await response.json();
+        listContainer.innerHTML = '';
+        if (items.length === 0) { listContainer.innerHTML = '<span class="text-gray-400 text-sm">Ничего не найдено</span>'; return; }
+        items.forEach(item => {
+            const btn = document.createElement('button');
+            btn.className = "text-sm border border-purple-200 bg-purple-50 hover:bg-purple-100 px-3 py-1 rounded text-purple-900 transition text-left";
+            btn.innerHTML = `<b>${item.name}</b> <span class="text-xs text-gray-500">№ ${item.serial}</span>`;
+            btn.onclick = () => loadTimeline(item.serial, item.nom_id, item.name);
+            listContainer.appendChild(btn);
+        });
+    } catch (e) {}
+}
 
-// ==========================================
-// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-// ==========================================
+async function loadTimeline(serial, nomId, name) {
+    const container = document.getElementById('reportTimeline');
+    const statusBox = document.getElementById('reportCurrentStatus');
+    container.innerHTML = '<div class="pl-6 text-gray-500">Загрузка...</div>';
+    statusBox.classList.add('hidden');
+    try {
+        const response = await apiFetch(`/api/arsenal/reports/timeline?serial=${encodeURIComponent(serial)}&nom_id=${nomId}`);
+        const data = await response.json();
+        statusBox.innerText = `${name} (№ ${serial}) — ${data.status}`;
+        statusBox.classList.remove('hidden');
+        container.innerHTML = '';
+        if (data.history.length === 0) { container.innerHTML = '<div class="pl-6">История пуста.</div>'; return; }
+        data.history.forEach(event => {
+            let color = "bg-gray-500", icon = "fa-file";
+            if (event.op_type === "Первичный ввод") { color = "bg-green-500"; icon = "fa-plus"; }
+            else if (event.op_type === "Списание") { color = "bg-red-500"; icon = "fa-trash"; }
+            else if (event.op_type === "Перемещение") { color = "bg-blue-500"; icon = "fa-truck"; }
+            else if (event.op_type === "Отправка") { color = "bg-orange-500"; icon = "fa-arrow-right"; }
+            container.innerHTML += `
+                <div class="mb-6 ml-6 relative group">
+                    <span class="absolute -left-9 flex items-center justify-center w-6 h-6 ${color} rounded-full ring-4 ring-white text-white text-xs"><i class="fa-solid ${icon}"></i></span>
+                    <div class="bg-white border border-gray-200 rounded p-3 shadow-sm hover:shadow-md transition">
+                        <div class="flex justify-between mb-1"><span class="text-sm font-bold text-gray-800">${event.op_type}</span><span class="text-xs text-gray-500">${event.date}</span></div>
+                        <div class="text-sm text-gray-600 mb-1">Документ: <span class="font-mono text-blue-600 font-bold">${event.doc_number}</span></div>
+                        <div class="text-xs flex items-center gap-2 text-gray-500 bg-gray-50 p-2 rounded"><span class="truncate max-w-[120px]">${event.source}</span><i class="fa-solid fa-arrow-right text-gray-300"></i><span class="font-bold text-gray-700 truncate max-w-[120px]">${event.target}</span></div>
+                    </div>
+                </div>`;
+        });
+    } catch (e) { container.innerHTML = `<div class="pl-6 text-red-500">Ошибка: ${e.message}</div>`; }
+}
 
-/**
- * Возвращает HTML-бейдж для типа документа.
- * @param {string} type - Тип документа
- */
+// HELPERS
 function getTypeBadge(type) {
-    const map = {
-        'Первичный ввод': 'bg-green-100 text-green-800 border-green-200',
-        'Отправка': 'bg-orange-100 text-orange-800 border-orange-200',
-        'Списание': 'bg-red-100 text-red-800 border-red-200',
-        'Прием': 'bg-blue-100 text-blue-800 border-blue-200',
-        'Перемещение': 'bg-blue-100 text-blue-800 border-blue-200'
-    };
+    const map = { 'Первичный ввод': 'bg-green-100 text-green-800 border-green-200', 'Отправка': 'bg-orange-100 text-orange-800 border-orange-200', 'Списание': 'bg-red-100 text-red-800 border-red-200', 'Прием': 'bg-blue-100 text-blue-800 border-blue-200', 'Перемещение': 'bg-blue-100 text-blue-800 border-blue-200' };
     const classes = map[type] || 'bg-gray-100 text-gray-800 border-gray-200';
     return `<span class="px-2 py-0.5 rounded text-xs font-bold border ${classes}">${type}</span>`;
 }
-
-/**
- * Подготавливает и открывает модальное окно создания нового документа.
- */
 function openNewDocModal() {
     document.getElementById('newDocForm').reset();
     document.querySelector('#docItemsTable tbody').innerHTML = '';
-    document.getElementById('newDocType').value = 'Первичный ввод'; // Значение по умолчанию
+    document.getElementById('newDocType').value = 'Первичный ввод';
+
+    // --- НОВОЕ: Настройка поля номера ---
+    const numInput = document.getElementById('newDocNumber');
+    numInput.value = "АВТО"; // Показываем заглушку
+    numInput.disabled = true; // Запрещаем редактирование
+    numInput.classList.add('bg-gray-100', 'text-gray-500', 'cursor-not-allowed'); // Визуально делаем серым
+    // ------------------------------------
+
     updateFormState();
-    addDocRow(); // Добавляем одну пустую строку для начала
+    addDocRow();
     openModal('newDocModal');
 }
-
-/**
- * Открывает модальное окно по его ID.
- * @param {string} id - ID модального окна
- */
-function openModal(id) {
-    const modal = document.getElementById(id);
-    if (modal) modal.style.display = 'flex';
-}
-
-/**
- * Закрывает модальное окно по его ID.
- * @param {string} id - ID модального окна
- */
-function closeModal(id) {
-    const modal = document.getElementById(id);
-    if (modal) modal.style.display = 'none';
-}
-
-/**
- * Добавляет новую строку в таблицу позиций документа.
- */
+function openModal(id) { const m = document.getElementById(id); if (m) m.style.display = 'flex'; }
+function closeModal(id) { const m = document.getElementById(id); if (m) m.style.display = 'none'; }
 function addDocRow() {
     const tableBody = document.querySelector('#docItemsTable tbody');
-    const tableRow = document.createElement('tr');
-    tableRow.className = 'border-b';
-
-    let options = '<option value="">-- Выберите номенклатуру --</option>' +
-        nomenclatures.map(n => `<option value="${n.id}" data-is-numbered="${n.is_numbered}">${n.name}${n.code ? ' ('+n.code+')' : ''}</option>`).join('');
-
-    tableRow.innerHTML = `
-        <td class="p-1">
-            <select class="nom-select w-full border border-gray-300 p-1.5 rounded text-sm bg-white" onchange="handleNomenclatureChange(this)">
-                ${options}
-            </select>
-        </td>
-        <td class="p-1">
-            <input type="text" class="serial-input w-full border border-gray-300 p-1.5 rounded text-sm" placeholder="№ / Партия">
-        </td>
-        <td class="p-1">
-            <input type="number" class="qty-input w-full border border-gray-300 p-1.5 rounded text-sm text-center" value="1" min="1">
-        </td>
-        <td class="p-1 text-center">
-            <button type="button" class="text-xl text-red-400 hover:text-red-600 p-1 leading-none" onclick="this.closest('tr').remove()" title="Удалить строку">&times;</button>
-        </td>
-    `;
-    tableBody.appendChild(tableRow);
-    // Сразу применяем логику к новой строке, чтобы поле количества было настроено правильно
-    handleNomenclatureChange(tableRow.querySelector('.nom-select'));
+    const tableRow = document.createElement('tr'); tableRow.className = 'border-b';
+    const opts = '<option value="">-- Выберите --</option>' + nomenclatures.map(n => `<option value="${n.id}" data-is-numbered="${n.is_numbered}">${n.name}${n.code ? ' ('+n.code+')' : ''}</option>`).join('');
+    tableRow.innerHTML = `<td class="p-1"><select class="nom-select w-full border border-gray-300 p-1.5 rounded text-sm bg-white" onchange="handleNomenclatureChange(this)">${opts}</select></td><td class="p-1"><input type="text" class="serial-input w-full border border-gray-300 p-1.5 rounded text-sm" placeholder="№ / Партия"></td><td class="p-1"><input type="number" class="qty-input w-full border border-gray-300 p-1.5 rounded text-sm text-center" value="1" min="1"></td><td class="p-1 text-center"><button type="button" class="text-xl text-red-400 hover:text-red-600 p-1 leading-none" onclick="this.closest('tr').remove()">&times;</button></td>`;
+    tableBody.appendChild(tableRow); handleNomenclatureChange(tableRow.querySelector('.nom-select'));
 }
-
-/**
- * Блокирует/разблокирует поле "Количество" в зависимости от типа номенклатуры
- * (серийная продукция всегда имеет количество 1).
- * @param {HTMLSelectElement} selectElement - Элемент select, который был изменен
- */
-function handleNomenclatureChange(selectElement) {
-    const selectedOption = selectElement.options[selectElement.selectedIndex];
-    const isNumbered = selectedOption.dataset.isNumbered === 'true';
-    const row = selectElement.closest('tr');
-    const quantityInput = row.querySelector('.qty-input');
-    const serialInput = row.querySelector('.serial-input');
-
-    if (isNumbered) {
-        quantityInput.value = 1;
-        quantityInput.readOnly = true;
-        quantityInput.classList.add('bg-gray-100');
-        serialInput.placeholder = "Серийный номер";
-    } else {
-        quantityInput.readOnly = false;
-        quantityInput.classList.remove('bg-gray-100');
-        serialInput.placeholder = "Номер партии";
-    }
+function handleNomenclatureChange(el) {
+    const isNum = el.options[el.selectedIndex].dataset.isNumbered === 'true';
+    const row = el.closest('tr');
+    const qty = row.querySelector('.qty-input');
+    const ser = row.querySelector('.serial-input');
+    if (isNum) { qty.value = 1; qty.readOnly = true; qty.classList.add('bg-gray-100'); ser.placeholder = "Серийный номер"; }
+    else { qty.readOnly = false; qty.classList.remove('bg-gray-100'); ser.placeholder = "Номер партии"; }
 }

@@ -45,3 +45,9 @@ sentry-sdk[fastapi,celery,sqlalchemy]
 
 fastapi-cache2[redis]
 orjson
+boto3
+pyotp
+qrcode
+pillow
+
+cryptography

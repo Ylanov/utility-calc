@@ -11,7 +11,8 @@ from sqlalchemy.future import select
 from app.config import settings
 from app.database import get_db
 from app.models import User
-
+from cryptography.fernet import Fernet
+from app.config import settings
 # =====================================================
 # НАСТРОЙКИ ХЕШИРОВАНИЯ ПАРОЛЕЙ
 # =====================================================
@@ -132,3 +133,25 @@ async def get_current_user(
         raise credentials_exception
 
     return user
+
+
+# Инициализация объекта шифрования
+fernet = Fernet(settings.ENCRYPTION_KEY.encode())
+
+
+def encrypt_totp_secret(secret: str) -> str:
+    """Шифрует TOTP секрет и добавляет маркер 'enc:'"""
+    encrypted_bytes = fernet.encrypt(secret.encode())
+    return f"enc:{encrypted_bytes.decode()}"
+
+
+def decrypt_totp_secret(db_secret: str) -> str:
+    """Расшифровывает секрет. Если маркера 'enc:' нет - возвращает как есть (обратная совместимость)."""
+    if not db_secret:
+        return None
+
+    if db_secret.startswith("enc:"):
+        encrypted_data = db_secret[4:]  # Отрезаем "enc:"
+        return fernet.decrypt(encrypted_data.encode()).decode()
+
+    return db_secret  # Возвращаем сырой секрет, если он был создан до внедрения шифрования

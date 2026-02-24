@@ -8,6 +8,7 @@ document.addEventListener('DOMContentLoaded', () => {
     localStorage.removeItem('token');
 
     const loginForm = document.getElementById('loginForm');
+
     if (loginForm) {
         loginForm.addEventListener('submit', async (e) => {
             e.preventDefault();
@@ -23,7 +24,8 @@ document.addEventListener('DOMContentLoaded', () => {
             formData.append('password', passwordInput.value);
 
             try {
-                const response = await fetch('/token', {
+                // 1. Первый этап: Отправка логина и пароля
+                let response = await fetch('/token', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/x-www-form-urlencoded'
@@ -31,14 +33,40 @@ document.addEventListener('DOMContentLoaded', () => {
                     body: formData
                 });
 
+                // 2. Проверка на необходимость 2FA (Статус 202 Accepted)
+                if (response.status === 202) {
+                    const tempData = await response.json();
+
+                    // Запрашиваем код у пользователя
+                    // (Для продакшена можно заменить prompt на красивое модальное окно)
+                    const code = prompt("🔐 Введите код из Яндекс.Ключа / Google Authenticator:");
+
+                    if (!code) {
+                        throw new Error("Вход отменен: код не введен");
+                    }
+
+                    // 3. Второй этап: Подтверждение кода 2FA
+                    response = await fetch('/api/auth/verify-2fa', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            temp_token: tempData.temp_token,
+                            code: code.trim()
+                        })
+                    });
+                }
+
+                // 4. Обработка финального результата (от /token или от /verify-2fa)
                 if (!response.ok) {
-                    throw new Error('Неверный логин или пароль');
+                    const errData = await response.json().catch(() => ({}));
+                    throw new Error(errData.detail || 'Неверные данные для входа');
                 }
 
                 const data = await response.json();
 
-                // Сохраняем только роль и имя пользователя.
-                // Токен браузер сохранил автоматически в куках!
+                // Сохраняем роль и имя. Токен (access_token) браузер сохранил в HttpOnly Cookie.
                 Auth.setSession(data.role, data.username || usernameInput.value.trim());
 
                 toast('Успешный вход!', 'success');
@@ -56,9 +84,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 }, 500);
 
             } catch (error) {
+                console.error(error);
                 toast(error.message, 'error');
                 passwordInput.value = '';
-                passwordInput.focus();
+                // Если ошибка 2FA, возможно стоит очистить и поле логина, но это опционально
             } finally {
                 setLoading(btn, false, 'Войти');
             }

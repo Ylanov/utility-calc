@@ -22,28 +22,33 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
-
-    # ФИО / логин
     username = Column(String, unique=True, index=True)
-
     hashed_password = Column(String, nullable=False)
-
     role = Column(String, nullable=False)
-
     dormitory = Column(String, nullable=True, index=True)
-
     workplace = Column(String, nullable=True)
-
     residents_count = Column(Integer, default=1)
-
     total_room_residents = Column(Integer, default=1)
-
-    # Площадь (2 знака после запятой)
     apartment_area = Column(Numeric(10, 2), default=0.00)
+    # Секретный ключ для 2FA (TOTP). Если NULL — 2FA выключена.
+    totp_secret = Column(String, nullable=True)
+    # НОВОЕ ПОЛЕ ДЛЯ SOFT DELETE
+    is_deleted = Column(Boolean, default=False, index=True)
 
-    # Функциональный индекс для быстрого поиска без учета регистра
     __table_args__ = (
-        Index("idx_user_username_lower", func.lower(username)),
+        # ЗАМЕНЯЕМ функциональный индекс LOWER на быстрые GIN индексы (pg_trgm)
+        Index(
+            "idx_user_username_trgm",
+            "username",
+            postgresql_using="gin",
+            postgresql_ops={"username": "gin_trgm_ops"}
+        ),
+        Index(
+            "idx_user_dormitory_trgm",
+            "dormitory",
+            postgresql_using="gin",
+            postgresql_ops={"dormitory": "gin_trgm_ops"}
+        ),
     )
 
 

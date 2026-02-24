@@ -47,7 +47,11 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
 
     # 4. Получаем список пользователей, которым нужен авто-расчет
     users_to_process_res = await db.execute(
-        select(User).where(User.role == "user", User.id.notin_(users_with_readings))
+        select(User).where(
+            User.role == "user",
+            User.is_deleted == False,  # <-- Не делаем авто-расчет выселенным
+            User.id.notin_(users_with_readings)
+        )
     )
     users_to_process = users_to_process_res.scalars().all()
 
