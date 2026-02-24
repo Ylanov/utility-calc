@@ -1,4 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import secrets
+import string
+from passlib.context import CryptContext
+from fastapi import APIRouter, Depends, HTTPException, status, Request
+from jose import jwt, JWTError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -7,20 +11,55 @@ from pydantic import BaseModel, validator
 from datetime import datetime
 
 # ======================================================
-# ИМПОРТЫ ДЛЯ АУТЕНТИФИКАЦИИ
+# ИМПОРТЫ ДЛЯ АУТЕНТИФИКАЦИИ И БД
 # ======================================================
 from app.database import get_arsenal_db
-from app.auth import get_current_user  # <-- 1. ДОБАВЛЕН ИМПОРТ
-# ======================================================
+from app.config import settings
 
 from app.arsenal.models import (
     AccountingObject,
     Nomenclature,
     Document,
     DocumentItem,
-    WeaponRegistry
+    WeaponRegistry,
+    ArsenalUser
 )
 from app.arsenal.services import WeaponService
+
+# ======================================================
+# НАСТРОЙКА ХЕШИРОВАНИЯ (Argon2)
+# ======================================================
+pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+
+
+# ======================================================
+# АВТОРИЗАЦИЯ ТОЛЬКО ДЛЯ АРСЕНАЛА (Изолированная)
+# ======================================================
+async def get_current_arsenal_user(
+        request: Request,
+        db: AsyncSession = Depends(get_arsenal_db)
+):
+    # Достаем токен из куки (как настроено в auth.py)
+    token = request.cookies.get("access_token")
+    if not token:
+        raise HTTPException(status_code=401, detail="Не авторизован")
+
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        username: str = payload.get("sub")
+        if not username:
+            raise HTTPException(status_code=401, detail="Неверный токен")
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Ошибка валидации токена")
+
+    # Ищем пользователя ИМЕННО в базе Арсенала
+    result = await db.execute(select(ArsenalUser).where(ArsenalUser.username == username))
+    user = result.scalars().first()
+
+    if not user:
+        raise HTTPException(status_code=401, detail="Пользователь Арсенала не найден")
+
+    return user
 
 
 # ======================================================
@@ -84,8 +123,8 @@ router = APIRouter(prefix="/api/arsenal", tags=["STROB Arsenal"])
 
 @router.get("/objects")
 async def get_objects(
-    db: AsyncSession = Depends(get_arsenal_db),
-    current_user=Depends(get_current_user)  # <-- 2. ДОБАВЛЕНА ЗАЩИТА
+        db: AsyncSession = Depends(get_arsenal_db),
+        current_user: ArsenalUser = Depends(get_current_arsenal_user)
 ):
     """Получить список всех объектов учета"""
     result = await db.execute(
@@ -96,11 +135,19 @@ async def get_objects(
 
 @router.post("/objects")
 async def create_object(
-    data: ObjCreate,
-    db: AsyncSession = Depends(get_arsenal_db),
-    current_user=Depends(get_current_user)  # <-- 2. ДОБАВЛЕНА ЗАЩИТА
+        data: ObjCreate,
+        db: AsyncSession = Depends(get_arsenal_db),
+        current_user: ArsenalUser = Depends(get_current_arsenal_user)
 ):
-    """Создать новый объект учета"""
+    """Создать новый объект учета и АВТОМАТИЧЕСКИ создать для него начальника"""
+
+    # ПРОВЕРКА РОЛИ: Только admin может создавать объекты
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=403,
+            detail="Только администратор может создавать новые объекты и структуры"
+        )
+
     existing = await db.execute(
         select(AccountingObject).where(AccountingObject.name == data.name)
     )
@@ -110,20 +157,55 @@ async def create_object(
             detail="Объект с таким именем уже существует"
         )
 
+    # 1. Создаем сам объект
     obj = AccountingObject(**data.dict())
     db.add(obj)
+    await db.flush()  # Делаем flush, чтобы БД присвоила объекту ID (obj.id)
+
+    # 2. Генерируем учетные данные для начальника склада
+    new_username = f"unit_{obj.id}"
+
+    # Генерируем случайный 8-значный пароль
+    alphabet = string.ascii_letters + string.digits
+    new_password = ''.join(secrets.choice(alphabet) for _ in range(8))
+
+    # Хешируем пароль через Argon2
+    hashed_pw = pwd_context.hash(new_password)
+
+    # 3. Создаем учетную запись пользователя и привязываем к складу
+    new_user = ArsenalUser(
+        username=new_username,
+        hashed_password=hashed_pw,
+        role="unit_head",  # Роль начальника подразделения
+        object_id=obj.id  # Привязка к созданному объекту
+    )
+    db.add(new_user)
+
     await db.commit()
     await db.refresh(obj)
-    return obj
+
+    # Возвращаем данные объекта И сгенерированные доступы для вывода админу
+    return {
+        "id": obj.id,
+        "name": obj.name,
+        "obj_type": obj.obj_type,
+        "credentials": {
+            "username": new_username,
+            "password": new_password
+        }
+    }
 
 
 @router.delete("/objects/{obj_id}")
 async def delete_object(
-    obj_id: int,
-    db: AsyncSession = Depends(get_arsenal_db),
-    current_user=Depends(get_current_user)  # <-- 2. ДОБАВЛЕНА ЗАЩИТА
+        obj_id: int,
+        db: AsyncSession = Depends(get_arsenal_db),
+        current_user: ArsenalUser = Depends(get_current_arsenal_user)
 ):
     """Удалить объект учета"""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Только администратор может удалять объекты")
+
     obj = await db.get(AccountingObject, obj_id)
     if not obj:
         raise HTTPException(status_code=404, detail="Объект не найден")
@@ -139,8 +221,8 @@ async def delete_object(
 
 @router.get("/nomenclature")
 async def get_nomenclature(
-    db: AsyncSession = Depends(get_arsenal_db),
-    current_user=Depends(get_current_user)  # <-- 2. ДОБАВЛЕНА ЗАЩИТА
+        db: AsyncSession = Depends(get_arsenal_db),
+        current_user: ArsenalUser = Depends(get_current_arsenal_user)
 ):
     """Получить список номенклатуры"""
     result = await db.execute(
@@ -151,11 +233,14 @@ async def get_nomenclature(
 
 @router.post("/nomenclature")
 async def create_nomenclature(
-    data: NomenclatureCreate,
-    db: AsyncSession = Depends(get_arsenal_db),
-    current_user=Depends(get_current_user)  # <-- 2. ДОБАВЛЕНА ЗАЩИТА
+        data: NomenclatureCreate,
+        db: AsyncSession = Depends(get_arsenal_db),
+        current_user: ArsenalUser = Depends(get_current_arsenal_user)
 ):
     """Добавить новый тип вооружения или боеприпасов"""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Только администратор может добавлять номенклатуру")
+
     existing = await db.execute(
         select(Nomenclature).where(Nomenclature.name == data.name)
     )
@@ -178,10 +263,10 @@ async def create_nomenclature(
 
 @router.get("/documents")
 async def get_documents(
-    db: AsyncSession = Depends(get_arsenal_db),
-    current_user=Depends(get_current_user)  # <-- 2. ДОБАВЛЕНА ЗАЩИТА
+        db: AsyncSession = Depends(get_arsenal_db),
+        current_user: ArsenalUser = Depends(get_current_arsenal_user)
 ):
-    """Получить журнал документов"""
+    """Получить журнал документов с учетом роли пользователя"""
     stmt = (
         select(Document)
         .options(
@@ -193,6 +278,13 @@ async def get_documents(
             Document.created_at.desc()
         )
     )
+
+    # ФИЛЬТРАЦИЯ ПО РОЛЯМ: Начальник склада видит только свои документы
+    if current_user.role == "unit_head":
+        stmt = stmt.where(
+            (Document.source_id == current_user.object_id) |
+            (Document.target_id == current_user.object_id)
+        )
 
     result = await db.execute(stmt)
     docs = result.scalars().all()
@@ -214,9 +306,9 @@ async def get_documents(
 
 @router.get("/documents/{doc_id}")
 async def get_document_details(
-    doc_id: int,
-    db: AsyncSession = Depends(get_arsenal_db),
-    current_user=Depends(get_current_user)  # <-- 2. ДОБАВЛЕНА ЗАЩИТА
+        doc_id: int,
+        db: AsyncSession = Depends(get_arsenal_db),
+        current_user: ArsenalUser = Depends(get_current_arsenal_user)
 ):
     """Получить подробную информацию о документе"""
     stmt = (
@@ -235,19 +327,44 @@ async def get_document_details(
     if not doc:
         raise HTTPException(status_code=404, detail="Документ не найден")
 
+    # Проверка прав: может ли начальник склада видеть этот конкретный документ
+    if current_user.role == "unit_head":
+        if doc.source_id != current_user.object_id and doc.target_id != current_user.object_id:
+            raise HTTPException(status_code=403,
+                                detail="Отказано в доступе. Этот документ не принадлежит вашему подразделению.")
+
     return doc
 
 
 @router.post("/documents")
 async def create_document(
-    data: DocCreate,
-    db: AsyncSession = Depends(get_arsenal_db),
-    current_user=Depends(get_current_user)  # <-- 2. ДОБАВЛЕНА ЗАЩИТА
+        data: DocCreate,
+        db: AsyncSession = Depends(get_arsenal_db),
+        current_user: ArsenalUser = Depends(get_current_arsenal_user)
 ):
     """
     Создать документ с автоматической проводкой по реестру оружия.
     Операция выполняется атомарно через WeaponService.
     """
+
+    # ПРОВЕРКА ПРАВ: Начальник склада может работать только со своим складом
+    if current_user.role == "unit_head":
+        # Если это расход/отправка - источником ОБЯЗАН быть его склад
+        if data.operation_type in ["Отправка", "Перемещение", "Списание"]:
+            if data.source_id != current_user.object_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Вы можете списывать/отправлять имущество только со своего склада!"
+                )
+
+        # Если это приход - получателем ОБЯЗАН быть его склад
+        if data.operation_type in ["Первичный ввод", "Прием"]:
+            if data.target_id != current_user.object_id:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Вы можете принимать имущество только на свой склад!"
+                )
+
     try:
         # Вся бизнес-логика (включая партионный учет) инкапсулирована в сервисе
         new_doc = await WeaponService.process_document(
@@ -265,7 +382,6 @@ async def create_document(
         raise he
     except Exception as e:
         await db.rollback()
-        # В реальном продакшене здесь нужно логирование (logger.error)
         raise HTTPException(
             status_code=400,
             detail=f"Ошибка проведения документа: {str(e)}"
@@ -274,22 +390,17 @@ async def create_document(
 
 @router.delete("/documents/{doc_id}")
 async def delete_document(
-    doc_id: int,
-    db: AsyncSession = Depends(get_arsenal_db),
-    current_user=Depends(get_current_user)  # <-- 2. ДОБАВЛЕНА ЗАЩИТА
+        doc_id: int,
+        db: AsyncSession = Depends(get_arsenal_db),
+        current_user: ArsenalUser = Depends(get_current_arsenal_user)
 ):
-    """
-    Удалить документ.
-    Внимание: это не выполняет сторнирование движений (возврат остатков).
-    Для полноценного учета нужно делать сторнирующие документы, но для MVP удаляем.
-    """
+    """Удалить документ (Только админ)."""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Только администратор может удалять документы")
+
     doc = await db.get(Document, doc_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Документ не найден")
-
-    # В будущем здесь можно добавить проверку прав:
-    # if current_user.role != "admin":
-    #     raise HTTPException(status_code=403, detail="Недостаточно прав для удаления")
 
     await db.delete(doc)
     await db.commit()
@@ -302,15 +413,20 @@ async def delete_document(
 
 @router.get("/balance/{obj_id}")
 async def get_object_balance(
-    obj_id: int,
-    db: AsyncSession = Depends(get_arsenal_db),
-    current_user=Depends(get_current_user)  # <-- 2. ДОБАВЛЕНА ЗАЩИТА
+        obj_id: int,
+        db: AsyncSession = Depends(get_arsenal_db),
+        current_user: ArsenalUser = Depends(get_current_arsenal_user)
 ):
     """
     Получить текущие остатки по объекту.
-    Берем данные напрямую из WeaponRegistry.
-    Учитывает и поштучный, и партионный учет.
     """
+    # ПРОВЕРКА ПРАВ: Начальник видит остатки только своего подразделения
+    if current_user.role == "unit_head" and obj_id != current_user.object_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Вы можете просматривать остатки только своего подразделения"
+        )
+
     stmt = (
         select(WeaponRegistry)
         .join(Nomenclature)  # Джойн для сортировки по имени
@@ -343,3 +459,62 @@ async def get_object_balance(
         })
 
     return balance
+
+
+# ======================================================
+# 5. УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ (Только для Админа)
+# ======================================================
+
+@router.get("/users")
+async def get_users(
+        db: AsyncSession = Depends(get_arsenal_db),
+        current_user: ArsenalUser = Depends(get_current_arsenal_user)
+):
+    """Получить список всех пользователей (только для админа)"""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Доступ запрещен")
+
+    stmt = select(ArsenalUser).options(selectinload(ArsenalUser.accounting_object)).order_by(ArsenalUser.id)
+    result = await db.execute(stmt)
+    users = result.scalars().all()
+
+    response = []
+    for u in users:
+        response.append({
+            "id": u.id,
+            "username": u.username,
+            "role": u.role,
+            "object_name": u.accounting_object.name if u.accounting_object else "Главное управление",
+            "created_at": u.created_at.strftime("%d.%m.%Y")
+        })
+    return response
+
+
+@router.post("/users/{user_id}/reset-password")
+async def reset_user_password(
+        user_id: int,
+        db: AsyncSession = Depends(get_arsenal_db),
+        current_user: ArsenalUser = Depends(get_current_arsenal_user)
+):
+    """Сброс пароля пользователя (Генерирует новый)"""
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Доступ запрещен")
+
+    user = await db.get(ArsenalUser, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+
+    # Генерируем новый пароль
+    alphabet = string.ascii_letters + string.digits
+    new_password = ''.join(secrets.choice(alphabet) for _ in range(8))
+
+    # Хешируем и сохраняем
+    user.hashed_password = pwd_context.hash(new_password)
+    db.add(user)
+    await db.commit()
+
+    return {
+        "message": "Пароль успешно сброшен",
+        "username": user.username,
+        "new_password": new_password
+    }

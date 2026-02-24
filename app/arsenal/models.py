@@ -20,7 +20,17 @@ class ArsenalUser(ArsenalBase):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
     hashed_password = Column(String)
+
+    # НОВОЕ: Роль пользователя (admin - видит всё, unit_head - видит только свое)
+    role = Column(String, default="unit_head")
+
+    # НОВОЕ: Привязка к конкретному складу/подразделению
+    object_id = Column(Integer, ForeignKey("accounting_objects.id"), nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Связь
+    accounting_object = relationship("AccountingObject")
 
 
 # --- Справочник: Организации / Объекты учета ---

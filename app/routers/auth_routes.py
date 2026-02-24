@@ -12,7 +12,7 @@ from fastapi_limiter.depends import RateLimiter
 
 from app.database import get_db
 from app.models import User
-from app.auth import verify_password, create_access_token, get_current_user, encrypt_totp_secret, decrypt_totp_secret
+from app.auth import verify_password, create_access_token, get_current_user, encrypt_totp_secret, decrypt_totp_secret, get_password_hash
 from app.config import settings
 from app.schemas import TotpSetupResponse, TotpVerify
 
@@ -57,22 +57,23 @@ async def login(
     user = result.scalars().first()
 
     if not user or not verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Неверный логин или пароль"
-        )
+        raise HTTPException(status_code=401, detail="Неверный логин или пароль")
 
-    # ПРОВЕРКА: ВКЛЮЧЕНА ЛИ 2FA?
-    if user.totp_secret:
-        # Создаем временный токен, который живет 5 минут и дает право ТОЛЬКО на ввод кода
-        pre_auth_token = create_access_token(data={"sub": user.username, "scope": "pre-auth"})
+    # --- ДОБАВИТЬ ЭТОТ БЛОК ---
+    # Проверяем, нужно ли обновить хеш (если он старого формата, например bcrypt)
+    if verify_password(form_data.password, user.hashed_password):
+        # Passlib умеет определять, устарел ли хеш относительно текущей конфигурации
+        # Но проще всего проверить префикс или просто перезаписать, если старый
 
-        # Возвращаем 202 Accepted, чтобы фронтенд понял, что нужен второй фактор
-        return Response(
-            content=f'{{"detail": "2FA_REQUIRED", "temp_token": "{pre_auth_token}"}}',
-            status_code=status.HTTP_202_ACCEPTED,
-            media_type="application/json"
-        )
+        # Самый простой способ без глубокого копания в Passlib:
+        # Если хеш не начинается на "$argon2", значит он старый -> обновляем
+        if not user.hashed_password.startswith("$argon2"):
+            new_hash = get_password_hash(form_data.password)
+            user.hashed_password = new_hash
+            # Не забудьте закоммитить изменения
+            db.add(user)
+            await db.commit()
+            # --------------------------
 
     # 2FA НЕТ -> Полный вход
     access_token = create_access_token(data={"sub": user.username, "role": user.role, "scope": "full"})

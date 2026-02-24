@@ -1,6 +1,6 @@
 from typing import Dict, List, Optional, Any
 from decimal import Decimal
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import desc, asc, func, or_, update, case
@@ -10,6 +10,7 @@ from app.models import User, MeterReading, Tariff, BillingPeriod, Adjustment
 from app.schemas import ApproveRequest
 from app.dependencies import get_current_user
 from app.services.calculations import calculate_utilities, D
+from app.services.excel_service import import_readings_from_excel
 
 router = APIRouter(tags=["Admin Readings"])
 
@@ -40,6 +41,32 @@ ANOMALY_MAP: Dict[str, Dict[str, str]] = {
 # ===================================================================
 # ПОЛУЧЕНИЕ СПИСКА ПОКАЗАНИЙ (С ПАГИНАЦИЕЙ)
 # ===================================================================
+
+@router.post("/api/admin/readings/import")
+async def import_readings(
+        file: UploadFile = File(...),
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db)
+):
+    """Массовая загрузка показаний (черновиков) из Excel."""
+    allowed_roles = ["accountant", "admin"]
+    if current_user.role not in allowed_roles:
+        raise HTTPException(status_code=403, detail="Доступ запрещен")
+
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="Разрешены только файлы Excel (.xlsx, .xls)")
+
+    # Получаем активный период
+    res_period = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))
+    active_period = res_period.scalars().first()
+    if not active_period:
+        raise HTTPException(status_code=400, detail="Нет активного периода для загрузки показаний")
+
+    # Читаем файл и отправляем в сервис
+    content = await file.read()
+    result = await import_readings_from_excel(content, db, active_period.id)
+    return result
+
 @router.get("/api/admin/readings")
 async def get_admin_readings(
         page: int = Query(1, ge=1, description="Номер страницы"),

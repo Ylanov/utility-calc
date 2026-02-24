@@ -59,6 +59,7 @@ document.getElementById('arsenalLoginForm').addEventListener('submit', async (e)
         if (response.ok) {
             const data = await response.json();
             // ИСПРАВЛЕНИЕ: Токен больше не сохраняется в JS, он автоматически в Cookie
+            localStorage.setItem('arsenal_role', data.role);
             window.location.href = data.redirect_url || 'arsenal_dashboard.html';
         } else {
             const errorData = await response.json();

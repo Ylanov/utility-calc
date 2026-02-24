@@ -45,6 +45,7 @@ async def arsenal_login(
     return {
         "access_token": access_token,
         "token_type": "bearer",
+        "role": user.role,  # <--- ДОБАВИТЬ ЭТУ СТРОКУ
         "redirect_url": "arsenal_dashboard.html"
     }
 

@@ -8,7 +8,8 @@ const ANOMALY_MAP = {
     "ZERO": { color: "#f39c12", label: "Нулевой" },
     "HIGH": { color: "#e74c3c", label: "Высокий" },
     "FROZEN": { color: "#3498db", label: "Замерзший" },
-    "PEERS": { color: "#9b59b6", label: "Аномалия (Группа)" }
+    "PEERS": { color: "#9b59b6", label: "Аномалия (Группа)" },
+    "IMPORTED_DRAFT": { color: "#8e44ad", label: "Импорт" } // Добавим цвет для импортированных
 };
 
 export const ReadingsModule = {
@@ -16,7 +17,12 @@ export const ReadingsModule = {
 
     init() {
         this.cacheDOM();
-        this.bindEvents();
+
+        if (!this.isInitialized) {
+            this.bindEvents();
+            this.isInitialized = true;
+        }
+
         this.loadActivePeriod();
         this.initTable();
     },
@@ -31,7 +37,9 @@ export const ReadingsModule = {
             periodLabel: document.getElementById('activePeriodLabel'),
             btnClosePeriod: document.querySelector('#periodActiveState button'),
             periodNameInput: document.getElementById('newPeriodNameInput'),
-            btnOpenPeriod: document.querySelector('#periodClosedState button')
+            btnOpenPeriod: document.querySelector('#periodClosedState button'),
+            btnImport: document.getElementById('btnImportReadings'),
+            inputImport: document.getElementById('importReadingsFile')
         };
     },
 
@@ -39,8 +47,10 @@ export const ReadingsModule = {
         if (this.dom.btnRefresh) {
             this.dom.btnRefresh.addEventListener('click', () => this.table.refresh());
         }
+        if (this.dom.btnImport) {
+            this.dom.btnImport.addEventListener('click', () => this.importReadings());
+        }
 
-        // ИСПРАВЛЕНО: Теперь обработчик просто перезагружает таблицу
         if (this.dom.filterCheckbox) {
             this.dom.filterCheckbox.addEventListener('change', () => {
                 if (this.table) {
@@ -66,7 +76,6 @@ export const ReadingsModule = {
                 pageInfo: 'pageIndicator'
             },
 
-            // ИСПРАВЛЕНО: Используем новую функцию для передачи фильтра
             getExtraParams: () => {
                 return {
                     anomalies_only: this.dom.filterCheckbox.checked
@@ -74,6 +83,9 @@ export const ReadingsModule = {
             },
 
             renderRow: (r) => {
+                // Если total_cost еще не посчитан (для импортированных черновиков), ставим 0
+                const totalCost = r.total_cost !== null && r.total_cost !== undefined ? r.total_cost : 0;
+
                 return el('tr', {},
                     el('td', {},
                         el('div', { style: { fontWeight: '600' } }, r.username),
@@ -84,7 +96,7 @@ export const ReadingsModule = {
                     el('td', { class: 'text-right' }, Number(r.cur_cold).toFixed(3)),
                     el('td', { class: 'text-right' }, Number(r.cur_elect).toFixed(3)),
                     el('td', { class: 'text-right', style: { color: '#27ae60', fontWeight: 'bold' } },
-                        `${Number(r.total_cost).toFixed(2)} ₽`
+                        `${Number(totalCost).toFixed(2)} ₽`
                     ),
                     el('td', { class: 'text-center' },
                         el('button', {
@@ -106,14 +118,47 @@ export const ReadingsModule = {
         this.table.init();
     },
 
-    // Остальные методы (createBadges, loadActivePeriod, модалки и т.д.) остаются без изменений
+    async importReadings() {
+        const file = this.dom.inputImport.files[0];
+        if (!file) {
+            toast('Сначала выберите файл Excel', 'info');
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        setLoading(this.dom.btnImport, true, 'Загрузка...');
+
+        try {
+            const res = await api.post('/admin/readings/import', formData);
+
+            if (res.errors && res.errors.length > 0) {
+                alert(`Импорт завершен с ошибками (${res.errors.length}):\n` + res.errors.slice(0, 8).join('\n'));
+            } else {
+                toast(`Успешно! Добавлено: ${res.added}, Обновлено: ${res.updated}`, 'success');
+            }
+
+            this.dom.inputImport.value = ''; // Очищаем инпут
+            this.table.refresh(); // Обновляем таблицу, чтобы увидеть новые черновики
+        } catch (e) {
+            toast('Ошибка импорта: ' + e.message, 'error');
+        } finally {
+            setLoading(this.dom.btnImport, false, '📥 Загрузить');
+        }
+    },
+
     createBadges(flags) {
         if (!flags) return el('span', { style: { color: '#ccc' } }, '-');
         const container = el('div', { style: { display: 'flex', gap: '4px', flexWrap: 'wrap' } });
         flags.split(',').forEach(flag => {
             let type = "UNKNOWN";
+            // Ищем основной ключ (например, из HIGH_HOT берем HIGH)
             for (const key in ANOMALY_MAP) {
-                if (flag.includes(key)) type = key;
+                if (flag.includes(key)) {
+                    type = key;
+                    break; // Нашли основной ключ, выходим
+                }
             }
             const meta = ANOMALY_MAP[type] || { color: '#95a5a6', label: flag };
             container.appendChild(el('span', {

@@ -1,6 +1,6 @@
 // static/js/login.js
 import { Auth } from './core/auth.js';
-import { toast, setLoading } from './core/dom.js';
+import { toast, setLoading, showPrompt } from './core/dom.js'; // <-- ДОБАВЛЕН импорт showPrompt
 
 document.addEventListener('DOMContentLoaded', () => {
     // Чистим старые данные при заходе на страницу логина
@@ -37,9 +37,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (response.status === 202) {
                     const tempData = await response.json();
 
-                    // Запрашиваем код у пользователя
-                    // (Для продакшена можно заменить prompt на красивое модальное окно)
-                    const code = prompt("🔐 Введите код из Яндекс.Ключа / Google Authenticator:");
+                    // ИСПРАВЛЕНИЕ: Вызываем наше красивое асинхронное модальное окно вместо системного prompt
+                    const code = await showPrompt(
+                        "Двухфакторная защита",
+                        "🔐 Введите 6-значный код из Яндекс.Ключа или Google Authenticator:",
+                        "",
+                        "123456"
+                    );
 
                     if (!code) {
                         throw new Error("Вход отменен: код не введен");

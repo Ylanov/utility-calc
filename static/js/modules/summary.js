@@ -12,7 +12,11 @@ export const SummaryModule = {
     init() {
         if (!this.dom.container) {
             this.cacheDOM();
-            this.bindEvents();
+
+            if (!this.isInitialized) {
+                this.bindEvents();
+                this.isInitialized = true;
+            }
         }
         this.loadPeriods();
     },
@@ -238,18 +242,29 @@ export const SummaryModule = {
     },
 
     async pollTask(taskId) {
+        let attempts = 0;
+        const maxAttempts = 150; // 5 минут (150 * 2 сек)
+
         const check = async () => {
+            attempts++;
+            if (attempts > maxAttempts) {
+                throw new Error('Время ожидания генерации файла истекло (5 минут)');
+            }
+
             const data = await api.get(`/admin/tasks/${taskId}`);
+
             if (data.status === 'done' || data.status === 'ok' || data.state === 'SUCCESS') {
                 return data;
             }
             if (data.state === 'FAILURE') {
                 throw new Error(data.error || 'Ошибка выполнения задачи на сервере');
             }
-            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            // Если все еще обрабатывается, ждем 2 секунды
+            await new Promise(resolve => setTimeout(resolve, 2000));
             return check();
         };
-        const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Время ожидания задачи истекло')), 300000));
-        return Promise.race([check(), timeout]);
+
+        return check();
     }
 };

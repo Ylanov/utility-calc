@@ -21,7 +21,12 @@ export const TariffsModule = {
     init() {
         // События вешаем только один раз
         if (!this.isInitialized) {
-            this.bindEvents();
+
+            if (!this.isInitialized) {
+                this.bindEvents();
+                this.isInitialized = true;
+            }
+
             this.isInitialized = true;
         }
 

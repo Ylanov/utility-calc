@@ -23,6 +23,19 @@ async function apiFetch(url, options = {}) {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+    // Проверка прав (Ролевая модель)
+    const userRole = localStorage.getItem('arsenal_role');
+    if (userRole === 'unit_head') {
+        const btnAddObj = document.getElementById('btnAddObject');
+        const menuNom = document.getElementById('menuNomenclature');
+        const menuUsers = document.getElementById('menuUsers'); // <-- ДОБАВЛЕНО
+
+        if (btnAddObj) btnAddObj.style.display = 'none';
+        if (menuNom) menuNom.style.display = 'none';
+        if (menuUsers) menuUsers.style.display = 'none'; // <-- Скрываем меню пользователей от не-админов
+    }
+    // ==========================================
+
     injectSourceSelectIfNeeded();
     bindEvents();
     const dateInput = document.getElementById('newDocDate');
@@ -36,6 +49,7 @@ function bindEvents() {
     document.getElementById('menuDocs')?.addEventListener('click', loadDocuments);
     document.getElementById('menuObjects')?.addEventListener('click', loadObjectsTree);
     document.getElementById('menuNomenclature')?.addEventListener('click', openNomenclatureModal);
+    document.getElementById('menuUsers')?.addEventListener('click', loadAndShowUsers);
 
     // ОТЧЕТЫ (НОВОЕ)
     document.getElementById('menuReports')?.addEventListener('click', () => openModal('reportModal'));
@@ -249,11 +263,35 @@ async function createObject() {
     const name = document.getElementById('newObjName').value;
     const type = document.getElementById('newObjType').value;
     if (!name) return alert("Введите название.");
+
     try {
-        const response = await apiFetch('/api/arsenal/objects', { method: 'POST', body: JSON.stringify({ name, obj_type: type }) });
-        if (response && response.ok) { closeModal('newObjectModal'); document.getElementById('newObjName').value = ''; loadObjectsTree(); }
-        else { const error = await response.json(); alert("Ошибка: " + error.detail); }
-    } catch (error) {}
+        const response = await apiFetch('/api/arsenal/objects', {
+            method: 'POST',
+            body: JSON.stringify({ name, obj_type: type })
+        });
+
+        if (response && response.ok) {
+            const data = await response.json();
+            closeModal('newObjectModal');
+            document.getElementById('newObjName').value = '';
+            loadObjectsTree();
+
+            // --- НОВАЯ КРАСИВАЯ МОДАЛКА ВМЕСТО ALERT ---
+            if (data.credentials) {
+                showCredentialsModal(
+                    `Объект "${data.name}" успешно создан!`,
+                    data.credentials.username,
+                    data.credentials.password
+                );
+            }
+        }
+        else {
+            const error = await response.json();
+            alert("Ошибка: " + error.detail);
+        }
+    } catch (error) {
+        console.error(error);
+    }
 }
 
 // 3. НОМЕНКЛАТУРА
@@ -402,4 +440,93 @@ function handleNomenclatureChange(el) {
     const ser = row.querySelector('.serial-input');
     if (isNum) { qty.value = 1; qty.readOnly = true; qty.classList.add('bg-gray-100'); ser.placeholder = "Серийный номер"; }
     else { qty.readOnly = false; qty.classList.remove('bg-gray-100'); ser.placeholder = "Номер партии"; }
+}
+
+// ==========================================
+// ФУНКЦИИ ДЛЯ КРАСИВОГО ПОКАЗА ПАРОЛЕЙ
+// ==========================================
+function showCredentialsModal(title, username, password) {
+    document.getElementById('credModalTitle').innerText = title;
+    document.getElementById('credUsername').innerText = username;
+    document.getElementById('credPassword').innerText = password;
+
+    const copyBtn = document.getElementById('btnCopyCreds');
+    copyBtn.innerHTML = '<i class="fa-regular fa-copy"></i> Копировать';
+    copyBtn.className = "absolute top-4 right-4 bg-white border border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-blue-600 px-3 py-1 rounded text-sm shadow-sm transition flex items-center gap-2";
+
+    // Логика копирования
+    copyBtn.onclick = () => {
+        const textToCopy = `Логин: ${username}\nПароль: ${password}`;
+        navigator.clipboard.writeText(textToCopy).then(() => {
+            copyBtn.innerHTML = '<i class="fa-solid fa-check text-green-600"></i> Скопировано';
+            copyBtn.classList.add('border-green-300', 'bg-green-50');
+            setTimeout(() => {
+                copyBtn.innerHTML = '<i class="fa-regular fa-copy"></i> Копировать';
+                copyBtn.classList.remove('border-green-300', 'bg-green-50');
+            }, 2000);
+        });
+    };
+
+    openModal('credentialsModal');
+}
+
+// ==========================================
+// УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ (Вкладка Админа)
+// ==========================================
+async function loadAndShowUsers() {
+    openModal('usersModal');
+    const tableBody = document.getElementById('usersTableBody');
+    tableBody.innerHTML = '<tr><td colspan="5" class="text-center p-8"><i class="fa-solid fa-spinner fa-spin text-teal-600"></i> Загрузка...</td></tr>';
+
+    try {
+        const response = await apiFetch('/api/arsenal/users');
+        if (!response || !response.ok) throw new Error("Ошибка загрузки");
+
+        const users = await response.json();
+        tableBody.innerHTML = '';
+
+        users.forEach(u => {
+            const roleBadge = u.role === 'admin'
+                ? '<span class="px-2 py-0.5 bg-purple-100 text-purple-800 rounded text-xs font-bold border border-purple-200">Админ</span>'
+                : '<span class="px-2 py-0.5 bg-blue-100 text-blue-800 rounded text-xs font-bold border border-blue-200">Начальник склада</span>';
+
+            const btnReset = u.role !== 'admin'
+                ? `<button onclick="resetUserPassword(${u.id}, '${u.username}')" class="text-gray-400 hover:text-red-600 p-1" title="Сбросить пароль"><i class="fa-solid fa-key"></i></button>`
+                : '';
+
+            tableBody.innerHTML += `
+                <tr class="border-b hover:bg-gray-50">
+                    <td class="p-2 text-gray-500">${u.id}</td>
+                    <td class="p-2 font-mono font-bold text-gray-800">${u.username}</td>
+                    <td class="p-2">${roleBadge}</td>
+                    <td class="p-2 text-gray-600">${u.object_name}</td>
+                    <td class="p-2 text-center">${btnReset}</td>
+                </tr>
+            `;
+        });
+    } catch (error) {
+        tableBody.innerHTML = '<tr><td colspan="5" class="text-center p-8 text-red-500">Ошибка загрузки пользователей</td></tr>';
+    }
+}
+
+async function resetUserPassword(userId, username) {
+    if (!confirm(`Вы уверены, что хотите сбросить пароль для пользователя ${username}? Старый пароль перестанет работать.`)) return;
+
+    try {
+        const response = await apiFetch(`/api/arsenal/users/${userId}/reset-password`, { method: 'POST' });
+        if (response && response.ok) {
+            const data = await response.json();
+            closeModal('usersModal');
+            // Используем наше новое красивое окно для показа сгенерированного пароля!
+            showCredentialsModal(
+                `Пароль сброшен!`,
+                data.username,
+                data.new_password
+            );
+        } else {
+            alert("Ошибка сброса пароля");
+        }
+    } catch (e) {
+        console.error(e);
+    }
 }

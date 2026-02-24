@@ -1,53 +1,45 @@
+# --- Core Framework ---
 fastapi
-uvicorn
+uvicorn[standard]
+gunicorn
 
-# Database
+# --- Database & ORM ---
 sqlalchemy
 asyncpg
-psycopg2-binary
+psycopg2-binary  # Используется Celery для синхронных соединений
+alembic
 
-# Config & Validation
+# --- Config & Validation ---
 pydantic
 pydantic-settings
 
-# Auth
+# --- Authentication & Security ---
 python-multipart
-passlib
-bcrypt==3.2.2
+passlib[bcrypt]
+bcrypt==4.1.2     # Версия 4.x лучше поддерживает Python 3.13
 python-jose
+cryptography
+pyotp
+argon2-cffi
 
-# PDF / Reports
+# --- Cache & Background Tasks ---
+redis
+fastapi-limiter[redis]==0.1.5
+fastapi-cache2[redis]
+celery
+
+# --- PDF / Reports / S3 ---
 qrcode
 pillow
 jinja2
 weasyprint
 openpyxl
 rapidfuzz
-
-# Migrations
-alembic
-
-# Redis + Rate limit
-redis
-fastapi-limiter[redis]==0.1.5
-
-# Background tasks
-celery
-
-# Testing
-pytest
-pytest-asyncio
-httpx
-gunicorn
-
-# Monitoring & Logs
-sentry-sdk[fastapi,celery,sqlalchemy]
-
-fastapi-cache2[redis]
-orjson
 boto3
-pyotp
-qrcode
-pillow
 
-cryptography
+# --- Utilities ---
+orjson
+httpx
+
+# --- Monitoring ---
+sentry-sdk[fastapi,celery,sqlalchemy]

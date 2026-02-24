@@ -84,7 +84,17 @@
                 <div class="card table-card">
                     <div class="card-header">
                         <h3>Поступившие данные</h3>
+                        <!-- ЗАМЕНИТЬ блок header-controls НА ЭТОТ: -->
                         <div class="header-controls">
+                            <!-- Красивый компактный блок загрузки -->
+                            <div class="compact-upload">
+                                <input type="file" id="importReadingsFile" accept=".xlsx, .xls" class="custom-file-input" style="border:none;">
+                                <button id="btnImportReadings" class="action-btn secondary-btn" style="padding: 4px 10px; font-size: 12px;" title="Загрузить черновики">
+                                    📥 Загрузить
+                                </button>
+                            </div>
+
+                            <!-- Остальные кнопки -->
                             <button id="btnBulkApprove" class="action-btn warning-btn">⚡ Утвердить (Авто)</button>
                             <button id="btnRefreshReadings" class="icon-btn refresh" title="Обновить">↻</button>
                         </div>
@@ -183,15 +193,24 @@
                     </div>
 
                     <!-- Колонка 2: Импорт из Excel -->
-                    <div class="card">
+                    <div class="card import-wrapper"> <!-- Добавлен класс import-wrapper -->
                         <div class="card-header">
                             <h3>📂 Импорт (Excel)</h3>
                         </div>
+
                         <div class="import-area">
-                            <p class="hint-text">Загрузите файл .xlsx со списком жильцов для массового добавления или обновления данных.</p>
-                            <div class="file-input-wrapper">
-                                <input type="file" id="importUsersFile" accept=".xlsx">
-                                <button id="btnImportUsers" class="action-btn secondary-btn">Загрузить</button>
+                            <!-- Иконка -->
+                            <div class="import-icon">📊</div>
+
+                            <!-- Текст подсказки -->
+                            <p class="hint-text" style="max-width: 300px; margin-bottom: 25px; text-align: center;">
+                                Загрузите файл <b>.xlsx</b> со списком жильцов для массового добавления или обновления данных.
+                            </p>
+
+                            <!-- Поля ввода -->
+                            <div class="file-upload-group">
+                                <input type="file" id="importUsersFile" accept=".xlsx" class="custom-file-input">
+                                <button id="btnImportUsers" class="action-btn primary-btn">Загрузить</button>
                             </div>
                         </div>
                     </div>

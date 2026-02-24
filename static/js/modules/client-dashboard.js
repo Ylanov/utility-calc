@@ -73,7 +73,7 @@ export const ClientDashboard = {
 
             // Показываем интерфейс после загрузки
             if (this.dom.container) {
-                this.dom.container.classList.remove('opacity-0');
+                this.dom.container.style.opacity = '1';
             }
         } catch (e) {
             toast('Ошибка загрузки данных: ' + e.message, 'error');
@@ -129,16 +129,26 @@ export const ClientDashboard = {
     },
 
     createStatusBox(color, title, text) {
+        // ИСПРАВЛЕНИЕ: Замена классов Tailwind на обычные CSS стили
         const map = {
-            gray: { bg: 'bg-gray-100', border: 'border-gray-500', text: 'text-gray-700' },
-            yellow: { bg: 'bg-yellow-100', border: 'border-yellow-500', text: 'text-yellow-700' },
-            green: { bg: 'bg-green-100', border: 'border-green-500', text: 'text-green-700' }
+            gray: { bg: '#f3f4f6', border: '#9ca3af', text: '#374151' },
+            yellow: { bg: '#fef3c7', border: '#f59e0b', text: '#92400e' },
+            green: { bg: '#d1fae5', border: '#10b981', text: '#065f46' }
         };
         const c = map[color];
 
-        return el('div', { class: `${c.bg} border-l-4 ${c.border} ${c.text} p-4 rounded-md shadow-sm` },
-            el('p', { class: 'font-bold' }, title),
-            el('p', { class: 'text-sm' }, text)
+        return el('div', {
+                style: {
+                    backgroundColor: c.bg,
+                    borderLeft: `4px solid ${c.border}`,
+                    color: c.text,
+                    padding: '15px',
+                    borderRadius: '6px',
+                    boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
+                }
+            },
+            el('p', { style: { fontWeight: 'bold', margin: '0 0 5px 0' } }, title),
+            el('p', { style: { margin: 0, fontSize: '13px' } }, text)
         );
     },
 
@@ -158,11 +168,13 @@ export const ClientDashboard = {
 
     renderResults(data) {
         if (!data.total_cost && data.total_cost !== 0) {
-            this.dom.result.classList.add('hidden');
+            // ИСПРАВЛЕНИЕ: Используем наш класс hide
+            this.dom.result.classList.add('hide');
             return;
         }
 
-        this.dom.result.classList.remove('hidden');
+        // ИСПРАВЛЕНИЕ: Используем наш класс hide
+        this.dom.result.classList.remove('hide');
 
         const fmt = (val) => `${Number(val || 0).toFixed(2)} ₽`;
 
@@ -191,22 +203,23 @@ export const ClientDashboard = {
             const history = await api.get('/readings/history');
 
             if (!history.length) {
-                this.dom.historyBody.innerHTML = '<tr><td colspan="6" class="p-4 text-center text-gray-500">История пуста</td></tr>';
+                this.dom.historyBody.innerHTML = '<tr><td colspan="6" class="text-center" style="padding: 20px; color: #888;">История пуста</td></tr>';
                 return;
             }
 
             const fragment = document.createDocumentFragment();
 
             history.forEach(r => {
-                const tr = el('tr', { class: 'hover:bg-gray-50 transition-colors' },
-                    el('td', { class: 'border p-2 font-medium' }, r.period),
-                    el('td', { class: 'border p-2 text-center' }, Number(r.hot).toFixed(2)),
-                    el('td', { class: 'border p-2 text-center' }, Number(r.cold).toFixed(2)),
-                    el('td', { class: 'border p-2 text-center' }, Number(r.electric).toFixed(2)),
-                    el('td', { class: 'border p-2 text-center font-bold text-green-700' }, Number(r.total).toFixed(2)),
-                    el('td', { class: 'border p-2 text-center' },
+                // ИСПРАВЛЕНИЕ: Очистили JS от классов Tailwind, используем базу style.css
+                const tr = el('tr', {},
+                    el('td', { style: { fontWeight: '500' } }, r.period),
+                    el('td', { class: 'text-center' }, Number(r.hot).toFixed(2)),
+                    el('td', { class: 'text-center' }, Number(r.cold).toFixed(2)),
+                    el('td', { class: 'text-center' }, Number(r.electric).toFixed(2)),
+                    el('td', { class: 'text-center', style: { fontWeight: 'bold', color: 'var(--success-color)' } }, Number(r.total).toFixed(2)),
+                    el('td', { class: 'text-center' },
                         el('button', {
-                            class: 'text-blue-500 hover:text-blue-700 transition-colors text-xl',
+                            style: { background: 'none', border: 'none', cursor: 'pointer', fontSize: '18px' },
                             title: 'Скачать PDF',
                             onclick: () => this.downloadReceipt(r.id)
                         }, '📄')
@@ -237,11 +250,13 @@ export const ClientDashboard = {
             }
 
             if (val < prevVal) {
-                input.classList.add('border-red-500', 'focus:ring-red-500');
+                // ИСПРАВЛЕНИЕ: Используем наш собственный класс ошибки
+                input.classList.add('input-error');
                 error.textContent = `Меньше пред. (${prevVal})`;
                 return false;
             } else {
-                input.classList.remove('border-red-500', 'focus:ring-red-500');
+                // ИСПРАВЛЕНИЕ: Удаляем собственный класс ошибки
+                input.classList.remove('input-error');
                 error.textContent = '';
                 return true;
             }
@@ -263,12 +278,11 @@ export const ClientDashboard = {
 
         setLoading(this.dom.btnSubmit, true, 'Расчет...');
 
-        // --- ИСПРАВЛЕНИЕ: Безопасное получение элемента спиннера ---
         const spinner = document.getElementById('submitBtnSpinner');
         if (spinner) {
-            spinner.classList.remove('hidden');
+            // ИСПРАВЛЕНИЕ: Используем наш класс hide
+            spinner.classList.remove('hide');
         }
-        // -----------------------------------------------------------
 
         const data = {
             hot_water: parseFloat(this.dom.inputs.hot.value),
@@ -286,11 +300,10 @@ export const ClientDashboard = {
         } finally {
             setLoading(this.dom.btnSubmit, false, '💾 Сохранить');
 
-            // --- ИСПРАВЛЕНИЕ: Безопасное скрытие спиннера ---
             if (spinner) {
-                spinner.classList.add('hidden');
+                // ИСПРАВЛЕНИЕ: Используем наш класс hide
+                spinner.classList.add('hide');
             }
-            // ------------------------------------------------
         }
     },
 

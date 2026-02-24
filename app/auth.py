@@ -18,10 +18,13 @@ from app.config import settings
 # =====================================================
 
 pwd_context = CryptContext(
-    schemes=["bcrypt"],
-    deprecated="auto"
+    schemes=["argon2", "bcrypt"],
+    deprecated="auto",
+    # Настройки для Argon2
+    argon2__memory_cost=65536,  # 64 MB (по умолчанию)
+    argon2__time_cost=2,        # кол-во итераций (по умолчанию)
+    argon2__parallelism=2,      # потоки (по умолчанию)
 )
-
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """

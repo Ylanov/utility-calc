@@ -4,7 +4,8 @@ import {el, toast, showPrompt, setLoading} from '../core/dom.js';
 export const FinancierApp = {
     state: {
         page: 1, limit: 50, total: 0, search: '',
-        importTaskId: null, pollTimer: null, isUploading: false, lastRequestId: 0
+        importTaskId: null, pollTimer: null, isUploading: false, lastRequestId: 0,
+        currentPollId: null // ДОБАВЛЕНО: для отслеживания текущего поллинга
     },
 
     init() {
@@ -52,7 +53,15 @@ export const FinancierApp = {
         this.state.page = newPage;
         this.loadUsers();
     },
-    clearPoll() { if(this.state.pollTimer) { clearTimeout(this.state.pollTimer); this.state.pollTimer = null; } },
+
+    // ДОБАВЛЕНО: Жесткая очистка поллинга
+    clearPoll() {
+        if(this.state.pollTimer) {
+            clearTimeout(this.state.pollTimer);
+            this.state.pollTimer = null;
+        }
+        this.state.currentPollId = null;
+    },
 
     async handleUpload() {
         if(this.state.isUploading) return toast('Импорт уже выполняется', 'info');
@@ -83,11 +92,31 @@ export const FinancierApp = {
         }
     },
 
+    // ИСПРАВЛЕНА УТЕЧКА: Лимит по времени и сброс старых задач
     async pollTask(taskId) {
         this.clearPoll();
+        this.state.currentPollId = taskId;
+        let attempts = 0;
+        const maxAttempts = 150; // Максимум 5 минут (150 * 2 сек)
+
         const check = async () => {
+            // Если запустили новую задачу — останавливаем эту
+            if(this.state.currentPollId !== taskId) return;
+
+            attempts++;
+            if (attempts > maxAttempts) {
+                toast('Превышено время ожидания сервера (5 минут).', 'warning');
+                this.state.isUploading = false;
+                setLoading(this.dom.btnUpload, false, '⬆ Загрузить');
+                return;
+            }
+
             try {
                 const res = await api.get(`/admin/tasks/${taskId}`);
+
+                // Проверяем еще раз после await, вдруг пользователь уже нажал кнопку снова
+                if(this.state.currentPollId !== taskId) return;
+
                 if(res.state === 'PENDING' || res.status === 'processing') {
                     this.state.pollTimer = setTimeout(check, 2000);
                     return;
@@ -96,21 +125,21 @@ export const FinancierApp = {
                     this.renderUploadResult(res.result || res);
                     toast('Импорт завершен!', 'success');
                     this.reload();
+                    this.state.isUploading = false;
+                    setLoading(this.dom.btnUpload, false, '⬆ Загрузить');
                     return;
                 }
                 if(res.state === 'FAILURE') throw new Error(res.error || 'Ошибка воркера');
-                throw new Error('Неизвестный статус');
+                throw new Error('Неизвестный статус задачи');
             } catch(e) {
+                if(this.state.currentPollId !== taskId) return;
                 toast('Ошибка задачи: ' + e.message, 'error');
                 if(this.dom.uploadResult) {
                     this.dom.uploadResult.style.display = 'block';
                     this.dom.uploadResult.innerHTML = `<div style="color:red">Сбой: ${e.message}</div>`;
                 }
-            } finally {
-                if(!this.state.pollTimer) {
-                    this.state.isUploading = false;
-                    setLoading(this.dom.btnUpload, false, '⬆ Загрузить');
-                }
+                this.state.isUploading = false;
+                setLoading(this.dom.btnUpload, false, '⬆ Загрузить');
             }
         };
         check();
@@ -175,12 +204,10 @@ export const FinancierApp = {
                 el('td', {}, String(u.id)),
                 el('td', {style:{fontWeight:'600'}}, u.username),
                 el('td', {}, u.dormitory || '-'),
-                
-                // Счет 209 (Коммуналка)
+
                 el('td', {style:{color:d209>0?'#c0392b':'#ccc', borderLeft:'2px solid #eee'}}, d209>0?d209.toFixed(2):'-'),
                 el('td', {style:{color:o209>0?'#27ae60':'#ccc'}}, o209>0?o209.toFixed(2):'-'),
-                
-                // Счет 205 (Найм)
+
                 el('td', {style:{color:d205>0?'#d35400':'#ccc', borderLeft:'2px solid #eee'}}, d205>0?d205.toFixed(2):'-'),
                 el('td', {style:{color:o205>0?'#27ae60':'#ccc'}}, o205>0?o205.toFixed(2):'-'),
 
@@ -206,7 +233,6 @@ export const FinancierApp = {
         const desc = await showPrompt('Причина', 'Основание:', 'Ручная корректировка');
         if(!desc) return;
 
-        // Новый шаг: выбор счета
         const accType = await showPrompt('Тип счета', 'Введите 209 (Коммуналка) или 205 (Найм):', '209');
         if(accType !== '209' && accType !== '205') return toast('Неверный тип счета', 'error');
 

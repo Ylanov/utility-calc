@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from app.models import User, MeterReading, BillingPeriod
 from app.auth import get_password_hash
+from app.services.debt_import import find_user_fuzzy, normalize_name
 
 ZERO = Decimal("0.00")
 
@@ -208,3 +209,89 @@ async def generate_billing_report_xlsx(db: AsyncSession, period_id: int) -> Tupl
     filename = f"Report_{period.name}".replace(" ", "_") + ".xlsx"
 
     return output, filename
+
+async def import_readings_from_excel(file_content: bytes, db: AsyncSession, period_id: int) -> dict:
+    """Импорт показаний (черновиков) счетчиков из Excel"""
+    try:
+        workbook = load_workbook(filename=io.BytesIO(file_content), read_only=True, data_only=True)
+        worksheet = workbook.active
+
+        # Загружаем активных пользователей для поиска
+        users_result = await db.execute(select(User).where(User.is_deleted == False))
+        users_map = {normalize_name(u.username): u.id for u in users_result.scalars().all()}
+
+        added_count = 0
+        updated_count = 0
+        skipped_count = 0
+        errors = []
+
+        # Читаем со второй строки (пропускаем заголовки)
+        # Ожидаемый формат: [ФИО, ГВС, ХВС, Электричество]
+        rows = worksheet.iter_rows(min_row=2, values_only=True)
+        for row_index, row in enumerate(rows, start=2):
+            if not row or not row[0]:
+                skipped_count += 1
+                continue
+
+            fio_raw = str(row[0]).strip()
+            user_id = find_user_fuzzy(fio_raw, users_map)
+
+            if not user_id:
+                errors.append(f"Строка {row_index}: Жилец '{fio_raw}' не найден")
+                skipped_count += 1
+                continue
+
+            try:
+                # Читаем объемы. Если пусто - ставим 0
+                hot = Decimal(str(row[1]).replace(',', '.').replace(' ', '')) if len(row) > 1 and row[1] is not None else Decimal("0.00")
+                cold = Decimal(str(row[2]).replace(',', '.').replace(' ', '')) if len(row) > 2 and row[2] is not None else Decimal("0.00")
+                elect = Decimal(str(row[3]).replace(',', '.').replace(' ', '')) if len(row) > 3 and row[3] is not None else Decimal("0.00")
+            except Exception:
+                errors.append(f"Строка {row_index}: Ошибка в числах для '{fio_raw}'")
+                skipped_count += 1
+                continue
+
+            # Ищем, есть ли уже ЧЕРНОВИК в этом периоде у юзера
+            exist_res = await db.execute(
+                select(MeterReading).where(
+                    MeterReading.user_id == user_id,
+                    MeterReading.period_id == period_id,
+                    MeterReading.is_approved == False
+                )
+            )
+            draft = exist_res.scalars().first()
+
+            if draft:
+                # Обновляем черновик
+                draft.hot_water = hot
+                draft.cold_water = cold
+                draft.electricity = elect
+                updated_count += 1
+            else:
+                # Создаем новый черновик
+                new_draft = MeterReading(
+                    user_id=user_id,
+                    period_id=period_id,
+                    hot_water=hot,
+                    cold_water=cold,
+                    electricity=elect,
+                    is_approved=False,
+                    anomaly_flags="IMPORTED_DRAFT" # Пометка, что загружено из админки
+                )
+                db.add(new_draft)
+                added_count += 1
+
+        await db.commit()
+        workbook.close()
+
+        return {
+            "status": "success",
+            "added": added_count,
+            "updated": updated_count,
+            "skipped": skipped_count,
+            "errors": errors
+        }
+
+    except Exception as error:
+        await db.rollback()
+        return {"status": "error", "message": str(error), "errors": [str(error)]}

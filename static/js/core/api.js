@@ -66,7 +66,12 @@ class ApiClient {
                             : JSON.stringify(data.detail); // Если detail это массив ошибок валидации
                     }
                 } else if (typeof data === 'string') {
-                    errorMessage = data;
+                    // Если сервер вернул HTML-ошибку, не выводим её всю
+                    if (data.trim().startsWith('<!DOCTYPE') || data.trim().startsWith('<html')) {
+                        errorMessage = 'Внутренняя ошибка сервера (500). Обратитесь к администратору.';
+                    } else {
+                        errorMessage = data;
+                    }
                 }
 
                 throw new Error(errorMessage);
