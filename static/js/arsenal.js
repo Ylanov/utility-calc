@@ -46,40 +46,68 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 function bindEvents() {
+    // 1. Меню
     document.getElementById('menuDocs')?.addEventListener('click', loadDocuments);
     document.getElementById('menuObjects')?.addEventListener('click', loadObjectsTree);
     document.getElementById('menuNomenclature')?.addEventListener('click', openNomenclatureModal);
+
+    // Новое меню "Пользователи" (если есть права)
     document.getElementById('menuUsers')?.addEventListener('click', loadAndShowUsers);
 
-    // ОТЧЕТЫ (НОВОЕ)
+    // 2. Отчеты
     document.getElementById('menuReports')?.addEventListener('click', () => openModal('reportModal'));
     document.getElementById('btnReportSearch')?.addEventListener('click', searchForReport);
     document.getElementById('reportSearchInput')?.addEventListener('keyup', (e) => {
         if (e.key === 'Enter') searchForReport();
     });
 
+    // 3. Открытие модалок создания
     document.getElementById('btnAddObject')?.addEventListener('click', () => openModal('newObjectModal'));
     document.getElementById('btnOpenCreateModal')?.addEventListener('click', openNewDocModal);
 
+    // ============================================================
+    // ИСПРАВЛЕНИЕ: ПРИВЯЗКА КНОПОК В МОДАЛКЕ СОЗДАНИЯ ДОКУМЕНТА
+    // ============================================================
+    // Кнопка "Крестик" (Закрыть)
+    const btnClose = document.getElementById('btnCloseModal');
+    if (btnClose) btnClose.addEventListener('click', () => closeModal('newDocModal'));
+
+    // Кнопка "Отмена"
+    const btnCancel = document.getElementById('btnCancelModal');
+    if (btnCancel) btnCancel.addEventListener('click', () => closeModal('newDocModal'));
+
+    // Кнопка "Провести" (Сохранить)
+    const btnSave = document.getElementById('btnSaveDoc');
+    if (btnSave) btnSave.addEventListener('click', createDocument);
+    // ============================================================
+
+    // 4. Закрытие остальных модалок (общий класс)
     document.querySelectorAll('.modal-close-btn').forEach(button => {
         button.addEventListener('click', () => closeModal(button.closest('.modal').id));
     });
+
+    // Закрытие по клику на фон
     document.querySelectorAll('.modal').forEach(modal => {
         modal.addEventListener('click', event => {
             if (event.target === modal) closeModal(modal.id);
         });
     });
+
+    // Закрытие по ESC
     document.addEventListener('keydown', event => {
         if (event.key === 'Escape') document.querySelectorAll('.modal').forEach(modal => closeModal(modal.id));
     });
 
+    // 5. Логика формы документа
     document.getElementById('newDocType')?.addEventListener('change', updateFormState);
     document.getElementById('btnRefreshDocs')?.addEventListener('click', loadDocuments);
-    document.getElementById('btnSaveDoc')?.addEventListener('click', createDocument);
     document.getElementById('btnAddRow')?.addEventListener('click', addDocRow);
+
+    // 6. Логика создания справочников
     document.getElementById('btnSaveObject')?.addEventListener('click', createObject);
     document.getElementById('btnSaveNom')?.addEventListener('click', createNomenclature);
 
+    // 7. Выход
     document.getElementById('logoutBtn')?.addEventListener('click', async () => {
         try { await fetch('/api/arsenal/logout', { method: 'POST' }); } catch (e) {}
         window.location.href = 'arsenal_login.html';

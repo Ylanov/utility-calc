@@ -27,9 +27,9 @@
                     <span id="adminName">Загрузка...</span>
                     <span class="role-badge admin">Администратор</span>
                 </div>
-                <!-- ДОБАВЛЕНО: Кнопка настройки 2FA -->
-                <button id="btnOpenTotp" class="action-btn secondary-btn" style="margin-right: 10px; background: #4b5563; color: white;">
-                    🔐 Настроить 2FA
+                <!-- Кнопка профиля (2FA перенесена внутрь профиля) -->
+                <button id="btnOpenAdminProfile" class="action-btn secondary-btn" style="margin-right: 10px; background: #374151; color: white;">
+                    ⚙️ Профиль
                 </button>
                 <button class="logout-btn">
                     <span>Выйти</span>
@@ -84,7 +84,6 @@
                 <div class="card table-card">
                     <div class="card-header">
                         <h3>Поступившие данные</h3>
-                        <!-- ЗАМЕНИТЬ блок header-controls НА ЭТОТ: -->
                         <div class="header-controls">
                             <!-- Красивый компактный блок загрузки -->
                             <div class="compact-upload">
@@ -133,7 +132,7 @@
                 </div>
             </div>
 
-            <!-- TAB 2: ПОЛЬЗОВАТЕЛИ (ОБНОВЛЕННАЯ ВЕРСИЯ) -->
+            <!-- TAB 2: ПОЛЬЗОВАТЕЛИ -->
             <div id="users" class="tab-content">
 
                 <!-- Структура: Обертка для форм добавления и импорта -->
@@ -193,21 +192,16 @@
                     </div>
 
                     <!-- Колонка 2: Импорт из Excel -->
-                    <div class="card import-wrapper"> <!-- Добавлен класс import-wrapper -->
+                    <div class="card import-wrapper">
                         <div class="card-header">
                             <h3>📂 Импорт (Excel)</h3>
                         </div>
 
                         <div class="import-area">
-                            <!-- Иконка -->
                             <div class="import-icon">📊</div>
-
-                            <!-- Текст подсказки -->
                             <p class="hint-text" style="max-width: 300px; margin-bottom: 25px; text-align: center;">
                                 Загрузите файл <b>.xlsx</b> со списком жильцов для массового добавления или обновления данных.
                             </p>
-
-                            <!-- Поля ввода -->
                             <div class="file-upload-group">
                                 <input type="file" id="importUsersFile" accept=".xlsx" class="custom-file-input">
                                 <button id="btnImportUsers" class="action-btn primary-btn">Загрузить</button>
@@ -215,26 +209,19 @@
                         </div>
                     </div>
 
-                </div> <!-- Конец обертки grid-2-col -->
+                </div>
 
-                <!-- Таблица со списком пользователей (С УПРАВЛЕНИЕМ И ПАГИНАЦИЕЙ) -->
+                <!-- Таблица со списком пользователей -->
                 <div class="card table-card mt-20">
                     <div class="card-header">
                         <h3>Список пользователей</h3>
-
-                        <!-- ПАНЕЛЬ УПРАВЛЕНИЯ ТАБЛИЦЕЙ -->
                         <div class="toolbar-controls" style="display: flex; gap: 10px; align-items: center;">
-                            <!-- Выбор лимита строк -->
                             <select id="usersLimitSelect" style="width: auto; padding: 6px;">
                                 <option value="25">25 строк</option>
                                 <option value="50" selected>50 строк</option>
                                 <option value="100">100 строк</option>
                             </select>
-
-                            <!-- Поиск -->
                             <input type="text" id="usersSearchInput" placeholder="Поиск по логину/комнате..." style="min-width: 200px; padding: 6px;">
-
-                            <!-- Кнопка обновления -->
                             <button id="btnRefreshUsers" class="icon-btn refresh" title="Обновить">↻</button>
                         </div>
                     </div>
@@ -243,13 +230,12 @@
                         <table class="sticky-header-table">
                             <thead>
                                 <tr>
-                                    <!-- Атрибуты data-sort и класс sortable нужны для TableController -->
                                     <th data-sort="id" class="sortable">ID</th>
                                     <th data-sort="username" class="sortable">Логин</th>
                                     <th data-sort="role" class="sortable">Роль</th>
                                     <th data-sort="dormitory" class="sortable">Общ.</th>
                                     <th data-sort="apartment_area" class="sortable">Площ.</th>
-                                    <th>Доля</th> <!-- Вычисляемое поле, пока без сортировки -->
+                                    <th>Доля</th>
                                     <th data-sort="workplace" class="sortable">Работа</th>
                                     <th class="text-center">Действия</th>
                                 </tr>
@@ -258,7 +244,6 @@
                         </table>
                     </div>
 
-                    <!-- ПОДВАЛ С ПАГИНАЦИЕЙ -->
                     <div class="pagination-footer" style="padding: 15px; border-top: 1px solid #eee; display: flex; justify-content: center; align-items: center; gap: 15px;">
                         <button id="btnPrevUsers" class="page-btn">← Назад</button>
                         <span id="usersPageInfo" style="font-weight: 500; color: #555;">Стр. 1</span>
@@ -337,9 +322,74 @@
         </main>
     </div>
 
-    <!-- МОДАЛЬНЫЕ ОКНА -->
+    <!-- ============================================================== -->
+    <!-- МОДАЛЬНЫЕ ОКНА                                                 -->
+    <!-- ============================================================== -->
 
-    <!-- Модалка: Проверка -->
+    <!-- Модалка: Профиль Администратора -->
+    <div id="adminProfileModal" class="modal-overlay">
+        <div class="modal-window" style="width: 500px;">
+            <div class="modal-header">
+                <h3>Настройки профиля</h3>
+                <button class="close-icon" onclick="document.getElementById('adminProfileModal').classList.remove('open')">&times;</button>
+            </div>
+            <div class="modal-form" style="padding: 20px;">
+
+                <div style="background: #f9fafb; padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
+                    <h4 style="margin-top: 0; margin-bottom: 15px; font-size: 15px; border-bottom: 1px solid #e5e7eb; padding-bottom: 5px;">Изменить учетные данные</h4>
+                    <form id="adminChangeCredsForm" class="styled-form">
+                        <div class="form-group mb-3">
+                            <label>Новый логин (оставьте пустым, если не меняете)</label>
+                            <input type="text" id="adminNewLogin" placeholder="Текущий логин: ...">
+                        </div>
+                        <div class="form-group mb-3">
+                            <label>Текущий пароль (обязательно для сохранения)</label>
+                            <input type="password" id="adminOldPass" required>
+                        </div>
+                        <div class="form-group mb-3">
+                            <label>Новый пароль</label>
+                            <input type="password" id="adminNewPass" placeholder="Минимум 6 символов" minlength="6">
+                        </div>
+                        <button type="submit" class="action-btn primary-btn full-width" id="btnSaveAdminCreds">Сохранить изменения</button>
+                    </form>
+                </div>
+
+                <div style="background: #f9fafb; padding: 15px; text-align: center; border-radius: 8px; border: 1px dashed #d1d5db;">
+                    <h4 style="margin-top: 0; margin-bottom: 10px; font-size: 15px;">Двухфакторная защита (2FA)</h4>
+                    <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 15px;">Дополнительный уровень безопасности для защиты системы от взлома.</p>
+                    <button id="btnOpenTotp" class="action-btn" style="background: #4b5563; color: white; width: 100%;">Настроить 2FA</button>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- Модалка: ПЕРВИЧНАЯ НАСТРОЙКА (Обязательная для админа) -->
+    <div id="firstSetupModal" class="modal-overlay" style="z-index: 10000; background: rgba(17, 24, 39, 0.85); backdrop-filter: blur(8px);">
+        <div class="modal-window" style="width: 450px;">
+            <div class="modal-header" style="background: var(--danger-color); color: white; justify-content: center;">
+                <h3 style="font-size: 18px;">⚠️ Требуется защита аккаунта!</h3>
+            </div>
+            <div class="modal-form">
+                <p style="font-size: 14px; color: var(--text-main); margin-bottom: 15px; text-align: center;">
+                    Вы используете стандартные учетные данные администратора. В целях безопасности системы необходимо немедленно задать новый пароль.
+                </p>
+                <form id="firstSetupForm" class="styled-form">
+                    <div class="form-group mb-3" style="display: none;">
+                        <!-- Для админа смену логина на первом входе скроем или оставим опциональной -->
+                        <input type="text" id="fsNewLogin">
+                    </div>
+                    <div class="form-group mb-3">
+                        <label>Придумайте новый надежный пароль</label>
+                        <input type="password" id="fsNewPassword" placeholder="Минимум 6 символов" minlength="6" required>
+                    </div>
+                    <button type="submit" class="action-btn success-btn full-width mt-2" id="btnFsSave">Сохранить и войти</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модалка: Проверка (Утверждение) -->
     <div id="approveModal" class="modal-overlay">
         <div class="modal-window">
             <div class="modal-header">
@@ -373,9 +423,9 @@
         </div>
     </div>
 
-    <!-- Модалка: Пользователь -->
+    <!-- Модалка: Редактирование Пользователя -->
     <div id="userEditModal" class="modal-overlay">
-        <div class="modal-window" style="width: 700px;"> <!-- Сделаем модалку шире -->
+        <div class="modal-window" style="width: 700px;">
             <div class="modal-header">
                 <h3>Редактирование жильца</h3>
                 <button class="close-btn close-icon">&times;</button>
@@ -432,20 +482,20 @@
         </div>
     </div>
 
-    <!-- ДОБАВЛЕНО: Модалка Настройка 2FA -->
-    <div id="totpModal" class="modal-overlay">
+    <!-- Модалка: Настройка 2FA -->
+    <div id="totpModal" class="modal-overlay" style="z-index: 2000;">
         <div class="modal-window" style="width: 400px; text-align: center;">
             <div class="modal-header">
                 <h3>Защита аккаунта (2FA)</h3>
                 <button id="btnTotpClose" class="close-icon">&times;</button>
             </div>
             <div class="modal-form">
-                <p style="font-size: 13px; color: #555; margin-bottom: 15px;">
+                <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 15px;">
                     Отсканируйте QR-код в приложении <b>Яндекс.Ключ</b> или <b>Google Authenticator</b>:
                 </p>
-                <img id="totpQrImage" src="" alt="QR Code" style="width: 200px; height: 200px; margin: 0 auto; display: none; border: 1px solid #ddd; border-radius: 8px;">
-                <p style="font-size: 12px; color: #888; margin-top: 10px;">
-                    Или введите ключ вручную:<br> <strong id="totpSecretText" style="color: #333; letter-spacing: 1px; font-size: 14px;"></strong>
+                <img id="totpQrImage" src="" alt="QR Code" style="width: 200px; height: 200px; margin: 0 auto; display: none; border: 1px solid var(--border-color); border-radius: 8px;">
+                <p style="font-size: 12px; color: var(--text-secondary); margin-top: 10px;">
+                    Или введите ключ вручную:<br> <strong id="totpSecretText" style="color: var(--text-main); letter-spacing: 1px; font-size: 14px;"></strong>
                 </p>
                 <div class="form-group" style="margin-top: 20px; text-align: left;">
                     <label>Введите код из приложения для подтверждения:</label>

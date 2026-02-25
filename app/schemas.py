@@ -58,6 +58,9 @@ class UserResponse(BaseModel):
     # Флаг, включена ли 2FA у пользователя (для отображения в UI)
     is_2fa_enabled: bool = False
 
+    # НОВОЕ ПОЛЕ: Флаг первичной настройки (сменил ли логин/пароль)
+    is_initial_setup_done: bool = False
+
     class Config:
         from_attributes = True
 
