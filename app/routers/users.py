@@ -3,21 +3,31 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import or_, asc, desc, func
 from typing import Optional
+from pydantic import BaseModel
 
 from app.database import get_db
 from app.models import User
 from app.schemas import UserCreate, UserResponse, UserUpdate, PaginatedResponse
 from app.dependencies import get_current_user, RoleChecker
-from app.auth import get_password_hash
+# ДОБАВЛЕНО: импортируем verify_password для проверки старого пароля
+from app.auth import get_password_hash, verify_password
 from app.services.excel_service import import_users_from_excel
 from app.services.user_service import delete_user_service
 
 router = APIRouter(prefix="/api/users", tags=["Users"])
 
 # Зависимости для проверки ролей
-# ИСПРАВЛЕНО: accountaint -> accountant
 allow_accountant = RoleChecker(["accountant", "admin"])
 allow_fin_acc = RoleChecker(["financier", "accountant", "admin"])
+
+
+# =================================================================
+# СХЕМЫ ДЛЯ НАСТРОЙКИ ПРОФИЛЯ
+# =================================================================
+class ChangeCredentials(BaseModel):
+    new_username: Optional[str] = None
+    new_password: Optional[str] = None
+    old_password: Optional[str] = None
 
 
 # =================================================================
@@ -30,20 +40,80 @@ async def get_me(current_user: User = Depends(get_current_user)):
     return current_user
 
 
+@router.post("/me/setup")
+async def initial_setup(
+        data: ChangeCredentials,
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_user)
+):
+    """
+    Единоразовая смена логина и/или пароля при первом входе.
+    Если пользователь оставляет старый логин (передает пустые поля),
+    флаг все равно переключается, чтобы окно больше не появлялось.
+    """
+    # Защита: обычный жилец может сделать это только один раз
+    if current_user.is_initial_setup_done and current_user.role == "user":
+        raise HTTPException(
+            status_code=400,
+            detail="Первичная настройка уже пройдена. Логин можно изменить только через администратора."
+        )
+
+    # Если передан новый логин и он отличается от текущего
+    if data.new_username and data.new_username != current_user.username:
+        # Проверка, не занят ли логин (без учета регистра)
+        existing_check = await db.execute(
+            select(User).where(func.lower(User.username) == func.lower(data.new_username))
+        )
+        if existing_check.scalars().first():
+            raise HTTPException(status_code=400, detail="Этот логин уже занят другим пользователем")
+        current_user.username = data.new_username
+
+    # Если передан новый пароль
+    if data.new_password:
+        current_user.hashed_password = get_password_hash(data.new_password)
+
+    # Помечаем, что настройка пройдена
+    current_user.is_initial_setup_done = True
+
+    db.add(current_user)
+    await db.commit()
+
+    return {"status": "success", "message": "Данные успешно обновлены."}
+
+
+@router.post("/me/change-password")
+async def change_password(
+        data: ChangeCredentials,
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_user)
+):
+    """Смена пароля из профиля (доступна всегда и для всех ролей)"""
+    if not data.old_password or not data.new_password:
+        raise HTTPException(status_code=400, detail="Необходимо указать старый и новый пароль")
+
+    if not verify_password(data.old_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Неверный текущий пароль")
+
+    current_user.hashed_password = get_password_hash(data.new_password)
+    db.add(current_user)
+    await db.commit()
+
+    return {"status": "success", "message": "Пароль успешно изменен"}
+
+
 @router.post("/import_excel", summary="Массовый импорт пользователей из Excel",
              dependencies=[Depends(allow_accountant)])
 async def import_users(file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="Поддерживаются только файлы Excel (.xlsx, .xls)")
 
-    # --- ДОБАВЛЕНО: Проверка Magic Numbers ---
+    # Проверка Magic Numbers
     header = await file.read(8)
     await file.seek(0)  # Обязательно возвращаем курсор в начало файла
 
     if not (header.startswith(b"PK\x03\x04") or header.startswith(b"\xd0\xcf\x11\xe0")):
         raise HTTPException(status_code=400,
                             detail="Файл поврежден или содержит вредоносный код (Неверная сигнатура Excel)")
-    # -----------------------------------------
 
     content = await file.read()
     result = await import_users_from_excel(content, db)
@@ -77,7 +147,9 @@ async def create_user(
         workplace=new_user.workplace,
         residents_count=new_user.residents_count,
         total_room_residents=new_user.total_room_residents,
-        apartment_area=new_user.apartment_area
+        apartment_area=new_user.apartment_area,
+        # По умолчанию админ создает юзера, которому еще предстоит настройка
+        is_initial_setup_done=False
     )
 
     db.add(db_user)
@@ -166,7 +238,7 @@ async def update_user(
         update_data: UserUpdate,
         db: AsyncSession = Depends(get_db)
 ):
-    """Обновление информации о пользователе."""
+    """Обновление информации о пользователе (Админ/Бухгалтер)."""
     db_user = await db.get(User, user_id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Пользователь не найден")

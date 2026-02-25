@@ -5,8 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Рабочее место Финансиста</title>
 <link rel="stylesheet" href="style.css">
+<!-- Подключаем FontAwesome для иконок -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 <style>
-/* Специфичные стили для этой страницы для удобства */
+/* Специфичные стили для этой страницы */
 .upload-area {
     display: flex;
     flex-direction: column;
@@ -69,18 +71,24 @@
     <header class="app-header">
         <div class="header-brand">
              <div class="brand-icon">💰</div>
-             <h1>Финансы ЖКХ</h1>
+             <div>
+                 <h1>Финансы ЖКХ</h1>
+                 <span class="header-subtitle">Управление расчетами</span>
+             </div>
         </div>
         <div class="header-profile">
             <div class="admin-info">
-                <span id="financierName" style="font-weight:600;">Финансист</span>
+                <span id="financierName" style="font-weight:600;">Загрузка...</span>
                 <span class="role-badge financier">Финансист</span>
             </div>
-            <!-- ДОБАВЛЕНО: Кнопка 2FA -->
-            <button id="btnOpenTotp" class="action-btn secondary-btn" style="margin-right: 10px; background: #4b5563; color: white;">
-                🔐 Настроить 2FA
+            <!-- Кнопка профиля -->
+            <button id="btnOpenFinancierProfile" class="action-btn secondary-btn" style="margin-right: 10px; background: #374151; color: white;">
+                ⚙️ Профиль
             </button>
-            <button class="logout-btn">Выйти</button>
+            <button class="logout-btn">
+                <span>Выйти</span>
+                <i class="fa-solid fa-arrow-right-from-bracket"></i>
+            </button>
         </div>
     </header>
 
@@ -95,7 +103,9 @@
     <!-- TAB: IMPORT -->
     <div id="debts" class="tab-content active">
         <div class="card" style="border-left:5px solid #8e44ad">
-            <h2>📂 Импорт из 1С (Excel)</h2>
+            <div class="card-header" style="border-bottom: none; padding-bottom: 0; margin-bottom: 10px;">
+                <h3>📂 Импорт из 1С (Excel)</h3>
+            </div>
             <p style="color:#666;font-size:14px;margin-bottom:15px">Загрузите файл "Оборотно-сальдовая ведомость" (.xlsx).<br>Система обновит сальдо для выбранного счета.</p>
             <div class="upload-area">
                 <div class="account-selector">
@@ -112,10 +122,12 @@
             <div id="uploadResult" class="upload-result-box"></div>
         </div>
         <div class="card">
-            <h3>ℹ️ Справка</h3>
-            <ul style="color:#555;font-size:13px;padding-left:20px">
-                <li>Файл должен содержать ФИО, Дебет (Долг) и Кредит (Переплата).</li>
-                <li>Импорт производится только для активного месяца.</li>
+            <div class="card-header">
+                <h3>ℹ️ Справка по импорту</h3>
+            </div>
+            <ul style="color:#555;font-size:13px;padding-left:20px; margin-top: 10px;">
+                <li style="margin-bottom: 5px;">Файл должен содержать ФИО, Дебет (Долг) и Кредит (Переплата).</li>
+                <li style="margin-bottom: 5px;">Импорт производится только для активного месяца.</li>
                 <li>Система автоматически найдет пользователей по ФИО (допускаются небольшие расхождения).</li>
             </ul>
         </div>
@@ -123,24 +135,24 @@
 
     <!-- TAB: USERS -->
     <div id="users" class="tab-content">
-        <div class="card">
+        <div class="card table-card">
             <div class="card-header">
-                <h2>Список жильцов</h2>
+                <h3>Список жильцов и долгов</h3>
                 <div style="display:flex;gap:10px;align-items:center">
                     <input type="text" id="userSearchInput" placeholder="Поиск по ФИО...">
-                    <button id="btnRefreshUsers" class="icon-btn refresh">↻</button>
+                    <button id="btnRefreshUsers" class="icon-btn refresh" title="Обновить">↻</button>
                 </div>
             </div>
             <div class="table-responsive">
-                <table>
+                <table class="sticky-header-table">
                     <thead>
                         <tr>
                             <th style="width:50px">ID</th>
                             <th>ФИО (Логин)</th>
                             <th>Общ.</th>
-                            <th style="color:#c0392b;border-left:2px solid #eee">Долг 209</th>
+                            <th style="color:#c0392b;border-left:2px solid #e5e7eb">Долг 209</th>
                             <th style="color:#27ae60">Перепл. 209</th>
-                            <th style="color:#d35400;border-left:2px solid #eee">Долг 205</th>
+                            <th style="color:#d35400;border-left:2px solid #e5e7eb">Долг 205</th>
                             <th style="color:#27ae60">Перепл. 205</th>
                             <th>Итог тек.</th>
                             <th style="text-align:right">Действия</th>
@@ -151,16 +163,83 @@
                     </tbody>
                 </table>
             </div>
-            <div class="pagination">
+            <div class="pagination-footer" style="padding: 15px; border-top: 1px solid #eee; display: flex; justify-content: center; align-items: center; gap: 15px;">
                 <button id="btnPrevPage" class="page-btn" disabled>← Назад</button>
-                <span id="pageInfo">Страница 1</span>
+                <span id="pageInfo" style="font-weight: 500; color: #555;">Страница 1</span>
                 <button id="btnNextPage" class="page-btn">Вперед →</button>
             </div>
         </div>
     </div>
 
-    <!-- ДОБАВЛЕНО: Модалка Настройка 2FA -->
-    <div id="totpModal" class="modal-overlay">
+    <!-- ============================================================== -->
+    <!-- МОДАЛЬНЫЕ ОКНА                                                 -->
+    <!-- ============================================================== -->
+
+    <!-- Модалка: Профиль Финансиста -->
+    <div id="financierProfileModal" class="modal-overlay">
+        <div class="modal-window" style="width: 500px;">
+            <div class="modal-header">
+                <h3>Настройки профиля</h3>
+                <button class="close-icon" onclick="document.getElementById('financierProfileModal').classList.remove('open')">&times;</button>
+            </div>
+            <div class="modal-form" style="padding: 20px;">
+
+                <div style="background: #f9fafb; padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
+                    <h4 style="margin-top: 0; margin-bottom: 15px; font-size: 15px; border-bottom: 1px solid #e5e7eb; padding-bottom: 5px;">Изменить учетные данные</h4>
+                    <form id="financierChangeCredsForm" class="styled-form">
+                        <div class="form-group mb-3">
+                            <label>Новый логин (оставьте пустым, если не меняете)</label>
+                            <input type="text" id="finNewLogin" placeholder="Текущий логин: ...">
+                        </div>
+                        <div class="form-group mb-3">
+                            <label>Текущий пароль (обязательно для сохранения)</label>
+                            <input type="password" id="finOldPass" required>
+                        </div>
+                        <div class="form-group mb-3">
+                            <label>Новый пароль</label>
+                            <input type="password" id="finNewPass" placeholder="Минимум 6 символов" minlength="6">
+                        </div>
+                        <button type="submit" class="action-btn primary-btn full-width" id="btnSaveFinCreds">Сохранить изменения</button>
+                    </form>
+                </div>
+
+                <div style="background: #f9fafb; padding: 15px; text-align: center; border-radius: 8px; border: 1px dashed #d1d5db;">
+                    <h4 style="margin-top: 0; margin-bottom: 10px; font-size: 15px;">Двухфакторная защита (2FA)</h4>
+                    <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 15px;">Дополнительный уровень безопасности для защиты системы от взлома.</p>
+                    <button id="btnOpenTotp" class="action-btn" style="background: #4b5563; color: white; width: 100%;">Настроить 2FA</button>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- Модалка: ПЕРВИЧНАЯ НАСТРОЙКА (Обязательная) -->
+    <div id="firstSetupModal" class="modal-overlay" style="z-index: 10000; background: rgba(17, 24, 39, 0.85); backdrop-filter: blur(8px);">
+        <div class="modal-window" style="width: 450px;">
+            <div class="modal-header" style="background: var(--danger-color); color: white; justify-content: center;">
+                <h3 style="font-size: 18px;">⚠️ Требуется защита аккаунта!</h3>
+            </div>
+            <div class="modal-form">
+                <p style="font-size: 14px; color: var(--text-main); margin-bottom: 15px; text-align: center;">
+                    Вы используете стандартные учетные данные. В целях безопасности финансовой системы необходимо немедленно задать новый пароль.
+                </p>
+                <form id="firstSetupForm" class="styled-form">
+                    <div class="form-group mb-3">
+                        <label>Новый логин (необязательно)</label>
+                        <input type="text" id="fsNewLogin" placeholder="Например: fin_ivanov">
+                    </div>
+                    <div class="form-group mb-3">
+                        <label>Придумайте новый надежный пароль</label>
+                        <input type="password" id="fsNewPassword" placeholder="Минимум 6 символов" minlength="6" required>
+                    </div>
+                    <button type="submit" class="action-btn success-btn full-width mt-2" id="btnFsSave">Сохранить и войти</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Модалка: Настройка 2FA -->
+    <div id="totpModal" class="modal-overlay" style="z-index: 20000;">
         <div class="modal-window" style="width: 400px; text-align: center;">
             <div class="modal-header">
                 <h3>Защита аккаунта (2FA)</h3>
@@ -187,42 +266,130 @@
 
 </div>
 
+<!-- ИНИЦИАЛИЗАЦИЯ И ЛОГИКА -->
 <script type="module">
-import {Auth} from './js/core/auth.js';
-import {FinancierApp} from './js/modules/financier.js';
-import {TotpSetup} from './js/core/totp.js'; // <-- Добавлен импорт 2FA
+import { api } from './js/core/api.js';
+import { Auth } from './js/core/auth.js';
+import { toast, setLoading } from './js/core/dom.js';
+import { FinancierApp } from './js/modules/financier.js';
+import { TotpSetup } from './js/core/totp.js';
 
 if(!Auth.isAuthenticated()){
     window.location.replace('login.html');
 }
 
-// Устанавливаем имя пользователя в шапке
-const username = Auth.getUsername();
-const nameEl = document.getElementById('financierName');
-if(nameEl) { nameEl.textContent = `Финансист: ${username || ''}`; }
+document.addEventListener('DOMContentLoaded', async () => {
+    // 1. Устанавливаем имя в шапке
+    const nameEl = document.getElementById('financierName');
+    if(nameEl) { nameEl.textContent = `${Auth.getUsername() || 'Загрузка...'}`; }
 
-// Вешаем обработчик на выход
-const logoutBtn = document.querySelector('.logout-btn');
-if(logoutBtn) { logoutBtn.addEventListener('click', () => Auth.logout()); }
+    // 2. Обработчик выхода
+    const logoutBtn = document.querySelector('.logout-btn');
+    if(logoutBtn) { logoutBtn.addEventListener('click', () => Auth.logout()); }
 
-// Логика переключения табов
-const tabs = document.querySelectorAll('.tab-btn');
-const contents = document.querySelectorAll('.tab-content');
-tabs.forEach(btn => {
-    btn.addEventListener('click', () => {
-        tabs.forEach(t => t.classList.remove('active'));
-        contents.forEach(c => c.classList.remove('active'));
-        btn.classList.add('active');
-        const tabId = btn.dataset.tab;
-        const tabContent = document.getElementById(tabId);
-        if(tabContent) tabContent.classList.add('active');
+    // 3. Табы
+    const tabs = document.querySelectorAll('.tab-btn');
+    const contents = document.querySelectorAll('.tab-content');
+    tabs.forEach(btn => {
+        btn.addEventListener('click', () => {
+            tabs.forEach(t => t.classList.remove('active'));
+            contents.forEach(c => c.classList.remove('active'));
+            btn.classList.add('active');
+            const tabId = btn.dataset.tab;
+            const tabContent = document.getElementById(tabId);
+            if(tabContent) tabContent.classList.add('active');
+        });
     });
-});
 
-// Инициализация приложения
-document.addEventListener('DOMContentLoaded', () => {
+    // 4. Инициализация модулей
     FinancierApp.init();
-    TotpSetup.init(); // <-- Запуск логики 2FA
+    TotpSetup.init();
+
+    // 5. ПРОВЕРКА БЕЗОПАСНОСТИ (Первичная настройка)
+    try {
+        const user = await api.get('/users/me');
+        if(nameEl) nameEl.textContent = user.username; // Обновляем точно из БД
+
+        if (user.is_initial_setup_done === false) {
+            const fsModal = document.getElementById('firstSetupModal');
+            if (fsModal) fsModal.classList.add('open');
+        }
+    } catch (e) {
+        console.warn('Security check failed', e);
+    }
+
+    // 6. Логика формы Первичной настройки
+    const fsForm = document.getElementById('firstSetupForm');
+    if (fsForm) {
+        fsForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('btnFsSave');
+            const newLogin = document.getElementById('fsNewLogin').value.trim();
+            const newPass = document.getElementById('fsNewPassword').value;
+
+            setLoading(btn, true, 'Сохранение...');
+            try {
+                const payload = { new_password: newPass };
+                if (newLogin) payload.new_username = newLogin;
+
+                await api.post('/users/me/setup', payload);
+
+                alert('Данные безопасности успешно обновлены. Пожалуйста, войдите в систему заново.');
+                Auth.logout();
+            } catch (err) {
+                toast(err.message, 'error');
+                setLoading(btn, false, 'Сохранить и войти');
+            }
+        });
+    }
+
+    // 7. Логика Профиля (Модалка)
+    const profileBtn = document.getElementById('btnOpenFinancierProfile');
+    const profileModal = document.getElementById('financierProfileModal');
+    if (profileBtn && profileModal) {
+        profileBtn.addEventListener('click', () => profileModal.classList.add('open'));
+    }
+
+    const changeCredsForm = document.getElementById('financierChangeCredsForm');
+    if (changeCredsForm) {
+        changeCredsForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById('btnSaveFinCreds');
+
+            const newLogin = document.getElementById('finNewLogin').value.trim();
+            const oldPass = document.getElementById('finOldPass').value;
+            const newPass = document.getElementById('finNewPass').value;
+
+            setLoading(btn, true, 'Сохранение...');
+            try {
+                const user = await api.get('/users/me');
+
+                // Меняем пароль
+                if (newPass) {
+                    await api.post('/users/me/change-password', {
+                        old_password: oldPass,
+                        new_password: newPass
+                    });
+                }
+
+                // Меняем логин (финансисту тоже разрешим менять свой логин через общий метод)
+                if (newLogin && newLogin !== user.username) {
+                    await api.put(`/users/${user.id}`, { username: newLogin });
+                    Auth.setSession(user.role, newLogin);
+                    if(nameEl) nameEl.textContent = newLogin;
+                }
+
+                toast('Профиль успешно обновлен!', 'success');
+                changeCredsForm.reset();
+                profileModal.classList.remove('open');
+
+            } catch (err) {
+                toast(err.message, 'error');
+            } finally {
+                setLoading(btn, false, 'Сохранить изменения');
+            }
+        });
+    }
 });
 </script>
 </body>

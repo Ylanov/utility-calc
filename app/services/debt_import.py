@@ -10,7 +10,7 @@ from app.models import User, MeterReading, BillingPeriod
 logger = logging.getLogger(__name__)
 
 FUZZY_THRESHOLD = 88
-CHUNK_SIZE = 2000  # Размер пакета для работы с БД при больших объемах данных
+CHUNK_SIZE = 2000  # Размер пакета для БД
 
 
 def clean_decimal(value) -> Decimal:
@@ -36,7 +36,7 @@ def normalize_name(value: str) -> str:
 
 
 def is_valid_name_row(cell_value: str) -> bool:
-    """Проверяет, является ли строка Excel ФИО жильца (отсеивает заголовки и итоги)."""
+    """Проверяет, является ли строка Excel ФИО жильца."""
     if not cell_value:
         return False
     val = str(cell_value).strip()
@@ -50,19 +50,48 @@ def is_valid_name_row(cell_value: str) -> bool:
         if word in lower_val:
             return False
 
-    # ФИО должно состоять минимум из двух слов (Фамилия и Имя/Инициалы)
     if len(val.split()) < 2:
         return False
 
     return True
 
 
+# --- ЭТА ФУНКЦИЯ НУЖНА ДЛЯ excel_service.py ---
+def find_user_fuzzy(target_name: str, users_map: Dict[str, int]) -> Optional[int]:
+    """
+    Глобальная функция поиска (используется внешними модулями).
+    В users_map ключи должны быть уже нормализованы!
+    """
+    if not target_name:
+        return None
+
+    norm_target = normalize_name(target_name)
+
+    # 1. Точное совпадение
+    if norm_target in users_map:
+        return users_map[norm_target]
+
+    # 2. Нечеткий поиск
+    # Примечание: process.extractOne каждый раз проходит по всем ключам.
+    # Это нормально для единичных вызовов из excel_service,
+    # но внутри массового импорта мы используем оптимизацию (см. ниже).
+    match = process.extractOne(norm_target, list(users_map.keys()), scorer=fuzz.token_sort_ratio)
+
+    if match:
+        best_match_name, score, _ = match
+        if score >= FUZZY_THRESHOLD:
+            return users_map[best_match_name]
+
+    return None
+
+
 def sync_import_debts_process(file_path: str, db: Session, account_type: str) -> dict:
-    """Синхронная функция для импорта долгов из 1С в фоне (Celery)."""
+    """
+    Функция массового импорта с оптимизациями (буферизация, кэширование).
+    """
     logger.info(f"Starting debts import from {file_path} for Account {account_type}")
 
     try:
-        # data_only=True гарантирует чтение значений, а не формул
         workbook = openpyxl.load_workbook(filename=file_path, read_only=True, data_only=True)
         worksheet = workbook.active
     except Exception as error:
@@ -78,17 +107,19 @@ def sync_import_debts_process(file_path: str, db: Session, account_type: str) ->
         if not active_period:
             return {"status": "error", "message": "Нет активного периода для загрузки долгов"}
 
-        # 2. Предзагрузка пользователей для быстрого поиска в памяти
+        # 2. Предзагрузка пользователей
         users_raw = db.execute(select(User.id, User.username).where(User.is_deleted == False)).all()
-        users_map: Dict[str, int] = {normalize_name(username): user_id for user_id, username in users_raw}
-        users_keys = list(users_map.keys())  # Создаем список ключей ОДИН раз для RapidFuzz
+        # Карта: нормализованное имя -> ID
+        users_map: Dict[str, int] = {normalize_name(u.username): u.id for u in users_raw}
+        # Список ключей один раз для rapidfuzz (оптимизация)
+        users_keys = list(users_map.keys())
 
-        # 3. Предзагрузка существующих показаний (черновиков) в текущем периоде
+        # 3. Предзагрузка показаний
         readings_raw = db.execute(
             select(MeterReading.id, MeterReading.user_id)
             .where(MeterReading.period_id == active_period.id)
         ).all()
-        readings_map: Dict[int, int] = {user_id: reading_id for reading_id, user_id in readings_raw}
+        readings_map: Dict[int, int] = {user_id: r_id for r_id, user_id in readings_raw}
 
         # Статистика и буферы
         stats = {
@@ -98,22 +129,22 @@ def sync_import_debts_process(file_path: str, db: Session, account_type: str) ->
         updates_buffer: List[dict] = []
         inserts_buffer: List[MeterReading] = []
 
-        # Кэш для нечеткого поиска (чтобы не искать одни и те же опечатки дважды)
+        # Локальный кэш нечеткого поиска (чтобы не искать одни и те же ФИО повторно)
         fuzzy_cache: Dict[str, Optional[int]] = {}
 
-        # Внутренняя функция для быстрого поиска с кэшированием
-        def get_user_id(fio: str) -> Optional[int]:
+        # Внутренняя оптимизированная функция поиска
+        def get_user_id_optimized(fio: str) -> Optional[int]:
             norm = normalize_name(fio)
 
-            # Точное совпадение O(1)
+            # Точное совпадение
             if norm in users_map:
                 return users_map[norm]
 
-            # Проверка в кэше O(1)
+            # Проверка кэша
             if norm in fuzzy_cache:
                 return fuzzy_cache[norm]
 
-            # Тяжелый нечеткий поиск (только для новых опечаток)
+            # Тяжелый поиск
             match = process.extractOne(norm, users_keys, scorer=fuzz.token_sort_ratio)
             if match:
                 best_match_name, score, _ = match
@@ -126,7 +157,6 @@ def sync_import_debts_process(file_path: str, db: Session, account_type: str) ->
             return None
 
         # 4. Чтение строк Excel
-        # Начинаем с 8 строки, так как сверху в 1С обычно шапка
         for row in worksheet.iter_rows(min_row=8, values_only=True):
             if not row or len(row) < 7:
                 continue
@@ -138,17 +168,17 @@ def sync_import_debts_process(file_path: str, db: Session, account_type: str) ->
             fio_raw = str(name_cell).strip()
             stats["processed"] += 1
 
-            user_id = get_user_id(fio_raw)
+            # Используем оптимизированный поиск с кэшем
+            user_id = get_user_id_optimized(fio_raw)
 
             if not user_id:
                 stats["not_found_users"].append(fio_raw)
                 continue
 
-            # Парсим деньги (в 1С Дебет - долг, Кредит - переплата)
             debt_val = clean_decimal(row[5])
             over_val = clean_decimal(row[6])
 
-            # 5. Обновление или создание записи
+            # 5. Подготовка данных (Update или Insert)
             if user_id in readings_map:
                 r_id = readings_map[user_id]
                 update_data = {"id": r_id}
@@ -181,7 +211,7 @@ def sync_import_debts_process(file_path: str, db: Session, account_type: str) ->
                 inserts_buffer.append(new_reading)
                 stats["created"] += 1
 
-            # 6. Пакетное сохранение в БД (Chunking) для защиты оперативной памяти
+            # 6. Сброс буферов в БД (Чанкинг)
             if len(inserts_buffer) >= CHUNK_SIZE:
                 db.add_all(inserts_buffer)
                 db.flush()
@@ -191,7 +221,7 @@ def sync_import_debts_process(file_path: str, db: Session, account_type: str) ->
                 db.bulk_update_mappings(MeterReading, updates_buffer)
                 updates_buffer.clear()
 
-        # Сохраняем остатки в буфере
+        # Сохранение остатков
         if inserts_buffer:
             db.add_all(inserts_buffer)
         if updates_buffer:
@@ -200,7 +230,7 @@ def sync_import_debts_process(file_path: str, db: Session, account_type: str) ->
         db.commit()
         workbook.close()
 
-        # Убираем дубликаты из списка ненайденных
+        # Уникализируем список ненайденных
         stats["not_found_users"] = list(set(stats["not_found_users"]))
 
         logger.info(
