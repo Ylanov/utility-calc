@@ -38,7 +38,7 @@ ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
 # Устанавливаем только runtime-зависимости (без компиляторов)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     libpq5 \
     libffi8 \
     libcairo2 \
