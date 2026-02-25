@@ -34,6 +34,7 @@ class User(Base):
     totp_secret = Column(String, nullable=True)
     # НОВОЕ ПОЛЕ ДЛЯ SOFT DELETE
     is_deleted = Column(Boolean, default=False, index=True)
+    telegram_id = Column(String, unique=True, nullable=True, index=True)
 
     __table_args__ = (
         # ЗАМЕНЯЕМ функциональный индекс LOWER на быстрые GIN индексы (pg_trgm)

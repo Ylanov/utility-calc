@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ЖКХ Лидер (Telegram)</title>
+    <!-- Подключаем официальный скрипт Telegram -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        /* ОПРЕДЕЛЯЕМ ПЕРЕМЕННЫЕ ПО УМОЛЧАНИЮ */
+        /* Это уберет все красные ошибки в вашей IDE и задаст красивую белую тему,
+           если открыть страницу просто в браузере компьютера */
+        :root {
+            --tg-theme-bg-color: #ffffff;
+            --tg-theme-secondary-bg-color: #f4f4f5;
+            --tg-theme-text-color: #222222;
+            --tg-theme-hint-color: #888888;
+            --tg-theme-button-color: #3390ec;
+            --tg-theme-button-text-color: #ffffff;
+            --tg-theme-destructive-text-color: #ff3b30;
+        }
+
+        /* Стили, адаптирующиеся под тему Telegram */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--tg-theme-secondary-bg-color);
+            color: var(--tg-theme-text-color);
+            margin: 0;
+            padding: 20px;
+        }
+
+        /* Скрываем элементы по умолчанию */
+        .screen { display: none; animation: fadeIn 0.3s ease; }
+        .screen.active { display: block; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+        .card {
+            background-color: var(--tg-theme-bg-color);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+
+        h2 { margin-top: 0; font-size: 18px; text-align: center; }
+
+        .form-group { margin-bottom: 15px; }
+        .form-group label { display: block; font-size: 13px; margin-bottom: 5px; color: var(--tg-theme-hint-color); }
+
+        input {
+            width: 100%; box-sizing: border-box;
+            padding: 12px; border-radius: 8px;
+            border: 1px solid var(--tg-theme-hint-color);
+            background-color: var(--tg-theme-bg-color);
+            color: var(--tg-theme-text-color);
+            font-size: 16px; outline: none;
+        }
+        input:focus { border-color: var(--tg-theme-button-color); }
+
+        .btn {
+            width: 100%; padding: 14px; border-radius: 8px; border: none;
+            background-color: var(--tg-theme-button-color);
+            color: var(--tg-theme-button-text-color);
+            font-size: 16px; font-weight: bold; cursor: pointer;
+            transition: opacity 0.2s;
+        }
+        .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+        .meter-row {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 10px 0; border-bottom: 1px solid var(--tg-theme-secondary-bg-color);
+        }
+        .meter-row input { width: 100px; text-align: right; }
+
+        .error { color: var(--tg-theme-destructive-text-color); text-align: center; margin-bottom: 15px; font-size: 14px;}
+
+        .btn-download { background-color: var(--tg-theme-secondary-bg-color); color: var(--tg-theme-text-color); margin-top: 10px;}
+    </style>
+</head>
+<body>
+
+    <!-- ЭКРАН 1: ЛОГИН (ПОКАЗЫВАЕТСЯ ТОЛЬКО ОДИН РАЗ ПРИ ПРИВЯЗКЕ) -->
+    <div id="loginScreen" class="screen">
+        <div class="card">
+            <h2>Привязка аккаунта</h2>
+            <p style="font-size: 13px; color: var(--tg-theme-hint-color); text-align: center;">
+                Введите логин и пароль от вашего Личного кабинета ЖКХ. В будущем вход будет происходить автоматически.
+            </p>
+            <div id="loginError" class="error"></div>
+            <div class="form-group">
+                <label>Логин</label>
+                <input type="text" id="username" placeholder="Ваш логин" autocomplete="username">
+            </div>
+            <div class="form-group">
+                <label>Пароль</label>
+                <input type="password" id="password" placeholder="Ваш пароль" autocomplete="current-password">
+            </div>
+            <button class="btn" id="btnSubmitLogin">Привязать и войти</button>
+        </div>
+    </div>
+
+    <!-- ЭКРАН 2: ЛИЧНЫЙ КАБИНЕТ (ГЛАВНЫЙ ЭКРАН) -->
+    <div id="dashboardScreen" class="screen">
+        <div class="card" style="text-align: center;">
+            <div style="font-size: 40px; margin-bottom: 10px;">🏠</div>
+            <h2 style="margin-bottom: 5px;">Здравствуйте, <span id="userNameDisplay">...</span>!</h2>
+            <div id="periodDisplay" style="color: var(--tg-theme-hint-color); font-size: 14px;">Загрузка...</div>
+        </div>
+
+        <div class="card">
+            <h2>Ввод показаний</h2>
+            <div class="meter-row">
+                <div>
+                    <span style="font-size: 16px; font-weight: bold;">🔥 ГВС</span>
+                    <div style="font-size: 12px; color: var(--tg-theme-hint-color);">Пред: <span id="prevHot">0.000</span></div>
+                </div>
+                <input type="number" id="inpHot" step="0.001" placeholder="0.000">
+            </div>
+            <div class="meter-row">
+                <div>
+                    <span style="font-size: 16px; font-weight: bold;">❄️ ХВС</span>
+                    <div style="font-size: 12px; color: var(--tg-theme-hint-color);">Пред: <span id="prevCold">0.000</span></div>
+                </div>
+                <input type="number" id="inpCold" step="0.001" placeholder="0.000">
+            </div>
+            <div class="meter-row" style="border: none;">
+                <div>
+                    <span style="font-size: 16px; font-weight: bold;">⚡ Свет</span>
+                    <div style="font-size: 12px; color: var(--tg-theme-hint-color);">Пред: <span id="prevElect">0.000</span></div>
+                </div>
+                <input type="number" id="inpElect" step="0.001" placeholder="0.000">
+            </div>
+            <button class="btn" id="btnSaveReadings" style="margin-top: 15px;">Отправить показания</button>
+        </div>
+
+        <div class="card" style="text-align: center;">
+            <h2>Текущий расчет</h2>
+            <div style="font-size: 28px; font-weight: bold; color: var(--tg-theme-button-color); margin: 10px 0;">
+                <span id="totalCost">0.00</span> ₽
+            </div>
+            <button class="btn btn-download" id="btnDownloadReceipt">📄 Скачать квитанцию (PDF)</button>
+        </div>
+    </div>
+
+    <!-- Подключаем вынесенный JavaScript файл -->
+    <script src="js/tg_app.js"></script>
+</body>
+</html>

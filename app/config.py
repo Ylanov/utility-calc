@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     # ДОБАВЛЕНО: Ключ для шифрования 2FA-секретов в БД (Fernet 32-byte base64)
     # Это сгенерированный рабочий ключ для разработки. Для продакшена его нужно переопределить в .env
     ENCRYPTION_KEY: str = "gR8g_2t9R2YwO9yZ0qEa7L_M4-c8Kx2mJ1rYvW4PZ7o="
+    TELEGRAM_BOT_TOKEN: Optional[str] = None
 
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
