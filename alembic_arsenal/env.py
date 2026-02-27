@@ -7,16 +7,14 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 
-from app.config import settings
+from app.core.config import settings
 
 # 1. Импортируем модели Арсенала
-from app.arsenal import models as arsenal_models
-from app.arsenal.models import ArsenalBase
+from app.modules.arsenal.models import ArsenalBase
 
 # 2. Импортируем модели ГСМ
 # Это обязательно, чтобы таблицы зарегистрировались в GsmBase.metadata
-from app.gsm import models as gsm_models
-from app.gsm.models import GsmBase
+from app.modules.gsm.models import GsmBase
 
 config = context.config
 

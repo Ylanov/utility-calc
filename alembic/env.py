@@ -9,8 +9,8 @@ from alembic import context
 
 # Импорт моделей и настроек проекта
 # Убедитесь, что пути app.models и app.config верны относительно корня проекта
-from app.models import Base
-from app.config import settings
+from app.modules.utility.models import Base
+from app.core.config import settings
 
 # Конфигурация Alembic
 config = context.config

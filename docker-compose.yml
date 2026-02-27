@@ -1,5 +1,3 @@
-# === БАЗОВЫЕ НАСТРОЙКИ ДЛЯ ПРИЛОЖЕНИЯ (YAML Anchor) ===
-# Лежит в корне файла, Docker не будет пытаться запустить его как контейнер
 x-app-base: &app-base
   build:
     context: .
@@ -22,7 +20,6 @@ x-app-base: &app-base
     - utility_net
 
 services:
-  # === ОСНОВНОЕ ВЕБ-ПРИЛОЖЕНИЕ ===
   web:
     <<: *app-base
     container_name: utility_calc_web
@@ -32,19 +29,17 @@ services:
       sh -c "
       sleep 5 &&
       echo '---> Running Utility DB migrations...' && alembic upgrade head &&
-      echo '---> Running Arsenal DB migrations...' && alembic -c alembic_arsenal.ini upgrade head &&
-      echo '---> Seeding initial data...' && python -m app.initial_data &&
+      echo '---> Running Arsenal/GSM DB migrations...' && alembic -c alembic_arsenal.ini upgrade head &&
+      echo '---> Seeding initial data...' && python -m app.core.initial_data && 
       echo '---> Starting Gunicorn...' &&
       gunicorn app.main:app -k uvicorn.workers.UvicornWorker -w ${WEB_CONCURRENCY:-4} -b 0.0.0.0:8000
       "
 
-  # === ВОРКЕР ДЛЯ ЛЕГКИХ ЗАДАЧ ===
   worker_default:
     <<: *app-base
     container_name: utility_calc_worker_default
     command: celery -A app.worker worker --loglevel=info --queues=default --hostname=default@%h --concurrency=${CELERY_WORKER_CONCURRENCY:-4}
 
-  # === ВОРКЕР ДЛЯ ТЯЖЕЛЫХ ЗАДАЧ ===
   worker_heavy:
     <<: *app-base
     container_name: utility_calc_worker_heavy
@@ -52,7 +47,6 @@ services:
       - shared_data:/app/static/generated_files
     command: celery -A app.worker worker --loglevel=info --queues=heavy --hostname=heavy@%h --concurrency=2
 
-  # === MINIO (S3 STORAGE) ===
   minio:
     image: minio/minio:latest
     container_name: utility_calc_minio
@@ -69,7 +63,6 @@ services:
     networks:
       - utility_net
 
-  # === ПУЛЕР СОЕДИНЕНИЙ PGBOUNCER ===
   pgbouncer:
     image: edoburu/pgbouncer:latest
     container_name: utility_calc_pgbouncer
@@ -86,13 +79,13 @@ services:
       - ADMIN_USERS=${POSTGRES_USER}
       - AUTH_TYPE=plain
       - AUTH_USER=${POSTGRES_USER}
+      # В dev режиме часто проще не мапить файл, а использовать переменные
       - AUTH_FILE=/etc/pgbouncer/userlist.txt
     depends_on:
       - db
     networks:
       - utility_net
 
-  # === БАЗА ДАННЫХ ===
   db:
     image: postgres:15-alpine
     container_name: utility_calc_db
@@ -113,7 +106,6 @@ services:
     networks:
       - utility_net
 
-  # === REDIS (КЭШ + БРОКЕР) ===
   redis:
     image: redis:7-alpine
     container_name: utility_calc_redis
@@ -124,7 +116,6 @@ services:
     networks:
       - utility_net
 
-  # === NGINX (ПРОКСИ + СТАТИКА) ===
   nginx:
     image: nginx:alpine
     container_name: utility_calc_nginx
@@ -132,6 +123,7 @@ services:
     ports:
       - "8080:80"
     volumes:
+      # В dev мы прокидываем локальный nginx.conf
       - ./nginx/conf.d:/etc/nginx/conf.d
       - ./nginx/certs:/etc/nginx/certs
       - ./static:/usr/share/nginx/html/static
@@ -141,7 +133,6 @@ services:
     networks:
       - utility_net
 
-  # === БЭКАПЫ ===
   backup:
     image: postgres:15-alpine
     container_name: utility_calc_backup

@@ -33,6 +33,10 @@ tr:hover{background-color:#f9fafb}
 .modal-header{background:#1e3a8a;color:white;padding:10px 15px;font-weight:bold;display:flex;justify-content:space-between;flex-shrink:0}
 .modal-body{padding:20px;overflow-y:auto}
 .modal-footer{padding:15px;border-top:1px solid #e5e7eb;background:#f9fafb;display:flex;justify-content:flex-end;gap:10px;flex-shrink:0}
+
+/* Стили для широких таблиц */
+#balanceModal .modal-content { width: 900px; max-width: 95%; }
+#newDocModal .modal-content { width: 850px; max-width: 95%; }
 </style>
 </head>
 <body>
@@ -53,7 +57,6 @@ tr:hover{background-color:#f9fafb}
     <div class="menu-item" id="menuObjects"><i class="fa-solid fa-sitemap mr-2 text-blue-600"></i>Объекты</div>
     <div class="menu-item" id="menuNomenclature"><i class="fa-solid fa-list mr-2 text-green-600"></i>Номенклатура</div>
     <div class="menu-item" id="menuReports"><i class="fa-solid fa-chart-pie mr-2 text-purple-600"></i>Отчеты</div>
-    <!-- НОВАЯ КНОПКА -->
     <div class="menu-item" id="menuUsers"><i class="fa-solid fa-users-gear mr-2 text-teal-600"></i>Пользователи</div>
 </div>
 <div class="main-layout">
@@ -61,7 +64,15 @@ tr:hover{background-color:#f9fafb}
     <div class="sidebar">
         <div class="sidebar-header flex justify-between items-center">
             <span><i class="fa-solid fa-network-wired mr-2"></i>Структура</span>
-            <button id="btnAddObject" class="text-blue-600 hover:text-blue-800 font-bold text-lg" title="Добавить">+</button>
+            <div>
+                <!-- 🔥 НОВАЯ КНОПКА ИМПОРТА ИЗ EXCEL 🔥 -->
+                <button id="btnImportExcel" class="text-green-600 hover:text-green-800 text-lg mr-3" title="Массовый импорт из Excel">
+                    <i class="fa-solid fa-file-excel"></i>
+                </button>
+                <button id="btnAddObject" class="text-blue-600 hover:text-blue-800 font-bold text-lg" title="Добавить">+</button>
+            </div>
+            <!-- Скрытый инпут для выбора файла -->
+            <input type="file" id="excelUploadInput" accept=".xlsx, .xls" style="display: none;">
         </div>
         <div class="tree-container" id="orgTree">
             <div class="p-4 text-gray-500 text-center text-sm">Загрузка структуры...</div>
@@ -92,7 +103,7 @@ tr:hover{background-color:#f9fafb}
         </div>
         <div class="mt-2 text-xs text-gray-500 flex justify-between">
             <span id="docsCount">Всего документов: 0</span>
-            <span>СТРОБ.Арсенал v2.0 (Batch Support)</span>
+            <span>СТРОБ.Арсенал v2.2 (Excel Support)</span>
         </div>
     </div>
 </div>
@@ -145,12 +156,15 @@ tr:hover{background-color:#f9fafb}
                             <i class="fa-solid fa-plus mr-1"></i> Добавить строку
                         </button>
                     </div>
+                    <!-- Добавлены колонки для Инв.Номера и Цены (Отображаются только при Первичном вводе) -->
                     <div class="border border-gray-300 rounded h-48 overflow-auto bg-gray-50">
                         <table id="docItemsTable" class="w-full text-xs">
                             <thead class="bg-gray-200 sticky top-0">
                                 <tr>
-                                    <th class="p-2 w-1/2">Изделие</th>
-                                    <th class="p-2 w-1/4">№ / Партия</th>
+                                    <th class="p-2 w-1/3">Изделие</th>
+                                    <th class="p-2 w-1/5">№ / Партия</th>
+                                    <th class="p-2 w-1/6 doc-accounting-col" style="display:none;">Инв. №</th>
+                                    <th class="p-2 w-1/6 doc-accounting-col" style="display:none;">Цена (₽)</th>
                                     <th class="p-2 w-16 text-center">Кол-во</th>
                                     <th class="p-2 w-10"></th>
                                 </tr>
@@ -174,21 +188,27 @@ tr:hover{background-color:#f9fafb}
 <div id="newObjectModal" class="modal">
     <div class="modal-content" style="width: 400px;">
         <div class="modal-header">
-            <span><i class="fa-solid fa-sitemap mr-2"></i>Новый объект</span>
+            <span><i class="fa-solid fa-sitemap mr-2"></i>Новый объект / Склад</span>
             <button onclick="document.getElementById('newObjectModal').style.display='none'" class="text-white hover:text-gray-300 text-xl">&times;</button>
         </div>
         <div class="modal-body">
             <div class="mb-4">
-                <label class="block text-gray-700 font-bold mb-1 text-sm">Наименование</label>
-                <input type="text" id="newObjName" class="w-full border border-gray-300 p-2 rounded outline-none">
+                <label class="block text-gray-700 font-bold mb-1 text-sm">Наименование объекта</label>
+                <input type="text" id="newObjName" class="w-full border border-gray-300 p-2 rounded outline-none" placeholder="Склад (арт. вооружение)">
             </div>
             <div class="mb-4">
                 <label class="block text-gray-700 font-bold mb-1 text-sm">Тип</label>
                 <select id="newObjType" class="w-full border border-gray-300 p-2 rounded bg-white">
-                    <option value="Подразделение">Подразделение</option>
+                    <option value="Подразделение">Подразделение (Группа / База)</option>
                     <option value="Склад">Склад</option>
                     <option value="Контрагент">Внешний контрагент</option>
                 </select>
+            </div>
+            <!-- НОВОЕ ПОЛЕ: МОЛ -->
+            <div class="mb-4">
+                <label class="block text-gray-700 font-bold mb-1 text-sm">Материально-ответственное лицо (МОЛ)</label>
+                <input type="text" id="newObjMol" class="w-full border border-gray-300 p-2 rounded outline-none" placeholder="Иванов И. И.">
+                <p class="text-xs text-gray-500 mt-1">Оставьте пустым, если это просто папка-подразделение.</p>
             </div>
             <button id="btnSaveObject" class="w-full bg-blue-700 text-white p-2 rounded font-bold hover:bg-blue-800">Создать</button>
         </div>
@@ -197,7 +217,7 @@ tr:hover{background-color:#f9fafb}
 
 <!-- МОДАЛКА: Номенклатура -->
 <div id="nomenclatureModal" class="modal">
-    <div class="modal-content">
+    <div class="modal-content" style="width: 800px;">
         <div class="modal-header">
             <span><i class="fa-solid fa-list mr-2"></i>Справочник Номенклатуры</span>
             <button onclick="document.getElementById('nomenclatureModal').style.display='none'" class="text-white hover:text-gray-300 text-xl">&times;</button>
@@ -206,25 +226,25 @@ tr:hover{background-color:#f9fafb}
             <div class="col-span-1 border-r pr-4 bg-gray-50 p-2 rounded">
                 <h4 class="font-bold text-gray-700 mb-3 border-b pb-1">Новое изделие</h4>
                 <div class="mb-2">
-                    <label class="text-xs font-bold text-gray-600">Индекс ГРАУ / Код</label>
-                    <input type="text" id="newNomCode" class="w-full border p-1 rounded text-sm" placeholder="6П20">
-                </div>
-                <div class="mb-2">
                     <label class="text-xs font-bold text-gray-600">Наименование</label>
                     <input type="text" id="newNomName" class="w-full border p-1 rounded text-sm" placeholder="АК-74">
                 </div>
                 <div class="mb-2">
-                    <label class="text-xs font-bold text-gray-600">Категория</label>
-                    <input type="text" id="newNomCat" class="w-full border p-1 rounded text-sm" placeholder="Стрелковое">
+                    <label class="text-xs font-bold text-gray-600">Индекс ГРАУ / Код</label>
+                    <input type="text" id="newNomCode" class="w-full border p-1 rounded text-sm" placeholder="6П20">
+                </div>
+                <div class="mb-2">
+                    <label class="text-xs font-bold text-gray-600">Счет учета</label>
+                    <input type="text" id="newNomAccount" class="w-full border p-1 rounded text-sm" placeholder="101.38.1">
                 </div>
                 <!-- ЧЕКБОКС НОМЕРНОГО УЧЕТА -->
-                <div class="mb-4 flex items-center bg-white p-2 border rounded">
+                <div class="mb-4 flex items-center bg-white p-2 border rounded mt-4">
                     <input type="checkbox" id="newNomIsNumbered" class="mr-2 h-4 w-4" checked>
                     <label for="newNomIsNumbered" class="text-xs font-bold text-gray-700 cursor-pointer select-none">
-                        Номерной учет<br><span class="text-gray-400 font-normal">Снять для патронов/ЗИП</span>
+                        Номерной учет (ОС)<br><span class="text-gray-400 font-normal">Снять галочку для патронов и МЗ</span>
                     </label>
                 </div>
-                <button id="btnSaveNom" class="w-full bg-green-600 text-white py-1 rounded text-sm font-bold hover:bg-green-700">Добавить</button>
+                <button id="btnSaveNom" class="w-full bg-green-600 text-white py-1 rounded text-sm font-bold hover:bg-green-700 mt-2">Добавить</button>
             </div>
             <div class="col-span-2 overflow-auto">
                 <table class="w-full text-sm">
@@ -232,6 +252,7 @@ tr:hover{background-color:#f9fafb}
                         <tr>
                             <th class="p-2 text-left">Индекс</th>
                             <th class="p-2 text-left">Наименование</th>
+                            <th class="p-2 text-left">Счет</th>
                         </tr>
                     </thead>
                     <tbody id="nomenclatureListBody"></tbody>
@@ -245,18 +266,25 @@ tr:hover{background-color:#f9fafb}
 <div id="balanceModal" class="modal">
     <div class="modal-content">
         <div class="modal-header bg-green-800">
-            <span><i class="fa-solid fa-box-archive mr-2"></i><span id="balanceModalTitle">Остатки</span></span>
+            <span><i class="fa-solid fa-box-archive mr-2"></i><span id="balanceModalTitle">Остатки на складе</span></span>
             <button onclick="document.getElementById('balanceModal').style.display='none'" class="text-white hover:text-gray-300 text-xl">&times;</button>
         </div>
         <div class="modal-body">
-            <div class="border rounded overflow-auto h-96">
+            <!-- Строка с общей суммой -->
+            <div class="mb-3 text-right text-sm font-bold text-gray-700">
+                Итого сумма по складу: <span id="balanceTotalSum" class="text-green-700 text-lg">0.00 ₽</span>
+            </div>
+            <div class="border rounded overflow-auto h-[500px]">
                 <table class="w-full text-sm">
                     <thead class="bg-gray-100 sticky top-0">
                         <tr>
                             <th class="p-2 text-left border-b">Наименование</th>
-                            <th class="p-2 text-left border-b">Индекс</th>
+                            <th class="p-2 text-left border-b">Счет</th>
                             <th class="p-2 text-left border-b">Серия / Партия</th>
+                            <th class="p-2 text-left border-b">Инв. №</th>
+                            <th class="p-2 text-right border-b">Цена</th>
                             <th class="p-2 text-center border-b">Кол-во</th>
+                            <th class="p-2 text-right border-b">Сумма</th>
                         </tr>
                     </thead>
                     <tbody id="balanceTableBody"></tbody>
@@ -270,13 +298,13 @@ tr:hover{background-color:#f9fafb}
 <div id="viewDocModal" class="modal">
     <div class="modal-content">
         <div class="modal-header bg-gray-800">
-            <span><i class="fa-solid fa-file-lines mr-2"></i>Документ</span>
+            <span><i class="fa-solid fa-file-lines mr-2"></i>Накладная</span>
             <button onclick="document.getElementById('viewDocModal').style.display='none'" class="text-white hover:text-gray-300 text-xl">&times;</button>
         </div>
         <div class="modal-body">
             <div class="flex justify-between mb-4 border-b pb-2">
                 <div>
-                    <div class="text-xs text-gray-500">Номер</div>
+                    <div class="text-xs text-gray-500">Номер документа</div>
                     <div class="font-bold text-xl" id="viewDocNumber">---</div>
                 </div>
                 <div class="text-right">
@@ -307,7 +335,7 @@ tr:hover{background-color:#f9fafb}
     </div>
 </div>
 
-<!-- МОДАЛКА: История движения (Lifecycle) -->
+<!-- МОДАЛКА: История движения (Без изменений) -->
 <div id="reportModal" class="modal">
     <div class="modal-content" style="height: 80vh; width: 800px;">
         <div class="modal-header bg-purple-700">
@@ -315,37 +343,25 @@ tr:hover{background-color:#f9fafb}
             <button class="modal-close-btn text-white hover:text-gray-300 text-xl" onclick="document.getElementById('reportModal').style.display='none'">&times;</button>
         </div>
         <div class="modal-body flex flex-col h-full">
-
-            <!-- Поиск -->
             <div class="flex gap-2 mb-4 border-b pb-4">
                 <input type="text" id="reportSearchInput" placeholder="Введите номер (например: 12345) или название..." class="flex-1 border p-2 rounded">
                 <button id="btnReportSearch" class="bg-purple-600 text-white px-4 rounded hover:bg-purple-800">Найти</button>
             </div>
-
-            <!-- Результаты поиска (Список) -->
             <div id="reportSearchResults" class="mb-4 hidden">
                 <h4 class="text-xs font-bold text-gray-500 uppercase mb-2">Найденные изделия:</h4>
                 <div id="reportSearchList" class="flex flex-wrap gap-2"></div>
             </div>
-
-            <!-- Текущий статус -->
-            <div id="reportCurrentStatus" class="bg-gray-100 p-3 rounded mb-4 text-center font-bold text-gray-700 hidden">
-                <!-- Здесь будет текст: В наличии на Складе 1 -->
-            </div>
-
-            <!-- Timeline -->
+            <div id="reportCurrentStatus" class="bg-gray-100 p-3 rounded mb-4 text-center font-bold text-gray-700 hidden"></div>
             <div class="flex-1 overflow-y-auto pr-2">
                 <div id="reportTimeline" class="relative border-l-2 border-gray-300 ml-4 space-y-6">
-                    <!-- Сюда JS будет вставлять события -->
                     <div class="text-gray-400 text-center mt-10">Выберите изделие для просмотра истории</div>
                 </div>
             </div>
-
         </div>
     </div>
 </div>
 
-<!-- МОДАЛКА: Красивый показ доступов (Логин / Пароль) -->
+<!-- МОДАЛКА: Логины и пароли -->
 <div id="credentialsModal" class="modal" style="z-index: 2000;">
     <div class="modal-content" style="width: 450px;">
         <div class="modal-header bg-teal-700">
@@ -355,8 +371,7 @@ tr:hover{background-color:#f9fafb}
         <div class="modal-body text-center">
             <i class="fa-solid fa-circle-check text-4xl text-green-500 mb-3"></i>
             <h3 id="credModalTitle" class="text-lg font-bold text-gray-800 mb-2">Объект успешно создан!</h3>
-            <p class="text-sm text-gray-600 mb-4">Передайте эти данные сотруднику для входа. Пароль больше не будет показан.</p>
-
+            <p class="text-sm text-gray-600 mb-4">Передайте эти данные сотруднику для входа.</p>
             <div class="bg-gray-100 p-4 rounded border border-gray-300 text-left relative">
                 <div class="mb-2">
                     <span class="text-xs font-bold text-gray-500 uppercase">Логин:</span>
@@ -366,10 +381,6 @@ tr:hover{background-color:#f9fafb}
                     <span class="text-xs font-bold text-gray-500 uppercase">Пароль:</span>
                     <div id="credPassword" class="font-mono text-lg font-bold text-blue-700"></div>
                 </div>
-
-                <button id="btnCopyCreds" class="absolute top-4 right-4 bg-white border border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-blue-600 px-3 py-1 rounded text-sm shadow-sm transition flex items-center gap-2">
-                    <i class="fa-regular fa-copy"></i> Копировать
-                </button>
             </div>
         </div>
         <div class="modal-footer justify-center">
@@ -378,11 +389,11 @@ tr:hover{background-color:#f9fafb}
     </div>
 </div>
 
-<!-- МОДАЛКА: Управление пользователями -->
+<!-- МОДАЛКА: Пользователи -->
 <div id="usersModal" class="modal">
     <div class="modal-content" style="width: 800px;">
         <div class="modal-header bg-teal-800">
-            <span><i class="fa-solid fa-users-gear mr-2"></i>Управление пользователями</span>
+            <span><i class="fa-solid fa-users-gear mr-2"></i>Пользователи</span>
             <button onclick="closeModal('usersModal')" class="text-white hover:text-gray-300 text-xl">&times;</button>
         </div>
         <div class="modal-body">
@@ -401,6 +412,15 @@ tr:hover{background-color:#f9fafb}
                 </table>
             </div>
         </div>
+    </div>
+</div>
+
+<!-- 🔥 МОДАЛКА: Процесс загрузки (Ожидание) 🔥 -->
+<div id="loadingOverlay" class="modal" style="z-index: 9999;">
+    <div class="bg-white p-6 rounded-lg shadow-xl flex flex-col items-center">
+        <i class="fa-solid fa-spinner fa-spin text-4xl text-green-600 mb-4"></i>
+        <h3 class="text-lg font-bold text-gray-800" id="loadingText">Загрузка и обработка данных...</h3>
+        <p class="text-sm text-gray-500 mt-2">Пожалуйста, подождите. Это может занять несколько секунд.</p>
     </div>
 </div>
 

@@ -3,9 +3,9 @@
 # ==========================================
 FROM python:3.13-slim-bookworm AS builder
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgdk-pixbuf2.0-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Копируем сверхбыстрый пакетный менеджер UV напрямую из официального образа
+# Копируем UV (быстрый установщик пакетов)
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Устанавливаем зависимости Python
@@ -31,13 +31,13 @@ RUN uv pip install --system -r requirements.txt
 # ==========================================
 FROM python:3.13-slim-bookworm AS app_runner
 
-ENV DEBIAN_FRONTEND=noninteractive
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Устанавливаем только runtime-зависимости (без компиляторов)
+# Устанавливаем runtime-зависимости
 RUN apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     libpq5 \
     libffi8 \
@@ -52,21 +52,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends --fix-missing \
 # Копируем установленные пакеты из builder
 COPY --from=builder /usr/local /usr/local
 
-# Создаем пользователя без прав root для безопасности
+# Создаем пользователя
 RUN useradd -ms /bin/bash appuser && \
     mkdir -p /app/static/generated_files && \
     chown -R appuser:appuser /app
 
-# Копируем исходный код приложения
+# Копируем код и конфигурации
+# Важно: app/ теперь содержит modules/ и core/
 COPY --chown=appuser:appuser app/ app/
 COPY --chown=appuser:appuser templates/ templates/
 COPY --chown=appuser:appuser static/ static/
+
+# Копируем миграции ЖКХ
 COPY --chown=appuser:appuser alembic/ alembic/
 COPY --chown=appuser:appuser alembic.ini .
+
+# Копируем миграции Арсенала/ГСМ
 COPY --chown=appuser:appuser alembic_arsenal/ alembic_arsenal/
 COPY --chown=appuser:appuser alembic_arsenal.ini .
 
 USER appuser
 
 EXPOSE 8000
-# Команду запуска (CMD) мы задаем в docker-compose.yml
+# CMD задается в docker-compose

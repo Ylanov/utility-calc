@@ -1,7 +1,7 @@
 from celery import Celery
 import sentry_sdk
 from sentry_sdk.integrations.celery import CeleryIntegration
-from app.config import settings
+from app.core.config import settings
 
 if settings.SENTRY_DSN:
     sentry_sdk.init(
@@ -46,13 +46,15 @@ celery.conf.update(
     task_default_queue="default",
     task_routes={
         # Тяжелые задачи отправляем в отдельную очередь
-        "app.tasks.generate_receipt_task": {"queue": "heavy"},
-        "app.tasks.create_zip_archive_task": {"queue": "heavy"},
-        "app.tasks.start_bulk_receipt_generation": {"queue": "heavy"},
-        "app.tasks.import_debts_task": {"queue": "heavy"},
+        # ВАЖНО: Пути обновлены до app.modules.utility.tasks
+        "app.modules.utility.tasks.generate_receipt_task": {"queue": "heavy"},
+        "app.modules.utility.tasks.create_zip_archive_task": {"queue": "heavy"},
+        "app.modules.utility.tasks.start_bulk_receipt_generation": {"queue": "heavy"},
+        "app.modules.utility.tasks.import_debts_task": {"queue": "heavy"},
         # Все остальные задачи летят в default
         "*": {"queue": "default"},
     }
 )
 
-celery.conf.imports = ["app.tasks"]
+# ВАЖНО: Указываем Celery, где теперь искать задачи
+celery.conf.imports = ["app.modules.utility.tasks"]

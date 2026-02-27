@@ -1,7 +1,6 @@
-import pytest
 from decimal import Decimal
-from app.models import User, Tariff
-from app.services.calculations import calculate_utilities
+from app.modules.utility.models import User, Tariff
+from app.modules.utility.services.calculations import calculate_utilities
 
 
 # Хелпер для создания заглушек

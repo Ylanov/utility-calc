@@ -1,6 +1,4 @@
-# === ПРОДАКШЕН НАСТРОЙКИ (PROXMOX) ===
 x-app-base: &app-base
-  # БЕРЕМ ГОТОВЫЙ ОБРАЗ ИЗ GITHUB CONTAINER REGISTRY
   image: ghcr.io/Ylanov/utility-calc:latest
   restart: always
   env_file: ./.env
@@ -28,8 +26,9 @@ services:
     command: >
       sh -c "
       sleep 5 &&
-      echo '---> Running DB migrations...' && alembic upgrade head &&
-      echo '---> Running Arsenal migrations...' && alembic -c alembic_arsenal.ini upgrade head &&
+      echo '---> Running Utility DB migrations...' && alembic upgrade head &&
+      echo '---> Running Arsenal/GSM DB migrations...' && alembic -c alembic_arsenal.ini upgrade head &&
+      echo '---> Seeding initial data...' && python -m app.core.initial_data &&
       echo '---> Starting Gunicorn...' &&
       gunicorn app.main:app -k uvicorn.workers.UvicornWorker -w $${WEB_CONCURRENCY:-4} -b 0.0.0.0:8000
       "
@@ -46,16 +45,13 @@ services:
       - shared_data:/app/static/generated_files
     command: celery -A app.worker worker --loglevel=info --queues=heavy --hostname=heavy@%h --concurrency=2
 
-  # === АВТООБНОВЛЕНИЕ ЧЕРЕЗ WATCHTOWER ===
   watchtower:
     image: containrrr/watchtower
     container_name: utility_calc_watchtower
     restart: always
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      # Это нужно, если репозиторий в Github приватный (чтобы Watchtower мог скачать образ)
       - /root/.docker/config.json:/config.json:ro
-    # Проверять обновления каждые 5 минут (300 сек) и удалять старые скачанные образы
     command: --interval 300 --cleanup
     networks:
       - utility_net
@@ -111,7 +107,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./init_db.sh:/docker-entrypoint-initdb.d/init_db.sh
     healthcheck:
-      test:["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -128,19 +124,18 @@ services:
     networks:
       - utility_net
 
-  # NGINX (Только для раздачи статики ВНУТРИ докер-сети, снаружи его закрывает NPM)
   nginx:
-    # ИСПОЛЬЗУЕМ ВАШ ЖЕ ОБРАЗ (он содержит папку static из Dockerfile)
+     # ИСПОЛЬЗУЕМ ВАШ ЖЕ ОБРАЗ (он содержит папку static из Dockerfile)
     image: ghcr.io/Ylanov/utility-calc:latest
     container_name: utility_calc_nginx
     restart: always
-    # Переопределяем команду запуска, чтобы он работал как Nginx, а не как Python
-    entrypoint: ["nginx", "-g", "daemon off;"]
     ports:
-      - "8080:80" # Nginx Proxy Manager будет проксировать трафик на этот порт!
+      - "8080:80"
     volumes:
-      # Прокидываем конфиг (убедитесь, что файл nginx.conf лежит рядом)
+      # Пробрасываем конфиг с хоста
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # Пробрасываем статику с хоста (предполагается, что на сервере папка static есть)
+      - ./static:/usr/share/nginx/html/static
       - shared_data:/usr/share/nginx/html/static/generated_files
     depends_on:
       - web
