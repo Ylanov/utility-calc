@@ -9,20 +9,29 @@ from alembic import context
 
 from app.config import settings
 
-# 🔥 ВАЖНО: импортируем ВСЕ модели, чтобы metadata заполнилась
-from app.arsenal import models
+# 1. Импортируем модели Арсенала
+from app.arsenal import models as arsenal_models
 from app.arsenal.models import ArsenalBase
+
+# 2. Импортируем модели ГСМ
+# Это обязательно, чтобы таблицы зарегистрировались в GsmBase.metadata
+from app.gsm import models as gsm_models
+from app.gsm.models import GsmBase
 
 config = context.config
 
+# Настройка логирования
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# теперь metadata будет содержать таблицы
-target_metadata = ArsenalBase.metadata
+# 3. ВАЖНО: Объединяем метаданные обеих систем
+# Теперь Alembic будет следить и за ArsenalBase, и за GsmBase в одной базе данных
+target_metadata = [ArsenalBase.metadata, GsmBase.metadata]
 
 
 def run_migrations_offline():
+    """Run migrations in 'offline' mode."""
+    # Используем синхронный URL для оффлайн режима
     url = settings.ARSENAL_DATABASE_URL_SYNC
     context.configure(
         url=url,
@@ -46,7 +55,10 @@ def do_run_migrations(connection: Connection):
 
 
 async def run_migrations_online():
+    """Run migrations in 'online' mode."""
     configuration = config.get_section(config.config_ini_section)
+
+    # Используем асинхронный URL Арсенала из конфига приложения
     configuration["sqlalchemy.url"] = settings.ARSENAL_DATABASE_URL_ASYNC
 
     connectable = async_engine_from_config(

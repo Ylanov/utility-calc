@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>СТРОБ.ГСМ</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<style>
+body{background-color:#e5e7eb;font-family:'Segoe UI',sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
+/* Изменили цвет верхней панели для визуального отличия от Арсенала (был синий, стал темно-серый/оранжевый акцент) */
+.top-bar{background:#1f2937; border-bottom: 3px solid #f59e0b; color:white;padding:0 15px;height:50px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 5px rgba(0,0,0,0.2);flex-shrink:0}
+.menu-bar{background:#f3f4f6;border-bottom:1px solid #d1d5db;padding:5px 10px;display:flex;gap:15px;font-size:14px;flex-shrink:0}
+.menu-item{cursor:pointer;padding:5px 10px;border-radius:4px;display:flex;align-items:center}
+.menu-item:hover{background:#e5e7eb}
+.main-layout{display:flex;flex:1;overflow:hidden}
+.sidebar{width:300px;background:white;border-right:1px solid #d1d5db;display:flex;flex-direction:column;flex-shrink:0}
+.sidebar-header{padding:10px;background:#f9fafb;border-bottom:1px solid #e5e7eb;font-weight:bold;font-size:13px;color:#374151}
+.tree-container{flex:1;overflow-y:auto;padding:10px;font-size:14px}
+.tree-node{padding:4px 8px;cursor:pointer;display:flex;align-items:center;gap:8px;border-radius:4px;margin-bottom:2px}
+.tree-node:hover{background-color:#fffbeb} /* Слегка желтоватый ховер для темы ГСМ */
+.workspace{flex:1;display:flex;flex-direction:column;background:white;padding:15px;overflow:hidden}
+.ws-toolbar{display:flex;gap:10px;margin-bottom:15px;align-items:center;flex-shrink:0}
+.data-table-container{border:1px solid #d1d5db;border-radius:4px;overflow:auto;flex:1;background:white}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{background:#f3f4f6;border-bottom:2px solid #e5e7eb;padding:8px;text-align:left;font-weight:600;color:#4b5563;position:sticky;top:0;z-index:10}
+td{border-bottom:1px solid #e5e7eb;padding:6px 8px;color:#1f2937;vertical-align:middle}
+tr:hover{background-color:#f9fafb}
+.tool-btn{display:flex;align-items:center;gap:6px;padding:6px 12px;background:#f3f4f6;border:1px solid #d1d5db;border-radius:4px;font-size:13px;cursor:pointer;transition:all 0.2s}
+.tool-btn:hover{background:#e5e7eb;border-color:#9ca3af}
+.tool-btn.primary{background:#fef3c7;border-color:#fcd34d;color:#92400e} /* Кнопка в стиле ГСМ */
+.modal{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);display:none;align-items:center;justify-content:center;z-index:1000}
+.modal-content{background:white;width:700px;max-width:95%;border-radius:6px;box-shadow:0 10px 25px rgba(0,0,0,0.2);overflow:hidden;display:flex;flex-direction:column;max-height:90vh}
+.modal-header{background:#1f2937;color:white;padding:10px 15px;font-weight:bold;display:flex;justify-content:space-between;flex-shrink:0}
+.modal-body{padding:20px;overflow-y:auto}
+.modal-footer{padding:15px;border-top:1px solid #e5e7eb;background:#f9fafb;display:flex;justify-content:flex-end;gap:10px;flex-shrink:0}
+</style>
+</head>
+<body>
+<!-- Верхняя панель -->
+<div class="top-bar">
+    <div class="flex items-center gap-3">
+        <!-- Иконка заправки вместо щита -->
+        <i class="fa-solid fa-gas-pump text-xl text-amber-500"></i>
+        <span class="font-bold tracking-wide">СТРОБ.ГСМ</span>
+    </div>
+    <div class="flex items-center gap-4 text-sm">
+        <span><i class="fa-solid fa-user mr-2"></i>Администратор</span>
+        <button id="logoutBtn" class="hover:text-amber-300 transition" title="Выход"><i class="fa-solid fa-sign-out-alt"></i></button>
+    </div>
+</div>
+<!-- Меню -->
+<div class="menu-bar">
+    <div class="menu-item" id="menuDocs"><i class="fa-solid fa-folder-open mr-2 text-yellow-600"></i>Документы</div>
+    <div class="menu-item" id="menuObjects"><i class="fa-solid fa-sitemap mr-2 text-blue-600"></i>Объекты учета</div>
+    <div class="menu-item" id="menuNomenclature"><i class="fa-solid fa-oil-can mr-2 text-green-600"></i>Справочник ГСМ</div>
+    <div class="menu-item" id="menuReports"><i class="fa-solid fa-chart-pie mr-2 text-purple-600"></i>Отчеты</div>
+    <div class="menu-item" id="menuUsers"><i class="fa-solid fa-users-gear mr-2 text-teal-600"></i>Пользователи</div>
+</div>
+<div class="main-layout">
+    <!-- Левая панель: Структура (Резервуары и склады) -->
+    <div class="sidebar">
+        <div class="sidebar-header flex justify-between items-center">
+            <span><i class="fa-solid fa-network-wired mr-2"></i>Структура ГСМ</span>
+            <button id="btnAddObject" class="text-blue-600 hover:text-blue-800 font-bold text-lg" title="Добавить">+</button>
+        </div>
+        <div class="tree-container" id="orgTree">
+            <div class="p-4 text-gray-500 text-center text-sm">Загрузка структуры...</div>
+        </div>
+    </div>
+    <!-- Рабочая область -->
+    <div class="workspace">
+        <div class="ws-toolbar">
+            <button id="btnOpenCreateModal" class="tool-btn primary"><i class="fa-solid fa-plus"></i> Создать документ</button>
+            <div class="h-6 w-px bg-gray-300 mx-2"></div>
+            <button id="btnRefreshDocs" class="tool-btn"><i class="fa-solid fa-rotate-right"></i> Обновить</button>
+        </div>
+        <div class="data-table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th style="width:40px">Тип</th>
+                        <th>Дата</th>
+                        <th>Номер</th>
+                        <th>Операция</th>
+                        <th>Поставщик / Отправитель</th>
+                        <th>Получатель / Резервуар</th>
+                        <th style="width:80px" class="text-center">Действия</th>
+                    </tr>
+                </thead>
+                <tbody id="docsTableBody"></tbody>
+            </table>
+        </div>
+        <div class="mt-2 text-xs text-gray-500 flex justify-between">
+            <span id="docsCount">Всего документов: 0</span>
+            <span>СТРОБ.ГСМ v1.0 (Учет топлива и масел)</span>
+        </div>
+    </div>
+</div>
+
+<!-- МОДАЛКА: Новый документ -->
+<div id="newDocModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <span><i class="fa-solid fa-file-circle-plus mr-2"></i>Новый документ движения ГСМ</span>
+            <button id="btnCloseModal" class="text-white hover:text-gray-300 text-xl">&times;</button>
+        </div>
+        <div class="modal-body">
+            <form id="newDocForm" class="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                    <label class="block text-gray-700 font-bold mb-1">Номер накладной/акта</label>
+                    <input type="text" id="newDocNumber" class="w-full border border-gray-300 p-2 rounded focus:border-amber-500 outline-none" placeholder="Генерируется автоматически" disabled>
+                </div>
+                <div>
+                    <label class="block text-gray-700 font-bold mb-1">Дата операции</label>
+                    <input type="date" id="newDocDate" class="w-full border border-gray-300 p-2 rounded focus:border-amber-500 outline-none">
+                </div>
+                <div class="col-span-2">
+                    <label class="block text-gray-700 font-bold mb-1">Тип операции</label>
+                    <select id="newDocType" class="w-full border border-gray-300 p-2 rounded bg-white">
+                        <option value="Первичный ввод">Приход от поставщика (Ввод)</option>
+                        <option value="Перемещение">Перемещение (Между резервуарами)</option>
+                        <option value="Прием">Прием (Слив АТЗ)</option>
+                        <option value="Отправка">Выдача (Заправка техники/АТЗ)</option>
+                        <option value="Списание">Списание (Естественная убыль/Расход)</option>
+                    </select>
+                </div>
+                <!-- Источник (скрыт для ввода) -->
+                <div id="sourceSelectContainer">
+                    <label class="block text-gray-700 font-bold mb-1">Отправитель / Поставщик</label>
+                    <select id="newDocSource" class="w-full border border-gray-300 p-2 rounded bg-white">
+                        <option value="">Загрузка...</option>
+                    </select>
+                </div>
+                <!-- Получатель (скрыт для списания) -->
+                <div id="targetSelectContainer">
+                    <label class="block text-gray-700 font-bold mb-1">Получатель / Резервуар</label>
+                    <select id="newDocTarget" class="w-full border border-gray-300 p-2 rounded bg-white">
+                        <option value="">Загрузка...</option>
+                    </select>
+                </div>
+                <div class="col-span-2 border-t pt-4 mt-2">
+                    <div class="flex justify-between items-center mb-2">
+                        <span class="font-bold text-gray-700 text-base">Спецификация (Топливо/Масла)</span>
+                        <button type="button" id="btnAddRow" class="text-xs bg-green-100 text-green-700 border border-green-200 hover:bg-green-200 px-3 py-1 rounded font-bold transition">
+                            <i class="fa-solid fa-plus mr-1"></i> Добавить строку
+                        </button>
+                    </div>
+                    <div class="border border-gray-300 rounded h-48 overflow-auto bg-gray-50">
+                        <table id="docItemsTable" class="w-full text-xs">
+                            <thead class="bg-gray-200 sticky top-0">
+                                <tr>
+                                    <th class="p-2 w-2/5">Марка ГСМ</th>
+                                    <th class="p-2 w-1/4">Паспорт качества / Партия</th>
+                                    <th class="p-2 w-1/4 text-center">Объем (л) / Масса</th>
+                                    <th class="p-2 w-10"></th>
+                                </tr>
+                            </thead>
+                            <tbody></tbody>
+                        </table>
+                    </div>
+                </div>
+            </form>
+        </div>
+        <div class="modal-footer">
+            <button id="btnCancelModal" class="px-4 py-2 rounded border border-gray-300 hover:bg-gray-100 text-sm font-medium">Отмена</button>
+            <!-- Изменил цвет кнопки на оранжевый/черный -->
+            <button id="btnSaveDoc" class="px-4 py-2 rounded bg-amber-600 text-white hover:bg-amber-700 text-sm font-bold shadow flex items-center gap-2">
+                <i class="fa-solid fa-check"></i> Провести
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- МОДАЛКА: Объект -->
+<div id="newObjectModal" class="modal">
+    <div class="modal-content" style="width: 400px;">
+        <div class="modal-header">
+            <span><i class="fa-solid fa-sitemap mr-2"></i>Новый объект ГСМ</span>
+            <button onclick="document.getElementById('newObjectModal').style.display='none'" class="text-white hover:text-gray-300 text-xl">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="mb-4">
+                <label class="block text-gray-700 font-bold mb-1 text-sm">Наименование</label>
+                <input type="text" id="newObjName" class="w-full border border-gray-300 p-2 rounded outline-none" placeholder="Напр: Резервуар РВС-1000">
+            </div>
+            <div class="mb-4">
+                <label class="block text-gray-700 font-bold mb-1 text-sm">Тип объекта</label>
+                <select id="newObjType" class="w-full border border-gray-300 p-2 rounded bg-white">
+                    <option value="Склад">Склад ГСМ</option>
+                    <option value="Резервуар">Резервуарный парк</option>
+                    <option value="Транспорт">Топливозаправщик (АТЗ)</option>
+                    <option value="Подразделение">Подразделение (Потребитель)</option>
+                    <option value="Контрагент">Внешний поставщик</option>
+                </select>
+            </div>
+            <button id="btnSaveObject" class="w-full bg-amber-600 text-white p-2 rounded font-bold hover:bg-amber-700">Создать</button>
+        </div>
+    </div>
+</div>
+
+<!-- МОДАЛКА: Номенклатура -->
+<div id="nomenclatureModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <span><i class="fa-solid fa-oil-can mr-2"></i>Справочник марок ГСМ</span>
+            <button onclick="document.getElementById('nomenclatureModal').style.display='none'" class="text-white hover:text-gray-300 text-xl">&times;</button>
+        </div>
+        <div class="modal-body grid grid-cols-3 gap-4 h-[500px]">
+            <div class="col-span-1 border-r pr-4 bg-gray-50 p-2 rounded">
+                <h4 class="font-bold text-gray-700 mb-3 border-b pb-1">Новая марка</h4>
+                <div class="mb-2">
+                    <label class="text-xs font-bold text-gray-600">ГОСТ / Код</label>
+                    <input type="text" id="newNomCode" class="w-full border p-1 rounded text-sm" placeholder="ГОСТ 32511-2013">
+                </div>
+                <div class="mb-2">
+                    <label class="text-xs font-bold text-gray-600">Наименование</label>
+                    <input type="text" id="newNomName" class="w-full border p-1 rounded text-sm" placeholder="ДТ-Л-К5">
+                </div>
+                <div class="mb-2">
+                    <label class="text-xs font-bold text-gray-600">Категория</label>
+                    <input type="text" id="newNomCat" class="w-full border p-1 rounded text-sm" placeholder="Светлые нефтепродукты">
+                </div>
+                <!-- ЧЕКБОКС: В ГСМ обычно налив (объем/масса), галочка для бочек/штук -->
+                <div class="mb-4 flex items-center bg-white p-2 border rounded">
+                    <input type="checkbox" id="newNomIsNumbered" class="mr-2 h-4 w-4">
+                    <label for="newNomIsNumbered" class="text-xs font-bold text-gray-700 cursor-pointer select-none">
+                        Фасованная продукция<br><span class="text-gray-400 font-normal">Установить для тары/бочек (шт)</span>
+                    </label>
+                </div>
+                <button id="btnSaveNom" class="w-full bg-green-600 text-white py-1 rounded text-sm font-bold hover:bg-green-700">Добавить</button>
+            </div>
+            <div class="col-span-2 overflow-auto">
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-200 sticky top-0">
+                        <tr>
+                            <th class="p-2 text-left">ГОСТ / Код</th>
+                            <th class="p-2 text-left">Наименование ГСМ</th>
+                        </tr>
+                    </thead>
+                    <tbody id="nomenclatureListBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- МОДАЛКА: Остатки -->
+<div id="balanceModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header bg-amber-600">
+            <span><i class="fa-solid fa-chart-column mr-2"></i><span id="balanceModalTitle">Остатки ГСМ</span></span>
+            <button onclick="document.getElementById('balanceModal').style.display='none'" class="text-white hover:text-gray-300 text-xl">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="border rounded overflow-auto h-96">
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-100 sticky top-0">
+                        <tr>
+                            <th class="p-2 text-left border-b">Марка ГСМ</th>
+                            <th class="p-2 text-left border-b">ГОСТ / Код</th>
+                            <th class="p-2 text-left border-b">Паспорт качества / Партия</th>
+                            <th class="p-2 text-center border-b">Остаток</th>
+                        </tr>
+                    </thead>
+                    <tbody id="balanceTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- МОДАЛКА: Просмотр документа -->
+<div id="viewDocModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header bg-gray-800">
+            <span><i class="fa-solid fa-file-lines mr-2"></i>Накладная / Акт</span>
+            <button onclick="document.getElementById('viewDocModal').style.display='none'" class="text-white hover:text-gray-300 text-xl">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="flex justify-between mb-4 border-b pb-2">
+                <div>
+                    <div class="text-xs text-gray-500">Номер</div>
+                    <div class="font-bold text-xl" id="viewDocNumber">---</div>
+                </div>
+                <div class="text-right">
+                    <div class="text-xs text-gray-500">Дата</div>
+                    <div class="font-bold" id="viewDocDate">---</div>
+                </div>
+            </div>
+            <div class="grid grid-cols-2 gap-4 mb-4 text-sm">
+                <div><span class="text-gray-500">Тип:</span> <span id="viewDocType" class="font-bold"></span></div>
+                <div></div>
+                <div><span class="text-gray-500">Отправитель:</span> <span id="viewDocSource"></span></div>
+                <div><span class="text-gray-500">Получатель:</span> <span id="viewDocTarget"></span></div>
+            </div>
+            <h4 class="font-bold text-sm mb-2 mt-4 bg-gray-100 p-1">Спецификация</h4>
+            <div class="border rounded overflow-auto h-64">
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="p-2 text-left border-b">Марка ГСМ</th>
+                            <th class="p-2 text-left border-b">Паспорт / Партия</th>
+                            <th class="p-2 text-center border-b">Объем / Масса</th>
+                        </tr>
+                    </thead>
+                    <tbody id="viewDocItems"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- МОДАЛКА: История движения (Lifecycle) -->
+<div id="reportModal" class="modal">
+    <div class="modal-content" style="height: 80vh; width: 800px;">
+        <div class="modal-header bg-purple-700">
+            <span><i class="fa-solid fa-clock-rotate-left mr-2"></i>История движения партии ГСМ</span>
+            <button class="modal-close-btn text-white hover:text-gray-300 text-xl" onclick="document.getElementById('reportModal').style.display='none'">&times;</button>
+        </div>
+        <div class="modal-body flex flex-col h-full">
+
+            <!-- Поиск -->
+            <div class="flex gap-2 mb-4 border-b pb-4">
+                <input type="text" id="reportSearchInput" placeholder="Введите номер паспорта (например: 12345) или марку..." class="flex-1 border p-2 rounded">
+                <button id="btnReportSearch" class="bg-purple-600 text-white px-4 rounded hover:bg-purple-800">Найти</button>
+            </div>
+
+            <!-- Результаты поиска (Список) -->
+            <div id="reportSearchResults" class="mb-4 hidden">
+                <h4 class="text-xs font-bold text-gray-500 uppercase mb-2">Найденные партии:</h4>
+                <div id="reportSearchList" class="flex flex-wrap gap-2"></div>
+            </div>
+
+            <!-- Текущий статус -->
+            <div id="reportCurrentStatus" class="bg-gray-100 p-3 rounded mb-4 text-center font-bold text-gray-700 hidden">
+                <!-- Здесь будет текст: В наличии на Складе 1 -->
+            </div>
+
+            <!-- Timeline -->
+            <div class="flex-1 overflow-y-auto pr-2">
+                <div id="reportTimeline" class="relative border-l-2 border-gray-300 ml-4 space-y-6">
+                    <!-- Сюда JS будет вставлять события -->
+                    <div class="text-gray-400 text-center mt-10">Выберите партию для просмотра истории движения</div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<!-- МОДАЛКА: Красивый показ доступов (Логин / Пароль) -->
+<div id="credentialsModal" class="modal" style="z-index: 2000;">
+    <div class="modal-content" style="width: 450px;">
+        <div class="modal-header bg-teal-700">
+            <span><i class="fa-solid fa-key mr-2"></i>Учетные данные</span>
+            <button onclick="closeModal('credentialsModal')" class="text-white hover:text-gray-300 text-xl">&times;</button>
+        </div>
+        <div class="modal-body text-center">
+            <i class="fa-solid fa-circle-check text-4xl text-green-500 mb-3"></i>
+            <h3 id="credModalTitle" class="text-lg font-bold text-gray-800 mb-2">Объект успешно создан!</h3>
+            <p class="text-sm text-gray-600 mb-4">Передайте эти данные начальнику склада/резервуара для входа. Пароль больше не будет показан.</p>
+
+            <div class="bg-gray-100 p-4 rounded border border-gray-300 text-left relative">
+                <div class="mb-2">
+                    <span class="text-xs font-bold text-gray-500 uppercase">Логин:</span>
+                    <div id="credUsername" class="font-mono text-lg font-bold text-gray-800"></div>
+                </div>
+                <div>
+                    <span class="text-xs font-bold text-gray-500 uppercase">Пароль:</span>
+                    <div id="credPassword" class="font-mono text-lg font-bold text-blue-700"></div>
+                </div>
+
+                <button id="btnCopyCreds" class="absolute top-4 right-4 bg-white border border-gray-300 text-gray-600 hover:bg-gray-50 hover:text-blue-600 px-3 py-1 rounded text-sm shadow-sm transition flex items-center gap-2">
+                    <i class="fa-regular fa-copy"></i> Копировать
+                </button>
+            </div>
+        </div>
+        <div class="modal-footer justify-center">
+            <button onclick="closeModal('credentialsModal')" class="bg-teal-700 text-white px-6 py-2 rounded font-bold hover:bg-teal-800">Понятно, закрыть</button>
+        </div>
+    </div>
+</div>
+
+<!-- МОДАЛКА: Управление пользователями -->
+<div id="usersModal" class="modal">
+    <div class="modal-content" style="width: 800px;">
+        <div class="modal-header bg-teal-800">
+            <span><i class="fa-solid fa-users-gear mr-2"></i>Управление пользователями</span>
+            <button onclick="closeModal('usersModal')" class="text-white hover:text-gray-300 text-xl">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="border rounded overflow-auto h-96">
+                <table class="w-full text-sm">
+                    <thead class="bg-gray-100 sticky top-0">
+                        <tr>
+                            <th class="p-2 text-left border-b w-12">ID</th>
+                            <th class="p-2 text-left border-b">Логин</th>
+                            <th class="p-2 text-left border-b">Роль</th>
+                            <th class="p-2 text-left border-b">Привязка к объекту (Склад/АЗС)</th>
+                            <th class="p-2 text-center border-b w-24">Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody id="usersTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ПОДКЛЮЧЕНИЕ СКРИПТА ГСМ (Вам нужно создать копию arsenal.js с именем gsm.js) -->
+<script src="js/gsm.js"></script>
+</body>
+</html>
