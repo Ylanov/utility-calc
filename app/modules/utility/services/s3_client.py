@@ -19,15 +19,27 @@ class S3Service:
         self._ensure_bucket_exists()
 
     def _ensure_bucket_exists(self):
-        """Создает бакет, если его еще нет."""
+        """Создает бакет, если его еще не существует."""
         try:
             self.s3.head_bucket(Bucket=self.bucket)
-        except ClientError:
-            logger.info(f"Creating S3 bucket: {self.bucket}")
-            self.s3.create_bucket(Bucket=self.bucket)
-
-            # Делаем бакет приватным по умолчанию,
-            # файлы будем отдавать только через сгенерированные ссылки
+            logger.info(f"S3 bucket '{self.bucket}' already exists.")
+        except ClientError as e:
+            # Проверяем код ошибки. Если это '404' (или 'NoSuchBucket'), значит бакета нет.
+            error_code = e.response.get("Error", {}).get("Code")
+            if error_code in ['404', 'NoSuchBucket']:
+                logger.info(f"S3 bucket '{self.bucket}' not found. Creating it...")
+                try:
+                    self.s3.create_bucket(Bucket=self.bucket)
+                    logger.info(f"S3 bucket '{self.bucket}' created successfully.")
+                except ClientError as create_error:
+                    # Обрабатываем возможную ошибку, если другой процесс создал бакет за эту миллисекунду
+                    if create_error.response.get("Error", {}).get("Code") != 'BucketAlreadyOwnedByYou':
+                        logger.error(f"Failed to create S3 bucket: {create_error}")
+                        raise create_error
+            else:
+                # Если ошибка другая (например, нет доступа), мы должны ее увидеть
+                logger.error(f"Unexpected S3 error when checking bucket: {e}")
+                raise e
 
     def upload_file(self, file_path: str, object_name: str) -> bool:
         """Загружает файл в S3."""
@@ -36,6 +48,15 @@ class S3Service:
             return True
         except ClientError as e:
             logger.error(f"S3 Upload Error: {e}")
+            return False
+
+    def upload_fileobj(self, file_obj, object_name: str) -> bool:
+        """Загружает файловый объект (UploadFile.file) прямо в S3 без сохранения на диск."""
+        try:
+            self.s3.upload_fileobj(file_obj, self.bucket, object_name)
+            return True
+        except ClientError as e:
+            logger.error(f"S3 Upload FileObj Error: {e}")
             return False
 
     def get_presigned_url(self, object_name: str, expiration=300) -> str:

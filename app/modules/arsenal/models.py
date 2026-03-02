@@ -7,7 +7,8 @@ from sqlalchemy import (
     Boolean,
     Text,
     UniqueConstraint,
-    Numeric  # НОВОЕ: Импортируем Numeric для работы с деньгами/ценами
+    Numeric,
+    Index  # 🔥 ДОБАВЛЕНО: Импорт для создания индексов
 )
 from sqlalchemy.orm import relationship
 from datetime import datetime
@@ -40,12 +41,12 @@ class AccountingObject(ArsenalBase):
 
     id = Column(Integer, primary_key=True, index=True)
     parent_id = Column(Integer, ForeignKey("accounting_objects.id"), nullable=True)
-    name = Column(String, nullable=False)
+    name = Column(String, nullable=False, index=True)  # 🔥 ДОБАВЛЕНО: Индекс для сортировки/поиска
 
     # Тип объекта: Подразделение, Склад, Ремонт, Контрагент
     obj_type = Column(String, nullable=False)
 
-    # 🔥 НОВОЕ: Материально-ответственное лицо (МОЛ), например: "Матус А. А."
+    # Материально-ответственное лицо (МОЛ), например: "Матус А. А."
     mol_name = Column(String, nullable=True)
 
     # Иерархия объектов (Self-referential relationship)
@@ -61,10 +62,10 @@ class Nomenclature(ArsenalBase):
     # Индекс ГРАУ (например: 6П20)
     code = Column(String, index=True)
 
-    name = Column(String, nullable=False)
+    name = Column(String, nullable=False, index=True)  # 🔥 ДОБАВЛЕНО: Индекс для быстрого поиска ilike
     category = Column(String, nullable=True)
 
-    # 🔥 НОВОЕ: Счет учета по умолчанию (например: 101.34.1, 105.36.1)
+    # Счет учета по умолчанию (например: 101.34.1, 105.36.1)
     default_account = Column(String, nullable=True)
 
     # ФЛАГ ТИПА УЧЕТА
@@ -90,26 +91,22 @@ class WeaponRegistry(ArsenalBase):
     # Текущее местонахождение
     current_object_id = Column(Integer, ForeignKey("accounting_objects.id"), nullable=True)
 
-    # Статус:
-    # 1 - В наличии
-    # 0 - Списано / Уничтожено
-    # 2 - В ремонте
+    # Статус: 1 - В наличии, 0 - Списано / Уничтожено, 2 - В ремонте
     status = Column(Integer, default=1)
 
     # КОЛИЧЕСТВО
-    # Для номерного учета всегда 1.
-    # Для партионного учета здесь хранится остаток партии на данном объекте.
     quantity = Column(Integer, default=1)
 
-    # 🔥 НОВЫЕ БУХГАЛТЕРСКИЕ ПОЛЯ (из вашей выгрузки TXT):
     # Инвентарный номер (например: 1101341304594)
     inventory_number = Column(String, index=True, nullable=True)
 
     # Цена / Сумма (Numeric(15,2) позволяет хранить суммы до десятков миллиардов с копейками)
     price = Column(Numeric(15, 2), nullable=True)
 
-    # Фактический счет учета для конкретной единицы (если отличается от дефолтного в номенклатуре)
+    # Фактический счет учета для конкретной единицы
     account_code = Column(String, nullable=True)
+
+    kbk = Column(String, nullable=True)
 
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -117,9 +114,6 @@ class WeaponRegistry(ArsenalBase):
     nomenclature = relationship("Nomenclature")
     current_object = relationship("AccountingObject")
 
-    # Уникальность:
-    # Теперь уникальна связка: (Изделие + Партия/Номер + Местонахождение).
-    # Это позволяет хранить одну и ту же партию патронов на разных складах разными строками.
     __table_args__ = (
         UniqueConstraint(
             "nomenclature_id",
@@ -127,6 +121,9 @@ class WeaponRegistry(ArsenalBase):
             "current_object_id",
             name="uix_nom_serial_obj"
         ),
+        # 🔥 НОВОЕ: Индексы для сверхбыстрой выборки миллионов строк
+        Index("ix_weapon_object_status", "current_object_id", "status"),  # Для просмотра баланса склада
+        Index("ix_weapon_status_qty_price", "status", "quantity", "price"),  # Для мгновенного расчета KPI
     )
 
 
@@ -140,10 +137,7 @@ class Document(ArsenalBase):
     doc_date = Column(DateTime, default=datetime.utcnow)
     operation_date = Column(DateTime, default=datetime.utcnow)
 
-    # Тип операции:
-    # 'Первичный ввод' (INCOME)
-    # 'Перемещение' / 'Выдача' / 'Прием' (TRANSFER)
-    # 'Списание' (OUTCOME)
+    # Тип операции: 'Первичный ввод', 'Перемещение', 'Списание' и т.д.
     operation_type = Column(String, nullable=False)
 
     source_id = Column(Integer, ForeignKey("accounting_objects.id"), nullable=True)
@@ -154,6 +148,8 @@ class Document(ArsenalBase):
 
     author_id = Column(Integer, ForeignKey("arsenal_users.id"), nullable=True)
 
+    attached_file_path = Column(String, nullable=True)
+
     # Связи
     source = relationship("AccountingObject", foreign_keys=[source_id])
     target = relationship("AccountingObject", foreign_keys=[target_id])
@@ -161,6 +157,13 @@ class Document(ArsenalBase):
         "DocumentItem",
         back_populates="document",
         cascade="all, delete"
+    )
+
+    __table_args__ = (
+        # 🔥 НОВОЕ: Индексы для фильтрации и пагинации журнала документов
+        Index("ix_doc_source_date", "source_id", "operation_date"),
+        Index("ix_doc_target_date", "target_id", "operation_date"),
+        Index("ix_doc_dates", "operation_date", "created_at"),
     )
 
 
@@ -172,7 +175,7 @@ class DocumentItem(ArsenalBase):
 
     document_id = Column(Integer, ForeignKey("documents.id"))
 
-    # Ссылка на конкретную запись реестра (может быть NULL, если запись была удалена при списании в ноль)
+    # Ссылка на конкретную запись реестра
     weapon_id = Column(Integer, ForeignKey("weapon_registry.id"), nullable=True)
 
     # Дублирование данных для истории (Snapshot)
@@ -181,7 +184,7 @@ class DocumentItem(ArsenalBase):
     # Серийный номер ИЛИ Номер партии
     serial_number = Column(String, nullable=True)
 
-    # 🔥 НОВОЕ: Дублирование бухгалтерских данных в историю (на момент совершения операции)
+    # Дублирование бухгалтерских данных в историю (на момент совершения операции)
     inventory_number = Column(String, nullable=True)
     price = Column(Numeric(15, 2), nullable=True)
 
@@ -191,3 +194,9 @@ class DocumentItem(ArsenalBase):
     document = relationship("Document", back_populates="items")
     nomenclature = relationship("Nomenclature")
     weapon = relationship("WeaponRegistry")
+
+    __table_args__ = (
+        # 🔥 НОВОЕ: Индексы для получения строк документа и построения отчета (timeline)
+        Index("ix_doc_item_doc_id", "document_id"),
+        Index("ix_doc_item_serial_nom", "serial_number", "nomenclature_id"),
+    )

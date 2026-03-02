@@ -1,429 +1,184 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>СТРОБ.Арсенал</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-<style>
-body{background-color:#e5e7eb;font-family:'Segoe UI',sans-serif;height:100vh;display:flex;flex-direction:column;overflow:hidden}
-.top-bar{background:#1e3a8a;color:white;padding:0 15px;height:50px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 5px rgba(0,0,0,0.2);flex-shrink:0}
-.menu-bar{background:#f3f4f6;border-bottom:1px solid #d1d5db;padding:5px 10px;display:flex;gap:15px;font-size:14px;flex-shrink:0}
-.menu-item{cursor:pointer;padding:5px 10px;border-radius:4px;display:flex;align-items:center}
-.menu-item:hover{background:#e5e7eb}
-.main-layout{display:flex;flex:1;overflow:hidden}
-.sidebar{width:300px;background:white;border-right:1px solid #d1d5db;display:flex;flex-direction:column;flex-shrink:0}
-.sidebar-header{padding:10px;background:#f9fafb;border-bottom:1px solid #e5e7eb;font-weight:bold;font-size:13px;color:#374151}
-.tree-container{flex:1;overflow-y:auto;padding:10px;font-size:14px}
-.tree-node{padding:4px 8px;cursor:pointer;display:flex;align-items:center;gap:8px;border-radius:4px;margin-bottom:2px}
-.tree-node:hover{background-color:#eff6ff}
-.workspace{flex:1;display:flex;flex-direction:column;background:white;padding:15px;overflow:hidden}
-.ws-toolbar{display:flex;gap:10px;margin-bottom:15px;align-items:center;flex-shrink:0}
-.data-table-container{border:1px solid #d1d5db;border-radius:4px;overflow:auto;flex:1;background:white}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th{background:#f3f4f6;border-bottom:2px solid #e5e7eb;padding:8px;text-align:left;font-weight:600;color:#4b5563;position:sticky;top:0;z-index:10}
-td{border-bottom:1px solid #e5e7eb;padding:6px 8px;color:#1f2937;vertical-align:middle}
-tr:hover{background-color:#f9fafb}
-.tool-btn{display:flex;align-items:center;gap:6px;padding:6px 12px;background:#f3f4f6;border:1px solid #d1d5db;border-radius:4px;font-size:13px;cursor:pointer;transition:all 0.2s}
-.tool-btn:hover{background:#e5e7eb;border-color:#9ca3af}
-.tool-btn.primary{background:#dbeafe;border-color:#93c5fd;color:#1e40af}
-.modal{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.5);display:none;align-items:center;justify-content:center;z-index:1000}
-.modal-content{background:white;width:700px;max-width:95%;border-radius:6px;box-shadow:0 10px 25px rgba(0,0,0,0.2);overflow:hidden;display:flex;flex-direction:column;max-height:90vh}
-.modal-header{background:#1e3a8a;color:white;padding:10px 15px;font-weight:bold;display:flex;justify-content:space-between;flex-shrink:0}
-.modal-body{padding:20px;overflow-y:auto}
-.modal-footer{padding:15px;border-top:1px solid #e5e7eb;background:#f9fafb;display:flex;justify-content:flex-end;gap:10px;flex-shrink:0}
-
-/* Стили для широких таблиц */
-#balanceModal .modal-content { width: 900px; max-width: 95%; }
-#newDocModal .modal-content { width: 850px; max-width: 95%; }
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>СТРОБ.Арсенал v3.0</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Иконки FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- 🔥 Наши вынесенные стили -->
+    <link rel="stylesheet" href="css/arsenal.css">
 </head>
-<body>
-<!-- Верхняя панель -->
-<div class="top-bar">
-    <div class="flex items-center gap-3">
-        <i class="fa-solid fa-shield-halved text-xl"></i>
-        <span class="font-bold tracking-wide">СТРОБ.Арсенал</span>
+<body class="bg-slate-100 text-slate-800 h-screen flex flex-col overflow-hidden">
+
+<!-- ВЕРХНЯЯ ПАНЕЛЬ И НАВИГАЦИЯ -->
+<div class="bg-white border-b border-slate-200 shadow-sm px-6 h-16 flex items-center justify-between shrink-0">
+    <div class="flex items-center gap-8">
+        <!-- Логотип -->
+        <div class="flex items-center gap-3">
+            <div class="w-9 h-9 bg-blue-700 rounded-lg flex items-center justify-center text-white shadow-sm">
+                <i class="fa-solid fa-shield-halved"></i>
+            </div>
+            <span class="font-bold text-lg tracking-wide text-slate-800">СТРОБ.Арсенал</span>
+        </div>
+
+        <!-- Меню -->
+        <div class="hidden md:flex items-center gap-2 text-sm border-l border-slate-200 pl-6">
+            <div class="menu-item" id="menuDocs"><i class="fa-solid fa-folder-open mr-2 text-amber-500"></i>Документы</div>
+            <div class="menu-item" id="menuObjects"><i class="fa-solid fa-sitemap mr-2 text-blue-500"></i>Объекты</div>
+            <div class="menu-item" id="menuNomenclature"><i class="fa-solid fa-list mr-2 text-emerald-500"></i>Номенклатура</div>
+            <div class="menu-item" id="menuReports"><i class="fa-solid fa-chart-pie mr-2 text-purple-500"></i>Отчеты</div>
+            <div class="menu-item" id="menuUsers"><i class="fa-solid fa-users-gear mr-2 text-teal-500"></i>Пользователи</div>
+        </div>
     </div>
-    <div class="flex items-center gap-4 text-sm">
-        <span><i class="fa-solid fa-user mr-2"></i>Администратор</span>
-        <button id="logoutBtn" class="hover:text-red-300 transition" title="Выход"><i class="fa-solid fa-sign-out-alt"></i></button>
+
+    <!-- Профиль -->
+    <div class="flex items-center gap-5 text-sm">
+        <div class="flex items-center gap-2 text-slate-600 bg-slate-50 px-3 py-1.5 rounded-full border border-slate-200">
+            <div class="w-6 h-6 bg-slate-200 rounded-full flex items-center justify-center text-slate-500"><i class="fa-solid fa-user text-xs"></i></div>
+            <span class="font-medium">Администратор</span>
+        </div>
+        <button id="logoutBtn" class="text-slate-400 hover:text-rose-600 transition" title="Выход">
+            <i class="fa-solid fa-sign-out-alt text-lg"></i>
+        </button>
     </div>
 </div>
-<!-- Меню -->
-<div class="menu-bar">
-    <div class="menu-item" id="menuDocs"><i class="fa-solid fa-folder-open mr-2 text-yellow-600"></i>Документы</div>
-    <div class="menu-item" id="menuObjects"><i class="fa-solid fa-sitemap mr-2 text-blue-600"></i>Объекты</div>
-    <div class="menu-item" id="menuNomenclature"><i class="fa-solid fa-list mr-2 text-green-600"></i>Номенклатура</div>
-    <div class="menu-item" id="menuReports"><i class="fa-solid fa-chart-pie mr-2 text-purple-600"></i>Отчеты</div>
-    <div class="menu-item" id="menuUsers"><i class="fa-solid fa-users-gear mr-2 text-teal-600"></i>Пользователи</div>
-</div>
-<div class="main-layout">
-    <!-- Левая панель: Структура -->
-    <div class="sidebar">
-        <div class="sidebar-header flex justify-between items-center">
-            <span><i class="fa-solid fa-network-wired mr-2"></i>Структура</span>
-            <div>
-                <!-- 🔥 НОВАЯ КНОПКА ИМПОРТА ИЗ EXCEL 🔥 -->
-                <button id="btnImportExcel" class="text-green-600 hover:text-green-800 text-lg mr-3" title="Массовый импорт из Excel">
+
+<div class="flex flex-1 overflow-hidden">
+    <!-- ЛЕВАЯ ПАНЕЛЬ: СТРУКТУРА -->
+    <div class="w-80 bg-white border-r border-slate-200 flex flex-col shrink-0">
+        <div class="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+            <span class="text-xs font-bold text-slate-500 uppercase tracking-wider"><i class="fa-solid fa-network-wired mr-2"></i>Структура складов</span>
+            <div class="flex gap-2">
+                <button id="btnImportExcel" class="w-7 h-7 flex items-center justify-center rounded bg-white border border-slate-200 text-emerald-600 hover:bg-emerald-50 hover:border-emerald-300 transition" title="Массовый импорт из Excel">
                     <i class="fa-solid fa-file-excel"></i>
                 </button>
-                <button id="btnAddObject" class="text-blue-600 hover:text-blue-800 font-bold text-lg" title="Добавить">+</button>
+                <button id="btnAddObject" class="w-7 h-7 flex items-center justify-center rounded bg-blue-600 text-white hover:bg-blue-700 transition shadow-sm" title="Добавить объект">
+                    <i class="fa-solid fa-plus text-sm"></i>
+                </button>
             </div>
-            <!-- Скрытый инпут для выбора файла -->
             <input type="file" id="excelUploadInput" accept=".xlsx, .xls" style="display: none;">
         </div>
-        <div class="tree-container" id="orgTree">
-            <div class="p-4 text-gray-500 text-center text-sm">Загрузка структуры...</div>
+        <div id="orgTree" class="flex-1 overflow-y-auto p-3 text-sm">
+            <div class="p-4 text-slate-400 text-center flex flex-col items-center">
+                <i class="fa-solid fa-spinner fa-spin text-xl mb-2"></i> Загрузка структуры...
+            </div>
         </div>
     </div>
-    <!-- Рабочая область -->
-    <div class="workspace">
-        <div class="ws-toolbar">
-            <button id="btnOpenCreateModal" class="tool-btn primary"><i class="fa-solid fa-plus"></i> Создать документ</button>
-            <div class="h-6 w-px bg-gray-300 mx-2"></div>
-            <button id="btnRefreshDocs" class="tool-btn"><i class="fa-solid fa-rotate-right"></i> Обновить</button>
+
+    <!-- РАБОЧАЯ ОБЛАСТЬ -->
+    <div class="flex-1 flex flex-col p-6 overflow-hidden bg-slate-100/50">
+        <!-- Виджеты KPI -->
+        <div class="grid grid-cols-4 gap-4 mb-5 shrink-0">
+            <div class="bg-white rounded-xl shadow-sm p-4 border border-slate-200 flex flex-col justify-center">
+                <div class="text-xs font-bold text-slate-400 uppercase mb-1">Всего единиц на балансе</div>
+                <div id="kpiTotalQty" class="text-2xl font-bold text-slate-800">---</div>
+            </div>
+            <div class="bg-white rounded-xl shadow-sm p-4 border border-slate-200 flex flex-col justify-center">
+                <div class="text-xs font-bold text-slate-400 uppercase mb-1">Оборот (документов)</div>
+                <div id="kpiDocsCount" class="text-2xl font-bold text-blue-600">---</div>
+            </div>
+            <div class="bg-white rounded-xl shadow-sm p-4 border border-slate-200 flex flex-col justify-center">
+                <div class="text-xs font-bold text-slate-400 uppercase mb-1">Общая стоимость</div>
+                <div id="kpiTotalSum" class="text-2xl font-bold text-emerald-600">--- ₽</div>
+            </div>
+            <div class="bg-white rounded-xl shadow-sm p-4 border border-slate-200 flex flex-col justify-center">
+                <div class="text-xs font-bold text-slate-400 uppercase mb-1">На ремонте / В пути</div>
+                <div id="kpiTransit" class="text-2xl font-bold text-amber-500">---</div>
+            </div>
         </div>
-        <div class="data-table-container">
-            <table>
-                <thead>
-                    <tr>
-                        <th style="width:40px">Тип</th>
-                        <th>Дата</th>
-                        <th>Номер</th>
-                        <th>Операция</th>
-                        <th>Отправитель</th>
-                        <th>Получатель</th>
-                        <th style="width:80px" class="text-center">Действия</th>
-                    </tr>
-                </thead>
-                <tbody id="docsTableBody"></tbody>
-            </table>
+
+        <!-- Тулбар рабочей области -->
+        <div class="flex justify-between items-center mb-4 shrink-0">
+            <div class="flex gap-3">
+                <button id="btnOpenCreateModal" class="bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold shadow hover:bg-blue-800 transition flex items-center gap-2">
+                    <i class="fa-solid fa-plus"></i> Создать документ
+                </button>
+                <button id="btnRefreshDocs" class="bg-white border border-slate-300 text-slate-600 px-4 py-2 rounded-lg text-sm hover:bg-slate-50 transition flex items-center gap-2 font-medium">
+                    <i class="fa-solid fa-rotate-right"></i> Обновить
+                </button>
+            </div>
+            <div class="relative">
+                <i class="fa-solid fa-search absolute left-3 top-2.5 text-slate-400 text-sm"></i>
+                <input id="docSearchInput" type="text" placeholder="Поиск по журналу..." class="border border-slate-300 rounded-lg pl-9 pr-4 py-2 text-sm w-72 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition">
+            </div>
         </div>
-        <div class="mt-2 text-xs text-gray-500 flex justify-between">
+
+        <!-- Таблица документов -->
+        <div class="bg-white border border-slate-200 rounded-xl shadow-sm flex-1 flex flex-col overflow-hidden">
+            <div class="overflow-auto flex-1">
+                <table class="w-full text-sm">
+                    <thead class="bg-slate-50 text-slate-500 uppercase text-xs tracking-wider border-b border-slate-200">
+                        <tr>
+                            <th class="p-4 text-center w-16">Тип</th>
+                            <th class="p-4 text-left">Дата</th>
+                            <th class="p-4 text-left">Номер</th>
+                            <th class="p-4 text-left">Операция</th>
+                            <th class="p-4 text-left">Отправитель</th>
+                            <th class="p-4 text-left">Получатель</th>
+                            <th class="p-4 text-center w-24">Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody id="docsTableBody" class="text-slate-700 divide-y divide-slate-100"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Подвал рабочей области -->
+        <div class="mt-3 text-xs text-slate-400 flex justify-between shrink-0 font-medium px-1">
             <span id="docsCount">Всего документов: 0</span>
-            <span>СТРОБ.Арсенал v2.2 (Excel Support)</span>
+            <span>СТРОБ.Арсенал v3.0</span>
         </div>
     </div>
 </div>
 
-<!-- МОДАЛКА: Новый документ -->
-<div id="newDocModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header">
-            <span><i class="fa-solid fa-file-circle-plus mr-2"></i>Новый документ</span>
-            <button id="btnCloseModal" class="text-white hover:text-gray-300 text-xl">&times;</button>
-        </div>
-        <div class="modal-body">
-            <form id="newDocForm" class="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                    <label class="block text-gray-700 font-bold mb-1">Номер документа</label>
-                    <input type="text" id="newDocNumber" class="w-full border border-gray-300 p-2 rounded focus:border-blue-500 outline-none" placeholder="Генерируется автоматически" disabled>
-                </div>
-                <div>
-                    <label class="block text-gray-700 font-bold mb-1">Дата операции</label>
-                    <input type="date" id="newDocDate" class="w-full border border-gray-300 p-2 rounded focus:border-blue-500 outline-none">
-                </div>
-                <div class="col-span-2">
-                    <label class="block text-gray-700 font-bold mb-1">Тип операции</label>
-                    <select id="newDocType" class="w-full border border-gray-300 p-2 rounded bg-white">
-                        <option value="Первичный ввод">Первичный ввод (От завода)</option>
-                        <option value="Перемещение">Перемещение (Внутреннее)</option>
-                        <option value="Прием">Прием (Из другого полка)</option>
-                        <option value="Отправка">Отправка (В другой полк/Ремонт)</option>
-                        <option value="Списание">Списание (Расход)</option>
-                    </select>
-                </div>
-                <!-- Источник (скрыт для ввода) -->
-                <div id="sourceSelectContainer">
-                    <label class="block text-gray-700 font-bold mb-1">Отправитель / Источник</label>
-                    <select id="newDocSource" class="w-full border border-gray-300 p-2 rounded bg-white">
-                        <option value="">Загрузка...</option>
-                    </select>
-                </div>
-                <!-- Получатель (скрыт для списания) -->
-                <div id="targetSelectContainer">
-                    <label class="block text-gray-700 font-bold mb-1">Получатель / Объект</label>
-                    <select id="newDocTarget" class="w-full border border-gray-300 p-2 rounded bg-white">
-                        <option value="">Загрузка...</option>
-                    </select>
-                </div>
-                <div class="col-span-2 border-t pt-4 mt-2">
-                    <div class="flex justify-between items-center mb-2">
-                        <span class="font-bold text-gray-700 text-base">Спецификация</span>
-                        <button type="button" id="btnAddRow" class="text-xs bg-green-100 text-green-700 border border-green-200 hover:bg-green-200 px-3 py-1 rounded font-bold transition">
-                            <i class="fa-solid fa-plus mr-1"></i> Добавить строку
-                        </button>
-                    </div>
-                    <!-- Добавлены колонки для Инв.Номера и Цены (Отображаются только при Первичном вводе) -->
-                    <div class="border border-gray-300 rounded h-48 overflow-auto bg-gray-50">
-                        <table id="docItemsTable" class="w-full text-xs">
-                            <thead class="bg-gray-200 sticky top-0">
-                                <tr>
-                                    <th class="p-2 w-1/3">Изделие</th>
-                                    <th class="p-2 w-1/5">№ / Партия</th>
-                                    <th class="p-2 w-1/6 doc-accounting-col" style="display:none;">Инв. №</th>
-                                    <th class="p-2 w-1/6 doc-accounting-col" style="display:none;">Цена (₽)</th>
-                                    <th class="p-2 w-16 text-center">Кол-во</th>
-                                    <th class="p-2 w-10"></th>
-                                </tr>
-                            </thead>
-                            <tbody></tbody>
-                        </table>
-                    </div>
-                </div>
-            </form>
-        </div>
-        <div class="modal-footer">
-            <button id="btnCancelModal" class="px-4 py-2 rounded border border-gray-300 hover:bg-gray-100 text-sm font-medium">Отмена</button>
-            <button id="btnSaveDoc" class="px-4 py-2 rounded bg-blue-700 text-white hover:bg-blue-800 text-sm font-bold shadow flex items-center gap-2">
-                <i class="fa-solid fa-check"></i> Провести
-            </button>
-        </div>
-    </div>
-</div>
+<!-- 🔥 КОНТЕЙНЕР ДЛЯ МОДАЛЬНЫХ ОКОН (СЮДА ОНИ ЗАГРУЖАЮТСЯ АВТОМАТИЧЕСКИ) -->
+<div id="modals-container"></div>
 
-<!-- МОДАЛКА: Объект -->
-<div id="newObjectModal" class="modal">
-    <div class="modal-content" style="width: 400px;">
-        <div class="modal-header">
-            <span><i class="fa-solid fa-sitemap mr-2"></i>Новый объект / Склад</span>
-            <button onclick="document.getElementById('newObjectModal').style.display='none'" class="text-white hover:text-gray-300 text-xl">&times;</button>
-        </div>
-        <div class="modal-body">
-            <div class="mb-4">
-                <label class="block text-gray-700 font-bold mb-1 text-sm">Наименование объекта</label>
-                <input type="text" id="newObjName" class="w-full border border-gray-300 p-2 rounded outline-none" placeholder="Склад (арт. вооружение)">
-            </div>
-            <div class="mb-4">
-                <label class="block text-gray-700 font-bold mb-1 text-sm">Тип</label>
-                <select id="newObjType" class="w-full border border-gray-300 p-2 rounded bg-white">
-                    <option value="Подразделение">Подразделение (Группа / База)</option>
-                    <option value="Склад">Склад</option>
-                    <option value="Контрагент">Внешний контрагент</option>
-                </select>
-            </div>
-            <!-- НОВОЕ ПОЛЕ: МОЛ -->
-            <div class="mb-4">
-                <label class="block text-gray-700 font-bold mb-1 text-sm">Материально-ответственное лицо (МОЛ)</label>
-                <input type="text" id="newObjMol" class="w-full border border-gray-300 p-2 rounded outline-none" placeholder="Иванов И. И.">
-                <p class="text-xs text-gray-500 mt-1">Оставьте пустым, если это просто папка-подразделение.</p>
-            </div>
-            <button id="btnSaveObject" class="w-full bg-blue-700 text-white p-2 rounded font-bold hover:bg-blue-800">Создать</button>
-        </div>
-    </div>
-</div>
+<!-- ========================================== -->
+<!-- ЛОГИКА ЗАГРУЗКИ ПРИЛОЖЕНИЯ                 -->
+<!-- ========================================== -->
+<script>
+    async function initApp() {
+        try {
+            // 1. Асинхронно скачиваем файл с модалками и вставляем его в документ
+            const resp = await fetch('arsenal_modals.html');
+            const html = await resp.text();
+            document.getElementById('modals-container').innerHTML = html;
 
-<!-- МОДАЛКА: Номенклатура -->
-<div id="nomenclatureModal" class="modal">
-    <div class="modal-content" style="width: 800px;">
-        <div class="modal-header">
-            <span><i class="fa-solid fa-list mr-2"></i>Справочник Номенклатуры</span>
-            <button onclick="document.getElementById('nomenclatureModal').style.display='none'" class="text-white hover:text-gray-300 text-xl">&times;</button>
-        </div>
-        <div class="modal-body grid grid-cols-3 gap-4 h-[500px]">
-            <div class="col-span-1 border-r pr-4 bg-gray-50 p-2 rounded">
-                <h4 class="font-bold text-gray-700 mb-3 border-b pb-1">Новое изделие</h4>
-                <div class="mb-2">
-                    <label class="text-xs font-bold text-gray-600">Наименование</label>
-                    <input type="text" id="newNomName" class="w-full border p-1 rounded text-sm" placeholder="АК-74">
-                </div>
-                <div class="mb-2">
-                    <label class="text-xs font-bold text-gray-600">Индекс ГРАУ / Код</label>
-                    <input type="text" id="newNomCode" class="w-full border p-1 rounded text-sm" placeholder="6П20">
-                </div>
-                <div class="mb-2">
-                    <label class="text-xs font-bold text-gray-600">Счет учета</label>
-                    <input type="text" id="newNomAccount" class="w-full border p-1 rounded text-sm" placeholder="101.38.1">
-                </div>
-                <!-- ЧЕКБОКС НОМЕРНОГО УЧЕТА -->
-                <div class="mb-4 flex items-center bg-white p-2 border rounded mt-4">
-                    <input type="checkbox" id="newNomIsNumbered" class="mr-2 h-4 w-4" checked>
-                    <label for="newNomIsNumbered" class="text-xs font-bold text-gray-700 cursor-pointer select-none">
-                        Номерной учет (ОС)<br><span class="text-gray-400 font-normal">Снять галочку для патронов и МЗ</span>
-                    </label>
-                </div>
-                <button id="btnSaveNom" class="w-full bg-green-600 text-white py-1 rounded text-sm font-bold hover:bg-green-700 mt-2">Добавить</button>
-            </div>
-            <div class="col-span-2 overflow-auto">
-                <table class="w-full text-sm">
-                    <thead class="bg-gray-200 sticky top-0">
-                        <tr>
-                            <th class="p-2 text-left">Индекс</th>
-                            <th class="p-2 text-left">Наименование</th>
-                            <th class="p-2 text-left">Счет</th>
-                        </tr>
-                    </thead>
-                    <tbody id="nomenclatureListBody"></tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-</div>
+            // 2. Только ПОСЛЕ того как HTML появился, загружаем JS файлы
+            const scripts = [
+                'js/arsenal-core.js',
+                'js/arsenal-data.js',
+                'js/arsenal-docs-list.js', // <-- НОВЫЙ ФАЙЛ 1
+                'js/arsenal-docs-form.js', // <-- НОВЫЙ ФАЙЛ 2
+                'js/arsenal-app.js'
+            ];
 
-<!-- МОДАЛКА: Остатки -->
-<div id="balanceModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header bg-green-800">
-            <span><i class="fa-solid fa-box-archive mr-2"></i><span id="balanceModalTitle">Остатки на складе</span></span>
-            <button onclick="document.getElementById('balanceModal').style.display='none'" class="text-white hover:text-gray-300 text-xl">&times;</button>
-        </div>
-        <div class="modal-body">
-            <!-- Строка с общей суммой -->
-            <div class="mb-3 text-right text-sm font-bold text-gray-700">
-                Итого сумма по складу: <span id="balanceTotalSum" class="text-green-700 text-lg">0.00 ₽</span>
-            </div>
-            <div class="border rounded overflow-auto h-[500px]">
-                <table class="w-full text-sm">
-                    <thead class="bg-gray-100 sticky top-0">
-                        <tr>
-                            <th class="p-2 text-left border-b">Наименование</th>
-                            <th class="p-2 text-left border-b">Счет</th>
-                            <th class="p-2 text-left border-b">Серия / Партия</th>
-                            <th class="p-2 text-left border-b">Инв. №</th>
-                            <th class="p-2 text-right border-b">Цена</th>
-                            <th class="p-2 text-center border-b">Кол-во</th>
-                            <th class="p-2 text-right border-b">Сумма</th>
-                        </tr>
-                    </thead>
-                    <tbody id="balanceTableBody"></tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-</div>
+            for (const src of scripts) {
+                await new Promise((resolve, reject) => {
+                    const s = document.createElement('script');
+                    s.src = src;
+                    s.onload = resolve;
+                    s.onerror = reject;
+                    document.body.appendChild(s);
+                });
+            }
 
-<!-- МОДАЛКА: Просмотр документа -->
-<div id="viewDocModal" class="modal">
-    <div class="modal-content">
-        <div class="modal-header bg-gray-800">
-            <span><i class="fa-solid fa-file-lines mr-2"></i>Накладная</span>
-            <button onclick="document.getElementById('viewDocModal').style.display='none'" class="text-white hover:text-gray-300 text-xl">&times;</button>
-        </div>
-        <div class="modal-body">
-            <div class="flex justify-between mb-4 border-b pb-2">
-                <div>
-                    <div class="text-xs text-gray-500">Номер документа</div>
-                    <div class="font-bold text-xl" id="viewDocNumber">---</div>
-                </div>
-                <div class="text-right">
-                    <div class="text-xs text-gray-500">Дата</div>
-                    <div class="font-bold" id="viewDocDate">---</div>
-                </div>
-            </div>
-            <div class="grid grid-cols-2 gap-4 mb-4 text-sm">
-                <div><span class="text-gray-500">Тип:</span> <span id="viewDocType" class="font-bold"></span></div>
-                <div></div>
-                <div><span class="text-gray-500">Отправитель:</span> <span id="viewDocSource"></span></div>
-                <div><span class="text-gray-500">Получатель:</span> <span id="viewDocTarget"></span></div>
-            </div>
-            <h4 class="font-bold text-sm mb-2 mt-4 bg-gray-100 p-1">Спецификация</h4>
-            <div class="border rounded overflow-auto h-64">
-                <table class="w-full text-sm">
-                    <thead class="bg-gray-50">
-                        <tr>
-                            <th class="p-2 text-left border-b">Изделие</th>
-                            <th class="p-2 text-left border-b">Серия / Партия</th>
-                            <th class="p-2 text-center border-b">Кол-во</th>
-                        </tr>
-                    </thead>
-                    <tbody id="viewDocItems"></tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-</div>
+            // 3. Имитируем событие 'DOMContentLoaded', чтобы arsenal-app.js запустил bindAppEvents()
+            document.dispatchEvent(new Event('DOMContentLoaded'));
 
-<!-- МОДАЛКА: История движения (Без изменений) -->
-<div id="reportModal" class="modal">
-    <div class="modal-content" style="height: 80vh; width: 800px;">
-        <div class="modal-header bg-purple-700">
-            <span><i class="fa-solid fa-clock-rotate-left mr-2"></i>История движения средства</span>
-            <button class="modal-close-btn text-white hover:text-gray-300 text-xl" onclick="document.getElementById('reportModal').style.display='none'">&times;</button>
-        </div>
-        <div class="modal-body flex flex-col h-full">
-            <div class="flex gap-2 mb-4 border-b pb-4">
-                <input type="text" id="reportSearchInput" placeholder="Введите номер (например: 12345) или название..." class="flex-1 border p-2 rounded">
-                <button id="btnReportSearch" class="bg-purple-600 text-white px-4 rounded hover:bg-purple-800">Найти</button>
-            </div>
-            <div id="reportSearchResults" class="mb-4 hidden">
-                <h4 class="text-xs font-bold text-gray-500 uppercase mb-2">Найденные изделия:</h4>
-                <div id="reportSearchList" class="flex flex-wrap gap-2"></div>
-            </div>
-            <div id="reportCurrentStatus" class="bg-gray-100 p-3 rounded mb-4 text-center font-bold text-gray-700 hidden"></div>
-            <div class="flex-1 overflow-y-auto pr-2">
-                <div id="reportTimeline" class="relative border-l-2 border-gray-300 ml-4 space-y-6">
-                    <div class="text-gray-400 text-center mt-10">Выберите изделие для просмотра истории</div>
-                </div>
-            </div>
-        </div>
-    </div>
-</div>
+        } catch (error) {
+            console.error("Ошибка инициализации приложения:", error);
+            alert("Ошибка загрузки интерфейса. Проверьте консоль.");
+        }
+    }
 
-<!-- МОДАЛКА: Логины и пароли -->
-<div id="credentialsModal" class="modal" style="z-index: 2000;">
-    <div class="modal-content" style="width: 450px;">
-        <div class="modal-header bg-teal-700">
-            <span><i class="fa-solid fa-key mr-2"></i>Учетные данные</span>
-            <button onclick="closeModal('credentialsModal')" class="text-white hover:text-gray-300 text-xl">&times;</button>
-        </div>
-        <div class="modal-body text-center">
-            <i class="fa-solid fa-circle-check text-4xl text-green-500 mb-3"></i>
-            <h3 id="credModalTitle" class="text-lg font-bold text-gray-800 mb-2">Объект успешно создан!</h3>
-            <p class="text-sm text-gray-600 mb-4">Передайте эти данные сотруднику для входа.</p>
-            <div class="bg-gray-100 p-4 rounded border border-gray-300 text-left relative">
-                <div class="mb-2">
-                    <span class="text-xs font-bold text-gray-500 uppercase">Логин:</span>
-                    <div id="credUsername" class="font-mono text-lg font-bold text-gray-800"></div>
-                </div>
-                <div>
-                    <span class="text-xs font-bold text-gray-500 uppercase">Пароль:</span>
-                    <div id="credPassword" class="font-mono text-lg font-bold text-blue-700"></div>
-                </div>
-            </div>
-        </div>
-        <div class="modal-footer justify-center">
-            <button onclick="closeModal('credentialsModal')" class="bg-teal-700 text-white px-6 py-2 rounded font-bold hover:bg-teal-800">Понятно, закрыть</button>
-        </div>
-    </div>
-</div>
+    // Запускаем сборку интерфейса
+    initApp();
+</script>
 
-<!-- МОДАЛКА: Пользователи -->
-<div id="usersModal" class="modal">
-    <div class="modal-content" style="width: 800px;">
-        <div class="modal-header bg-teal-800">
-            <span><i class="fa-solid fa-users-gear mr-2"></i>Пользователи</span>
-            <button onclick="closeModal('usersModal')" class="text-white hover:text-gray-300 text-xl">&times;</button>
-        </div>
-        <div class="modal-body">
-            <div class="border rounded overflow-auto h-96">
-                <table class="w-full text-sm">
-                    <thead class="bg-gray-100 sticky top-0">
-                        <tr>
-                            <th class="p-2 text-left border-b w-12">ID</th>
-                            <th class="p-2 text-left border-b">Логин</th>
-                            <th class="p-2 text-left border-b">Роль</th>
-                            <th class="p-2 text-left border-b">Привязка к объекту</th>
-                            <th class="p-2 text-center border-b w-24">Действия</th>
-                        </tr>
-                    </thead>
-                    <tbody id="usersTableBody"></tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- 🔥 МОДАЛКА: Процесс загрузки (Ожидание) 🔥 -->
-<div id="loadingOverlay" class="modal" style="z-index: 9999;">
-    <div class="bg-white p-6 rounded-lg shadow-xl flex flex-col items-center">
-        <i class="fa-solid fa-spinner fa-spin text-4xl text-green-600 mb-4"></i>
-        <h3 class="text-lg font-bold text-gray-800" id="loadingText">Загрузка и обработка данных...</h3>
-        <p class="text-sm text-gray-500 mt-2">Пожалуйста, подождите. Это может занять несколько секунд.</p>
-    </div>
-</div>
-
-<script src="js/arsenal.js"></script>
 </body>
 </html>

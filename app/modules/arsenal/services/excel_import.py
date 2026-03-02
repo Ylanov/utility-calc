@@ -1,93 +1,78 @@
 import io
 import re
 import logging
-from typing import Dict, List
-from decimal import Decimal
+import secrets
+import string
+from typing import Dict
+from decimal import Decimal, ROUND_HALF_UP
 from openpyxl import load_workbook
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy.dialects.postgresql import insert
+from passlib.context import CryptContext
 
-from app.modules.arsenal.models import AccountingObject, Nomenclature, WeaponRegistry
+from app.modules.arsenal.models import AccountingObject, Nomenclature, WeaponRegistry, ArsenalUser
 
-# Настройка логгера
 logger = logging.getLogger(__name__)
-
 ZERO = Decimal("0.00")
+BATCH_SIZE = 1000
+
+pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
 
 def parse_price(value) -> Decimal:
-    """Очищает строку с ценой от пробелов и приводит к Decimal"""
+    """
+    Парсит сумму/цену из Excel, очищая от пробелов и лишних символов.
+    """
     if value is None:
         return ZERO
-    # Если уже число
     if isinstance(value, (int, float)):
-        return Decimal(f"{value:.2f}")
+        return Decimal(str(round(float(value), 2)))
     if isinstance(value, Decimal):
         return value
-
-    # Если строка - чистим мусор
-    clean_val = str(value).replace(' ', '').replace(',', '.').replace('\xa0', '').strip()
+    clean = str(value).replace(' ', '').replace(',', '.').replace('\xa0', '').strip()
     try:
-        return Decimal(clean_val)
+        return Decimal(clean)
     except:
         return ZERO
 
 
 async def import_arsenal_from_excel(file_content: bytes, db: AsyncSession) -> dict:
+    """
+    Импорт данных из Excel с оптимизацией памяти и исправленной логикой количества.
+    """
+    workbook = None
     try:
-        logger.info("🟢 Начинаю обработку Excel файла Арсенала...")
-
-        # Загружаем Excel
         workbook = load_workbook(filename=io.BytesIO(file_content), read_only=True, data_only=True)
         worksheet = workbook.active
 
-        added_count = 0
-        updated_count = 0
-        skipped_count = 0
-        errors: List[str] = []
-
-        # === КЭШИРОВАНИЕ ===
         objects_cache: Dict[str, AccountingObject] = {}
         nom_cache: Dict[str, Nomenclature] = {}
 
-        # Кэш складов
         obj_res = await db.execute(select(AccountingObject))
         for obj in obj_res.scalars().all():
             key = f"{obj.name.lower()}_{str(obj.mol_name).lower() if obj.mol_name else ''}"
             objects_cache[key] = obj
 
-        # Кэш номенклатуры
         nom_res = await db.execute(select(Nomenclature))
         for nom in nom_res.scalars().all():
             nom_cache[nom.name.lower()] = nom
 
-        # Читаем строки
+        batch = []
+        added_count = 0
+        skipped_count = 0
+        created_users_creds = []
+
         rows = worksheet.iter_rows(values_only=True)
 
         for row_index, row in enumerate(rows, start=1):
             try:
-                # 1. Проверка на валидность строки (должна начинаться с номера п/п)
                 if not row or row[0] is None:
                     continue
-
-                # Очищаем первую ячейку от точек и пробелов (чтобы "1." стало "1")
                 first_col = str(row[0]).strip().replace('.', '')
-
                 if not first_col.isdigit():
-                    if skipped_count < 5:
-                        logger.warning(f"⚠️ Пропуск строки {row_index}: Первая колонка '{row[0]}' не является числом.")
                     skipped_count += 1
                     continue
-
-                # 2. Чтение данных (СТРОГО ПО ИНДЕКСАМ ИЗ ВАШЕГО EXCEL)
-                # A[0] - №
-                # B[1] - Наименование
-                # C[2] - Счет
-                # D[3] - КБК (ПРОПУСКАЕМ)
-                # E[4] - Место хранения
-                # F[5] - Количество
-                # G[6] - Сумма
-                # H[7] - Инв. номер
 
                 raw_name = str(row[1]).strip() if len(row) > 1 and row[1] else ""
                 if not raw_name:
@@ -95,132 +80,171 @@ async def import_arsenal_from_excel(file_content: bytes, db: AsyncSession) -> di
                     continue
 
                 account = str(row[2]).strip() if len(row) > 2 and row[2] else None
-
-                # E (индекс 4) - Место хранения
+                kbk = str(row[3]).strip() if len(row) > 3 and row[3] else None
                 storage_raw = str(row[4]).strip() if len(row) > 4 and row[4] else "Главный склад"
 
-                # F (индекс 5) - Количество
-                qty_raw = row[5] if len(row) > 5 else 1
+                qty_val = row[5] if len(row) > 5 else 1
                 try:
-                    if isinstance(qty_raw, str):
-                        qty_raw = qty_raw.replace(' ', '').replace('\xa0', '')
-                    qty = int(float(qty_raw)) if qty_raw else 1
+                    qty = int(float(str(qty_val).replace(' ', '').replace('\xa0', '')))
+                    if qty < 1: qty = 1
                 except:
-                    # Если не удалось прочитать количество, ставим 1
                     qty = 1
 
-                # G (индекс 6) - Цена
-                price = parse_price(row[6] if len(row) > 6 else 0)
+                total_sum_val = row[6] if len(row) > 6 else 0
+                total_sum = parse_price(total_sum_val)
 
-                # H (индекс 7) - Инвентарный номер
+                if qty > 0 and total_sum > 0:
+                    unit_price = total_sum / Decimal(qty)
+                    unit_price = unit_price.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                else:
+                    unit_price = total_sum
+
                 inv_number = str(row[7]).strip() if len(row) > 7 and row[7] else None
 
-                # 3. Парсинг Склада и МОЛ
+                # --- 1. Обработка Склада и МОЛ (без изменений) ---
                 obj_name = storage_raw
                 mol_name = None
-
                 if " - " in storage_raw:
                     parts = storage_raw.rsplit(" - ", 1)
                     obj_name = parts[0].strip()
                     mol_name = parts[1].strip()
 
-                # Получаем или создаем склад
-                obj_cache_key = f"{obj_name.lower()}_{str(mol_name).lower() if mol_name else ''}"
-                target_object = objects_cache.get(obj_cache_key)
+                obj_key = f"{obj_name.lower()}_{str(mol_name).lower() if mol_name else ''}"
+                target_object = objects_cache.get(obj_key)
 
                 if not target_object:
                     target_object = AccountingObject(name=obj_name, obj_type="Склад", mol_name=mol_name)
                     db.add(target_object)
                     await db.flush()
-                    objects_cache[obj_cache_key] = target_object
+                    objects_cache[obj_key] = target_object
+                    # ... (создание пользователя) ...
+                    new_username = f"unit_{target_object.id}"
+                    alphabet = string.ascii_letters + string.digits
+                    plain_password = ''.join(secrets.choice(alphabet) for _ in range(8))
+                    new_user = ArsenalUser(
+                        username=new_username,
+                        hashed_password=pwd_context.hash(plain_password),
+                        role="unit_head",
+                        object_id=target_object.id
+                    )
+                    db.add(new_user)
+                    created_users_creds.append({
+                        "object": obj_name, "mol": mol_name or "-",
+                        "username": new_username, "password": plain_password
+                    })
 
-                # 4. Парсинг Номенклатуры
-                serial_number = "Б/Н"
+                # --- 2. 🔥 ИСПРАВЛЕННАЯ ЛОГИКА ОБРАБОТКИ НОМЕНКЛАТУРЫ ---
+                serial = "Б/Н"
                 nom_name = raw_name
 
                 match = re.search(r'\(([^)]+)\)$', raw_name)
                 if match:
-                    serial_number = match.group(1).strip()
+                    serial = match.group(1).strip()
                     nom_name = raw_name[:match.start()].strip()
 
-                is_numbered = True
-                if account and str(account).strip().startswith("105."):
-                    is_numbered = False
-                    if serial_number == "Б/Н":
-                        serial_number = "Партия 1"
+                nom_key = nom_name.lower()
+                nomenclature = nom_cache.get(nom_key)
 
-                nom_cache_key = nom_name.lower()
-                nomenclature = nom_cache.get(nom_cache_key)
+                is_numbered = True  # Значение по-умолчанию
 
-                if not nomenclature:
-                    nomenclature = Nomenclature(
-                        name=nom_name,
-                        default_account=account,
-                        is_numbered=is_numbered
-                    )
+                if nomenclature:
+                    # Если номенклатура уже есть в базе, доверяем ЕЙ
+                    is_numbered = nomenclature.is_numbered
+                else:
+                    # Если это новый товар, пытаемся угадать его тип
+                    batch_keywords = ["патрон", "граната", "мина", "снаряд", "зип", "масло", "смазка", "гвоздодер"]
+                    nom_name_lower = nom_name.lower()
+                    if (account and str(account).startswith("105")) or any(
+                            kw in nom_name_lower for kw in batch_keywords):
+                        is_numbered = False
+
+                    # Создаем новую номенклатуру с правильным флагом
+                    nomenclature = Nomenclature(name=nom_name, default_account=account, is_numbered=is_numbered)
                     db.add(nomenclature)
                     await db.flush()
-                    nom_cache[nom_cache_key] = nomenclature
+                    nom_cache[nom_key] = nomenclature
 
-                # 5. Обновляем остатки
-                stmt = select(WeaponRegistry).where(
-                    WeaponRegistry.nomenclature_id == nomenclature.id,
-                    WeaponRegistry.serial_number == serial_number,
-                    WeaponRegistry.current_object_id == target_object.id,
-                    WeaponRegistry.status == 1
-                )
-                existing_weapon = (await db.execute(stmt)).scalars().first()
-
-                if existing_weapon:
-                    if not is_numbered:
-                        existing_weapon.quantity += qty
-                        existing_weapon.price = (existing_weapon.price or ZERO) + price
+                # Определяем серийник, если он не был указан в скобках
+                if serial == "Б/Н":
+                    if is_numbered:
+                        serial = f"Инв.{inv_number}" if inv_number else f"Б/Н-{row_index}"
                     else:
-                        existing_weapon.price = price
-                        existing_weapon.inventory_number = inv_number
-                    updated_count += 1
-                else:
-                    new_weapon = WeaponRegistry(
-                        nomenclature_id=nomenclature.id,
-                        serial_number=serial_number,
-                        current_object_id=target_object.id,
-                        status=1,
-                        quantity=qty,
-                        inventory_number=inv_number,
-                        price=price,
-                        account_code=account
-                    )
-                    db.add(new_weapon)
-                    added_count += 1
+                        serial = "Партия 1"
 
-            except Exception as row_error:
+                # --- 3. 🔥 ИСПРАВЛЕННАЯ ЛОГИКА ФОРМИРОВАНИЯ КОЛИЧЕСТВА ---
+                final_quantity = 1 if is_numbered else qty
+
+                batch.append({
+                    "nomenclature_id": nomenclature.id,
+                    "serial_number": serial,
+                    "current_object_id": target_object.id,
+                    "status": 1,
+                    "quantity": final_quantity,  # <-- Используем правильное количество
+                    "inventory_number": inv_number,
+                    "price": unit_price,
+                    "account_code": account,
+                    "kbk": kbk
+                })
+                # ... (далее без изменений) ...
+                if len(batch) >= BATCH_SIZE:
+                    await upsert_batch(db, batch)
+                    added_count += len(batch)
+                    batch.clear()
+
+            except Exception as e:
+                logger.error(f"Error parsing row {row_index}: {e}")
                 skipped_count += 1
-                err_msg = f"Строка {row_index}: {str(row_error)}"
-                errors.append(err_msg)
-                logger.error(err_msg)
+
+        if batch:
+            await upsert_batch(db, batch)
+            added_count += len(batch)
 
         await db.commit()
-        workbook.close()
-
-        logger.info(f"🏁 Импорт завершен. +{added_count}, ~{updated_count}, -{skipped_count}")
 
         return {
-            "status": "success",
-            "message": "Импорт завершен",
-            "added": added_count,
-            "updated": updated_count,
-            "skipped": skipped_count,
-            "errors": errors
+            "status": "success", "added": added_count,
+            "skipped": skipped_count, "new_users": created_users_creds
         }
-
-    except Exception as error:
+    except Exception as e:
         await db.rollback()
-        logger.exception("Критическая ошибка импорта")
-        return {
-            "status": "error",
-            "message": f"Ошибка: {str(error)}",
-            "added": 0,
-            "updated": 0,
-            "skipped": 0,
-            "errors": [str(error)]
+        return {"status": "error", "message": str(e)}
+    finally:
+        if workbook:
+            workbook.close()
+
+
+async def upsert_batch(db: AsyncSession, rows: list):
+    """
+    Массовая вставка (Upsert). (без изменений)
+    """
+    if not rows:
+        return
+    aggregated = {}
+    for r in rows:
+        key = (r["nomenclature_id"], r["serial_number"], r["current_object_id"])
+        if key not in aggregated:
+            aggregated[key] = r.copy()
+        else:
+            aggregated[key]["quantity"] += r["quantity"]
+            if r["price"] and r["price"] > ZERO:
+                aggregated[key]["price"] = r["price"]
+            if r.get("inventory_number"):
+                aggregated[key]["inventory_number"] = r["inventory_number"]
+            if r.get("kbk"):
+                aggregated[key]["kbk"] = r["kbk"]
+            if r.get("account_code"):
+                aggregated[key]["account_code"] = r["account_code"]
+    final_rows = list(aggregated.values())
+    stmt = insert(WeaponRegistry).values(final_rows)
+    stmt = stmt.on_conflict_do_update(
+        constraint="uix_nom_serial_obj",
+        set_={
+            "quantity": stmt.excluded.quantity,
+            "price": stmt.excluded.price,
+            "inventory_number": stmt.excluded.inventory_number,
+            "kbk": stmt.excluded.kbk,
+            "account_code": stmt.excluded.account_code,
+            "status": 1
         }
+    )
+    await db.execute(stmt)

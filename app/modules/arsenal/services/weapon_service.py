@@ -21,7 +21,7 @@ class WeaponService:
         return f"{year}{suffix}"
 
     @staticmethod
-    async def process_document(db: AsyncSession, doc_data, items_data):
+    async def process_document(db: AsyncSession, doc_data, items_data, attached_file_path: str = None):
         """
         Главный метод проводки документа.
         Атомарно создает документ и обновляет положение имущества в Реестре.
@@ -43,7 +43,8 @@ class WeaponService:
             operation_type=doc_data.operation_type,
             source_id=doc_data.source_id,
             target_id=doc_data.target_id,
-            operation_date=doc_data.operation_date
+            operation_date=doc_data.operation_date,
+            attached_file_path=attached_file_path  # <-- ПОЛЕ ДЛЯ ПУТИ В S3 MINIO
         )
         db.add(new_doc)
         await db.flush()  # Получаем ID документа, чтобы привязывать строки

@@ -1,0 +1,394 @@
+<!-- МОДАЛКА: Новый документ -->
+<div id="newDocModal" class="modal">
+    <div class="modal-content w-[900px] max-w-[95%]">
+        <div class="px-6 py-4 border-b flex justify-between items-center bg-blue-800 text-white shrink-0">
+            <span class="font-bold tracking-wide flex items-center gap-2">
+                <i class="fa-solid fa-file-circle-plus opacity-80"></i> Создание документа
+            </span>
+            <button id="btnCloseModal" class="text-blue-200 hover:text-white text-2xl leading-none">&times;</button>
+        </div>
+        <div class="p-6 overflow-y-auto">
+            <form id="newDocForm" class="grid grid-cols-2 gap-5 text-sm">
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1.5">Номер документа</label>
+                    <input type="text" id="newDocNumber" class="w-full border border-slate-300 p-2.5 rounded-lg bg-slate-50 text-slate-500 font-mono cursor-not-allowed outline-none" placeholder="Генерируется автоматически" disabled>
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1.5">Дата операции</label>
+                    <input type="date" id="newDocDate" class="w-full border border-slate-300 p-2.5 rounded-lg focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none bg-white">
+                </div>
+                <div class="col-span-2">
+                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1.5">Тип операции</label>
+                    <select id="newDocType" class="w-full border border-slate-300 p-2.5 rounded-lg bg-white focus:border-blue-500 outline-none font-medium">
+                        <option value="Первичный ввод">Первичный ввод (От завода)</option>
+                        <option value="Перемещение">Перемещение (Внутреннее)</option>
+                        <option value="Прием">Прием (Из другого полка)</option>
+                        <option value="Отправка">Отправка (В другой полк/Ремонт)</option>
+                        <option value="Списание">Списание (Расход)</option>
+                    </select>
+                </div>
+                <div id="targetSelectContainer">
+                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1.5">Получатель / Объект</label>
+                    <select id="newDocTarget" class="w-full border border-slate-300 p-2.5 rounded-lg bg-white focus:border-blue-500 outline-none">
+                        <option value="">Загрузка...</option>
+                    </select>
+                </div>
+
+                <!-- 🔥 НОВОЕ: Поле для загрузки скана в MinIO -->
+                <div class="col-span-2 bg-slate-50 border border-slate-200 p-3 rounded-lg flex items-center justify-between mt-2">
+                    <div>
+                        <span class="block text-xs font-bold text-slate-500 uppercase mb-1">Основание (Скан / Файл)</span>
+                        <span class="text-[11px] text-slate-400">PDF, Word, Excel, JPG (опционально)</span>
+                    </div>
+                    <input type="file" id="newDocFile" class="text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 outline-none cursor-pointer">
+                </div>
+
+                <div class="col-span-2 border-t border-slate-200 pt-5 mt-2">
+                    <div class="flex justify-between items-center mb-3">
+                        <span class="font-bold text-slate-700 text-base">Спецификация</span>
+                        <button type="button" id="btnAddRow" class="text-xs bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 px-3 py-1.5 rounded-lg font-bold transition flex items-center">
+                            <i class="fa-solid fa-plus mr-1.5"></i> Добавить строку
+                        </button>
+                    </div>
+                    <div class="border border-slate-200 rounded-lg h-56 overflow-auto bg-slate-50">
+                        <table id="docItemsTable" class="w-full text-xs">
+                            <thead class="bg-slate-200 text-slate-600 sticky top-0 z-10">
+                                <tr>
+                                    <th class="p-2 w-1/3 text-left font-semibold">Изделие</th>
+                                    <th class="p-2 w-1/5 text-left font-semibold">№ / Партия</th>
+                                    <th class="p-2 w-1/6 text-left font-semibold doc-accounting-col" style="display:none;">Инв. №</th>
+                                    <th class="p-2 w-1/6 text-left font-semibold doc-accounting-col" style="display:none;">Цена (₽)</th>
+                                    <th class="p-2 w-16 text-center font-semibold">Кол-во</th>
+                                    <th class="p-2 w-10"></th>
+                                </tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-slate-100"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </form>
+        </div>
+        <div class="px-6 py-4 border-t border-slate-200 flex justify-end gap-3 bg-slate-50 shrink-0">
+            <button id="btnCancelModal" class="px-5 py-2 border border-slate-300 bg-white hover:bg-slate-100 rounded-lg text-sm font-medium transition">Отмена</button>
+            <button id="btnSaveDoc" class="px-5 py-2 bg-blue-700 text-white rounded-lg text-sm font-bold shadow hover:bg-blue-800 transition flex items-center gap-2">
+                <i class="fa-solid fa-check"></i> Провести документ
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- МОДАЛКА: Новый объект -->
+<div id="newObjectModal" class="modal">
+    <div class="modal-content w-[450px]">
+        <div class="px-5 py-4 border-b bg-blue-800 text-white flex justify-between items-center">
+            <span class="font-bold flex items-center gap-2"><i class="fa-solid fa-sitemap opacity-80"></i> Новый объект / Склад</span>
+            <button class="modal-close-btn text-blue-200 hover:text-white text-xl leading-none" onclick="document.getElementById('newObjectModal').style.display='none'">&times;</button>
+        </div>
+        <div class="p-6">
+            <div class="mb-4">
+                <label class="block text-xs font-bold text-slate-500 uppercase mb-1.5">Наименование объекта</label>
+                <input type="text" id="newObjName" class="w-full border border-slate-300 p-2.5 rounded-lg outline-none focus:border-blue-500" placeholder="Например: Склад РАВ №1">
+            </div>
+            <div class="mb-4">
+                <label class="block text-xs font-bold text-slate-500 uppercase mb-1.5">Тип</label>
+                <select id="newObjType" class="w-full border border-slate-300 p-2.5 rounded-lg bg-white focus:border-blue-500 outline-none">
+                    <option value="Подразделение">Подразделение (Группа / База)</option>
+                    <option value="Склад">Склад</option>
+                    <option value="Контрагент">Внешний контрагент</option>
+                </select>
+            </div>
+            <div class="mb-6">
+                <label class="block text-xs font-bold text-slate-500 uppercase mb-1.5">МОЛ (Опционально)</label>
+                <input type="text" id="newObjMol" class="w-full border border-slate-300 p-2.5 rounded-lg outline-none focus:border-blue-500" placeholder="ФИО ответственного">
+                <p class="text-[11px] text-slate-400 mt-1.5 leading-tight">Оставьте пустым, если это структурная папка без мат. ответственности.</p>
+            </div>
+            <button id="btnSaveObject" class="w-full bg-blue-700 text-white p-2.5 rounded-lg font-bold shadow hover:bg-blue-800 transition">Создать объект</button>
+        </div>
+    </div>
+</div>
+
+<!-- МОДАЛКА: Справочник Номенклатуры -->
+<div id="nomenclatureModal" class="modal">
+    <div class="modal-content w-[900px] max-w-[95%]">
+        <div class="px-5 py-4 border-b bg-emerald-800 text-white flex justify-between items-center shrink-0">
+            <span class="font-bold flex items-center gap-2"><i class="fa-solid fa-book opacity-80"></i> Каталог изделий (Справочник)</span>
+            <button class="modal-close-btn text-emerald-200 hover:text-white text-2xl leading-none" onclick="document.getElementById('nomenclatureModal').style.display='none'">&times;</button>
+        </div>
+        <div class="flex h-[600px]">
+            <!-- Левая панель: Форма -->
+            <div class="w-[350px] border-r border-slate-200 bg-slate-50 p-5 flex flex-col shrink-0 relative">
+                <input type="hidden" id="editNomId">
+                <h4 id="nomFormTitle" class="font-bold text-slate-700 mb-4 pb-2 border-b border-slate-200 text-sm flex items-center gap-2">
+                    <i class="fa-solid fa-plus text-emerald-600"></i> Добавить новое изделие
+                </h4>
+
+                <div class="mb-3">
+                    <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Наименование <span class="text-rose-500">*</span></label>
+                    <input type="text" id="newNomName" class="w-full border border-slate-300 p-2 rounded-lg text-sm focus:border-emerald-500 outline-none" placeholder="АК-74М">
+                </div>
+                <div class="mb-3">
+                    <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Индекс ГРАУ / Внутр. Код</label>
+                    <input type="text" id="newNomCode" class="w-full border border-slate-300 p-2 rounded-lg text-sm focus:border-emerald-500 outline-none font-mono placeholder-slate-300" placeholder="6П20">
+                </div>
+                <div class="mb-3">
+                    <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Счет учета по умолчанию</label>
+                    <input type="text" id="newNomAccount" class="w-full border border-slate-300 p-2 rounded-lg text-sm focus:border-emerald-500 outline-none font-mono placeholder-slate-300" placeholder="101.38.1">
+                </div>
+                <div class="mt-2 mb-4 bg-white p-3 border border-slate-200 rounded-lg shadow-sm">
+                    <label class="flex items-start cursor-pointer select-none">
+                        <input type="checkbox" id="newNomIsNumbered" class="mt-0.5 mr-3 h-4 w-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500" checked>
+                        <div class="text-sm">
+                            <span class="font-bold text-slate-700 block leading-tight">Номерной учет (ОС)</span>
+                            <span class="text-[11px] text-slate-400 mt-1 block leading-tight">Снять галочку для массовых изделий (патроны, ЗИП, масло)</span>
+                        </div>
+                    </label>
+                </div>
+
+                <!-- Кнопки управления -->
+                <div class="mt-auto flex flex-col gap-2">
+                    <!-- Режим создания -->
+                    <button id="btnSaveNom" class="w-full bg-emerald-600 text-white py-2.5 rounded-lg text-sm font-bold shadow hover:bg-emerald-700 transition">Добавить в каталог</button>
+
+                    <!-- Режим редактирования (скрыт по умолчанию) -->
+                    <div id="nomEditActions" class="hidden flex-col gap-2">
+                        <button id="btnUpdateNom" class="w-full bg-blue-600 text-white py-2 rounded-lg text-sm font-bold shadow hover:bg-blue-700 transition"><i class="fa-solid fa-save mr-1"></i> Сохранить изменения</button>
+                        <div class="flex gap-2">
+                            <button id="btnCancelEditNom" class="flex-1 bg-white border border-slate-300 text-slate-600 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-50 transition">Отменить</button>
+                            <button id="btnDeleteNom" class="flex-1 bg-rose-50 border border-rose-200 text-rose-600 py-1.5 rounded-lg text-xs font-bold hover:bg-rose-100 hover:text-rose-700 transition"><i class="fa-solid fa-trash mr-1"></i> Удалить</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Правая панель: Таблица -->
+            <div class="flex-1 overflow-auto bg-white relative flex flex-col">
+                <div class="p-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between sticky top-0 z-20">
+                    <div class="relative w-64">
+                        <i class="fa-solid fa-search absolute left-3 top-2 text-slate-400 text-xs"></i>
+                        <input type="text" id="nomSearchInput" placeholder="Поиск в каталоге..." class="w-full pl-8 pr-3 py-1.5 rounded-md border border-slate-300 text-xs outline-none focus:border-emerald-500">
+                    </div>
+                    <span class="text-xs text-slate-400">Нажмите на строку для ред.</span>
+                </div>
+                <table class="w-full text-sm relative">
+                    <thead class="bg-slate-100 text-slate-500 text-[10px] uppercase tracking-wider sticky top-[45px] z-10 shadow-sm">
+                        <tr>
+                            <th class="p-3 text-left w-20">Индекс</th>
+                            <th class="p-3 text-left">Наименование</th>
+                            <th class="p-3 text-center w-24">Тип учета</th>
+                            <th class="p-3 text-left w-24">Счет</th>
+                        </tr>
+                    </thead>
+                    <tbody id="nomenclatureListBody" class="divide-y divide-slate-100"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- МОДАЛКА: Остатки (Баланс) -->
+<div id="balanceModal" class="modal">
+    <div class="modal-content w-[1000px] max-w-[95%]">
+        <div class="px-6 py-4 border-b bg-slate-800 text-white flex justify-between items-center shrink-0">
+            <span class="font-bold flex items-center gap-2 text-lg">
+                <i class="fa-solid fa-box-archive text-emerald-400 mr-1"></i> <span id="balanceModalTitle">Остатки на складе</span>
+            </span>
+            <button class="modal-close-btn text-slate-400 hover:text-white text-2xl leading-none" onclick="document.getElementById('balanceModal').style.display='none'">&times;</button>
+        </div>
+        <!-- ВАЖНО: Убрана жесткая высота, добавлена гибкость -->
+        <div class="p-6 flex flex-col max-h-[65vh]">
+            <div class="flex justify-end items-center mb-4 bg-slate-50 p-3 rounded-lg border border-slate-200 shrink-0">
+                <div class="text-sm font-bold text-slate-500 uppercase mr-3">Итого сумма по складу:</div>
+                <div id="balanceTotalSum" class="text-2xl font-bold text-emerald-600 tracking-tight">0.00 ₽</div>
+            </div>
+            <div class="border border-slate-200 rounded-xl overflow-auto flex-1 shadow-sm">
+                <table class="w-full text-sm relative">
+                    <thead class="bg-slate-100 text-slate-600 text-xs uppercase tracking-wider sticky top-0 z-10">
+                        <tr>
+                            <th class="p-3 text-left border-b border-slate-200">Наименование</th>
+                            <th class="p-3 text-left border-b border-slate-200">Счет / КБК</th>
+                            <th class="p-3 text-left border-b border-slate-200">Серия / Партия</th>
+                            <th class="p-3 text-left border-b border-slate-200">Инв. №</th>
+                            <th class="p-3 text-right border-b border-slate-200">Цена</th>
+                            <th class="p-3 text-center border-b border-slate-200">Кол-во</th>
+                            <th class="p-3 text-right border-b border-slate-200">Сумма</th>
+                        </tr>
+                    </thead>
+                    <tbody id="balanceTableBody" class="divide-y divide-slate-100 text-slate-700"></tbody>
+                </table>
+            </div>
+        </div>
+        <!-- ВАЖНО: Жестко зафиксированный блок пагинации ВНИЗУ модального окна -->
+        <div id="balancePagination" class="px-6 py-3 border-t border-slate-200 bg-slate-50 flex justify-between items-center shrink-0"></div>
+    </div>
+</div>
+
+<!-- МОДАЛКА: Просмотр документа -->
+<div id="viewDocModal" class="modal">
+    <div class="modal-content w-[750px] max-w-[95%]">
+        <div class="px-6 py-4 border-b bg-slate-800 text-white flex justify-between items-center shrink-0">
+            <span class="font-bold flex items-center gap-2"><i class="fa-solid fa-file-lines opacity-80"></i> Карточка документа</span>
+            <button class="modal-close-btn text-slate-400 hover:text-white text-2xl leading-none" onclick="document.getElementById('viewDocModal').style.display='none'">&times;</button>
+        </div>
+        <div class="p-6">
+            <!-- Шапка документа -->
+            <div class="flex justify-between items-start mb-6 pb-6 border-b border-slate-200">
+                <div>
+                    <div class="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Номер документа</div>
+                    <div class="font-black text-2xl text-blue-900 font-mono tracking-tight" id="viewDocNumber">---</div>
+                </div>
+
+                <!-- 🔥 НОВОЕ: Контейнер для кнопки скачивания файла -->
+                <div class="text-right flex flex-col items-end gap-2">
+                    <div>
+                        <div class="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Дата операции</div>
+                        <div class="font-bold text-lg text-slate-700" id="viewDocDate">---</div>
+                    </div>
+                    <div id="viewDocFileContainer"></div>
+                </div>
+
+            </div>
+            <!-- Инфо-блок -->
+            <div class="grid grid-cols-2 gap-y-4 gap-x-8 mb-6 bg-slate-50 p-4 rounded-lg border border-slate-200 text-sm">
+                <div class="flex flex-col">
+                    <span class="text-xs font-bold text-slate-400 uppercase mb-1">Тип операции:</span>
+                    <span id="viewDocType" class="font-bold text-slate-800 text-base"></span>
+                </div>
+                <div></div>
+                <div class="flex flex-col">
+                    <span class="text-xs font-bold text-slate-400 uppercase mb-1">Отправитель:</span>
+                    <span id="viewDocSource" class="font-medium text-slate-700"></span>
+                </div>
+                <div class="flex flex-col">
+                    <span class="text-xs font-bold text-slate-400 uppercase mb-1">Получатель:</span>
+                    <span id="viewDocTarget" class="font-medium text-slate-700"></span>
+                </div>
+            </div>
+            <!-- Спецификация -->
+            <h4 class="font-bold text-slate-700 text-sm mb-3 flex items-center gap-2">
+                <i class="fa-solid fa-list-check text-slate-400"></i> Спецификация
+            </h4>
+            <div class="border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+                <table class="w-full text-sm">
+                    <thead class="bg-slate-100 text-slate-600 text-xs uppercase tracking-wider">
+                        <tr>
+                            <th class="p-3 text-left border-b border-slate-200">Изделие</th>
+                            <th class="p-3 text-left border-b border-slate-200">Серия / Партия</th>
+                            <th class="p-3 text-left border-b border-slate-200">Инв. № / Цена</th>
+                            <th class="p-3 text-center border-b border-slate-200 w-24">Кол-во</th>
+                        </tr>
+                    </thead>
+                    <tbody id="viewDocItems" class="divide-y divide-slate-100"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- МОДАЛКА: История движения (Отчеты) -->
+<div id="reportModal" class="modal">
+    <div class="modal-content w-[850px] h-[85vh]">
+        <div class="px-6 py-4 border-b bg-purple-800 text-white flex justify-between items-center shrink-0">
+            <span class="font-bold flex items-center gap-2"><i class="fa-solid fa-clock-rotate-left opacity-80"></i> История движения средства (Трассировка)</span>
+            <button class="modal-close-btn text-purple-200 hover:text-white text-2xl leading-none" onclick="document.getElementById('reportModal').style.display='none'">&times;</button>
+        </div>
+        <div class="p-6 flex flex-col h-full overflow-hidden">
+            <div class="flex gap-3 mb-5 shrink-0 relative">
+                <div class="relative flex-1">
+                    <i class="fa-solid fa-search absolute left-4 top-3.5 text-slate-400"></i>
+                    <input type="text" id="reportSearchInput" placeholder="Введите серийный номер (например: 12345) или название изделия..." class="w-full border border-slate-300 pl-11 pr-4 py-3 rounded-xl shadow-sm focus:ring-2 focus:ring-purple-500 focus:border-purple-500 outline-none transition text-sm">
+                </div>
+                <button id="btnReportSearch" class="bg-purple-700 text-white px-6 py-3 rounded-xl font-bold shadow-sm hover:bg-purple-800 transition">Найти</button>
+            </div>
+            <div id="reportSearchResults" class="mb-5 hidden shrink-0">
+                <h4 class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Найденные совпадения:</h4>
+                <div id="reportSearchList" class="flex flex-wrap gap-2 max-h-32 overflow-y-auto p-1"></div>
+            </div>
+            <div id="reportCurrentStatus" class="bg-purple-50 border border-purple-200 p-4 rounded-xl mb-6 text-center text-lg font-bold text-purple-900 shadow-inner hidden shrink-0"></div>
+            <div class="flex-1 overflow-y-auto pr-4 custom-scrollbar bg-slate-50/50 rounded-xl p-4 border border-slate-100">
+                <div id="reportTimeline" class="relative border-l-2 border-slate-300 ml-6 space-y-8 pt-2 pb-6">
+                    <div class="text-slate-400 text-center mt-12 flex flex-col items-center">
+                        <i class="fa-solid fa-timeline text-4xl mb-3 opacity-20"></i>
+                        Выберите изделие для просмотра его жизненного цикла
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- МОДАЛКА: Логины и пароли -->
+<div id="credentialsModal" class="modal" style="z-index: 2000;">
+    <div class="modal-content w-[480px]">
+        <div class="px-5 py-4 border-b bg-teal-800 text-white flex justify-between items-center">
+            <span class="font-bold flex items-center gap-2"><i class="fa-solid fa-key opacity-80"></i> Учетные данные доступа</span>
+            <button class="modal-close-btn text-teal-200 hover:text-white text-2xl leading-none" onclick="document.getElementById('credentialsModal').style.display='none'">&times;</button>
+        </div>
+        <div class="p-8 text-center bg-white relative">
+            <button id="btnCopyCreds" class="absolute top-4 right-4 bg-white border border-slate-300 text-slate-600 hover:bg-slate-50 hover:text-blue-600 px-3 py-1.5 rounded-lg text-xs font-bold shadow-sm transition flex items-center gap-2">
+                <i class="fa-regular fa-copy"></i> Скопировать
+            </button>
+            <div class="w-16 h-16 bg-emerald-100 text-emerald-500 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl">
+                <i class="fa-solid fa-check"></i>
+            </div>
+            <h3 id="credModalTitle" class="text-xl font-bold text-slate-800 mb-2">Успешно!</h3>
+            <p class="text-sm text-slate-500 mb-6 px-4">Передайте эти данные ответственному сотруднику для авторизации в системе.</p>
+            <div class="bg-slate-50 p-5 rounded-xl border border-slate-200 text-left relative">
+                <div class="mb-4">
+                    <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Логин (Имя пользователя)</span>
+                    <div id="credUsername" class="font-mono text-xl font-bold text-slate-800 bg-white border border-slate-200 px-3 py-1.5 rounded-lg"></div>
+                </div>
+                <div>
+                    <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest block mb-1">Сгенерированный пароль</span>
+                    <div id="credPassword" class="font-mono text-xl font-bold text-blue-700 bg-white border border-slate-200 px-3 py-1.5 rounded-lg"></div>
+                </div>
+            </div>
+        </div>
+        <div class="px-6 py-4 bg-slate-50 border-t border-slate-200 flex justify-center">
+            <button onclick="document.getElementById('credentialsModal').style.display='none'" class="bg-teal-700 text-white px-8 py-2.5 rounded-lg font-bold shadow hover:bg-teal-800 transition">Понятно, закрыть</button>
+        </div>
+    </div>
+</div>
+
+<!-- МОДАЛКА: Пользователи -->
+<div id="usersModal" class="modal">
+    <div class="modal-content w-[850px] max-w-[95%]">
+        <div class="px-6 py-4 border-b bg-teal-800 text-white flex justify-between items-center shrink-0">
+            <span class="font-bold flex items-center gap-2"><i class="fa-solid fa-users-gear opacity-80"></i> Управление пользователями</span>
+            <button class="modal-close-btn text-teal-200 hover:text-white text-2xl leading-none" onclick="document.getElementById('usersModal').style.display='none'">&times;</button>
+        </div>
+        <div class="p-6">
+            <div class="border border-slate-200 rounded-xl overflow-hidden shadow-sm h-[400px] flex flex-col">
+                <div class="overflow-auto flex-1">
+                    <table class="w-full text-sm">
+                        <thead class="bg-slate-100 text-slate-600 text-xs uppercase tracking-wider sticky top-0 z-10 shadow-sm">
+                            <tr>
+                                <th class="p-3 text-left border-b border-slate-200 w-16">ID</th>
+                                <th class="p-3 text-left border-b border-slate-200">Логин</th>
+                                <th class="p-3 text-left border-b border-slate-200">Роль в системе</th>
+                                <th class="p-3 text-left border-b border-slate-200">Привязка к объекту (Склад)</th>
+                                <th class="p-3 text-center border-b border-slate-200 w-28">Действия</th>
+                            </tr>
+                        </thead>
+                        <tbody id="usersTableBody" class="divide-y divide-slate-100"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- МОДАЛКА: Процесс загрузки (Ожидание) -->
+<div id="loadingOverlay" class="modal" style="z-index: 9999; backdrop-filter: blur(4px);">
+    <div class="bg-white p-8 rounded-2xl shadow-2xl flex flex-col items-center w-[350px] border border-slate-100">
+        <div class="relative w-16 h-16 mb-5">
+            <div class="absolute inset-0 border-4 border-slate-100 rounded-full"></div>
+            <div class="absolute inset-0 border-4 border-emerald-500 rounded-full border-t-transparent animate-spin"></div>
+            <i class="fa-solid fa-file-excel absolute inset-0 flex items-center justify-center text-emerald-500 text-xl"></i>
+        </div>
+        <h3 class="text-lg font-bold text-slate-800 text-center" id="loadingText">Обработка файла...</h3>
+        <p class="text-sm text-slate-500 mt-2 text-center">Анализ структуры и импорт данных.<br>Пожалуйста, не закрывайте окно.</p>
+    </div>
+</div>
+
+<!-- 🔥 КОНТЕЙНЕР ДЛЯ TOAST-УВЕДОМЛЕНИЙ -->
+<div id="toast-container" class="fixed bottom-6 right-6 z-[10000] flex flex-col gap-3 pointer-events-none"></div>
