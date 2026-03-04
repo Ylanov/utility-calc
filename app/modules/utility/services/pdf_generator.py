@@ -12,8 +12,19 @@ from weasyprint import HTML
 
 from app.modules.utility.models import User, MeterReading, Tariff, BillingPeriod, Adjustment
 
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
-TEMPLATE_DIR = BASE_DIR / "templates"
+# ОПРЕДЕЛЕНИЕ ПУТИ К ШАБЛОНАМ
+# Вариант 1: Абсолютный путь внутри Docker-контейнера
+DOCKER_TEMPLATE_DIR = Path("/app/templates")
+
+if DOCKER_TEMPLATE_DIR.exists():
+    TEMPLATE_DIR = DOCKER_TEMPLATE_DIR
+else:
+    # Вариант 2: Расчет относительно текущего файла (для локальной разработки без Docker)
+    # Структура: app/modules/utility/services/pdf_generator.py -> (5 уровней вверх) -> templates
+    CURRENT_FILE = Path(__file__).resolve()
+    PROJECT_ROOT = CURRENT_FILE.parents[4]
+    TEMPLATE_DIR = PROJECT_ROOT / "templates"
+
 DEFAULT_PDF_DIR = "/app/static/generated_files"
 
 os.makedirs(DEFAULT_PDF_DIR, exist_ok=True)
@@ -116,7 +127,12 @@ def generate_receipt_pdf(
         "kbk_utils": KBC_UTILS, "qr_rent": qr_rent, "qr_utils": qr_utils
     }
 
-    template = env.get_template("receipt.html")
+    try:
+        template = env.get_template("receipt.html")
+    except Exception as e:
+        # Для отладки в логах Celery
+        raise RuntimeError(f"Шаблон не найден в {TEMPLATE_DIR}. Ошибка: {e}")
+
     html = template.render(context)
     target_dir = output_dir or DEFAULT_PDF_DIR
     os.makedirs(target_dir, exist_ok=True)

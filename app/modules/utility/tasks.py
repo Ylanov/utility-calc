@@ -2,16 +2,24 @@ import os
 import zipfile
 import logging
 import tempfile
+import asyncio
 from datetime import datetime
 from celery import group, chain
 from sqlalchemy.orm import selectinload
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+from sqlalchemy.orm import sessionmaker
+from redis import asyncio as aioredis
+from fastapi_cache import FastAPICache
+from fastapi_cache.backends.redis import RedisBackend
 
 from app.worker import celery
 from app.core.database import SessionLocalSync
+from app.core.config import settings
 from app.modules.utility.models import MeterReading, Tariff, BillingPeriod, Adjustment
 from app.modules.utility.services.pdf_generator import generate_receipt_pdf
 from app.modules.utility.services.debt_import import sync_import_debts_process
 from app.modules.utility.services.s3_client import s3_service
+from app.modules.utility.services.billing import close_current_period
 
 logger = logging.getLogger(__name__)
 
@@ -103,11 +111,6 @@ def generate_receipt_task(reading_id: int) -> dict:
 def create_zip_archive_task(results) -> dict:
     """
     Сборка ZIP-архива из файлов в S3.
-    1. Создает временную папку.
-    2. Скачивает туда файлы из S3.
-    3. Архивирует.
-    4. Загружает архив в S3.
-    5. Чистит временную папку.
     """
     if isinstance(results, dict):
         results = [results]
@@ -125,7 +128,6 @@ def create_zip_archive_task(results) -> dict:
 
     try:
         # Используем контекстный менеджер TemporaryDirectory.
-        # Он автоматически удалит папку и всё содержимое при выходе из блока with.
         with tempfile.TemporaryDirectory() as tmpdirname:
             logger.info(f"[ZIP] Using temp dir: {tmpdirname}")
 
@@ -139,7 +141,6 @@ def create_zip_archive_task(results) -> dict:
                     local_file_path = os.path.join(tmpdirname, local_filename)
 
                     # Скачиваем файл из S3 во временную папку
-                    # Обращаемся к клиенту boto3 напрямую для скачивания
                     s3_service.s3.download_file(s3_service.bucket, key, local_file_path)
 
                     # Добавляем файл в архив
@@ -222,3 +223,72 @@ def import_debts_task(file_path: str, account_type: str) -> dict:
         except Exception as error:
             logger.warning(f"[IMPORT] File cleanup failed: {error}")
         db.close()
+
+
+async def run_async_close_period(admin_user_id: int):
+    """
+    Асинхронная обертка для логики закрытия периода.
+    Создает сессию БД, выполняет логику и очищает кэш.
+    Использует ИЗОЛИРОВАННЫЙ движок, чтобы избежать конфликта с Event Loop.
+    """
+    # 1. Инициализация кэша (т.к. worker это отдельный процесс)
+    try:
+        redis = aioredis.from_url(settings.REDIS_URL, encoding="utf8", decode_responses=True)
+        FastAPICache.init(RedisBackend(redis), prefix="fastapi-cache")
+    except Exception as e:
+        logger.warning(f"Could not init cache in worker: {e}")
+
+    # 2. Создаем ИЗОЛИРОВАННЫЙ асинхронный движок
+    # Отключаем prepared_statement_cache, так как работаем через PgBouncer
+    async_engine = create_async_engine(
+        settings.DATABASE_URL_ASYNC,
+        echo=False,
+        future=True,
+        pool_pre_ping=True,
+        connect_args={
+            "prepared_statement_cache_size": 0,
+            "statement_cache_size": 0,
+            "command_timeout": 60
+        }
+    )
+
+    # Создаем фабрику сессий, привязанную к этому движку
+    local_session_maker = sessionmaker(
+        bind=async_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autoflush=False
+    )
+
+    try:
+        async with local_session_maker() as db:
+            try:
+                # Вызываем бизнес-логику
+                result = await close_current_period(db=db, admin_user_id=admin_user_id)
+                await db.commit()
+
+                # Сбрасываем кэш периодов
+                await FastAPICache.clear(namespace="periods")
+
+                return result
+            except Exception as e:
+                await db.rollback()
+                raise e
+    finally:
+        # ВАЖНО: Закрываем движок, чтобы корректно завершить работу с asyncpg
+        await async_engine.dispose()
+
+
+@celery.task(name="close_period_task", queue="heavy")
+def close_period_task(admin_user_id: int):
+    """
+    Celery-задача, запускающая асинхронный код закрытия периода.
+    """
+    logger.info(f"Starting close_period_task for admin {admin_user_id}")
+    try:
+        # Запускаем event loop для асинхронной работы с БД
+        result = asyncio.run(run_async_close_period(admin_user_id))
+        return result
+    except Exception as e:
+        logger.exception("Error in close_period_task")
+        return {"status": "error", "message": str(e)}

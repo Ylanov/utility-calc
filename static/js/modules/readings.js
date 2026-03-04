@@ -262,17 +262,81 @@ export const ReadingsModule = {
         }
     },
 
+    // === ОБНОВЛЕННЫЙ МЕТОД ЗАКРЫТИЯ ПЕРИОДА С ПОЛЛИНГОМ ===
     async closePeriodAction() {
-        if (!confirm('Закрыть месяц? Будет произведен авто-расчет для должников.')) return;
-        setLoading(this.dom.btnClosePeriod, true);
+        if (!confirm('Закрыть месяц? Будет произведен авто-расчет для всех должников. Это может занять время.')) return;
+
+        const btn = this.dom.btnClosePeriod;
+        setLoading(btn, true, 'Запуск...');
+
         try {
+            // 1. Запускаем задачу на бэкенде (теперь возвращает task_id)
             const res = await api.post('/admin/periods/close', {});
-            toast(`Месяц закрыт. Авто-расчетов: ${res.auto_generated}`, 'success');
-            setTimeout(() => window.location.reload(), 1500);
+
+            // 2. Если получили ID задачи - начинаем опрос статуса
+            if (res.task_id) {
+                toast('Процесс закрытия запущен. Пожалуйста, подождите...', 'info');
+                await this.pollCloseTask(res.task_id, btn);
+            } else {
+                // Если вдруг вернулся старый формат ответа (для совместимости)
+                toast(`Месяц закрыт. Авто-расчетов: ${res.auto_generated || 0}`, 'success');
+                setTimeout(() => window.location.reload(), 1500);
+            }
+
         } catch (e) {
             toast(e.message, 'error');
-            setLoading(this.dom.btnClosePeriod, false);
+            setLoading(btn, false, '🔒 Закрыть месяц');
         }
+    },
+
+    // Функция опроса статуса задачи (Long Polling)
+    async pollCloseTask(taskId, btn) {
+        const maxAttempts = 60; // Ждем максимум 2 минуты (60 * 2сек)
+        let attempts = 0;
+
+        const check = async () => {
+            attempts++;
+            if (attempts > maxAttempts) {
+                setLoading(btn, false, '🔒 Закрыть месяц');
+                toast('Время ожидания истекло. Проверьте статус позже.', 'warning');
+                return;
+            }
+
+            try {
+                // Используем существующий эндпоинт проверки задач (как для PDF)
+                const statusData = await api.get(`/admin/tasks/${taskId}`);
+
+                if (statusData.state === 'PENDING' || statusData.state === 'STARTED' || statusData.status === 'processing') {
+                    // Обновляем текст кнопки, чтобы видно было, что процесс идет
+                    btn.innerText = `Обработка... ${attempts}с`;
+                    setTimeout(check, 2000); // Повторяем через 2 сек
+                }
+                else if (statusData.status === 'done' || statusData.state === 'SUCCESS') {
+                    // УСПЕХ!
+                    const result = statusData.result || {};
+
+                    // Проверка на ошибку внутри успешной задачи (если вернулся JSON с status: error)
+                    if (result.status === 'error') {
+                        throw new Error(result.message);
+                    }
+
+                    toast(`Месяц успешно закрыт! Авто-расчетов: ${result.auto_generated || 0}`, 'success');
+                    setLoading(btn, false, 'Готово');
+
+                    // Перезагружаем страницу для обновления интерфейса
+                    setTimeout(() => window.location.reload(), 1500);
+                }
+                else if (statusData.state === 'FAILURE') {
+                    throw new Error(statusData.error || 'Ошибка выполнения задачи');
+                }
+            } catch (e) {
+                setLoading(btn, false, '🔒 Закрыть месяц');
+                toast('Ошибка при закрытии: ' + e.message, 'error');
+            }
+        };
+
+        // Запускаем опрос
+        check();
     },
 
     async openPeriodAction() {

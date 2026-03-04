@@ -10,12 +10,13 @@ from app.core.database import get_db
 from app.modules.utility.models import User, BillingPeriod
 from app.modules.utility.schemas import PeriodCreate, PeriodResponse
 from app.core.dependencies import get_current_user
-from app.modules.utility.services.billing import close_current_period, open_new_period
+from app.modules.utility.services.billing import open_new_period
+from app.modules.utility.tasks import close_period_task
 
 router = APIRouter(tags=["Admin Periods"])
 
 
-@router.post("/api/admin/periods/close", summary="Закрыть текущий месяц")
+@router.post("/api/admin/periods/close", summary="Закрыть текущий месяц (Фоновая задача)")
 async def api_close_period(
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
@@ -23,21 +24,14 @@ async def api_close_period(
     if current_user.role != "accountant":
         raise HTTPException(status_code=403, detail="Доступ запрещен")
 
-    try:
-        result = await close_current_period(db=db, admin_user_id=current_user.id)
-        await db.commit()
+    # Вместо прямого вызова синхронной логики, запускаем задачу в Celery
+    task = close_period_task.delay(current_user.id)
 
-        # При закрытии периода меняется статус "активный", сбрасываем кэш
-        await FastAPICache.clear(namespace="periods")
-
-        return result
-    except ValueError as e:
-        await db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        await db.rollback()
-        print(f"!!! Critical Error in api_close_period: {e}")
-        raise HTTPException(status_code=500, detail=f"Внутренняя ошибка сервера: {e}")
+    return {
+        "status": "processing",
+        "task_id": task.id,
+        "message": "Процесс закрытия периода запущен в фоне."
+    }
 
 
 @router.post("/api/admin/periods/open", summary="Открыть новый месяц")
