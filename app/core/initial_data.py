@@ -7,6 +7,7 @@ from app.modules.utility.models import User, Tariff, BillingPeriod
 from app.modules.arsenal.models import ArsenalUser
 from app.core.auth import get_password_hash
 from app.core.config import settings
+from sqlalchemy import text
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -27,20 +28,31 @@ async def seed_data():
         try:
             # Администратор ЖКХ
             admin_result = await db.execute(select(User).where(User.username == "admin"))
-            if not admin_result.scalars().first():
+            admin = admin_result.scalars().first()
+
+            if not admin:
+                # Если нет - создаем
                 admin = User(
                     username="admin",
                     hashed_password=get_password_hash("admin"),
-                    role="accountant"
+                    role="accountant",
+                    is_deleted=False,  # Важно для новой логики
+                    is_initial_setup_done=False  # Чтобы проверить модалку
                 )
                 db.add(admin)
                 logger.info("Utility DB: 'admin' user created.")
+            else:
+                # Если есть - ПРИНУДИТЕЛЬНО СБРАСЫВАЕМ ПАРОЛЬ (для dev режима)
+                admin.hashed_password = get_password_hash("admin")
+                admin.is_deleted = False  # На случай если случайно удалили
+                logger.info("Utility DB: 'admin' password reset to default.")
 
-            # Тариф
+            # Тариф (Создаем базовый профиль)
             tariff_result = await db.execute(select(Tariff).where(Tariff.id == 1))
             if not tariff_result.scalars().first():
                 tariff = Tariff(
                     id=1,
+                    name="Базовый тариф",
                     is_active=True,
                     electricity_rate=Decimal("5.0"),
                     maintenance_repair=Decimal("0.0"),
@@ -53,7 +65,16 @@ async def seed_data():
                     electricity_per_sqm=Decimal("0.0")
                 )
                 db.add(tariff)
-                logger.info("Utility DB: Default tariff created.")
+
+                # ВАЖНО: Делаем промежуточный коммит, чтобы тариф с id=1 записался в БД
+                await db.commit()
+
+                # ИСПРАВЛЕНИЕ: Синхронизируем sequence в PostgreSQL.
+                # Так как мы жестко задали id=1, счетчик БД не сдвинулся, что вызывает ошибку UniqueViolation
+                # при создании следующих тарифов через админку. Эта команда сдвигает счетчик.
+                await db.execute(text("SELECT setval('tariffs_id_seq', (SELECT MAX(id) FROM tariffs))"))
+
+                logger.info("Utility DB: Default tariff profile created and sequence updated.")
 
             # Период
             period_result = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active.is_(True)))
@@ -65,7 +86,9 @@ async def seed_data():
                 db.add(period)
                 logger.info("Utility DB: Default billing period created.")
 
+            # Финальный коммит для пользователя и периода
             await db.commit()
+
         except Exception as e:
             logger.error(f"Utility DB seeding error: {e}")
             await db.rollback()

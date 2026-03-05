@@ -61,7 +61,7 @@ class Tariff(Base):
     __tablename__ = "tariffs"
 
     id = Column(Integer, primary_key=True)
-
+    name = Column(String, nullable=False, default="Базовый тариф")
     # Флаг активности тарифа (для версионности и истории)
     is_active = Column(Boolean, default=True, index=True)
 
@@ -87,7 +87,8 @@ class BillingPeriod(Base):
     __tablename__ = "periods"
 
     id = Column(Integer, primary_key=True, index=True)
-
+    tariff_id = Column(Integer, ForeignKey("tariffs.id"), nullable=True)
+    tariff = relationship("Tariff")
     name = Column(String, unique=True, nullable=False)
 
     # Индексируем, так как часто ищем именно активный период
@@ -201,3 +202,13 @@ class MeterReading(Base):
     # ==================================================
     anomaly_flags = Column(String, nullable=True)
     is_approved = Column(Boolean, default=False)
+
+# ======================================================
+# SYSTEM SETTINGS (Глобальные настройки)
+# ======================================================
+class SystemSetting(Base):
+    __tablename__ = "system_settings"
+
+    key = Column(String, primary_key=True, index=True)
+    value = Column(String, nullable=False)
+    description = Column(String, nullable=True)

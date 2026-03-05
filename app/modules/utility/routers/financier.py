@@ -25,7 +25,7 @@ async def upload_debts_1c(
     file: UploadFile = File(...),
     current_user: User = Depends(get_current_user)
 ):
-    if current_user.role not in ("financier", "accountant"):
+    if current_user.role not in ("financier", "accountant", "admin"):
         raise HTTPException(status_code=403, detail="Доступ запрещен")
 
     if not file.filename.lower().endswith((".xlsx", ".xls")):
@@ -72,7 +72,7 @@ async def get_users_with_debts(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    if current_user.role not in ("financier", "accountant"):
+    if current_user.role not in ("financier", "accountant", "admin"):
         raise HTTPException(status_code=403, detail="Доступ запрещен")
 
     offset = (page - 1) * limit

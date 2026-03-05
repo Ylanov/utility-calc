@@ -1,0 +1,72 @@
+<div id="debts" class="tab-content">
+    <div class="grid-2-col">
+        <!-- Колонка 1: Импорт -->
+        <div class="card" style="border-left:5px solid #8e44ad">
+            <div class="card-header" style="border-bottom: none; padding-bottom: 0; margin-bottom: 10px;">
+                <h3>📂 Импорт из 1С (Excel)</h3>
+            </div>
+            <p style="color:#666;font-size:14px;margin-bottom:15px">Загрузите файл "Оборотно-сальдовая ведомость" (.xlsx).<br>Система обновит сальдо для выбранного счета.</p>
+            <div class="upload-area">
+                <div class="account-selector">
+                    <span style="font-weight:bold">1. Выберите счет:</span>
+                    <label class="radio-label"><input type="radio" name="accountType" value="209" checked> <span style="color:#27ae60">209 (Коммуналка)</span></label>
+                    <label class="radio-label"><input type="radio" name="accountType" value="205"> <span style="color:#e67e22">205 (Найм)</span></label>
+                </div>
+                <div class="upload-row">
+                    <span style="font-weight:bold;min-width:120px">2. Файл:</span>
+                    <input type="file" id="debtFile1C" accept=".xlsx,.xls" style="flex:1;padding:5px;border:1px solid #ddd;border-radius:4px">
+                    <button id="btnUploadDebts" class="action-btn" style="background:#8e44ad">⬆ Загрузить</button>
+                </div>
+            </div>
+            <div id="uploadResult" class="upload-result-box"></div>
+        </div>
+
+        <!-- Колонка 2: Справка -->
+        <div class="card">
+            <div class="card-header">
+                <h3>ℹ️ Справка по импорту</h3>
+            </div>
+            <ul style="color:#555;font-size:13px;padding-left:20px; margin-top: 10px;">
+                <li style="margin-bottom: 5px;">Файл должен содержать ФИО, Дебет (Долг) и Кредит (Переплата).</li>
+                <li style="margin-bottom: 5px;">Импорт производится только для активного месяца.</li>
+                <li>Система автоматически найдет пользователей по ФИО (допускаются небольшие расхождения).</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- Таблица -->
+    <div class="card table-card mt-20">
+        <div class="card-header">
+            <h3>Список жильцов и долгов</h3>
+            <div style="display:flex;gap:10px;align-items:center">
+                <input type="text" id="debtsSearchInput" placeholder="Поиск по ФИО...">
+                <button id="btnRefreshDebts" class="icon-btn refresh" title="Обновить">↻</button>
+            </div>
+        </div>
+        <div class="table-responsive">
+            <table class="sticky-header-table">
+                <thead>
+                    <tr>
+                        <th style="width:50px">ID</th>
+                        <th>ФИО (Логин)</th>
+                        <th>Общ.</th>
+                        <th style="color:#c0392b;border-left:2px solid #e5e7eb">Долг 209</th>
+                        <th style="color:#27ae60">Перепл. 209</th>
+                        <th style="color:#d35400;border-left:2px solid #e5e7eb">Долг 205</th>
+                        <th style="color:#27ae60">Перепл. 205</th>
+                        <th>Итог тек.</th>
+                        <th style="text-align:right">Действия</th>
+                    </tr>
+                </thead>
+                <tbody id="debtsTableBody">
+                    <tr><td colspan="9" style="text-align:center;padding:20px;color:#888">Загрузка данных...</td></tr>
+                </tbody>
+            </table>
+        </div>
+        <div class="pagination-footer" style="padding: 15px; border-top: 1px solid #eee; display: flex; justify-content: center; align-items: center; gap: 15px;">
+            <button id="btnPrevDebts" class="page-btn" disabled>← Назад</button>
+            <span id="debtsPageInfo" style="font-weight: 500; color: #555;">Страница 1</span>
+            <button id="btnNextDebts" class="page-btn">Вперед →</button>
+        </div>
+    </div>
+</div>

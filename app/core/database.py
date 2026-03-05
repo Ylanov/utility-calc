@@ -1,12 +1,15 @@
+# app/core/database.py
+
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy import create_engine
+from sqlalchemy.pool import NullPool  # <-- ДОБАВЛЕНО: Критически важно для Celery
 from app.core.config import settings
 
 # Определение базовых классов моделей
 Base = declarative_base()          # ЖКХ
 ArsenalBase = declarative_base()   # Арсенал
-GsmBase = declarative_base()       # ГСМ (НОВОЕ)
+GsmBase = declarative_base()       # ГСМ
 
 # 🔥 КРИТИЧЕСКИ ВАЖНО ДЛЯ PGBOUNCER (Transaction Mode) + ASYNCPG
 # Мы обязаны отключить кэширование prepared statements в драйвере.
@@ -21,11 +24,12 @@ asyncpg_connect_args = {
 # 1. Конфигурация БД ЖКХ (Utility DB)
 # =========================================================================
 
+# Асинхронный движок (используется FastAPI веб-воркерами)
 engine = create_async_engine(
     settings.DATABASE_URL_ASYNC,
     echo=False,
     future=True,
-    pool_pre_ping=True,  # Проверка соединения перед выдачей (избавляет от "closed connection")
+    pool_pre_ping=True,  # Проверка соединения перед выдачей
     pool_size=settings.DB_POOL_SIZE,
     max_overflow=settings.DB_MAX_OVERFLOW,
     pool_timeout=settings.DB_POOL_TIMEOUT,
@@ -41,13 +45,14 @@ AsyncSessionLocal = sessionmaker(
     autoflush=False
 )
 
-# Синхронный движок (используется Celery воркерами для тяжелых фоновых задач)
+# 🔥 ИСПРАВЛЕНИЕ ДЛЯ CELERY: Синхронный движок
+# Используем NullPool! Celery форкает процессы, локальный пул ломает сокеты.
+# NullPool заставляет SQLAlchemy не держать соединения, а сразу отдавать их обратно в PgBouncer.
 engine_sync = create_engine(
     settings.DATABASE_URL_SYNC,
     echo=False,
     future=True,
-    pool_pre_ping=True,
-    pool_recycle=1800,
+    poolclass=NullPool,  # <-- ГЛАВНОЕ ИСПРАВЛЕНИЕ ЗДЕСЬ
     isolation_level="READ COMMITTED"
 )
 
@@ -117,8 +122,6 @@ async def close_arsenal_engine():
 # =========================================================================
 # 3. Конфигурация БД СТРОБ ГСМ (GSM DB)
 # =========================================================================
-# Мы используем ту же физическую базу данных, что и для Арсенала,
-# но создаем отдельный пул соединений для изоляции нагрузки.
 
 gsm_engine = create_async_engine(
     settings.ARSENAL_DATABASE_URL_ASYNC,

@@ -22,8 +22,8 @@ router = APIRouter(tags=["Client Readings"])
 
 @router.get("/api/readings/state", response_model=ReadingStateResponse)
 async def get_reading_state(
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db)
 ):
     """Получение текущего состояния для Dashboard жильца."""
     period_res = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))
@@ -77,21 +77,33 @@ async def get_reading_state(
 
 @router.post("/api/calculate")
 async def save_reading(
-    data: ReadingSchema,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+        data: ReadingSchema,
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db)
 ):
-    """Расчет и сохранение показаний (Черновик) с поддержкой раздельного учета."""
+    """
+    Расчет и сохранение показаний (Черновик) с поддержкой раздельного учета.
+    ОПТИМИЗИРОВАНО ДЛЯ ВЫСОКОЙ НАГРУЗКИ:
+    Расчеты вынесены ДО начала блокирующей транзакции.
+    """
+    # 1. Получение данных (Read-Only phase) - без блокировок
     res_period = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))
     active_period = res_period.scalars().first()
     if not active_period:
         raise HTTPException(status_code=400, detail="Расчетный период закрыт.")
 
-    t_res = await db.execute(select(Tariff).where(Tariff.is_active == True))
+    # Получаем индивидуальный тариф или базовый
+    user_tariff_id = getattr(current_user, 'tariff_id', None) or 1
+    t_res = await db.execute(select(Tariff).where(Tariff.id == user_tariff_id))
     t = t_res.scalars().first()
-    if not t:
-        raise HTTPException(status_code=500, detail="Активный тариф не найден")
 
+    if not t:
+        t_res_def = await db.execute(select(Tariff).where(Tariff.is_active == True))
+        t = t_res_def.scalars().first()
+        if not t:
+            raise HTTPException(status_code=500, detail="Активный тариф не найден")
+
+    # Получаем предыдущие показания
     prev_res = await db.execute(
         select(MeterReading)
         .where(MeterReading.user_id == current_user.id, MeterReading.is_approved == True)
@@ -99,6 +111,27 @@ async def save_reading(
     )
     prev = prev_res.scalars().first()
 
+    # Получаем корректировки (MOVED UP: вынесено из транзакции)
+    adj_stmt = (
+        select(Adjustment.account_type, func.sum(Adjustment.amount))
+        .where(Adjustment.user_id == current_user.id, Adjustment.period_id == active_period.id)
+        .group_by(Adjustment.account_type)
+    )
+    adj_res = await db.execute(adj_stmt)
+    # Преобразуем в словарь в памяти
+    adj_map = {row[0]: (row[1] or Decimal("0.00")) for row in adj_res.all()}
+    adj_209 = adj_map.get('209', Decimal("0.00"))
+    adj_205 = adj_map.get('205', Decimal("0.00"))
+
+    # Получаем историю для аномалий
+    history_res = await db.execute(
+        select(MeterReading)
+        .where(MeterReading.user_id == current_user.id, MeterReading.is_approved == True)
+        .order_by(MeterReading.created_at.desc()).limit(4)
+    )
+    history = history_res.scalars().all()
+
+    # 2. Вычисления (CPU Bound phase) - в памяти Python
     zero_vol = Decimal("0.000")
     p_hot = prev.hot_water if prev else zero_vol
     p_cold = prev.cold_water if prev else zero_vol
@@ -110,63 +143,76 @@ async def save_reading(
     d_hot = data.hot_water - p_hot
     d_cold = data.cold_water - p_cold
     d_elect_total = data.electricity - p_elect
+
     residents = Decimal(current_user.residents_count)
     total_residents = Decimal(current_user.total_room_residents if current_user.total_room_residents > 0 else 1)
     user_share_kwh = (residents / total_residents) * d_elect_total
     vol_sewage = d_hot + d_cold
 
+    # Основной математический расчет
     costs = calculate_utilities(
         user=current_user, tariff=t, volume_hot=d_hot, volume_cold=d_cold,
         volume_sewage=vol_sewage, volume_electricity_share=user_share_kwh
     )
+
     cost_rent_205 = costs['cost_social_rent']
     cost_utils_209 = costs['total_cost'] - cost_rent_205
 
-    history_res = await db.execute(select(MeterReading).where(MeterReading.user_id == current_user.id, MeterReading.is_approved == True).order_by(MeterReading.created_at.desc()).limit(4))
-    history = history_res.scalars().all()
+    # Проверка аномалий
     temp_reading = MeterReading(hot_water=data.hot_water, cold_water=data.cold_water, electricity=data.electricity)
     anomaly_flags = check_reading_for_anomalies(temp_reading, history, None)
 
-    draft_res = await db.execute(select(MeterReading).where(MeterReading.user_id == current_user.id, MeterReading.is_approved == False, MeterReading.period_id == active_period.id).with_for_update())
-    draft = draft_res.scalars().first()
-
-    adj_stmt = (select(Adjustment.account_type, func.sum(Adjustment.amount)).where(Adjustment.user_id == current_user.id, Adjustment.period_id == active_period.id).group_by(Adjustment.account_type))
-    adj_res = await db.execute(adj_stmt)
-    adj_map = {row[0]: (row[1] or Decimal("0.00")) for row in adj_res.all()}
-    adj_209 = adj_map.get('209', Decimal("0.00"))
-    adj_205 = adj_map.get('205', Decimal("0.00"))
-
-    d_209 = draft.debt_209 or Decimal("0.00") if draft else Decimal("0.00")
-    o_209 = draft.overpayment_209 or Decimal("0.00") if draft else Decimal("0.00")
-    d_205 = draft.debt_205 or Decimal("0.00") if draft else Decimal("0.00")
-    o_205 = draft.overpayment_205 or Decimal("0.00") if draft else Decimal("0.00")
-
-    total_209 = cost_utils_209 + d_209 - o_209 + adj_209
-    total_205 = cost_rent_205 + d_205 - o_205 + adj_205
-    grand_total = total_209 + total_205
-
-    if draft:
-        draft.hot_water, draft.cold_water, draft.electricity = data.hot_water, data.cold_water, data.electricity
-        for k, v in costs.items():
-            if hasattr(draft, k):
-                setattr(draft, k, v)
-        draft.total_209, draft.total_205, draft.total_cost = total_209, total_205, grand_total
-        draft.anomaly_flags = anomaly_flags
-    else:
-        # Удаляем дублирующийся ключ перед распаковкой
-        costs.pop('total_cost', None)
-        new_reading = MeterReading(
-            user_id=current_user.id, period_id=active_period.id,
-            hot_water=data.hot_water, cold_water=data.cold_water, electricity=data.electricity,
-            debt_209=Decimal("0.00"), overpayment_209=Decimal("0.00"),
-            debt_205=Decimal("0.00"), overpayment_205=Decimal("0.00"),
-            **costs,
-            total_209=total_209, total_205=total_205, total_cost=grand_total,
-            is_approved=False, anomaly_flags=anomaly_flags
+    # 3. Транзакция записи (IO/Lock Bound phase) - максимально короткая
+    async with db.begin():
+        # Блокируем строку только здесь
+        draft_res = await db.execute(
+            select(MeterReading)
+            .where(
+                MeterReading.user_id == current_user.id,
+                MeterReading.is_approved == False,
+                MeterReading.period_id == active_period.id
+            )
+            .with_for_update()
         )
-        db.add(new_reading)
+        draft = draft_res.scalars().first()
 
-    await db.commit()
+        # Получаем текущие долги из черновика (если он есть), либо нули
+        d_209 = draft.debt_209 or Decimal("0.00") if draft else Decimal("0.00")
+        o_209 = draft.overpayment_209 or Decimal("0.00") if draft else Decimal("0.00")
+        d_205 = draft.debt_205 or Decimal("0.00") if draft else Decimal("0.00")
+        o_205 = draft.overpayment_205 or Decimal("0.00") if draft else Decimal("0.00")
+
+        # Финальный расчет итогов
+        total_209 = cost_utils_209 + d_209 - o_209 + adj_209
+        total_205 = cost_rent_205 + d_205 - o_205 + adj_205
+        grand_total = total_209 + total_205
+
+        if draft:
+            # Обновление существующего черновика
+            draft.hot_water, draft.cold_water, draft.electricity = data.hot_water, data.cold_water, data.electricity
+            for k, v in costs.items():
+                if hasattr(draft, k):
+                    setattr(draft, k, v)
+            draft.total_209, draft.total_205, draft.total_cost = total_209, total_205, grand_total
+            draft.anomaly_flags = anomaly_flags
+        else:
+            # Создание нового
+            # Удаляем дублирующийся ключ перед распаковкой, если он есть
+            costs_for_create = costs.copy()
+            costs_for_create.pop('total_cost', None)
+
+            new_reading = MeterReading(
+                user_id=current_user.id, period_id=active_period.id,
+                hot_water=data.hot_water, cold_water=data.cold_water, electricity=data.electricity,
+                debt_209=Decimal("0.00"), overpayment_209=Decimal("0.00"),
+                debt_205=Decimal("0.00"), overpayment_205=Decimal("0.00"),
+                **costs_for_create,
+                total_209=total_209, total_205=total_205, total_cost=grand_total,
+                is_approved=False, anomaly_flags=anomaly_flags
+            )
+            db.add(new_reading)
+
+    # Транзакция закоммичена автоматически при выходе из async with db.begin()
 
     return {"status": "success", "total_cost": grand_total, "total_209": total_209, "total_205": total_205}
 
@@ -194,9 +240,9 @@ async def get_client_history(current_user: User = Depends(get_current_user), db:
 
 @router.get("/api/client/receipts/{reading_id}")
 async def download_client_receipt(
-    reading_id: int,
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+        reading_id: int,
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db)
 ):
     """
     Генерация и скачивание квитанции.
@@ -218,10 +264,17 @@ async def download_client_receipt(
     if not reading.is_approved:
         raise HTTPException(400, "Квитанция еще не сформирована")
 
-    tariff_res = await db.execute(select(Tariff).where(Tariff.is_active == True))
+    # Получаем индивидуальный тариф пользователя
+    user_tariff_id = getattr(reading.user, 'tariff_id', None) or 1
+    tariff_res = await db.execute(select(Tariff).where(Tariff.id == user_tariff_id))
     tariff = tariff_res.scalars().first()
+
+    # Резервный поиск базового тарифа, если привязанный не найден
     if not tariff:
-        raise HTTPException(500, "Активный тариф не найден")
+        tariff_res_def = await db.execute(select(Tariff).where(Tariff.is_active == True))
+        tariff = tariff_res_def.scalars().first()
+        if not tariff:
+            raise HTTPException(500, "Активный тариф не найден")
 
     prev_stmt = (
         select(MeterReading)
@@ -235,7 +288,8 @@ async def download_client_receipt(
     prev_res = await db.execute(prev_stmt)
     prev = prev_res.scalars().first()
 
-    adj_stmt = select(Adjustment).where(Adjustment.user_id == reading.user_id, Adjustment.period_id == reading.period_id)
+    adj_stmt = select(Adjustment).where(Adjustment.user_id == reading.user_id,
+                                        Adjustment.period_id == reading.period_id)
     adj_res = await db.execute(adj_stmt)
     adjustments = adj_res.scalars().all()
 

@@ -1,4 +1,4 @@
-# app/services/billing.py
+# app/modules/utility/services/billing.py
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import update, insert, func
@@ -12,11 +12,13 @@ from app.modules.utility.services.calculations import calculate_utilities, D
 
 logger = logging.getLogger("billing_service")
 
+
 async def close_current_period(db: AsyncSession, admin_user_id: int):
     """
     Закрывает текущий расчетный период.
     Оптимизирован для работы с большим количеством пользователей (Bulk Operations).
     V2: Вместо загрузки всей истории, получаем только последние 4 записи для каждого пользователя.
+    V3: Внедрены профили тарификации (поддержка индивидуальных тарифов).
     """
 
     # 1. Получаем и блокируем активный период
@@ -30,13 +32,18 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
     if not active_period:
         raise ValueError("Нет активного периода для закрытия.")
 
-    # 2. Получаем активный тариф
-    tariff_result = await db.execute(
+    # 2. Получаем ВСЕ активные тарифы (Профили тарификации)
+    tariffs_result = await db.execute(
         select(Tariff).where(Tariff.is_active == True)
     )
-    tariff = tariff_result.scalars().first()
-    if not tariff:
-        raise ValueError("Активный тариф не найден.")
+    active_tariffs = tariffs_result.scalars().all()
+    if not active_tariffs:
+        raise ValueError("В системе нет активных тарифов.")
+
+    # Создаем мапу тарифов {id: tariff_object} для быстрого доступа
+    tariffs_map = {t.id: t for t in active_tariffs}
+    # Базовый тариф (обычно id=1), либо просто первый попавшийся активный
+    default_tariff = tariffs_map.get(1) or active_tariffs[0]
 
     # 3. Получаем ID тех, кто УЖЕ сдал показания в этом месяце
     submitted_readings_res = await db.execute(
@@ -103,7 +110,7 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
         reading_obj = MeterReading(**{c.name: getattr(row, c.name) for c in MeterReading.__table__.columns})
         history_map[row.user_id].append(reading_obj)
 
-    # --- Дальнейший код почти не меняется, но теперь он работает с маленьким объемом данных ---
+    # --- Подготовка переменных ---
 
     zero = Decimal("0.000")
     zero_money = Decimal("0.00")
@@ -112,8 +119,13 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
 
     # 6. Главный цикл расчета (теперь быстрый, т.к. history_map маленький)
     for user in users_to_process:
+        # Получаем индивидуальный тариф жильца (Профили тарификации)
+        user_tariff = tariffs_map.get(user.tariff_id) if getattr(user, 'tariff_id', None) else default_tariff
+        if not user_tariff:
+            user_tariff = default_tariff
+
         history = history_map.get(user.id, [])
-        # Сортируем на всякий случай, если БД вернула не в том порядке
+        # Сортируем на всякий случай, если БД вернула не в том порядке (0 - самая новая)
         history.sort(key=lambda r: r.created_at, reverse=True)
 
         # --- Логика авто-расчета по среднему ---
@@ -157,21 +169,33 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
         total_residents = D(user.total_room_residents if user.total_room_residents > 0 else 1)
         share_kwh = (residents / total_residents) * delta_elect
 
+        # Передаем ИНДИВИДУАЛЬНЫЙ ТАРИФ (user_tariff)
         costs = calculate_utilities(
-            user=user, tariff=tariff, volume_hot=vol_hot, volume_cold=vol_cold,
-            volume_sewage=vol_hot + vol_cold, volume_electricity_share=max(zero, share_kwh)
+            user=user,
+            tariff=user_tariff,
+            volume_hot=vol_hot,
+            volume_cold=vol_cold,
+            volume_sewage=vol_hot + vol_cold,
+            volume_electricity_share=max(zero, share_kwh)
         )
 
         cost_rent_205 = costs['cost_social_rent']
         cost_utils_209 = costs['total_cost'] - cost_rent_205
 
         row = {
-            "user_id": user.id, "period_id": active_period.id,
-            "hot_water": new_hot, "cold_water": new_cold, "electricity": new_elect,
-            "debt_209": zero_money, "overpayment_209": zero_money,
-            "debt_205": zero_money, "overpayment_205": zero_money,
-            "total_209": cost_utils_209, "total_205": cost_rent_205,
-            "is_approved": True, "anomaly_flags": "AUTO_GENERATED",
+            "user_id": user.id,
+            "period_id": active_period.id,
+            "hot_water": new_hot,
+            "cold_water": new_cold,
+            "electricity": new_elect,
+            "debt_209": zero_money,
+            "overpayment_209": zero_money,
+            "debt_205": zero_money,
+            "overpayment_205": zero_money,
+            "total_209": cost_utils_209,
+            "total_205": cost_rent_205,
+            "is_approved": True,
+            "anomaly_flags": "AUTO_GENERATED",
             "created_at": datetime.utcnow(),
             **costs
         }

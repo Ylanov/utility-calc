@@ -1,6 +1,6 @@
 // static/js/login.js
 import { Auth } from './core/auth.js';
-import { toast, setLoading, showPrompt } from './core/dom.js'; // <-- ДОБАВЛЕН импорт showPrompt
+import { toast, setLoading, showPrompt } from './core/dom.js';
 
 document.addEventListener('DOMContentLoaded', () => {
     // Чистим старые данные при заходе на страницу логина
@@ -37,7 +37,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (response.status === 202) {
                     const tempData = await response.json();
 
-                    // ИСПРАВЛЕНИЕ: Вызываем наше красивое асинхронное модальное окно вместо системного prompt
+                    // Вызываем наше красивое асинхронное модальное окно вместо системного prompt
                     const code = await showPrompt(
                         "Двухфакторная защита",
                         "🔐 Введите 6-значный код из Яндекс.Ключа или Google Authenticator:",
@@ -76,12 +76,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 toast('Успешный вход!', 'success');
                 passwordInput.value = '';
 
-                // Редирект в зависимости от роли
+                // Редирект в зависимости от роли (ИСПРАВЛЕНО: финансист тоже идет в admin.html)
                 setTimeout(() => {
-                    if (data.role === 'admin' || data.role === 'accountant') {
+                    if (['admin', 'accountant', 'financier'].includes(data.role)) {
                         window.location.href = 'admin.html';
-                    } else if (data.role === 'financier') {
-                        window.location.href = 'financier.html';
                     } else {
                         window.location.href = 'index.html';
                     }

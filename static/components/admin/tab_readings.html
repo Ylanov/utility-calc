@@ -1,0 +1,105 @@
+<div id="readings" class="tab-content">
+
+    <!-- Управление периодом (Карточка статуса) -->
+    <div class="status-card">
+        <!-- Блок: Период открыт -->
+        <div id="periodActiveState" style="display:none;" class="period-state open">
+            <div class="state-icon">🟢</div>
+            <div class="state-info">
+                <h2>Прием показаний открыт</h2>
+                <p>Текущий период: <strong id="activePeriodLabel">...</strong>. Жильцы вносят данные.</p>
+            </div>
+            <button class="action-btn danger-btn">🔒 Закрыть месяц</button>
+        </div>
+
+        <!-- Блок: Период закрыт -->
+        <div id="periodClosedState" style="display:none;" class="period-state closed">
+            <div class="state-icon">🔴</div>
+            <div class="state-info">
+                <h2>Прием показаний закрыт</h2>
+                <p>Внесите изменения или начните новый отчетный период.</p>
+            </div>
+            <div class="new-period-form">
+                <input type="text" id="newPeriodNameInput" placeholder="Название (напр. Апрель 2025)">
+                <button class="action-btn success-btn">📂 Открыть новый</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Таблица показаний -->
+    <div class="card table-card">
+        <div class="card-header">
+            <h3>Поступившие данные</h3>
+            <div class="header-controls">
+                <div class="compact-upload">
+                    <input type="file" id="importReadingsFile" accept=".xlsx, .xls" class="custom-file-input" style="border:none;">
+                    <button id="btnImportReadings" class="action-btn secondary-btn" style="padding: 4px 10px; font-size: 12px;" title="Загрузить черновики">
+                        📥 Загрузить
+                    </button>
+                </div>
+                <button id="btnBulkApprove" class="action-btn warning-btn">⚡ Утвердить (Авто)</button>
+                <button id="btnRefreshReadings" class="icon-btn refresh" title="Обновить">↻</button>
+            </div>
+        </div>
+
+        <div class="toolbar">
+            <label class="checkbox-filter">
+                <input type="checkbox" id="filterAnomalies">
+                <span>Только подозрительные</span>
+            </label>
+            <div class="pagination">
+                <button id="btnPrev" class="page-btn">←</button>
+                <span id="pageIndicator">Стр. 1</span>
+                <button id="btnNext" class="page-btn">→</button>
+            </div>
+        </div>
+
+        <div class="table-responsive">
+            <table id="readingsTable">
+                <thead>
+                    <tr>
+                        <th>Жилец</th>
+                        <th>Статус</th>
+                        <th class="text-right">ГВС</th>
+                        <th class="text-right">ХВС</th>
+                        <th class="text-right">Свет</th>
+                        <th class="text-right">Сумма</th>
+                        <th class="text-center">Действие</th>
+                    </tr>
+                </thead>
+                <tbody id="readingsTableBody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Модалка: Проверка (Утверждение) -->
+    <div id="approveModal" class="modal-overlay">
+        <div class="modal-window">
+            <div class="modal-header">
+                <h3>Проверка показаний</h3>
+                <button id="btnModalClose" class="close-icon">&times;</button>
+            </div>
+            <input type="hidden" id="modal_reading_id">
+            <div class="info-box">
+                <strong>Жилец:</strong> <span id="m_username"></span>
+                <div class="readings-grid">
+                    <div>🔥 ГВС: <span id="m_hot_usage"></span></div>
+                    <div>💧 ХВС: <span id="m_cold_usage"></span></div>
+                    <div>⚡ Свет: <span id="m_elect_usage"></span></div>
+                </div>
+            </div>
+            <div class="modal-form">
+                <h4>Корректировка потребления (Разница)</h4>
+                <div class="form-grid-2">
+                    <div class="form-group"><label>ГВС</label><input type="number" step="0.001" id="m_corr_hot"></div>
+                    <div class="form-group"><label>ХВС</label><input type="number" step="0.001" id="m_corr_cold"></div>
+                    <div class="form-group"><label>Свет</label><input type="number" step="0.001" id="m_corr_elect"></div>
+                    <div class="form-group"><label>Водоотв.</label><input type="number" step="0.001" id="m_corr_sewage"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="btnModalSubmit" class="action-btn primary-btn">Подтвердить и пересчитать</button>
+            </div>
+        </div>
+    </div>
+</div>

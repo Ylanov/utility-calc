@@ -1,3 +1,4 @@
+# app/modules/utility/tasks.py
 import os
 import zipfile
 import logging
@@ -15,7 +16,7 @@ from fastapi_cache.backends.redis import RedisBackend
 from app.worker import celery
 from app.core.database import SessionLocalSync
 from app.core.config import settings
-from app.modules.utility.models import MeterReading, Tariff, BillingPeriod, Adjustment
+from app.modules.utility.models import MeterReading, Tariff, BillingPeriod, Adjustment, SystemSetting, User
 from app.modules.utility.services.pdf_generator import generate_receipt_pdf
 from app.modules.utility.services.debt_import import sync_import_debts_process
 from app.modules.utility.services.s3_client import s3_service
@@ -49,9 +50,22 @@ def generate_receipt_task(reading_id: int) -> dict:
             raise ValueError("Incomplete reading data")
 
         period = reading.period
-        tariff = db.query(Tariff).filter(Tariff.is_active == True).first()
+
+        # --- ИНТЕГРАЦИЯ ПРОФИЛЕЙ ТАРИФИКАЦИИ ---
+        # 1. Пытаемся получить индивидуальный тариф пользователя
+        user_tariff_id = getattr(reading.user, 'tariff_id', None)
+        tariff = None
+
+        if user_tariff_id:
+            tariff = db.query(Tariff).filter(Tariff.id == user_tariff_id).first()
+
+        # 2. Если у пользователя нет своего тарифа (или он был удален), берем дефолтный активный
         if not tariff:
-            raise ValueError("Active tariff not found")
+            tariff = db.query(Tariff).filter(Tariff.is_active == True).first()
+
+        if not tariff:
+            raise ValueError("В системе нет активных тарифов для генерации квитанции")
+        # ---------------------------------------
 
         prev_reading = (
             db.query(MeterReading)
@@ -292,3 +306,57 @@ def close_period_task(admin_user_id: int):
     except Exception as e:
         logger.exception("Error in close_period_task")
         return {"status": "error", "message": str(e)}
+
+
+@celery.task(name="check_auto_period_task")
+def check_auto_period_task():
+    """
+    Ежедневная задача (Beat): проверяет текущую дату и настройки.
+    Если сегодня день старта -> открывает новый период.
+    Если сегодня день конца + 1 -> закрывает период.
+    """
+    logger.info("[AUTO] Checking period automation...")
+    db = get_sync_db()  # Используем синхронную сессию для простой задачи
+    try:
+        # 1. Получаем настройки из БД
+        start_setting = db.query(SystemSetting).filter_by(key="submission_start_day").first()
+        end_setting = db.query(SystemSetting).filter_by(key="submission_end_day").first()
+
+        start_day = int(start_setting.value) if start_setting else 20
+        end_day = int(end_setting.value) if end_setting else 25
+
+        today = datetime.now()
+        current_day = today.day
+
+        # 2. Логика ОТКРЫТИЯ (в день старта)
+        if current_day == start_day:
+            active = db.query(BillingPeriod).filter_by(is_active=True).first()
+            if not active:
+                # Генерируем имя: "Май 2026"
+                month_names = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
+                period_name = f"{month_names[today.month]} {today.year}"
+
+                # Проверяем, не существует ли уже такой период
+                exists = db.query(BillingPeriod).filter_by(name=period_name).first()
+                if not exists:
+                    new_period = BillingPeriod(name=period_name, is_active=True)
+                    db.add(new_period)
+                    db.commit()
+                    logger.info(f"[AUTO] Opened new period: {period_name}")
+                    # Очищаем кэш через sync->async вызов, или просто ждем TTL
+
+        # 3. Логика ЗАКРЫТИЯ (на следующий день после конца приема)
+        elif current_day == end_day + 1:
+            active = db.query(BillingPeriod).filter_by(is_active=True).first()
+            if active:
+                # Находим активного админа для привязки действия (системного пользователя)
+                admin = db.query(User).filter_by(username="admin").first()
+                if admin:
+                    # Запускаем тяжелую задачу закрытия через очередь
+                    close_period_task.delay(admin.id)
+                    logger.info(f"[AUTO] Triggered closing task for period '{active.name}'")
+
+    except Exception:
+        logger.exception("[AUTO] Automation failed")
+    finally:
+        db.close()

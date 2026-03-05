@@ -43,6 +43,7 @@ class UserCreate(BaseModel):
     residents_count: int = 1
     total_room_residents: int = 1
     apartment_area: DecimalAmount = Decimal("0.00")
+    tariff_id: Optional[int] = None  # <--- Добавили
 
 
 class UserResponse(BaseModel):
@@ -54,7 +55,7 @@ class UserResponse(BaseModel):
     residents_count: int
     total_room_residents: int
     apartment_area: Optional[Decimal] = None
-
+    tariff_id: Optional[int] = None  # <--- Добавили
     # Флаг, включена ли 2FA у пользователя (для отображения в UI)
     is_2fa_enabled: bool = False
 
@@ -74,7 +75,7 @@ class UserUpdate(BaseModel):
     residents_count: Optional[int] = None
     total_room_residents: Optional[int] = None
     apartment_area: Optional[DecimalAmount] = None
-
+    tariff_id: Optional[int] = None # <--- Добавили
 
 # ======================================================
 # 2FA (TOTP) SCHEMAS
@@ -98,6 +99,8 @@ class TotpVerify(BaseModel):
 # ======================================================
 
 class TariffSchema(BaseModel):
+    id: Optional[int] = None
+    name: str
     maintenance_repair: DecimalTariff
     social_rent: DecimalTariff
     heating: DecimalTariff
@@ -221,3 +224,21 @@ class UserDebtResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+# ======================================================
+# ADMIN MANUAL ENTRY SCHEMAS
+# ======================================================
+class AdminManualReadingSchema(BaseModel):
+    user_id: int
+    hot_water: DecimalVolume
+    cold_water: DecimalVolume
+    electricity: DecimalVolume
+
+class OneTimeChargeSchema(BaseModel):
+    user_id: int
+    days_lived: int
+    total_days_in_month: int
+    hot_water: DecimalVolume
+    cold_water: DecimalVolume
+    electricity: DecimalVolume
+    is_moving_out: bool = False

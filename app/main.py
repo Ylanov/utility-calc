@@ -2,6 +2,7 @@ import logging
 import sentry_sdk
 import redis.asyncio as redis
 from contextlib import asynccontextmanager
+from typing import List
 
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
@@ -17,6 +18,7 @@ from app.core.config import settings
 from app.core.database import ArsenalSessionLocal, GsmSessionLocal
 from app.modules.arsenal.models import ArsenalUser
 from app.modules.gsm.models import GsmUser
+from app.modules.utility.routers import settings as settings_router
 
 # --- Импорт Роутеров ЖКХ ---
 from app.modules.utility.routers import (
@@ -32,8 +34,6 @@ from app.modules.arsenal.routers import (
     nomenclature as arsenal_nomenclature,
     documents as arsenal_documents,
     users as arsenal_users_router,
-    # Если reports.py тоже лежит в routers, то импорт отсюда:
-    # reports as arsenal_reports
 )
 
 # Если reports.py, routes.py и auth.py остались в корне arsenal, оставьте их отдельно:
@@ -64,6 +64,7 @@ if settings.SENTRY_DSN:
         environment=settings.ENVIRONMENT,
         traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
     )
+
 
 # =====================================================================
 # LIFESPAN (Замена устаревшему @app.on_event("startup"))
@@ -123,24 +124,42 @@ app = FastAPI(
     redoc_url=None
 )
 
-# CORS (Разрешаем запросы с фронтенда)
+# =====================================================================
+# НАСТРОЙКА БЕЗОПАСНОСТИ (CORS & Headers)
+# =====================================================================
+
+# Получаем список разрешенных доменов.
+# Если в config.py нет ALLOWED_ORIGINS, используем безопасный дефолт для локальной разработки.
+# В ПРОДАКШЕНЕ ОБЯЗАТЕЛЬНО ЗАДАЙТЕ ALLOWED_ORIGINS В .env!
+allowed_origins: List[str] = getattr(settings, "ALLOWED_ORIGINS", [])
+if not allowed_origins:
+    logger.warning("⚠️ ALLOWED_ORIGINS not set. Defaulting to localhost.")
+    allowed_origins = ["http://localhost", "http://localhost:8000", "http://127.0.0.1:8000"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # В продакшене лучше указать конкретные домены
+    allow_origins=allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With", "Accept"],
 )
 
-# Middleware безопасности (HSTS, XSS)
+
+# Middleware безопасности (HSTS, XSS, Clickjacking)
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
     response = await call_next(request)
+    # Защита от сниффинга MIME-типов
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-Frame-Options"] = "DENY"
+    # Защита от встраивания в iframe (Clickjacking) - разрешаем только с того же домена или запрещаем вовсе
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    # Базовая защита от XSS (для старых браузеров)
     response.headers["X-XSS-Protection"] = "1; mode=block"
+
+    # HSTS (Strict-Transport-Security) только для продакшена
     if settings.ENVIRONMENT == "production":
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
     return response
 
 
@@ -188,16 +207,16 @@ app.include_router(admin_user_ops.router)
 app.include_router(admin_adjustments.router)
 app.include_router(financier.router)
 app.include_router(telegram_app.router)
+app.include_router(settings_router.router)
 
 # --- АРСЕНАЛ (Weaponry) ---
-# Подключаем оптимизированные роутеры
-app.include_router(arsenal_auth.router)       # Авторизация
-app.include_router(arsenal_system.router, prefix="/api/arsenal")     # KPI, Импорт
-app.include_router(arsenal_objects.router, prefix="/api/arsenal")    # Объекты, Баланс
-app.include_router(arsenal_nomenclature.router, prefix="/api/arsenal") # Справочник
-app.include_router(arsenal_documents.router, prefix="/api/arsenal")    # Документы
-app.include_router(arsenal_users_router.router, prefix="/api/arsenal") # Пользователи
-app.include_router(arsenal_reports.router)    # Отчеты (Timeline)
+app.include_router(arsenal_auth.router)  # Авторизация
+app.include_router(arsenal_system.router, prefix="/api/arsenal")  # KPI, Импорт
+app.include_router(arsenal_objects.router, prefix="/api/arsenal")  # Объекты, Баланс
+app.include_router(arsenal_nomenclature.router, prefix="/api/arsenal")  # Справочник
+app.include_router(arsenal_documents.router, prefix="/api/arsenal")  # Документы
+app.include_router(arsenal_users_router.router, prefix="/api/arsenal")  # Пользователи
+app.include_router(arsenal_reports.router)  # Отчеты (Timeline)
 
 app.include_router(arsenal_reports.router, prefix="/api/arsenal")
 

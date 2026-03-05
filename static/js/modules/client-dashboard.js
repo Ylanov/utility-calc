@@ -14,6 +14,7 @@ export const ClientDashboard = {
         this.setupTabs();
         this.bindEvents();
         this.loadAllData();
+        this.checkSchedule(); // <--- Вызываем новую функцию для баннера
     },
 
     cacheDOM() {
@@ -187,6 +188,52 @@ export const ClientDashboard = {
             console.warn('State load error', e);
         }
     },
+
+    // --- ДОБАВЛЕНА НОВАЯ ФУНКЦИЯ ---
+    async checkSchedule() {
+        try {
+            // Запрашиваем настройки дат (этот эндпоинт открыт для всех)
+            const settings = await api.get('/settings/submission-period');
+            const now = new Date();
+            const day = now.getDate();
+
+            const alertBox = document.getElementById('submissionAlert');
+            const title = document.getElementById('subAlertTitle');
+            const text = document.getElementById('subAlertText');
+
+            if (!alertBox || !title || !text) return;
+
+            alertBox.style.display = 'flex';
+
+            if (day >= settings.start_day && day <= settings.end_day) {
+                // Период активен
+                alertBox.style.background = '#ecfdf5'; // Зеленый фон
+                alertBox.style.border = '1px solid #a7f3d0';
+                title.textContent = 'Прием показаний открыт!';
+                title.style.color = '#065f46';
+                const daysLeft = settings.end_day - day;
+                text.textContent = `Пожалуйста, внесите данные до ${settings.end_day}-го числа. Осталось дней: ${daysLeft}.`;
+            } else if (day < settings.start_day) {
+                // Рано
+                alertBox.style.background = '#eff6ff'; // Синий фон
+                alertBox.style.border = '1px solid #bfdbfe';
+                title.textContent = 'Прием показаний скоро начнется';
+                title.style.color = '#1e40af';
+                const daysWait = settings.start_day - day;
+                text.textContent = `Ввод данных будет доступен с ${settings.start_day}-го числа (через ${daysWait} дн).`;
+            } else {
+                // Опоздал
+                alertBox.style.background = '#fef2f2'; // Красный фон
+                alertBox.style.border = '1px solid #fecaca';
+                title.textContent = 'Прием показаний завершен';
+                title.style.color = '#991b1b';
+                text.textContent = `В этом месяце прием закрыт. Следующий период начнется ${settings.start_day}-го числа.`;
+            }
+        } catch (e) {
+            console.warn('Failed to load schedule info', e);
+        }
+    },
+    // --- КОНЕЦ НОВОЙ ФУНКЦИИ ---
 
     renderStatus(data) {
         this.dom.statusArea.innerHTML = '';

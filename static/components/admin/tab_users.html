@@ -1,0 +1,249 @@
+<div id="users" class="tab-content">
+    <div class="grid-2-col">
+        <!-- Колонка 1: Добавление жильца -->
+        <div class="card">
+            <div class="card-header">
+                <h3>➕ Новый жилец</h3>
+            </div>
+            <form id="addUserForm" class="styled-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Логин</label>
+                        <input type="text" id="newUsername" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Пароль</label>
+                        <input type="password" id="newPassword" required>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Роль</label>
+                        <select id="newRole">
+                            <option value="user">Жилец</option>
+                            <option value="accountant">Бухгалтер</option>
+                            <option value="financier">Финансист</option>
+                            <option value="admin">Администратор</option>
+                        </select>
+                    </div>
+                    <!-- НОВОЕ: ВЫБОР ТАРИФА -->
+                    <div class="form-group">
+                        <label>Тарифный профиль</label>
+                        <select id="newTariffId" class="tariff-select">
+                            <!-- Заполняется через JS (users.js) -->
+                        </select>
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Общежитие</label>
+                        <input type="text" id="dormitory">
+                    </div>
+                    <div class="form-group">
+                        <label>Место работы</label>
+                        <input type="text" id="workplace">
+                    </div>
+                </div>
+                <div class="form-row three-col">
+                    <div class="form-group">
+                        <label>Площадь (м²)</label>
+                        <input type="number" step="0.1" id="area" value="0">
+                    </div>
+                    <div class="form-group">
+                        <label>Жильцов</label>
+                        <input type="number" id="residentsCount" value="1">
+                    </div>
+                    <div class="form-group">
+                        <label>Всего мест</label>
+                        <input type="number" id="totalRoomResidents" value="1">
+                    </div>
+                </div>
+                <button type="submit" class="action-btn primary-btn full-width">Зарегистрировать</button>
+            </form>
+        </div>
+
+        <!-- Колонка 2: Импорт -->
+        <div class="card import-wrapper">
+            <div class="card-header">
+                <h3>📂 Импорт (Excel)</h3>
+            </div>
+            <div class="import-area">
+                <div class="import-icon">📊</div>
+                <p class="hint-text" style="max-width: 300px; margin-bottom: 25px; text-align: center;">
+                    Загрузите файл <b>.xlsx</b> со списком жильцов для массового добавления или обновления.
+                </p>
+                <div class="file-upload-group">
+                    <input type="file" id="importUsersFile" accept=".xlsx" class="custom-file-input">
+                    <button id="btnImportUsers" class="action-btn primary-btn">Загрузить</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Таблица -->
+    <div class="card table-card mt-20">
+        <div class="card-header">
+            <h3>Список пользователей</h3>
+            <div class="toolbar-controls" style="display: flex; gap: 10px; align-items: center;">
+                <select id="usersLimitSelect" style="width: auto; padding: 6px;">
+                    <option value="25">25 строк</option>
+                    <option value="50" selected>50 строк</option>
+                    <option value="100">100 строк</option>
+                </select>
+                <input type="text" id="usersSearchInput" placeholder="Поиск по логину/комнате..." style="min-width: 200px; padding: 6px;">
+                <button id="btnRefreshUsers" class="icon-btn refresh" title="Обновить">↻</button>
+            </div>
+        </div>
+        <div class="table-responsive">
+            <table class="sticky-header-table">
+                <thead>
+                    <tr>
+                        <th data-sort="id" class="sortable">ID</th>
+                        <th data-sort="username" class="sortable">Логин</th>
+                        <th data-sort="role" class="sortable">Роль</th>
+                        <th data-sort="dormitory" class="sortable">Общ.</th>
+                        <th data-sort="apartment_area" class="sortable">Площ.</th>
+                        <th>Доля</th>
+                        <th data-sort="workplace" class="sortable">Работа</th>
+                        <th class="text-center">Действия</th>
+                    </tr>
+                </thead>
+                <tbody id="usersTableBody"></tbody>
+            </table>
+        </div>
+        <div class="pagination-footer" style="padding: 15px; border-top: 1px solid #eee; display: flex; justify-content: center; align-items: center; gap: 15px;">
+            <button id="btnPrevUsers" class="page-btn">← Назад</button>
+            <span id="usersPageInfo" style="font-weight: 500; color: #555;">Стр. 1</span>
+            <button id="btnNextUsers" class="page-btn">Вперед →</button>
+        </div>
+    </div>
+
+    <!-- Модалка редактирования -->
+    <div id="userEditModal" class="modal-overlay">
+        <div class="modal-window" style="width: 700px;">
+            <div class="modal-header">
+                <h3>Редактирование жильца</h3>
+                <button class="close-btn close-icon">&times;</button>
+            </div>
+            <form id="editUserForm">
+                <div class="modal-form">
+                    <input type="hidden" id="editUserId">
+                    <div class="form-grid-2">
+                        <div class="form-group">
+                            <label>Логин</label>
+                            <input type="text" id="editUsername" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Пароль (оставить пустым, чтобы не менять)</label>
+                            <input type="text" id="editPassword" placeholder="Новый пароль">
+                        </div>
+                        <div class="form-group">
+                            <label>Роль</label>
+                            <select id="editRole">
+                                <option value="user">Жилец</option>
+                                <option value="accountant">Бухгалтер</option>
+                                <option value="financier">Финансист</option>
+                            </select>
+                        </div>
+                        <!-- НОВОЕ: ВЫБОР ТАРИФА В МОДАЛКЕ -->
+                        <div class="form-group">
+                            <label>Тарифный профиль</label>
+                            <select id="editTariffId" class="tariff-select"></select>
+                        </div>
+                        <div class="form-group">
+                            <label>Общежитие</label>
+                            <input type="text" id="editDormitory">
+                        </div>
+                        <div class="form-group">
+                            <label>Место работы</label>
+                            <input type="text" id="editWorkplace">
+                        </div>
+                    </div>
+                    <div class="form-grid-3">
+                        <div class="form-group">
+                            <label>Площадь</label>
+                            <input type="number" step="0.1" id="editArea">
+                        </div>
+                        <div class="form-group">
+                            <label>Жильцов (платит за)</label>
+                            <input type="number" id="editResidentsCount">
+                        </div>
+                        <div class="form-group">
+                            <label>Всего мест в комнате</label>
+                            <input type="number" id="editTotalRoomResidents">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="action-btn secondary-btn close-btn">Отмена</button>
+                    <button type="submit" class="action-btn primary-btn confirm-btn">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Модалка: Разовое начисление (Выселение/Переезд) -->
+    <div id="oneTimeChargeModal" class="modal-overlay">
+        <div class="modal-window" style="width: 500px;">
+            <div class="modal-header" style="background: #fef3c7;">
+                <h3 style="color: #92400e;">⏳ Разовое начисление (Выписка/Переезд)</h3>
+                <button class="close-btn close-icon" id="btnCloseOneTime">&times;</button>
+            </div>
+            <form id="oneTimeChargeForm">
+                <div class="modal-form">
+                    <p style="font-size: 13px; color: #555; margin-bottom: 15px;">
+                        Используется при выселении жильца или смене комнаты в середине месяца. Постоянные платежи (найм, содержание и т.д.) будут рассчитаны пропорционально прожитым дням.
+                    </p>
+
+                    <input type="hidden" id="otcUserId">
+
+                    <div style="background: #f9fafb; padding: 15px; border-radius: 8px; border: 1px solid #e5e7eb; margin-bottom: 15px;">
+                        <strong style="display:block; margin-bottom:10px;">Жилец: <span id="otcUserName" style="color:var(--primary-color);">...</span></strong>
+
+                        <div class="form-grid-2">
+                            <div class="form-group">
+                                <label>Дней в этом месяце</label>
+                                <input type="number" id="otcTotalDays" required min="28" max="31">
+                            </div>
+                            <div class="form-group">
+                                <label style="color: #d97706; font-weight:bold;">Прожито дней</label>
+                                <input type="number" id="otcDaysLived" required min="1" max="31">
+                            </div>
+                        </div>
+                    </div>
+
+                    <h4 style="font-size: 14px; margin-bottom: 10px;">Финальные показания счетчиков:</h4>
+                    <div class="form-grid-3">
+                        <div class="form-group">
+                            <label>🔥 ГВС (м³)</label>
+                            <input type="number" step="0.001" id="otcHot" required>
+                        </div>
+                        <div class="form-group">
+                            <label>💧 ХВС (м³)</label>
+                            <input type="number" step="0.001" id="otcCold" required>
+                        </div>
+                        <div class="form-group">
+                            <label>⚡ Свет (кВт)</label>
+                            <input type="number" step="0.001" id="otcElect" required>
+                        </div>
+                    </div>
+
+                    <div style="margin-top: 20px; padding: 15px; border-radius: 8px; border: 1px dashed #ef4444; background: #fef2f2;">
+                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; color: #b91c1c; font-weight: 600;">
+                            <input type="checkbox" id="otcIsMovingOut" style="width: 20px; height: 20px; cursor: pointer;">
+                            Жилец окончательно съезжает (Освободить логин и выселить)
+                        </label>
+                        <p style="font-size: 12px; margin: 5px 0 0 30px; color: #dc2626;">
+                            Если жилец просто переезжает в другую комнату, не ставьте эту галочку (просто измените номер комнаты в его профиле после расчета).
+                        </p>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="action-btn secondary-btn" id="btnCancelOneTime">Отмена</button>
+                    <button type="submit" class="action-btn warning-btn" id="btnSubmitOneTime">Сформировать квитанцию</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+</div>

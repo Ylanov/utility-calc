@@ -9,6 +9,8 @@ import { ReadingsModule } from './modules/readings.js';
 import { UsersModule } from './modules/users.js';
 import { TariffsModule } from './modules/tariffs.js';
 import { SummaryModule } from './modules/summary.js';
+import { DebtsModule } from './modules/debts.js';     // Модуль долгов
+import { ManualModule } from './modules/manual.js';   // Модуль ручного ввода показаний
 
 // --- 1. Глобальная проверка авторизации ---
 // Если в памяти нет токена (роли), сразу выкидываем на страницу логина.
@@ -34,18 +36,20 @@ window.addEventListener('error', (event) => {
 
 // --- 3. Инициализация приложения ---
 document.addEventListener('DOMContentLoaded', async () => {
-    console.log('Admin App Initialized');
+    console.log('Admin App Initialized (SPA Mode)');
 
     setupHeader();
     setupGlobalEvents();
     setupAdminProfile();
-    setupRouting();
 
     // Проверяем, нужно ли принудительно сменить пароль
     await checkAdminSecurity();
 
-    // Инициализируем 2FA логику
+    // Инициализируем 2FA логику (глобальная модалка находится в admin.html)
     TotpSetup.init();
+
+    // Запускаем роутинг в самом конце, чтобы интерфейс загрузился
+    setupRouting();
 });
 
 function setupHeader() {
@@ -68,7 +72,7 @@ function setupGlobalEvents() {
         });
     });
 
-    // Делегирование событий для переключения табов
+    // Делегирование событий для переключения табов в шапке
     const tabsContainer = document.querySelector('.tabs');
     if (tabsContainer) {
         tabsContainer.addEventListener('click', (e) => {
@@ -77,6 +81,7 @@ function setupGlobalEvents() {
 
             const tabId = btn.dataset.tab;
             if (tabId) {
+                // Изменение хэша автоматически вызовет handleRoute()
                 window.location.hash = tabId;
             }
         });
@@ -160,7 +165,6 @@ function setupAdminProfile() {
 
                 // Если введен новый логин — меняем логин через обычный PUT (права админа позволяют)
                 if (newLogin && newLogin !== user.username) {
-                    // Используем метод обновления пользователя
                     await api.put(`/users/${user.id}`, {
                         username: newLogin
                     });
@@ -188,42 +192,87 @@ function setupAdminProfile() {
     }
 }
 
-// --- РОУТИНГ (ПЕРЕКЛЮЧЕНИЕ ВКЛАДОК) ---
+// --- РОУТИНГ (SPA: ПЕРЕКЛЮЧЕНИЕ И ДИНАМИЧЕСКАЯ ЗАГРУЗКА ВКЛАДОК) ---
 
 function setupRouting() {
+    // Слушаем изменение хэша в URL (например, #users, #tariffs)
     window.addEventListener('hashchange', handleRoute);
-    handleRoute(); // Вызываем первый раз при загрузке
+    handleRoute(); // Вызываем первый раз при загрузке страницы
 }
 
 function handleRoute() {
     const hash = window.location.hash.substring(1);
     const defaultTab = 'readings';
-    const tabToLoad = (hash && isValidTab(hash)) ? hash : defaultTab;
+
+    // Массив разрешенных вкладок. ДОБАВЛЕН 'manual'
+    const validTabs = ['readings', 'users', 'tariffs', 'accountant', 'debts', 'manual'];
+    const tabToLoad = validTabs.includes(hash) ? hash : defaultTab;
+
     switchTab(tabToLoad);
 }
 
-function isValidTab(tabId) {
-    return !!document.querySelector(`.tab-btn[data-tab="${tabId}"]`);
-}
-
-function switchTab(tabId) {
+async function switchTab(tabId) {
     if (!tabId) return;
 
-    // Скрываем контент и деактивируем кнопки
-    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+    // 1. Деактивируем все кнопки вкладок в шапке
     document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
 
-    // Показываем нужный таб
-    const content = document.getElementById(tabId);
-    if (content) content.classList.add('active');
-
+    // Активируем нужную кнопку
     const btn = document.querySelector(`.tab-btn[data-tab="${tabId}"]`);
     if (btn) btn.classList.add('active');
 
-    // Инициализируем модуль
-    initModule(tabId);
+    // Главный контейнер, куда мы будем вставлять загруженный HTML
+    const contentArea = document.getElementById('content-area');
+    if (!contentArea) {
+        console.error("Критическая ошибка: не найден #content-area");
+        return;
+    }
+
+    // 2. Проверяем, загружена ли уже эта вкладка в DOM
+    let content = document.getElementById(tabId);
+
+    if (!content) {
+        // Если вкладки еще нет в DOM, загружаем её HTML фрагмент по сети
+        try {
+            // Показываем индикатор загрузки (опционально)
+            contentArea.style.opacity = '0.5';
+
+            const response = await fetch(`components/admin/tab_${tabId}.html`);
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+            const htmlString = await response.text();
+
+            // Вставляем полученный HTML в конец content-area
+            contentArea.insertAdjacentHTML('beforeend', htmlString);
+
+            // Находим свежезагруженный элемент
+            content = document.getElementById(tabId);
+
+            // Инициализируем JS-модуль ТОЛЬКО ПОСЛЕ того, как HTML появился в DOM
+            initModule(tabId);
+
+        } catch (error) {
+            console.error('Ошибка загрузки компонента:', error);
+            toast('Ошибка загрузки интерфейса. Проверьте соединение.', 'error');
+            contentArea.style.opacity = '1';
+            return;
+        } finally {
+            contentArea.style.opacity = '1';
+        }
+    }
+
+    // 3. Скрываем все вкладки и показываем текущую
+    document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+    if (content) {
+        content.classList.add('active');
+
+        // Вызываем обновление данных при каждом переходе на вкладку (опционально)
+        // Если модуль уже был инициализирован, мы можем просто пнуть его обновить таблицу
+        refreshModuleData(tabId);
+    }
 }
 
+// Первичная инициализация модуля (навешивание событий)
 function initModule(tabId) {
     switch (tabId) {
         case 'readings':
@@ -238,7 +287,49 @@ function initModule(tabId) {
         case 'accountant':
             SummaryModule.init();
             break;
+        case 'debts':
+            DebtsModule.init();
+            break;
+        case 'manual':
+            ManualModule.init(); // Инициализация ручного ввода
+            break;
         default:
             console.warn(`Модуль для вкладки "${tabId}" не найден.`);
+    }
+}
+
+// Обновление данных (если пользователь ушел на другую вкладку и вернулся)
+function refreshModuleData(tabId) {
+    switch (tabId) {
+        case 'readings':
+            if (ReadingsModule.isInitialized && ReadingsModule.table) {
+                ReadingsModule.table.refresh();
+            }
+            break;
+        case 'users':
+            if (UsersModule.isInitialized && UsersModule.table) {
+                UsersModule.table.refresh();
+            }
+            break;
+        case 'tariffs':
+            if (TariffsModule.isInitialized) {
+                TariffsModule.load();
+            }
+            break;
+        case 'accountant':
+            // Сводку не обновляем автоматически, так как это тяжелый запрос,
+            // бухгалтер нажмет кнопку "Обновить" сам, если нужно.
+            break;
+        case 'debts':
+            if (DebtsModule.isInitialized) {
+                DebtsModule.reload();
+            }
+            break;
+        case 'manual':
+            if (ManualModule.isInitialized) {
+                // При возврате на вкладку обновляем список пользователей на всякий случай
+                ManualModule.searchUsers('');
+            }
+            break;
     }
 }

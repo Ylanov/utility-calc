@@ -43,10 +43,17 @@ async def get_receipt_pdf(
     if not reading or not reading.user or not reading.period:
         raise HTTPException(404, "Данные не найдены")
 
-    tariff_res = await db.execute(select(Tariff).where(Tariff.is_active == True))
+    # Получаем индивидуальный тариф пользователя
+    user_tariff_id = getattr(reading.user, 'tariff_id', None) or 1
+    tariff_res = await db.execute(select(Tariff).where(Tariff.id == user_tariff_id))
     tariff = tariff_res.scalars().first()
+
+    # Резервный поиск базового тарифа
     if not tariff:
-        raise HTTPException(404, "Тариф не найден")
+        tariff_res_def = await db.execute(select(Tariff).where(Tariff.is_active == True))
+        tariff = tariff_res_def.scalars().first()
+        if not tariff:
+            raise HTTPException(404, "Активный тариф не найден")
 
     prev_stmt = (
         select(MeterReading)
@@ -81,7 +88,7 @@ async def get_receipt_pdf(
         )
 
         # 2. Формируем ключ S3
-        filename = f"receipt_{reading.user.username}_{reading.period.name}.pdf"
+        # Добавляем UUID, чтобы избежать кэширования браузером при повторном скачивании
         s3_key = f"receipts/{reading.period.id}/admin_view_{reading.user.id}_{uuid.uuid4().hex[:8]}.pdf"
 
         # 3. Загружаем в S3

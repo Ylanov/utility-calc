@@ -1,30 +1,34 @@
-import {api} from '../core/api.js';
-import {el, toast, showPrompt, setLoading} from '../core/dom.js';
+import { api } from '../core/api.js';
+import { el, toast, showPrompt, setLoading } from '../core/dom.js';
 
-export const FinancierApp = {
+export const DebtsModule = {
+    isInitialized: false,
     state: {
         page: 1, limit: 50, total: 0, search: '',
         importTaskId: null, pollTimer: null, isUploading: false, lastRequestId: 0,
-        currentPollId: null // ДОБАВЛЕНО: для отслеживания текущего поллинга
+        currentPollId: null
     },
 
     init() {
         this.cacheDOM();
-        this.bindEvents();
+        if (!this.isInitialized) {
+            this.bindEvents();
+            this.isInitialized = true;
+        }
         this.loadUsers();
     },
 
     cacheDOM() {
         this.dom = {
-            usersTableBody: document.getElementById('usersTableBody'),
-            btnRefresh: document.getElementById('btnRefreshUsers'),
+            tableBody: document.getElementById('debtsTableBody'),
+            btnRefresh: document.getElementById('btnRefreshDebts'),
             btnUpload: document.getElementById('btnUploadDebts'),
             inputUpload: document.getElementById('debtFile1C'),
             uploadResult: document.getElementById('uploadResult'),
-            btnPrev: document.getElementById('btnPrevPage'),
-            btnNext: document.getElementById('btnNextPage'),
-            pageInfo: document.getElementById('pageInfo'),
-            searchInput: document.getElementById('userSearchInput')
+            btnPrev: document.getElementById('btnPrevDebts'),
+            btnNext: document.getElementById('btnNextDebts'),
+            pageInfo: document.getElementById('debtsPageInfo'),
+            searchInput: document.getElementById('debtsSearchInput')
         };
     },
 
@@ -54,7 +58,6 @@ export const FinancierApp = {
         this.loadUsers();
     },
 
-    // ДОБАВЛЕНО: Жесткая очистка поллинга
     clearPoll() {
         if(this.state.pollTimer) {
             clearTimeout(this.state.pollTimer);
@@ -68,7 +71,6 @@ export const FinancierApp = {
         const file = this.dom.inputUpload.files[0];
         if(!file) return toast('Выберите файл .xlsx', 'error');
 
-        // Считываем тип счета
         const accountType = document.querySelector('input[name="accountType"]:checked').value;
         if(!confirm(`Загрузить долги для счета ${accountType}?`)) return;
 
@@ -92,20 +94,17 @@ export const FinancierApp = {
         }
     },
 
-    // ИСПРАВЛЕНА УТЕЧКА: Лимит по времени и сброс старых задач
     async pollTask(taskId) {
         this.clearPoll();
         this.state.currentPollId = taskId;
         let attempts = 0;
-        const maxAttempts = 150; // Максимум 5 минут (150 * 2 сек)
+        const maxAttempts = 150;
 
         const check = async () => {
-            // Если запустили новую задачу — останавливаем эту
             if(this.state.currentPollId !== taskId) return;
-
             attempts++;
             if (attempts > maxAttempts) {
-                toast('Превышено время ожидания сервера (5 минут).', 'warning');
+                toast('Превышено время ожидания сервера.', 'warning');
                 this.state.isUploading = false;
                 setLoading(this.dom.btnUpload, false, '⬆ Загрузить');
                 return;
@@ -113,8 +112,6 @@ export const FinancierApp = {
 
             try {
                 const res = await api.get(`/admin/tasks/${taskId}`);
-
-                // Проверяем еще раз после await, вдруг пользователь уже нажал кнопку снова
                 if(this.state.currentPollId !== taskId) return;
 
                 if(res.state === 'PENDING' || res.status === 'processing') {
@@ -160,9 +157,9 @@ export const FinancierApp = {
     },
 
     async loadUsers() {
-        if(!this.dom.usersTableBody) return;
+        if(!this.dom.tableBody) return;
         const requestId = ++this.state.lastRequestId;
-        this.dom.usersTableBody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px">Загрузка...</td></tr>';
+        this.dom.tableBody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px">Загрузка...</td></tr>';
 
         try {
             const search = encodeURIComponent(this.state.search || '');
@@ -175,7 +172,7 @@ export const FinancierApp = {
             this.updatePagination();
         } catch(e) {
             if(requestId !== this.state.lastRequestId) return;
-            this.dom.usersTableBody.innerHTML = `<tr><td colspan="9" style="color:red;text-align:center">${e.message}</td></tr>`;
+            this.dom.tableBody.innerHTML = `<tr><td colspan="9" style="color:red;text-align:center">${e.message}</td></tr>`;
         }
     },
 
@@ -188,9 +185,9 @@ export const FinancierApp = {
     },
 
     renderUsers(users) {
-        this.dom.usersTableBody.innerHTML = '';
+        this.dom.tableBody.innerHTML = '';
         if(!users || !users.length) {
-            this.dom.usersTableBody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px">Нет данных</td></tr>';
+            this.dom.tableBody.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:20px">Нет данных</td></tr>';
             return;
         }
 
@@ -204,13 +201,10 @@ export const FinancierApp = {
                 el('td', {}, String(u.id)),
                 el('td', {style:{fontWeight:'600'}}, u.username),
                 el('td', {}, u.dormitory || '-'),
-
                 el('td', {style:{color:d209>0?'#c0392b':'#ccc', borderLeft:'2px solid #eee'}}, d209>0?d209.toFixed(2):'-'),
                 el('td', {style:{color:o209>0?'#27ae60':'#ccc'}}, o209>0?o209.toFixed(2):'-'),
-
                 el('td', {style:{color:d205>0?'#d35400':'#ccc', borderLeft:'2px solid #eee'}}, d205>0?d205.toFixed(2):'-'),
                 el('td', {style:{color:o205>0?'#27ae60':'#ccc'}}, o205>0?o205.toFixed(2):'-'),
-
                 el('td', {style:{fontWeight:'bold'}}, total!==0?total.toFixed(2):'-'),
                 el('td', {style:{textAlign:'right'}},
                     el('button', {
@@ -221,7 +215,7 @@ export const FinancierApp = {
             );
             fragment.appendChild(tr);
         });
-        this.dom.usersTableBody.appendChild(fragment);
+        this.dom.tableBody.appendChild(fragment);
     },
 
     async openDebtModal(userId, username) {
