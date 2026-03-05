@@ -1,15 +1,69 @@
-name: Build and Publish Docker Image
+name: Build, Test and Publish
 
 on:
   push:
-    branches: [ "main" ] # Сборка запускается при пуше в main
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ] # Полезно проверять безопасность и на Пул-реквестах
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  # ------------------------------------------------------------------
+  # JОВ 1: ПРОВЕРКА БЕЗОПАСНОСТИ И КАЧЕСТВА КОДА
+  # ------------------------------------------------------------------
+  check-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 1. Настройка Python
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: 'pip'
+
+      # 2. Установка зависимостей
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff pytest
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      # 3. Линтинг кода (Ruff) - поиск синтаксических ошибок и плохого стиля
+      - name: Lint with Ruff
+        run: |
+          # --exit-zero обрабатывает все ошибки как предупреждения. 
+          # Уберите этот флаг, если хотите, чтобы сборка падала при ошибках линтера.
+          ruff check . --exit-zero 
+
+      # 4. Сканер безопасности Trivy (Файловая система)
+      # Ищет уязвимости в зависимостях (requirements.txt) и секреты в коде
+      - name: Run Trivy vulnerability scanner (Repo mode)
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          ignore-unfixed: true
+          format: 'table'
+          exit-code: '1' # Упасть (остановить сборку), если найдены критические уязвимости
+          severity: 'CRITICAL,HIGH'
+
+      # 5. Запуск тестов
+      # Если тестов пока нет, можно закомментировать этот шаг
+      - name: Run Tests
+        run: |
+          export PYTHONPATH=$PYTHONPATH:.
+          pytest
+
+  # ------------------------------------------------------------------
+  # JOB 2: СБОРКА И ОТПРАВКА ОБРАЗА (Только если JOB 1 успешен)
+  # ------------------------------------------------------------------
   build-and-push-image:
+    needs: check-and-test # <--- ГЛАВНОЕ: Ждем проверки безопасности
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -31,7 +85,13 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
-          tags: type=raw,value=latest
+          tags: |
+            type=raw,value=latest
+            type=sha,format=long
+
+      # Добавляем кеширование для ускорения сборки
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
@@ -40,3 +100,5 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
