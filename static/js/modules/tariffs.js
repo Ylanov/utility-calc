@@ -71,7 +71,6 @@ export const TariffsModule = {
         }
     },
 
-    // --- НОВАЯ ЛОГИКА ДЛЯ ГРАФИКА ---
     async loadSchedule() {
         try {
             const data = await api.get('/settings/submission-period');
@@ -103,7 +102,6 @@ export const TariffsModule = {
             setLoading(btn, false, 'Сохранить график');
         }
     },
-    // ------------------------------------
 
     async load(selectedId = null) {
         try {
@@ -213,6 +211,9 @@ export const TariffsModule = {
             const savedTariff = await api.post('/tariffs', data);
             toast('Тарифный профиль успешно сохранен!', 'success');
 
+            // ВАЖНО: Очищаем кэш тарифов, чтобы во вкладке "Жильцы" обновились данные
+            sessionStorage.removeItem('tariffs_cache');
+
             // Перезагружаем список и выделяем только что сохраненный тариф
             this.load(savedTariff.id);
         } catch (error) {
@@ -241,6 +242,9 @@ export const TariffsModule = {
         try {
             await api.delete(`/tariffs/${id}`);
             toast('Тарифный профиль удален', 'success');
+
+            // ВАЖНО: Очищаем кэш тарифов
+            sessionStorage.removeItem('tariffs_cache');
 
             // Перезагружаем и переключаемся на базовый тариф (id=1)
             this.load(1);

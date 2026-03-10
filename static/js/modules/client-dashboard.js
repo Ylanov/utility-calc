@@ -104,11 +104,15 @@ export const ClientDashboard = {
             this.dom.form.addEventListener('submit', (e) => this.handleSubmit(e));
         }
 
-        // Валидация при вводе показаний (умные карточки)
+        // Замена запятой на точку и валидация при вводе показаний (умные карточки)
         ['hot', 'cold', 'elect'].forEach(key => {
             const input = this.dom.inputs[key];
             if (input) {
-                input.addEventListener('input', () => this.validate());
+                input.addEventListener('input', (e) => {
+                    // ИСПРАВЛЕНИЕ: Автоматически меняем запятую на точку для мобильных клавиатур
+                    e.target.value = e.target.value.replace(',', '.');
+                    this.validate();
+                });
             }
         });
 
@@ -206,7 +210,7 @@ export const ClientDashboard = {
             alertBox.style.display = 'flex';
 
             if (day >= settings.start_day && day <= settings.end_day) {
-                // Период активен
+                // Перио active
                 alertBox.style.background = '#ecfdf5'; // Зеленый фон
                 alertBox.style.border = '1px solid #a7f3d0';
                 title.textContent = 'Прием показаний открыт!';

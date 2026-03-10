@@ -1,3 +1,4 @@
+// static/js/modules/summary.js
 import { api } from '../core/api.js';
 import { el, setLoading, toast } from '../core/dom.js';
 
@@ -88,7 +89,17 @@ export const SummaryModule = {
             this.renderData(data);
         } catch (e) {
             if (e.name === 'AbortError') return;
-            this.dom.container.innerHTML = `<div style="text-align:center; color:#e74c3c; padding:20px; border:1px solid #e74c3c; border-radius:8px; margin:20px;"><strong>Ошибка загрузки:</strong><br>${e.message}</div>`;
+
+            // БЕЗОПАСНЫЙ ВЫВОД ОШИБКИ (Защита от XSS)
+            this.dom.container.innerHTML = '';
+            const errorBox = el('div', {
+                style: { textAlign: 'center', color: '#e74c3c', padding: '20px', border: '1px solid #e74c3c', borderRadius: '8px', margin: '20px' }
+            },
+                el('strong', {}, 'Ошибка загрузки:'),
+                el('br', {}),
+                e.message
+            );
+            this.dom.container.appendChild(errorBox);
         }
     },
 

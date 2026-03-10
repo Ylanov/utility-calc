@@ -9,7 +9,7 @@ const ANOMALY_MAP = {
     "HIGH": { color: "#e74c3c", label: "Высокий" },
     "FROZEN": { color: "#3498db", label: "Замерзший" },
     "PEERS": { color: "#9b59b6", label: "Аномалия (Группа)" },
-    "IMPORTED_DRAFT": { color: "#8e44ad", label: "Импорт" } // Добавим цвет для импортированных
+    "IMPORTED_DRAFT": { color: "#8e44ad", label: "Импорт" }
 };
 
 export const ReadingsModule = {
@@ -83,7 +83,6 @@ export const ReadingsModule = {
             },
 
             renderRow: (r) => {
-                // Если total_cost еще не посчитан (для импортированных черновиков), ставим 0
                 const totalCost = r.total_cost !== null && r.total_cost !== undefined ? r.total_cost : 0;
 
                 return el('tr', {},
@@ -133,14 +132,11 @@ export const ReadingsModule = {
         try {
             const res = await api.post('/admin/readings/import', formData);
 
-            if (res.errors && res.errors.length > 0) {
-                alert(`Импорт завершен с ошибками (${res.errors.length}):\n` + res.errors.slice(0, 8).join('\n'));
-            } else {
-                toast(`Успешно! Добавлено: ${res.added}, Обновлено: ${res.updated}`, 'success');
-            }
+            // НОВОЕ: Используем красивую модалку вместо alert()
+            this.showImportResultModal(res);
 
-            this.dom.inputImport.value = ''; // Очищаем инпут
-            this.table.refresh(); // Обновляем таблицу, чтобы увидеть новые черновики
+            this.dom.inputImport.value = '';
+            this.table.refresh();
         } catch (e) {
             toast('Ошибка импорта: ' + e.message, 'error');
         } finally {
@@ -148,16 +144,68 @@ export const ReadingsModule = {
         }
     },
 
+    // НОВОЕ: Динамическое создание модалки для показа результатов импорта показаний
+    showImportResultModal(result) {
+        const hasErrors = result.errors && result.errors.length > 0;
+
+        const overlay = el('div', { class: 'modal-overlay open', style: { zIndex: 10000 } });
+        const headerTitle = hasErrors ? '⚠️ Результат импорта (Есть ошибки)' : '✅ Импорт успешно завершен';
+        const headerColor = hasErrors ? '#d97706' : '#059669';
+
+        const closeBtn = el('button', { class: 'close-icon' }, '×');
+        closeBtn.onclick = () => document.body.removeChild(overlay);
+
+        const content = el('div', { class: 'modal-form' },
+            el('ul', { style: { marginBottom: '15px', paddingLeft: '20px', fontSize: '15px', color: '#374151' } },
+                el('li', { style: { marginBottom: '5px' } }, `Добавлено черновиков: `, el('strong', { style: { color: '#059669'} }, String(result.added || 0))),
+                el('li', {}, `Обновлено существующих: `, el('strong', { style: { color: '#2563eb'} }, String(result.updated || 0)))
+            )
+        );
+
+        if (hasErrors) {
+            const errorBox = el('div', {
+                style: {
+                    maxHeight: '250px', overflowY: 'auto', background: '#fef2f2',
+                    border: '1px solid #fecaca', borderRadius: '8px', padding: '12px',
+                    fontSize: '13px', color: '#991b1b', fontFamily: 'monospace'
+                }
+            });
+
+            result.errors.forEach(err => {
+                errorBox.appendChild(el('div', {
+                    style: { marginBottom: '6px', borderBottom: '1px dashed #fca5a5', paddingBottom: '6px' }
+                }, String(err)));
+            });
+
+            content.appendChild(el('h4', { style: { marginBottom: '10px', color: '#dc2626', fontSize: '14px' } }, `Ошибки (${result.errors.length}):`));
+            content.appendChild(errorBox);
+        }
+
+        const btnOk = el('button', { class: 'action-btn primary-btn full-width', style: { marginTop: '20px' } }, 'Понятно, закрыть');
+        btnOk.onclick = () => document.body.removeChild(overlay);
+        content.appendChild(btnOk);
+
+        const modalWindow = el('div', { class: 'modal-window', style: { width: '550px' } },
+            el('div', { class: 'modal-header' },
+                el('h3', { style: { color: headerColor } }, headerTitle),
+                closeBtn
+            ),
+            content
+        );
+
+        overlay.appendChild(modalWindow);
+        document.body.appendChild(overlay);
+    },
+
     createBadges(flags) {
         if (!flags) return el('span', { style: { color: '#ccc' } }, '-');
         const container = el('div', { style: { display: 'flex', gap: '4px', flexWrap: 'wrap' } });
         flags.split(',').forEach(flag => {
             let type = "UNKNOWN";
-            // Ищем основной ключ (например, из HIGH_HOT берем HIGH)
             for (const key in ANOMALY_MAP) {
                 if (flag.includes(key)) {
                     type = key;
-                    break; // Нашли основной ключ, выходим
+                    break;
                 }
             }
             const meta = ANOMALY_MAP[type] || { color: '#95a5a6', label: flag };
@@ -210,12 +258,20 @@ export const ReadingsModule = {
 
     async submitApproval(id) {
         const btn = document.getElementById('btnModalSubmit');
-        const data = {
-            hot_correction: parseFloat(document.getElementById('m_corr_hot').value) || 0,
-            cold_correction: parseFloat(document.getElementById('m_corr_cold').value) || 0,
-            electricity_correction: parseFloat(document.getElementById('m_corr_elect').value) || 0,
-            sewage_correction: parseFloat(document.getElementById('m_corr_sewage').value) || 0
+
+        // НОВОЕ: Заменяем запятую на точку перед парсингом, чтобы избежать NaN
+        const parseInput = (elId) => {
+            const val = document.getElementById(elId).value;
+            return parseFloat(val.replace(',', '.')) || 0;
         };
+
+        const data = {
+            hot_correction: parseInput('m_corr_hot'),
+            cold_correction: parseInput('m_corr_cold'),
+            electricity_correction: parseInput('m_corr_elect'),
+            sewage_correction: parseInput('m_corr_sewage')
+        };
+
         setLoading(btn, true, 'Сохранение...');
         try {
             const res = await api.post(`/admin/approve/${id}`, data);
@@ -232,11 +288,14 @@ export const ReadingsModule = {
     async openAdjustmentModal(userId, username) {
         const amountStr = await showPrompt(`Корректировка: ${username}`, 'Введите сумму (например -500 для скидки или 1000 для долга):');
         if (!amountStr) return;
-        const amount = parseFloat(amountStr);
+
+        // НОВОЕ: Защита от опечатки с запятой
+        const amount = parseFloat(amountStr.replace(',', '.'));
         if (isNaN(amount)) {
-            toast('Нужно ввести число!', 'error');
+            toast('Нужно ввести корректное число!', 'error');
             return;
         }
+
         const desc = await showPrompt('Причина', 'Укажите основание (например: перерасчет):', 'Перерасчет');
         if (!desc) return;
         try {
@@ -262,7 +321,6 @@ export const ReadingsModule = {
         }
     },
 
-    // === ОБНОВЛЕННЫЙ МЕТОД ЗАКРЫТИЯ ПЕРИОДА С ПОЛЛИНГОМ ===
     async closePeriodAction() {
         if (!confirm('Закрыть месяц? Будет произведен авто-расчет для всех должников. Это может занять время.')) return;
 
@@ -270,15 +328,12 @@ export const ReadingsModule = {
         setLoading(btn, true, 'Запуск...');
 
         try {
-            // 1. Запускаем задачу на бэкенде (теперь возвращает task_id)
             const res = await api.post('/admin/periods/close', {});
 
-            // 2. Если получили ID задачи - начинаем опрос статуса
             if (res.task_id) {
                 toast('Процесс закрытия запущен. Пожалуйста, подождите...', 'info');
                 await this.pollCloseTask(res.task_id, btn);
             } else {
-                // Если вдруг вернулся старый формат ответа (для совместимости)
                 toast(`Месяц закрыт. Авто-расчетов: ${res.auto_generated || 0}`, 'success');
                 setTimeout(() => window.location.reload(), 1500);
             }
@@ -289,9 +344,8 @@ export const ReadingsModule = {
         }
     },
 
-    // Функция опроса статуса задачи (Long Polling)
     async pollCloseTask(taskId, btn) {
-        const maxAttempts = 60; // Ждем максимум 2 минуты (60 * 2сек)
+        const maxAttempts = 60;
         let attempts = 0;
 
         const check = async () => {
@@ -303,19 +357,15 @@ export const ReadingsModule = {
             }
 
             try {
-                // Используем существующий эндпоинт проверки задач (как для PDF)
                 const statusData = await api.get(`/admin/tasks/${taskId}`);
 
                 if (statusData.state === 'PENDING' || statusData.state === 'STARTED' || statusData.status === 'processing') {
-                    // Обновляем текст кнопки, чтобы видно было, что процесс идет
                     btn.innerText = `Обработка... ${attempts}с`;
-                    setTimeout(check, 2000); // Повторяем через 2 сек
+                    setTimeout(check, 2000);
                 }
                 else if (statusData.status === 'done' || statusData.state === 'SUCCESS') {
-                    // УСПЕХ!
                     const result = statusData.result || {};
 
-                    // Проверка на ошибку внутри успешной задачи (если вернулся JSON с status: error)
                     if (result.status === 'error') {
                         throw new Error(result.message);
                     }
@@ -323,7 +373,6 @@ export const ReadingsModule = {
                     toast(`Месяц успешно закрыт! Авто-расчетов: ${result.auto_generated || 0}`, 'success');
                     setLoading(btn, false, 'Готово');
 
-                    // Перезагружаем страницу для обновления интерфейса
                     setTimeout(() => window.location.reload(), 1500);
                 }
                 else if (statusData.state === 'FAILURE') {
@@ -335,7 +384,6 @@ export const ReadingsModule = {
             }
         };
 
-        // Запускаем опрос
         check();
     },
 

@@ -1,3 +1,4 @@
+// static/js/modules/manual.js
 import { api } from '../core/api.js';
 import { el, toast, setLoading } from '../core/dom.js';
 
@@ -54,6 +55,15 @@ export const ManualModule = {
         if (this.dom.form) {
             this.dom.form.addEventListener('submit', (e) => this.handleSubmit(e));
         }
+
+        // НОВОЕ: Автоматическая замена запятой на точку для скорости ввода с numpad
+        ['inHot', 'inCold', 'inElect'].forEach(key => {
+            if (this.dom[key]) {
+                this.dom[key].addEventListener('input', function() {
+                    this.value = this.value.replace(',', '.');
+                });
+            }
+        });
     },
 
     async searchUsers(query) {
@@ -92,7 +102,11 @@ export const ManualModule = {
             });
 
         } catch (e) {
-            this.dom.userList.innerHTML = `<li style="padding:15px; color:red; text-align:center;">Ошибка: ${e.message}</li>`;
+            // БЕЗОПАСНЫЙ ВЫВОД ОШИБКИ (Защита от XSS)
+            this.dom.userList.innerHTML = '';
+            this.dom.userList.appendChild(
+                el('li', { style: { padding: '15px', color: 'red', textAlign: 'center' } }, `Ошибка: ${e.message}`)
+            );
         }
     },
 
@@ -109,6 +123,9 @@ export const ManualModule = {
         this.dom.formCard.style.opacity = '1';
         this.dom.formCard.style.pointerEvents = 'auto';
         this.dom.form.reset();
+
+        // Фокус на первое поле для скорости
+        this.dom.inHot.focus();
 
         // Загружаем состояние счетчиков для пользователя
         try {
@@ -183,6 +200,10 @@ export const ManualModule = {
             Array.from(this.dom.userList.children).forEach(li => li.style.background = 'transparent');
             this.dom.alertDraft.style.display = 'none';
             this.dom.form.reset();
+
+            // НОВОЕ UX УЛУЧШЕНИЕ: Автоматически возвращаем курсор в строку поиска для следующего жильца!
+            this.dom.searchInput.value = '';
+            this.dom.searchInput.focus();
 
         } catch (err) {
             toast(err.message, 'error');

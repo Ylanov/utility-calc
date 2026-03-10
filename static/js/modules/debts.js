@@ -51,6 +51,7 @@ export const DebtsModule = {
     },
 
     reload() { this.state.page = 1; this.loadUsers(); },
+
     changePage(delta) {
         const newPage = this.state.page + delta;
         if(newPage < 1) return;
@@ -75,7 +76,10 @@ export const DebtsModule = {
         if(!confirm(`Загрузить долги для счета ${accountType}?`)) return;
 
         this.state.isUploading = true;
-        if(this.dom.uploadResult) { this.dom.uploadResult.style.display = 'none'; this.dom.uploadResult.innerHTML = ''; }
+        if(this.dom.uploadResult) {
+            this.dom.uploadResult.style.display = 'none';
+            this.dom.uploadResult.innerHTML = '';
+        }
         setLoading(this.dom.btnUpload, true, 'Загрузка...');
 
         const formData = new FormData();
@@ -131,10 +135,15 @@ export const DebtsModule = {
             } catch(e) {
                 if(this.state.currentPollId !== taskId) return;
                 toast('Ошибка задачи: ' + e.message, 'error');
+
                 if(this.dom.uploadResult) {
                     this.dom.uploadResult.style.display = 'block';
-                    this.dom.uploadResult.innerHTML = `<div style="color:red">Сбой: ${e.message}</div>`;
+                    this.dom.uploadResult.innerHTML = ''; // Безопасная очистка
+                    this.dom.uploadResult.appendChild(
+                        el('div', { style: { color: 'red' } }, `Сбой: ${e.message}`)
+                    );
                 }
+
                 this.state.isUploading = false;
                 setLoading(this.dom.btnUpload, false, '⬆ Загрузить');
             }
@@ -144,16 +153,54 @@ export const DebtsModule = {
 
     renderUploadResult(res) {
         if(!this.dom.uploadResult || !res) return;
-        let html = `<div style="padding:15px;background:#e8f5e9;color:#2e7d32;border-radius:6px;border:1px solid #c8e6c9">
-            <h4 style="margin:0 0 10px 0">✅ Импорт завершен (Счет ${res.account || '?'})</h4>
-            <ul style="margin:0;padding-left:20px"><li>Обработано: <strong>${res.processed}</strong></li><li>Обновлено: <strong>${res.updated}</strong></li><li>Создано: <strong>${res.created}</strong></li></ul></div>`;
-        if(res.not_found_users && res.not_found_users.length) {
-            html += `<div style="margin-top:15px;padding:15px;background:#ffebee;color:#c62828;border-radius:6px;border:1px solid #ffcdd2">
-                <h4>⚠️ Не найдены (${res.not_found_users.length})</h4>
-                <div style="max-height:100px;overflow:auto;font-size:13px;background:rgba(255,255,255,.5);padding:5px">${res.not_found_users.join('<br>')}</div></div>`;
-        }
-        this.dom.uploadResult.innerHTML = html;
+
+        // Очищаем контейнер безопасным способом
+        this.dom.uploadResult.innerHTML = '';
         this.dom.uploadResult.style.display = 'block';
+
+        // Создаем успешный блок
+        const successBox = el('div', {
+            style: {
+                padding: '15px', background: '#e8f5e9', color: '#2e7d32',
+                borderRadius: '6px', border: '1px solid #c8e6c9'
+            }
+        },
+            el('h4', { style: { margin: '0 0 10px 0' } }, `✅ Импорт завершен (Счет ${res.account || '?'})`),
+            el('ul', { style: { margin: 0, paddingLeft: '20px' } },
+                el('li', {}, 'Обработано: ', el('strong', {}, String(res.processed))),
+                el('li', {}, 'Обновлено: ', el('strong', {}, String(res.updated))),
+                el('li', {}, 'Создано: ', el('strong', {}, String(res.created)))
+            )
+        );
+        this.dom.uploadResult.appendChild(successBox);
+
+        // Если есть ненайденные пользователи
+        if (res.not_found_users && res.not_found_users.length) {
+            const errorBox = el('div', {
+                style: {
+                    marginTop: '15px', padding: '15px', background: '#ffebee',
+                    color: '#c62828', borderRadius: '6px', border: '1px solid #ffcdd2'
+                }
+            },
+                el('h4', { style: { margin: '0 0 10px 0' } }, `⚠️ Не найдены (${res.not_found_users.length})`)
+            );
+
+            // Создаем контейнер для списка с прокруткой
+            const scrollBox = el('div', {
+                style: {
+                    maxHeight: '100px', overflow: 'auto', fontSize: '13px',
+                    background: 'rgba(255,255,255,.5)', padding: '5px'
+                }
+            });
+
+            // Добавляем пользователей по одному через el() для защиты от XSS
+            res.not_found_users.forEach(user => {
+                scrollBox.appendChild(el('div', {}, String(user)));
+            });
+
+            errorBox.appendChild(scrollBox);
+            this.dom.uploadResult.appendChild(errorBox);
+        }
     },
 
     async loadUsers() {
@@ -172,7 +219,13 @@ export const DebtsModule = {
             this.updatePagination();
         } catch(e) {
             if(requestId !== this.state.lastRequestId) return;
-            this.dom.tableBody.innerHTML = `<tr><td colspan="9" style="color:red;text-align:center">${e.message}</td></tr>`;
+            // Безопасный вывод ошибки загрузки таблицы
+            this.dom.tableBody.innerHTML = '';
+            this.dom.tableBody.appendChild(
+                el('tr', {},
+                    el('td', { colspan: '9', style: { color: 'red', textAlign: 'center', padding: '20px' } }, e.message)
+                )
+            );
         }
     },
 

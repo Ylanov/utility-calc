@@ -86,6 +86,35 @@ function setupGlobalEvents() {
             }
         });
     }
+
+    // --- НОВОЕ: Глобальные Горячие Клавиши для Админки ---
+    document.addEventListener('keydown', (e) => {
+        // 1. Закрытие модалок по Escape
+        if (e.key === 'Escape') {
+            const openModals = document.querySelectorAll('.modal-overlay.open');
+            openModals.forEach(modal => {
+                // Модалку обязательной настройки закрывать нельзя
+                if (modal.id !== 'firstSetupModal') {
+                    modal.classList.remove('open');
+                }
+            });
+        }
+
+        // 2. Быстрый поиск по "/"
+        if (e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+            e.preventDefault(); // Предотвращаем ввод слеша в поле
+
+            // Ищем видимый инпут поиска на текущей активной вкладке
+            const activeTab = document.querySelector('.tab-content.active');
+            if (activeTab) {
+                // Ищем инпуты, id которых заканчивается на SearchInput (как usersSearchInput, debtsSearchInput и т.д.)
+                const searchInput = activeTab.querySelector('input[type="text"][id$="SearchInput"]');
+                if (searchInput) {
+                    searchInput.focus();
+                }
+            }
+        }
+    });
 }
 
 // --- ЛОГИКА ПРОФИЛЯ АДМИНИСТРАТОРА И БЕЗОПАСНОСТИ ---

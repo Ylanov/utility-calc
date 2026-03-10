@@ -16,7 +16,7 @@ export const UsersModule = {
             this.isInitialized = true;
         }
 
-        // 1. Сначала загружаем список тарифов, чтобы заполнить выпадающие списки
+        // 1. Сначала загружаем список тарифов (с кэшированием)
         await this.loadTariffs();
 
         // 2. Затем инициализируем таблицу пользователей
@@ -50,7 +50,6 @@ export const UsersModule = {
             btnClose: document.querySelector('#userEditModal .close-btn')
         };
 
-        // ДОБАВЛЕНО: Элементы модалки Разового начисления (Выселение/Переезд)
         this.otc = {
             modal: document.getElementById('oneTimeChargeModal'),
             form: document.getElementById('oneTimeChargeForm'),
@@ -102,7 +101,6 @@ export const UsersModule = {
             });
         }
 
-        // ДОБАВЛЕНО: Обработчики для модалки Разового начисления
         if (this.otc.form) {
             this.otc.form.addEventListener('submit', (e) => this.handleOneTimeSubmit(e));
             this.otc.btnClose.addEventListener('click', (e) => { e.preventDefault(); this.otc.modal.classList.remove('open'); });
@@ -110,10 +108,18 @@ export const UsersModule = {
         }
     },
 
-    // Загрузка и рендер тарифов
+    // ОПТИМИЗАЦИЯ: Кэширование тарифов в браузере
     async loadTariffs() {
         try {
+            const cached = sessionStorage.getItem('tariffs_cache');
+            if (cached) {
+                this.tariffs = JSON.parse(cached);
+                this.populateTariffSelects();
+                return; // Берем из кэша, экономим запрос к БД
+            }
+
             this.tariffs = await api.get('/tariffs');
+            sessionStorage.setItem('tariffs_cache', JSON.stringify(this.tariffs));
             this.populateTariffSelects();
         } catch (error) {
             console.error('Ошибка загрузки профилей тарифов:', error);
@@ -122,16 +128,12 @@ export const UsersModule = {
     },
 
     populateTariffSelects() {
-        // Формируем HTML для опций
         const optionsHtml = '<option value="">Базовый тариф (По умолчанию)</option>' +
             this.tariffs.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
 
-        // Вставляем в форму создания
         if (this.dom.newTariffSelect) {
             this.dom.newTariffSelect.innerHTML = optionsHtml;
         }
-
-        // Вставляем в форму редактирования
         if (this.modal.inputs.tariff) {
             this.modal.inputs.tariff.innerHTML = optionsHtml;
         }
@@ -160,7 +162,6 @@ export const UsersModule = {
                     el('td', { class: 'text-center text-sm' }, `${user.residents_count} / ${user.total_room_residents}`),
                     el('td', {}, user.workplace || '-'),
                     el('td', { class: 'text-center' },
-                        // ДОБАВЛЕНО: Кнопка Разового начисления (Песочные часы)
                         el('button', {
                             class: 'btn-icon',
                             title: 'Разовое начисление / Выселение',
@@ -188,8 +189,6 @@ export const UsersModule = {
 
     async handleAdd(event) {
         const button = this.dom.addForm.querySelector('button');
-
-        // Читаем выбранный тариф
         const tariffIdVal = this.dom.newTariffSelect.value;
 
         const data = {
@@ -239,11 +238,8 @@ export const UsersModule = {
         try {
             const result = await api.post('/users/import_excel', formData);
 
-            if (result.errors && result.errors.length > 0) {
-                alert(`Импорт завершен с ошибками (${result.errors.length}):\n` + result.errors.slice(0, 5).join('\n'));
-            } else {
-                toast(`Добавлено: ${result.added}, Обновлено: ${result.updated}`, 'success');
-            }
+            // UX УЛУЧШЕНИЕ: Вызываем красивую модалку вместо alert()
+            this.showImportResultModal(result);
 
             this.dom.importInput.value = '';
             this.table.refresh();
@@ -253,6 +249,60 @@ export const UsersModule = {
         } finally {
             setLoading(button, false);
         }
+    },
+
+    // НОВОЕ: Динамическое создание модалки для показа результатов импорта 20к жильцов
+    showImportResultModal(result) {
+        const hasErrors = result.errors && result.errors.length > 0;
+
+        const overlay = el('div', { class: 'modal-overlay open', style: { zIndex: 10000 } });
+        const headerTitle = hasErrors ? '⚠️ Результат импорта (Есть ошибки)' : '✅ Импорт успешно завершен';
+        const headerColor = hasErrors ? '#d97706' : '#059669';
+
+        const closeBtn = el('button', { class: 'close-icon' }, '×');
+        closeBtn.onclick = () => document.body.removeChild(overlay);
+
+        const content = el('div', { class: 'modal-form' },
+            el('ul', { style: { marginBottom: '15px', paddingLeft: '20px', fontSize: '15px', color: '#374151' } },
+                el('li', { style: { marginBottom: '5px' } }, `Добавлено новых жильцов: `, el('strong', { style: { color: '#059669'} }, String(result.added))),
+                el('li', {}, `Обновлено существующих: `, el('strong', { style: { color: '#2563eb'} }, String(result.updated)))
+            )
+        );
+
+        if (hasErrors) {
+            // Контейнер с прокруткой для ошибок
+            const errorBox = el('div', {
+                style: {
+                    maxHeight: '250px', overflowY: 'auto', background: '#fef2f2',
+                    border: '1px solid #fecaca', borderRadius: '8px', padding: '12px',
+                    fontSize: '13px', color: '#991b1b', fontFamily: 'monospace'
+                }
+            });
+
+            result.errors.forEach(err => {
+                errorBox.appendChild(el('div', {
+                    style: { marginBottom: '6px', borderBottom: '1px dashed #fca5a5', paddingBottom: '6px' }
+                }, String(err))); // String() + el() защищает от XSS
+            });
+
+            content.appendChild(el('h4', { style: { marginBottom: '10px', color: '#dc2626', fontSize: '14px' } }, `Ошибки (${result.errors.length}):`));
+            content.appendChild(errorBox);
+        }
+
+        const btnOk = el('button', { class: 'action-btn primary-btn full-width', style: { marginTop: '20px' } }, 'Понятно, закрыть');
+        btnOk.onclick = () => document.body.removeChild(overlay);
+        content.appendChild(btnOk);
+
+        const modalWindow = el('div', { class: 'modal-window', style: { width: '550px' } },
+            el('div', { class: 'modal-header' },
+                el('h3', { style: { color: headerColor } }, headerTitle),
+                closeBtn
+            ),
+            content
+        );
+
+        overlay.appendChild(modalWindow);
+        document.body.appendChild(overlay); // Вставляем в DOM на лету
     },
 
     async deleteUser(id) {
@@ -328,18 +378,16 @@ export const UsersModule = {
         }
     },
 
-    // ДОБАВЛЕНО: Функции для модалки Разового начисления
     async openOneTimeModal(user) {
         if (!this.otc.modal) return;
 
         this.otc.userId.value = user.id;
         this.otc.userName.textContent = `${user.username} (${user.dormitory || 'без адреса'})`;
 
-        // Автоматически считаем дни в текущем месяце
         const date = new Date();
         const totalDays = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
         this.otc.totalDays.value = totalDays;
-        this.otc.daysLived.value = date.getDate(); // По умолчанию прожил до сегодняшнего дня
+        this.otc.daysLived.value = date.getDate();
 
         this.otc.hot.value = '';
         this.otc.cold.value = '';
@@ -352,7 +400,6 @@ export const UsersModule = {
 
         this.otc.modal.classList.add('open');
 
-        // Пытаемся подгрузить предыдущие показания, чтобы админ не ошибся
         try {
             const state = await api.get(`/admin/readings/manual-state/${user.id}`);
             this.otc.hot.placeholder = `Пред: ${state.prev_hot}`;
@@ -388,7 +435,7 @@ export const UsersModule = {
             await api.post('/admin/readings/one-time', payload);
             toast('Разовое начисление успешно проведено и утверждено!', 'success');
             this.otc.modal.classList.remove('open');
-            this.table.refresh(); // Обновляем таблицу (юзер может пропасть, если выселен)
+            this.table.refresh();
         } catch (err) {
             toast(err.message, 'error');
         } finally {
