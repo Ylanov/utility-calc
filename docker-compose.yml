@@ -1,99 +1,65 @@
-x-app-base: &app-base
-  image: ghcr.io/ylanov/utility-calc:latest
-  restart: always
-  env_file: ./.env
-  environment:
-    - DB_HOST=pgbouncer
-    - DB_PORT=5432
-    # Оптимизация Python для контейнеров
-    - PYTHONUNBUFFERED=1
-    - PYTHONDONTWRITEBYTECODE=1
-  networks:
-    - utility_net
-  # Лимиты ресурсов (опционально, но полезно для продакшена)
-  deploy:
-    resources:
-      limits:
-        memory: 2G
+version: "3.9"
 
 services:
-  # ==========================================
-  # MIGRATION JOB (Запускается один раз)
-  # ==========================================
-  migration_job:
-    <<: *app-base
-    container_name: utility_calc_migrations
-    restart: "no"  # Не перезапускать после успешного завершения
+
+  db:
+    image: postgres:15
+    container_name: utility_calc_db
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init_db.sh:/docker-entrypoint-initdb.d/init_db.sh
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - utility_net
+
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: utility_calc_pgbouncer
+    restart: always
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: ${POSTGRES_USER}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 10000
+      DEFAULT_POOL_SIZE: 50
+      RESERVE_POOL_SIZE: 20
+      MAX_DB_CONNECTIONS: 100
+      ADMIN_USERS: ${POSTGRES_USER}
+      AUTH_TYPE: plain
+      AUTH_USER: ${POSTGRES_USER}
     depends_on:
       db:
         condition: service_healthy
-      pgbouncer:
-        condition: service_started
-    # Команда выполняет миграции и сидинг данных
-    command: >
-      sh -c "
-      echo '---> Waiting for PgBouncer...' && sleep 5 &&
-      echo '---> Running Utility DB migrations...' && alembic upgrade head &&
-      echo '---> Running Arsenal/GSM DB migrations...' && alembic -c alembic_arsenal.ini upgrade head &&
-      echo '---> Seeding initial data...' && python -m app.core.initial_data
-      "
+    networks:
+      - utility_net
 
-  # ==========================================
-  # WEB API (Масштабируемый сервис)
-  # ==========================================
-  web:
-    <<: *app-base
-    container_name: utility_calc_web
-    # Ждем завершения миграций перед запуском
-    depends_on:
-      migration_job:
-        condition: service_completed_successfully
-      redis:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-    # Запускаем Gunicorn без лишних действий.
-    # Количество воркеров берется из ENV или рассчитывается (обычно 2 * CPU + 1).
-    # Для вашего сервера можно ставить WEB_CONCURRENCY=10-20.
-    command: gunicorn app.main:app -k uvicorn.workers.UvicornWorker -w ${WEB_CONCURRENCY:-4} -b 0.0.0.0:8000 --timeout 120
+  redis:
+    image: redis:7
+    container_name: utility_calc_redis
+    restart: always
+    command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - utility_net
 
-  # ==========================================
-  # CELERY WORKERS
-  # ==========================================
-  worker_default:
-    <<: *app-base
-    container_name: utility_calc_worker_default
-    depends_on:
-      redis:
-        condition: service_healthy
-      migration_job:
-        condition: service_completed_successfully
-    command: celery -A app.worker worker --loglevel=info --queues=default --hostname=default@%h --concurrency=${CELERY_WORKER_CONCURRENCY:-4}
-
-  worker_heavy:
-    <<: *app-base
-    container_name: utility_calc_worker_heavy
-    depends_on:
-      redis:
-        condition: service_healthy
-      migration_job:
-        condition: service_completed_successfully
-    # Для тяжелых задач (PDF) concurrency меньше, но памяти больше (настроено в worker.py)
-    command: celery -A app.worker worker --loglevel=info --queues=heavy --hostname=heavy@%h --concurrency=4
-
-  worker_beat:
-    <<: *app-base
-    container_name: utility_calc_beat
-    depends_on:
-      redis:
-        condition: service_healthy
-      migration_job:
-        condition: service_completed_successfully
-    command: celery -A app.worker beat --loglevel=info
-
-  # ==========================================
-  # INFRASTRUCTURE
-  # ==========================================
   minio:
     image: minio/minio:latest
     container_name: utility_calc_minio
@@ -115,56 +81,114 @@ services:
     networks:
       - utility_net
 
-  pgbouncer:
-    image: edoburu/pgbouncer:latest
-    container_name: utility_calc_pgbouncer
-    restart: always
+  migration_job:
+    image: ghcr.io/ylanov/utility-calc:latest
+    container_name: utility_calc_migrations
+    restart: "no"
+    env_file:
+      - .env
     environment:
-      - DB_HOST=db
-      - DB_PORT=5432
-      - DB_USER=${POSTGRES_USER}
-      - DB_PASSWORD=${POSTGRES_PASSWORD}
-      - POOL_MODE=transaction
-      - MAX_CLIENT_CONN=5000  # Увеличено для 20к пользователей
-      - DEFAULT_POOL_SIZE=40
-      - RESERVE_POOL_SIZE=10
-      - MAX_DB_CONNECTIONS=100
-      - ADMIN_USERS=${POSTGRES_USER}
-      - AUTH_TYPE=plain
-      - AUTH_USER=${POSTGRES_USER}
-      - AUTH_FILE=/etc/pgbouncer/userlist.txt
+      DB_HOST: pgbouncer
+      DB_PORT: 5432
     depends_on:
       db:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_started
+    command: >
+      sh -c "
+      echo 'Waiting for PgBouncer...' &&
+      sleep 5 &&
+      alembic upgrade head &&
+      alembic -c alembic_arsenal.ini upgrade head &&
+      python -m app.core.initial_data
+      "
+    networks:
+      - utility_net
+
+  web:
+    image: ghcr.io/ylanov/utility-calc:latest
+    container_name: utility_calc_web
+    restart: always
+    env_file:
+      - .env
+    environment:
+      DB_HOST: pgbouncer
+      DB_PORT: 5432
+      PYTHONUNBUFFERED: 1
+      PYTHONDONTWRITEBYTECODE: 1
+    command: >
+      gunicorn app.main:app
+      -k uvicorn.workers.UvicornWorker
+      -w ${WEB_CONCURRENCY:-4}
+      -b 0.0.0.0:8000
+      --timeout 120
+    depends_on:
+      migration_job:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      minio:
         condition: service_healthy
     networks:
       - utility_net
 
-  db:
-    image: postgres:15
-    container_name: utility_calc_db
+  worker_default:
+    image: ghcr.io/ylanov/utility-calc:latest
+    container_name: utility_calc_worker_default
     restart: always
+    env_file:
+      - .env
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-      PGDATA: /var/lib/postgresql/data/pgdata
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-      - ./init_db.sh:/docker-entrypoint-initdb.d/init_db.sh
+      DB_HOST: pgbouncer
+      DB_PORT: 5432
+    command: >
+      celery -A app.worker worker
+      --loglevel=info
+      --queues=default
+      --concurrency=${CELERY_WORKER_CONCURRENCY:-4}
+    depends_on:
+      redis:
+        condition: service_healthy
+      migration_job:
+        condition: service_completed_successfully
+    networks:
+      - utility_net
 
-  redis:
-    image: redis:7
-    container_name: utility_calc_redis
+  worker_heavy:
+    image: ghcr.io/ylanov/utility-calc:latest
+    container_name: utility_calc_worker_heavy
     restart: always
-    # Оптимизация Redis: удаление старых ключей (LRU) при заполнении 1GB
-    command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+    env_file:
+      - .env
+    environment:
+      DB_HOST: pgbouncer
+      DB_PORT: 5432
+    command: >
+      celery -A app.worker worker
+      --loglevel=info
+      --queues=heavy
+      --concurrency=4
+    depends_on:
+      redis:
+        condition: service_healthy
+      migration_job:
+        condition: service_completed_successfully
+    networks:
+      - utility_net
+
+  worker_beat:
+    image: ghcr.io/ylanov/utility-calc:latest
+    container_name: utility_calc_beat
+    restart: always
+    env_file:
+      - .env
+    command: celery -A app.worker beat --loglevel=info
+    depends_on:
+      redis:
+        condition: service_healthy
+      migration_job:
+        condition: service_completed_successfully
     networks:
       - utility_net
 
@@ -177,7 +201,6 @@ services:
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d
       - ./static:/usr/share/nginx/html/static
-      # shared_data больше не нужен, файлы генерируются в /tmp и уходят в S3
     depends_on:
       - web
     networks:
@@ -191,7 +214,7 @@ services:
       PGHOST: db
       PGUSER: ${POSTGRES_USER}
       PGPASSWORD: ${POSTGRES_PASSWORD}
-      PGDB: ${POSTGRES_DB}
+      PGDATABASE: ${POSTGRES_DB}
     volumes:
       - ./backups:/backups
       - ./backup.sh:/usr/local/bin/backup.sh
