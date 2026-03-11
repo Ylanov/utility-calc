@@ -1,10 +1,5 @@
-version: "3.8"
-
-# Базовый шаблон для Python-сервисов (DRY)
 x-app-base: &app-base
-  build:
-    context: .
-    target: app_runner
+  image: ghcr.io/Ylanov/utility-calc:latest
   restart: always
   env_file: ./.env
   environment:

@@ -99,19 +99,19 @@ jobs:
   # ------------------------------------------------------------------
   deploy:
     needs: build-and-push-image
-    runs-on: self-hosted # ВАЖНО: Это заставит скрипт выполняться на вашем сервере
+    runs-on: self-hosted
 
     steps:
-      # 1. Скачиваем свежий код (docker-compose.yml, nginx.conf и т.д.)
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Создаем файл .env из секретов GitHub (чтобы пароли не хранились в коде)
-      - name: Create .env file
-        run: |
-          echo "${{ secrets.PROD_ENV_FILE }}" > .env
+      - name: Sync files to production folder
+        run: cp -r ./* /opt/utility_calc/
 
-      # 3. Авторизуемся в хранилище GitHub (чтобы сервер мог скачать приватный образ)
+      - name: Create .env file
+        working-directory: /opt/utility_calc
+        run: echo "${{ secrets.PROD_ENV_FILE }}" > .env
+
       - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
@@ -119,27 +119,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GH_PAT }}
 
-      # 4. Создаем папки для томов Docker (чтобы не было ошибок прав доступа)
-      - name: Create necessary directories
-        run: |
-          mkdir -p backups
-          mkdir -p static/generated_files
-          mkdir -p minio_data
-          mkdir -p nginx/conf.d
-
-      # 5. Делаем скрипты исполняемыми
       - name: Make scripts executable
-        run: |
-          chmod +x init_db.sh backup.sh || true
+        working-directory: /opt/utility_calc
+        run: chmod +x init_db.sh backup.sh || true
 
-      # 6. Скачиваем новый образ приложения
       - name: Pull new images
+        working-directory: /opt/utility_calc
         run: docker compose pull
 
-      # 7. Запускаем/Перезапускаем контейнеры
       - name: Deploy with Docker Compose
+        working-directory: /opt/utility_calc
         run: docker compose up -d
 
-      # 8. Удаляем старые образы, чтобы не забить жесткий диск сервера
       - name: Clean up old Docker images
+        working-directory: /opt/utility_calc
         run: docker image prune -af
