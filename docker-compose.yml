@@ -190,7 +190,6 @@ services:
       - "8080:80"
     volumes:
       - ./nginx/conf.d:/etc/nginx/conf.d
-      - ./nginx/certs:/etc/nginx/certs
       - ./static:/usr/share/nginx/html/static
       # shared_data больше не нужен, файлы генерируются в /tmp и уходят в S3
     depends_on:
