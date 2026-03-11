@@ -96,6 +96,8 @@ services:
     environment:
       DB_HOST: pgbouncer
       DB_PORT: 5432
+    security_opt:
+      - seccomp:unconfined
     depends_on:
       db:
         condition: service_healthy
