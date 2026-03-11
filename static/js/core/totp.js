@@ -11,7 +11,7 @@ export const TotpSetup = {
         const btnClose = document.getElementById('btnTotpClose');
         const btnActivate = document.getElementById('btnTotpActivate');
 
-        // Если кнопки нет на странице, прекращаем выполнение, чтобы не было ошибок
+        // Если кнопки нет на странице, прекращаем выполнение (например, на странице логина)
         if (!btnOpen) return;
 
         // Привязка событий
@@ -34,9 +34,9 @@ export const TotpSetup = {
             });
         }
 
-        // Закрытие по клику вне окна (для админа и финансиста)
+        // Закрытие по клику вне окна
         if (modal) {
-            modal.addEventListener('click', (e) => {
+            modal.addEventListener('mousedown', (e) => {
                 if (e.target === modal) this.closeModal();
             });
         }
@@ -48,7 +48,7 @@ export const TotpSetup = {
         const secretText = document.getElementById('totpSecretText');
         const btn = document.getElementById('btnOpenTotp');
 
-        setLoading(btn, true, '...');
+        setLoading(btn, true, 'Генерация...');
         try {
             // Запрашиваем QR и секрет у бэкенда
             const data = await api.post('/auth/setup-2fa', {});
@@ -57,15 +57,15 @@ export const TotpSetup = {
             if (img) {
                 img.src = `data:image/png;base64,${data.qr_code}`;
                 img.style.display = 'block';
-                // Убираем класс hidden для Tailwind (жилец)
-                img.classList.remove('hidden');
+                img.classList.remove('hide', 'hidden'); // Поддержка разных CSS систем
             }
-            if (secretText) secretText.textContent = data.secret;
+            if (secretText) {
+                secretText.textContent = data.secret;
+            }
 
             if (modal) {
                 modal.classList.add('open');
-                // Для Tailwind (жилец) нужно убрать hidden
-                modal.classList.remove('hidden');
+                modal.classList.remove('hide', 'hidden');
                 modal.style.display = 'flex';
             }
         } catch (e) {
@@ -79,9 +79,7 @@ export const TotpSetup = {
         const modal = document.getElementById('totpModal');
         if (modal) {
             modal.classList.remove('open');
-            // Возвращаем классы для Tailwind
-            modal.classList.add('hidden');
-            modal.style.display = ''; // Сброс инлайн стиля
+            modal.style.display = '';
         }
 
         const codeInput = document.getElementById('totpCodeInput');
@@ -95,8 +93,9 @@ export const TotpSetup = {
         const code = codeInput ? codeInput.value.trim() : '';
         const btn = document.getElementById('btnTotpActivate');
 
-        if (!code || code.length !== 6 || isNaN(code)) {
-            toast('Введите корректный 6-значный код', 'error');
+        // Валидация на клиенте (только 6 цифр)
+        if (!code || !/^\d{6}$/.test(code)) {
+            toast('Введите корректный 6-значный код (только цифры)', 'error');
             return;
         }
 
@@ -107,12 +106,17 @@ export const TotpSetup = {
                 secret: this.currentSecret
             });
 
-            toast('Двухфакторная защита успешно включена!', 'success');
+            toast('Двухфакторная защита успешно включена! 🔐', 'success');
             this.closeModal();
 
-            // Скрываем кнопку настройки (опционально)
-            // const btnOpen = document.getElementById('btnOpenTotp');
-            // if (btnOpen) btnOpen.style.display = 'none';
+            // Скрываем кнопку настройки, так как 2FA уже включена
+            const btnOpen = document.getElementById('btnOpenTotp');
+            if (btnOpen) {
+                btnOpen.disabled = true;
+                btnOpen.innerText = '2FA подключена';
+                btnOpen.style.backgroundColor = '#10b981'; // Зеленый цвет
+                btnOpen.style.borderColor = '#10b981';
+            }
 
         } catch (e) {
             toast(e.message, 'error');

@@ -2,25 +2,18 @@
 
 /**
  * Создает HTML элемент безопасным способом (защита от XSS).
- *
- * Использование:
- * el('div', { class: 'my-class' }, 'Текст', el('span', {}, 'Вложенный'))
  */
 export function el(tag, attributes = {}, ...children) {
     const element = document.createElement(tag);
 
     for (const [key, value] of Object.entries(attributes)) {
         if (key.startsWith('on') && typeof value === 'function') {
-            // Например: onclick
             element.addEventListener(key.substring(2).toLowerCase(), value);
         } else if (key === 'style' && typeof value === 'object') {
-            // Например: style: { color: 'red' }
             Object.assign(element.style, value);
         } else if (key === 'dataset' && typeof value === 'object') {
-            // Например: dataset: { id: 1 }
             Object.assign(element.dataset, value);
         } else if (value !== null && value !== undefined && value !== false) {
-            // Обычные атрибуты
             element.setAttribute(key, value);
         }
     }
@@ -29,7 +22,7 @@ export function el(tag, attributes = {}, ...children) {
         if (child === null || child === undefined || child === false) return;
 
         if (typeof child === 'string' || typeof child === 'number') {
-            // Создаем текстовый узел — это предотвращает внедрение HTML-тегов (XSS)
+            // Создаем текстовый узел — предотвращает выполнение <script> (XSS)
             element.appendChild(document.createTextNode(child));
         } else if (child instanceof Node) {
             element.appendChild(child);
@@ -52,25 +45,33 @@ export function clear(elementId) {
 
 /**
  * Управляет состоянием кнопки (Загрузка/Обычное).
+ * Предотвращает множественные отправки форм (Double-click prevention).
  */
 export function setLoading(btn, isLoading, loadingText = 'Загрузка...') {
     if (!btn) return;
 
     if (isLoading) {
-        btn.dataset.originalText = btn.innerText;
+        // Сохраняем оригинальные ширину и текст, чтобы кнопка не прыгала
+        if (!btn.dataset.originalText) {
+            btn.dataset.originalText = btn.innerText;
+            // Фиксируем ширину (опционально, убрано для гибкости, но можно добавить btn.style.width = btn.offsetWidth + 'px')
+        }
+
         btn.disabled = true;
-        // Можно добавить иконку спиннера, если есть CSS
+        btn.classList.add('loading-state'); // Класс для CSS (потускнение)
         btn.innerText = loadingText;
     } else {
         btn.disabled = false;
+        btn.classList.remove('loading-state');
         btn.innerText = btn.dataset.originalText || 'OK';
+
+        // Удаляем сохраненный текст для будущих вызовов
+        delete btn.dataset.originalText;
     }
 }
 
 /**
- * Показывает красивое всплывающее уведомление.
- * @param {string} message - Текст
- * @param {string} type - 'success' | 'error' | 'info'
+ * Показывает красивое всплывающее уведомление (Toast).
  */
 export function toast(message, type = 'success') {
     let container = document.getElementById('toast-container');
@@ -80,23 +81,43 @@ export function toast(message, type = 'success') {
     }
 
     const colors = {
-        success: '#27ae60',
-        error: '#c0392b',
-        info: '#2980b9'
+        success: '#10b981', // Изумрудный (Tailwind green-500)
+        error: '#ef4444',   // Красный (Tailwind red-500)
+        info: '#3b82f6',    // Синий (Tailwind blue-500)
+        warning: '#f59e0b'  // Желтый (Tailwind amber-500)
     };
+
+    // Определяем иконку
+    const icons = {
+        success: '✅',
+        error: '❌',
+        info: 'ℹ️',
+        warning: '⚠️'
+    };
+
+    const icon = icons[type] || icons.success;
 
     const toastEl = el('div', {
         class: 'toast show',
-        style: { backgroundColor: colors[type] || colors.success }
-    }, message);
+        style: {
+            backgroundColor: colors[type] || colors.success,
+            display: 'flex',
+            alignItems: 'center',
+            gap: '10px'
+        }
+    },
+        el('span', { style: { fontSize: '18px' } }, icon),
+        el('span', {}, message)
+    );
 
     container.appendChild(toastEl);
 
-    // Удаляем через 3.5 секунды
+    // Анимация удаления
     setTimeout(() => {
-        toastEl.classList.remove('show');
+        toastEl.style.opacity = '0';
+        toastEl.style.transform = 'translateX(100%)';
         setTimeout(() => toastEl.remove(), 300);
-    }, 3500);
+    }, 4000); // Держим 4 секунды (чуть дольше для длинных текстов)
 }
 
 /**
@@ -106,38 +127,57 @@ export function toast(message, type = 'success') {
 export function showPrompt(title, message, defaultValue = '', placeholder = '') {
     return new Promise((resolve) => {
         const overlay = el('div', { class: 'modal-overlay open', style: { zIndex: 10000 } });
+
         const input = el('input', {
             type: 'text',
             value: defaultValue,
             placeholder: placeholder,
-            class: 'modal-input' // Стилизуйте этот класс в CSS
+            style: { width: '100%', marginBottom: '20px', fontSize: '16px' }
         });
 
-        const btnConfirm = el('button', { class: 'confirm-btn' }, 'OK');
-        const btnCancel = el('button', { class: 'close-btn' }, 'Отмена');
+        const btnConfirm = el('button', { class: 'action-btn primary-btn' }, 'OK');
+        const btnCancel = el('button', { class: 'action-btn secondary-btn' }, 'Отмена');
 
         const modal = el('div', { class: 'modal-window', style: { width: '400px' } },
-            el('div', { class: 'modal-header' }, title),
-            el('p', { style: { marginBottom: '10px', color: '#555' } }, message),
-            input,
-            el('div', { class: 'modal-actions' }, btnCancel, btnConfirm)
+            el('div', { class: 'modal-header' }, el('h3', {}, title)),
+            el('div', { class: 'modal-form' },
+                el('p', { style: { marginBottom: '15px', color: '#4b5563', fontSize: '14px' } }, message),
+                input
+            ),
+            el('div', { class: 'modal-footer' }, btnCancel, btnConfirm)
         );
 
         overlay.appendChild(modal);
         document.body.appendChild(overlay);
-        input.focus();
+
+        // Фокус на поле ввода с небольшой задержкой для рендера
+        setTimeout(() => input.focus(), 50);
 
         const close = (value) => {
-            document.body.removeChild(overlay);
+            if (document.body.contains(overlay)) {
+                document.body.removeChild(overlay);
+            }
             resolve(value);
         };
 
         btnConfirm.onclick = () => close(input.value.trim());
         btnCancel.onclick = () => close(null);
 
-        input.onkeyup = (e) => {
-            if (e.key === 'Enter') close(input.value.trim());
-            if (e.key === 'Escape') close(null);
+        // Обработка клавиш
+        input.onkeydown = (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault(); // Защита от сабмита форм на фоне
+                close(input.value.trim());
+            }
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                close(null);
+            }
+        };
+
+        // Закрытие по клику вне модалки
+        overlay.onmousedown = (e) => {
+            if (e.target === overlay) close(null);
         };
     });
 }

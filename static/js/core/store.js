@@ -1,45 +1,24 @@
 // static/js/core/store.js
-
+/**
+ * Глобальное хранилище состояния приложения (в оперативной памяти).
+ * Используется для легковесных данных, которые не нужно хранить между сессиями браузера.
+ */
 export const store = {
     state: {
-        // Данные текущей страницы
-        readings: [],       // Список показаний
-        users: [],          // Список пользователей
-        tariffs: {},        // Текущие тарифы
-        summary: {},        // Сводка для бухгалтера
+        activePeriod: null, // Имя текущего активного периода
+        isLoadingGlobal: false
+    },
 
-        // Состояние интерфейса
-        activePeriod: null, // Имя активного периода (или null)
-        pagination: {
-            page: 1,
-            limit: 50
+    setActivePeriod(periodName) {
+        this.state.activePeriod = periodName;
+    },
+
+    setGlobalLoading(status) {
+        this.state.isLoadingGlobal = status;
+        if (status) {
+            document.body.style.cursor = 'wait';
+        } else {
+            document.body.style.cursor = 'default';
         }
-    },
-
-    // --- Действия (Actions) для изменения данных ---
-
-    setReadings(readings) {
-        this.state.readings = readings;
-    },
-
-    setUsers(users) {
-        this.state.users = users;
-    },
-
-    setTariffs(tariffs) {
-        this.state.tariffs = tariffs;
-    },
-
-    setSummary(data) {
-        this.state.summary = data;
-    },
-
-    setPage(page) {
-        this.state.pagination.page = page;
-    },
-
-    // Получить одну запись показания по ID (нужно для модального окна)
-    getReadingById(id) {
-        return this.state.readings.find(r => r.id === id);
     }
 };
