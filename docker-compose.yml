@@ -140,7 +140,7 @@ services:
       - utility_net
 
   db:
-    image: postgres:15-alpine
+    image: postgres:15
     container_name: utility_calc_db
     restart: always
     environment:
@@ -162,7 +162,7 @@ services:
       - utility_net
 
   redis:
-    image: redis:7-alpine
+    image: redis:7
     container_name: utility_calc_redis
     restart: always
     # Оптимизация Redis: удаление старых ключей (LRU) при заполнении 1GB
