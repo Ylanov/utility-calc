@@ -6,6 +6,7 @@ services:
     image: postgres:15
     container_name: utility_calc_db
     restart: always
+    user: root
 
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
@@ -17,10 +18,10 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./init_db.sh:/docker-entrypoint-initdb.d/init_db.sh
 
-    command: postgres -c unix_socket_directories=/tmp
+    command: postgres -c unix_socket_directories=/var/lib/postgresql
 
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER}" ]
       interval: 5s
       timeout: 5s
       retries: 10
