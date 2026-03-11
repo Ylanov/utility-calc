@@ -1,5 +1,5 @@
 x-app-base: &app-base
-  image: ghcr.io/Ylanov/utility-calc:latest
+  image: ghcr.io/ylanov/utility-calc:latest
   restart: always
   env_file: ./.env
   environment:
