@@ -151,8 +151,8 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init_db.sh:/docker-entrypoint-initdb.d/init_db.sh
-    tmpfs:
-      - /var/run/postgresql
+    # Говорим Postgres создавать сокет в папке /tmp, а не в системной /var/run/postgresql
+    command: postgres -c unix_socket_directories=/tmp
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
       interval: 5s
