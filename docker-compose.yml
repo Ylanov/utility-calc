@@ -88,29 +88,24 @@ services:
     container_name: utility_calc_migrations
     restart: "no"
 
+    privileged: true
     security_opt:
       - seccomp:unconfined
-
-    cap_add:
-      - SYS_ADMIN
-      - NET_ADMIN
 
     env_file:
       - .env
 
     environment:
-      DB_HOST: pgbouncer
+      DB_HOST: db
       DB_PORT: 5432
 
     depends_on:
       db:
         condition: service_healthy
-      pgbouncer:
-        condition: service_started
 
     command: >
       sh -c "
-      echo 'Waiting for PgBouncer...' &&
+      echo 'Waiting for database...' &&
       sleep 5 &&
       alembic upgrade head &&
       alembic -c alembic_arsenal.ini upgrade head &&
