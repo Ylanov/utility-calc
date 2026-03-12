@@ -102,18 +102,14 @@ jobs:
     runs-on: self-hosted
 
     steps:
-      # ВАЖНО: Мы убрали 'actions/checkout' и 'cp'.
-      # Раннер просто зайдет в папку проекта и обновит код через Git.
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Update code from repository
-        working-directory: /opt/utility_calc
-        run: |
-          git fetch --all
-          git reset --hard origin/main
+      - name: Sync files to production folder
+        run: cp -r ./* /opt/utility_calc/
 
       - name: Create .env file
         working-directory: /opt/utility_calc
-        # Записываем секреты из GitHub в файл .env
         run: echo "${{ secrets.PROD_ENV_FILE }}" > .env
 
       - name: Log in to GitHub Container Registry
@@ -133,7 +129,7 @@ jobs:
 
       - name: Deploy with Docker Compose
         working-directory: /opt/utility_calc
-        run: docker compose up -d --remove-orphans
+        run: docker compose up -d
 
       - name: Clean up old Docker images
         working-directory: /opt/utility_calc
