@@ -1,30 +1,30 @@
-name: Build, Test and Publish
+name: Production CI/CD Pipeline
 
 on:
   push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+    branches:
+      - main
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # ------------------------------------------------------------------
-  # JОВ 1: ПРОВЕРКА БЕЗОПАСНОСТИ И КАЧЕСТВА КОДА
-  # ------------------------------------------------------------------
-  check-and-test:
+
+  quality-check:
+    name: Code Quality and Security
     runs-on: ubuntu-latest
+
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.13'
-          cache: 'pip'
+          python-version: "3.13"
+          cache: pip
 
       - name: Install dependencies
         run: |
@@ -32,105 +32,142 @@ jobs:
           pip install ruff pytest
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Lint with Ruff
-        run: |
-          ruff check . --exit-zero 
+      - name: Lint code
+        run: ruff check . --exit-zero
 
-      - name: Run Trivy vulnerability scanner (Repo mode)
+      - name: Run security scan
         uses: aquasecurity/trivy-action@master
         with:
-          scan-type: 'fs'
+          scan-type: fs
           ignore-unfixed: true
-          format: 'table'
-          exit-code: '1'
-          severity: 'CRITICAL,HIGH'
+          format: table
+          exit-code: "1"
+          severity: CRITICAL,HIGH
 
-      # Если у вас пока нет тестов, этот шаг просто пропустится без ошибки
-      - name: Run Tests
+      - name: Run tests
         run: |
           export PYTHONPATH=$PYTHONPATH:.
-          pytest || echo "No tests found or tests failed, continuing anyway..."
+          pytest || echo "Tests skipped"
 
-  # ------------------------------------------------------------------
-  # JOB 2: СБОРКА И ОТПРАВКА ОБРАЗА В ХРАНИЛИЩЕ GITHUB
-  # ------------------------------------------------------------------
-  build-and-push-image:
-    needs: check-and-test
+
+
+  build:
+    name: Build and Push Docker Image
+    needs: quality-check
     runs-on: ubuntu-latest
+
     permissions:
       contents: read
       packages: write
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Log in to the Container registry
+      - name: Login to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
+      - name: Extract Docker metadata
+        id: metadata
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest
-            type=sha,format=long
+            type=sha
 
-      - name: Set up Docker Buildx
+      - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push Docker image
+      - name: Build and push image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ------------------------------------------------------------------
-  # JOB 3: РАЗВЕРТЫВАНИЕ НА СЕРВЕРЕ (PROXMOX)
-  # ------------------------------------------------------------------
+
+
   deploy:
-    needs: build-and-push-image
+    name: Deploy to Production
+    needs: build
     runs-on: self-hosted
 
     steps:
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Sync files to production folder
-        run: cp -r ./* /opt/utility_calc/
 
-      - name: Create .env file
+      - name: Sync project files
+        run: |
+          rsync -av \
+          --delete \
+          --exclude backups \
+          --exclude .env \
+          ./ /opt/utility_calc/
+
+
+      - name: Create environment file
         working-directory: /opt/utility_calc
-        run: echo "${{ secrets.PROD_ENV_FILE }}" > .env
+        run: |
+          echo "${{ secrets.PROD_ENV_FILE }}" > .env
 
-      - name: Log in to GitHub Container Registry
+
+      - name: Login to Container Registry
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GH_PAT }}
 
+
       - name: Make scripts executable
         working-directory: /opt/utility_calc
-        run: chmod +x init_db.sh backup.sh || true
+        run: |
+          chmod +x init_db.sh || true
+          chmod +x backup.sh || true
+
+
+      - name: Backup current docker compose state
+        working-directory: /opt/utility_calc
+        run: |
+          docker compose ps > last_state.txt
+
 
       - name: Pull new images
         working-directory: /opt/utility_calc
-        run: docker compose pull
+        run: |
+          docker compose pull
 
-      - name: Deploy with Docker Compose
-        working-directory: /opt/utility_calc
-        run: docker compose up -d
 
-      - name: Clean up old Docker images
+      - name: Deploy new containers
         working-directory: /opt/utility_calc
+        run: |
+          docker compose up -d --remove-orphans
+
+
+      - name: Wait for application to start
+        run: sleep 15
+
+
+      - name: Health check
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080 || true)
+
+          if [ "$STATUS" != "200" ]; then
+            echo "Application health check failed!"
+            exit 1
+          fi
+
+
+      - name: Cleanup unused docker images
         run: docker image prune -af
