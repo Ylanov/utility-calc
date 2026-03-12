@@ -87,18 +87,27 @@ services:
     image: ghcr.io/ylanov/utility-calc:latest
     container_name: utility_calc_migrations
     restart: "no"
+
     security_opt:
       - seccomp:unconfined
+
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+
     env_file:
       - .env
+
     environment:
       DB_HOST: pgbouncer
       DB_PORT: 5432
+
     depends_on:
       db:
         condition: service_healthy
       pgbouncer:
         condition: service_started
+
     command: >
       sh -c "
       echo 'Waiting for PgBouncer...' &&
@@ -107,6 +116,7 @@ services:
       alembic -c alembic_arsenal.ini upgrade head &&
       python -m app.core.initial_data
       "
+
     networks:
       - utility_net
 
