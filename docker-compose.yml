@@ -4,8 +4,8 @@ services:
     image: postgres:15
     container_name: utility_calc_db
     restart: always
-    security_opt: # <--- ДОБАВИТЬ ВОТ ЭТО
-      - seccomp:unconfined        # <--- ДОБАВИТЬ ВОТ ЭТО
+    security_opt:
+      - seccomp:unconfined
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -13,9 +13,10 @@ services:
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - postgres_socket:/var/run/postgresql
       - ./init_db.sh:/docker-entrypoint-initdb.d/init_db.sh
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -h localhost -p 5432 -U ${POSTGRES_USER}" ]
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -238,6 +239,7 @@ services:
 
 volumes:
   postgres_data:
+  postgres_socket:
   redis_data:
   minio_data:
 
