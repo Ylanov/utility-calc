@@ -14,9 +14,11 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init_db.sh:/docker-entrypoint-initdb.d/init_db.sh
-    # tmpfs УДАЛЕН ОТСЮДА
+    # РЕШЕНИЕ ПРОБЛЕМЫ С СОКЕТОМ: Переносим его в папку данных БД
+    command: postgres -c listen_addresses='*' -c unix_socket_directories='/var/lib/postgresql/data'
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER}" ]
+      # Проверяем здоровье базы строго по локальному IP, а не через сокет
+      test: [ "CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U ${POSTGRES_USER}" ]
       interval: 5s
       timeout: 5s
       retries: 10
