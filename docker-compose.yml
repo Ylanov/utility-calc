@@ -4,6 +4,8 @@ services:
     image: postgres:15
     container_name: utility_calc_db
     restart: always
+    security_opt: # <--- ДОБАВИТЬ ВОТ ЭТО
+      - seccomp:unconfined        # <--- ДОБАВИТЬ ВОТ ЭТО
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -12,7 +14,6 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init_db.sh:/docker-entrypoint-initdb.d/init_db.sh
-    # СТРОКА command: ... БЫЛА УДАЛЕНА
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -h localhost -p 5432 -U ${POSTGRES_USER}" ]
       interval: 5s
