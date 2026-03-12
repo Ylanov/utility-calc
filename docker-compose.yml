@@ -8,19 +8,15 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-      # Эта настройка говорит базе создать папку pgdata ВНУТРИ тома.
-      # Это решает 100% проблем с правами.
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init_db.sh:/docker-entrypoint-initdb.d/init_db.sh
     healthcheck:
-      # Проверяем здоровье базы стандартной утилитой локально
       test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
       interval: 5s
       timeout: 5s
       retries: 10
-      start_period: 10s
     networks:
       - utility_net
 
