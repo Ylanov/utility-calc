@@ -37,7 +37,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /app
 
-# Устанавливаем runtime-зависимости
+# Устанавливаем runtime-зависимости (ВНЕДРЕНО: добавлен curl для healthcheck)
 RUN apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     libpq5 \
     libffi8 \
@@ -47,6 +47,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     libgdk-pixbuf-2.0-0 \
     shared-mime-info \
     fonts-liberation \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Копируем установленные пакеты из builder
