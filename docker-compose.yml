@@ -85,15 +85,19 @@ services:
       - seccomp:unconfined
     env_file:
       - .env
+    # --- ИЗМЕНЕНИЯ ЗДЕСЬ ---
     environment:
-      DB_HOST: db
+      # Подключаемся через пул соединений, как и все остальные
+      DB_HOST: pgbouncer
       DB_PORT: 5432
     depends_on:
-      db:
-        condition: service_healthy
+      # Ждем не саму базу, а наш пул соединений, который ждет базу
+      pgbouncer:
+        condition: service_started
+    # --- КОНЕЦ ИЗМЕНЕНИЙ ---
     command: >
       sh -c "
-      echo 'Waiting for database...' &&
+      echo 'Waiting for PgBouncer...' &&
       sleep 5 &&
       alembic upgrade head &&
       alembic -c alembic_arsenal.ini upgrade head &&
