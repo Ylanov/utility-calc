@@ -4,25 +4,23 @@ services:
     image: postgres:15
     container_name: utility_calc_db
     restart: always
-    security_opt:
-      - seccomp:unconfined
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      # Эта настройка говорит базе создать папку pgdata ВНУТРИ тома.
+      # Это решает 100% проблем с правами.
       PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init_db.sh:/docker-entrypoint-initdb.d/init_db.sh
-    # РЕШЕНИЕ ПРОБЛЕМЫ С СОКЕТОМ: Переносим его в папку данных БД
-    command: postgres -c listen_addresses='*' -c unix_socket_directories='/var/lib/postgresql/data'
     healthcheck:
-      # Проверяем здоровье базы строго по локальному IP, а не через сокет
-      test: [ "CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U ${POSTGRES_USER}" ]
+      # Проверяем здоровье базы стандартной утилитой локально
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
       interval: 5s
       timeout: 5s
       retries: 10
-      start_period: 60s
+      start_period: 10s
     networks:
       - utility_net
 
