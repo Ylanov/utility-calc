@@ -22,7 +22,6 @@ services:
     networks:
       - utility_net
 
-
   pgbouncer:
     image: edoburu/pgbouncer:latest
     container_name: utility_calc_pgbouncer
@@ -46,7 +45,6 @@ services:
     networks:
       - utility_net
 
-
   redis:
     image: redis:7
     container_name: utility_calc_redis
@@ -62,7 +60,6 @@ services:
       start_period: 10s
     networks:
       - utility_net
-
 
   minio:
     image: minio/minio:latest
@@ -82,27 +79,20 @@ services:
     networks:
       - utility_net
 
-
   migration_job:
     image: ghcr.io/ylanov/utility-calc:latest
     container_name: utility_calc_migrations
     restart: "no"
-
-    privileged: true
     security_opt:
       - seccomp:unconfined
-
     env_file:
       - .env
-
     environment:
       DB_HOST: db
       DB_PORT: 5432
-
     depends_on:
       db:
         condition: service_healthy
-
     command: >
       sh -c "
       echo 'Waiting for database...' &&
@@ -111,15 +101,15 @@ services:
       alembic -c alembic_arsenal.ini upgrade head &&
       python -m app.core.initial_data
       "
-
     networks:
       - utility_net
-
 
   web:
     image: ghcr.io/ylanov/utility-calc:latest
     container_name: utility_calc_web
     restart: always
+    security_opt:
+      - seccomp:unconfined
     env_file:
       - .env
     environment:
@@ -143,11 +133,12 @@ services:
     networks:
       - utility_net
 
-
   worker_default:
     image: ghcr.io/ylanov/utility-calc:latest
     container_name: utility_calc_worker_default
     restart: always
+    security_opt:
+      - seccomp:unconfined
     env_file:
       - .env
     environment:
@@ -166,11 +157,12 @@ services:
     networks:
       - utility_net
 
-
   worker_heavy:
     image: ghcr.io/ylanov/utility-calc:latest
     container_name: utility_calc_worker_heavy
     restart: always
+    security_opt:
+      - seccomp:unconfined
     env_file:
       - .env
     environment:
@@ -189,11 +181,12 @@ services:
     networks:
       - utility_net
 
-
   worker_beat:
     image: ghcr.io/ylanov/utility-calc:latest
     container_name: utility_calc_beat
     restart: always
+    security_opt:
+      - seccomp:unconfined
     env_file:
       - .env
     command: celery -A app.worker beat --loglevel=info
@@ -204,7 +197,6 @@ services:
         condition: service_completed_successfully
     networks:
       - utility_net
-
 
   nginx:
     image: nginx:alpine
@@ -219,7 +211,6 @@ services:
       - web
     networks:
       - utility_net
-
 
   backup:
     image: postgres:15-alpine
@@ -244,12 +235,10 @@ services:
     networks:
       - utility_net
 
-
 volumes:
   postgres_data:
   redis_data:
   minio_data:
-
 
 networks:
   utility_net:
