@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "Checking required databases..."
+echo "Initializing databases..."
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres <<-EOSQL
 
@@ -17,4 +17,4 @@ WHERE NOT EXISTS (
 
 EOSQL
 
-echo "Databases utility_db and arsenal_db are ready."
+echo "Databases are ready."
