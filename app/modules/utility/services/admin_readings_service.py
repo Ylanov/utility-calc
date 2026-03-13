@@ -1,4 +1,3 @@
-# app/modules/utility/services/admin_readings_service.py
 from decimal import Decimal
 from typing import Optional
 from fastapi import HTTPException
@@ -7,7 +6,6 @@ from sqlalchemy.future import select
 from sqlalchemy import desc, asc, func, or_, update
 
 from app.modules.utility.models import User, MeterReading, Tariff, BillingPeriod, Adjustment
-# ИСПРАВЛЕНИЕ ЗДЕСЬ: Добавлен импорт OneTimeChargeSchema
 from app.modules.utility.schemas import ApproveRequest, AdminManualReadingSchema, OneTimeChargeSchema
 from app.modules.utility.services.calculations import calculate_utilities, D
 from app.modules.utility.services.anomaly_detector import check_reading_for_anomalies
@@ -15,7 +13,7 @@ from app.modules.utility.constants import ANOMALY_MAP
 
 
 async def get_paginated_readings(
-        db: AsyncSession, page: int, limit: int, search: Optional[str],
+        db: AsyncSession, page: int, limit: int, after_id: Optional[int], search: Optional[str],
         anomalies_only: bool, sort_by: str, sort_dir: str
 ):
     active_period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))).scalars().first()
@@ -33,14 +31,26 @@ async def get_paginated_readings(
         search_fmt = f"%{search}%"
         query = query.where(or_(User.username.ilike(search_fmt), User.dormitory.ilike(search_fmt)))
 
+    # Вычисление Total Count остается (нужно фронтенду для пагинации)
     total = (await db.execute(select(func.count()).select_from(query.subquery()))).scalar_one()
 
     sort_col = {
         "username": User.username, "dormitory": User.dormitory, "total_cost": MeterReading.total_cost
-    }.get(sort_by, MeterReading.created_at)
+    }.get(sort_by, MeterReading.id)  # По умолчанию сортируем по ID (он коррелирует с created_at, но надежнее)
 
-    query = query.order_by(asc(sort_col) if sort_dir == "asc" else desc(sort_col))
-    rows = (await db.execute(query.offset((page - 1) * limit).limit(limit))).all()
+    # 🔥 ОПТИМИЗАЦИЯ: Если передан after_id и сортировка по умолчанию, используем Keyset Pagination (Мгновенно)
+    if after_id and sort_by in ["created_at", "id"]:
+        if sort_dir == "desc":
+            query = query.where(MeterReading.id < after_id).order_by(desc(MeterReading.id))
+        else:
+            query = query.where(MeterReading.id > after_id).order_by(asc(MeterReading.id))
+
+        # Keyset пагинация: OFFSET не нужен
+        rows = (await db.execute(query.limit(limit))).all()
+    else:
+        # Fallback: Обычная сортировка (или кастомная по имени) использует OFFSET
+        query = query.order_by(asc(sort_col) if sort_dir == "asc" else desc(sort_col))
+        rows = (await db.execute(query.offset((page - 1) * limit).limit(limit))).all()
 
     if not rows:
         return {"total": total, "page": page, "size": limit, "items": []}
@@ -51,7 +61,7 @@ async def get_paginated_readings(
     ).group_by(MeterReading.user_id).subquery()
 
     stmt_prev = select(MeterReading).join(subq_max_prev, (MeterReading.user_id == subq_max_prev.c.user_id) & (
-                MeterReading.created_at == subq_max_prev.c.max_created))
+            MeterReading.created_at == subq_max_prev.c.max_created))
     prev_map = {r.user_id: r for r in (await db.execute(stmt_prev)).scalars().all()}
 
     items = []

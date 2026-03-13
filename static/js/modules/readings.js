@@ -261,8 +261,9 @@ export const ReadingsModule = {
 
         // НОВОЕ: Заменяем запятую на точку перед парсингом, чтобы избежать NaN
         const parseInput = (elId) => {
-            const val = document.getElementById(elId).value;
-            return parseFloat(val.replace(',', '.')) || 0;
+            const el = document.getElementById(elId);
+            if (!el || !el.value) return 0; // Безопасный возврат 0
+            return parseFloat(el.value.replace(',', '.')) || 0;
         };
 
         const data = {

@@ -1,6 +1,6 @@
 import os
 import uuid
-import shutil
+import asyncio
 import logging
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -48,13 +48,16 @@ async def upload_debts_1c(
     file_path = os.path.join(TEMP_DIR, unique_name)
 
     try:
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        # 🔥 ИСПРАВЛЕНИЕ: Читаем файл асинхронно и сохраняем в фоновом потоке
+        content = await file.read()
+        def save_file():
+            with open(file_path, "wb") as buffer:
+                buffer.write(content)
+        await asyncio.to_thread(save_file)
     except Exception:
         logger.exception("Failed to save uploaded file")
         raise HTTPException(status_code=500, detail="Ошибка сохранения файла")
 
-    # Передаем account_type в задачу
     task = import_debts_task.delay(file_path, account_type)
     logger.info(f"[IMPORT] Started task={task.id} for account={account_type}")
 

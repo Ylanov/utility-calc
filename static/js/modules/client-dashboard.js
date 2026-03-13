@@ -1,7 +1,12 @@
 // static/js/modules/client-dashboard.js
 import { api } from '../core/api.js';
 import { el, clear, toast, setLoading } from '../core/dom.js';
-import { Auth } from '../core/auth.js'; // Нужен для логаута после смены логина
+import { Auth } from '../core/auth.js';
+
+// НОВОЕ: Мгновенная проверка
+if (!Auth.isAuthenticated()) {
+    window.location.replace('login.html');
+}
 
 export const ClientDashboard = {
     state: {

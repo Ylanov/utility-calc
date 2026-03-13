@@ -36,13 +36,20 @@ async def import_readings(
 
 @router.get("/api/admin/readings")
 async def get_admin_readings(
-        page: int = Query(1, ge=1), limit: int = Query(50, ge=1, le=1000),
-        search: Optional[str] = Query(None), anomalies_only: bool = Query(False),
-        sort_by: str = Query("created_at"), sort_dir: str = Query("desc"),
-        current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+        page: int = Query(1, ge=1),
+        limit: int = Query(50, ge=1, le=1000),
+        after_id: Optional[int] = Query(None, description="ID для высокоскоростной Keyset пагинации"),
+        search: Optional[str] = Query(None),
+        anomalies_only: bool = Query(False),
+        sort_by: str = Query("created_at"),
+        sort_dir: str = Query("desc"),
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db)
 ):
     check_role(current_user, ["accountant", "admin", "financier"])
-    return await admin_readings_service.get_paginated_readings(db, page, limit, search, anomalies_only, sort_by, sort_dir)
+    return await admin_readings_service.get_paginated_readings(
+        db, page, limit, after_id, search, anomalies_only, sort_by, sort_dir
+    )
 
 @router.post("/api/admin/approve-bulk")
 async def bulk_approve_readings(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):

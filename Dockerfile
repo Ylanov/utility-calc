@@ -5,7 +5,8 @@ FROM python:3.13-slim-bookworm AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PYTHONOPTIMIZE=1
 
 WORKDIR /app
 
@@ -26,6 +27,11 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 COPY requirements.txt .
 RUN uv pip install --system -r requirements.txt
 
+# Уменьшение образа: удаляем компиляторы после сборки
+RUN apt-get purge -y build-essential && \
+    apt-get autoremove -y && \
+    apt-get clean
+
 # ==========================================
 # ===== FINAL STAGE (Финальный образ) ======
 # ==========================================
@@ -33,7 +39,8 @@ FROM python:3.13-slim-bookworm AS app_runner
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PYTHONOPTIMIZE=1
 
 WORKDIR /app
 
@@ -48,6 +55,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     shared-mime-info \
     fonts-liberation \
     curl \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Копируем установленные пакеты из builder

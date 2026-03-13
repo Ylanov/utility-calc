@@ -1,5 +1,6 @@
 import os
 import uuid
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -294,9 +295,11 @@ async def download_client_receipt(
     adjustments = adj_res.scalars().all()
 
     try:
-        # 1. Генерируем PDF во временную директорию ОС
         temp_dir = "/tmp"
-        pdf_path = generate_receipt_pdf(
+
+        # Выносим рендеринг PDF (WeasyPrint) в отдельный поток, чтобы не блокировать Event Loop
+        pdf_path = await asyncio.to_thread(
+            generate_receipt_pdf,
             user=reading.user,
             reading=reading,
             period=reading.period,
@@ -306,19 +309,20 @@ async def download_client_receipt(
             output_dir=temp_dir
         )
 
-        # 2. Формируем ключ для S3
-        # Добавляем UUID для уникальности, чтобы не было конфликтов
+        # Формируем ключ для S3 с UUID для уникальности
         s3_key = f"receipts/{reading.period.id}/client_view_{reading.user.id}_{uuid.uuid4().hex[:8]}.pdf"
 
-        # 3. Загружаем файл в S3
-        if s3_service.upload_file(pdf_path, s3_key):
-            # 4. Удаляем локальный файл после успешной загрузки
-            os.remove(pdf_path)
+        # Синхронный вызов Boto3 для загрузки в S3 также вынесен в отдельный поток
+        upload_success = await asyncio.to_thread(s3_service.upload_file, pdf_path, s3_key)
 
-            # 5. Генерируем временную ссылку на скачивание (5 минут)
-            download_url = s3_service.get_presigned_url(s3_key, expiration=300)
+        if upload_success:
+            # Удаляем локальный файл в фоновом потоке
+            await asyncio.to_thread(os.remove, pdf_path)
 
-            # 6. Редиректим браузер пользователя на MinIO/S3
+            # Генерация временной ссылки (5 минут) вынесена в поток
+            download_url = await asyncio.to_thread(s3_service.get_presigned_url, s3_key, 300)
+
+            # Редиректим браузер пользователя на MinIO/S3
             return RedirectResponse(url=download_url)
         else:
             raise HTTPException(500, "Ошибка сохранения файла в облаке")

@@ -1,5 +1,6 @@
 import os
 import uuid
+import asyncio
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse, StreamingResponse
@@ -25,10 +26,6 @@ async def get_receipt_pdf(
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
 ):
-    """
-    Генерация квитанции "на лету" (синхронно).
-    Генерирует PDF во временную папку -> Загружает в S3 -> Редиректит на скачивание.
-    """
     if current_user.role != "accountant":
         raise HTTPException(status_code=403, detail="Доступ запрещен")
 
@@ -43,12 +40,10 @@ async def get_receipt_pdf(
     if not reading or not reading.user or not reading.period:
         raise HTTPException(404, "Данные не найдены")
 
-    # Получаем индивидуальный тариф пользователя
     user_tariff_id = getattr(reading.user, 'tariff_id', None) or 1
     tariff_res = await db.execute(select(Tariff).where(Tariff.id == user_tariff_id))
     tariff = tariff_res.scalars().first()
 
-    # Резервный поиск базового тарифа
     if not tariff:
         tariff_res_def = await db.execute(select(Tariff).where(Tariff.is_active == True))
         tariff = tariff_res_def.scalars().first()
@@ -75,9 +70,11 @@ async def get_receipt_pdf(
     adjustments = adj_res.scalars().all()
 
     try:
-        # 1. Генерируем во временную папку ОС (чтобы не забивать диск контейнера)
         temp_dir = "/tmp"
-        pdf_path = generate_receipt_pdf(
+
+        # 🔥 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Выносим рендеринг PDF в отдельный поток
+        pdf_path = await asyncio.to_thread(
+            generate_receipt_pdf,
             user=reading.user,
             reading=reading,
             period=reading.period,
@@ -87,19 +84,17 @@ async def get_receipt_pdf(
             output_dir=temp_dir
         )
 
-        # 2. Формируем ключ S3
-        # Добавляем UUID, чтобы избежать кэширования браузером при повторном скачивании
         s3_key = f"receipts/{reading.period.id}/admin_view_{reading.user.id}_{uuid.uuid4().hex[:8]}.pdf"
 
-        # 3. Загружаем в S3
-        if s3_service.upload_file(pdf_path, s3_key):
-            # 4. Удаляем локальный файл
-            os.remove(pdf_path)
+        # 🔥 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Синхронный вызов Boto3 вынесен в отдельный поток
+        upload_success = await asyncio.to_thread(s3_service.upload_file, pdf_path, s3_key)
 
-            # 5. Генерируем временную ссылку (5 минут)
-            download_url = s3_service.get_presigned_url(s3_key, expiration=300)
+        if upload_success:
+            await asyncio.to_thread(os.remove, pdf_path)  # Удаляем локальный файл в потоке
 
-            # 6. Перенаправляем администратора на скачивание
+            # Генерация ссылки (тоже синхронный запрос к AWS/MinIO)
+            download_url = await asyncio.to_thread(s3_service.get_presigned_url, s3_key, 300)
+
             return RedirectResponse(url=download_url)
         else:
             raise HTTPException(500, "Ошибка загрузки файла в хранилище")
@@ -115,9 +110,6 @@ async def export_report(
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
 ):
-    """
-    Генерация Excel-отчета (пока остается в памяти, т.к. файлы небольшие).
-    """
     if current_user.role != "accountant":
         raise HTTPException(status_code=403)
 
@@ -153,10 +145,6 @@ async def start_receipt_generation(
 
 @router.get("/api/admin/tasks/{task_id}")
 async def get_task_status(task_id: str, current_user: User = Depends(get_current_user)):
-    """
-    Проверка статуса фоновой задачи.
-    Если задача выполнена и вернула s3_key, генерирует ссылку на скачивание.
-    """
     task_result = AsyncResult(task_id)
 
     if task_result.state == 'PENDING':
@@ -165,25 +153,23 @@ async def get_task_status(task_id: str, current_user: User = Depends(get_current
     elif task_result.state != 'FAILURE':
         result = task_result.result
 
-        # Если задача завершилась успешно и вернула ключ S3
         if isinstance(result, dict) and result.get("status") in ["done", "ok"]:
             s3_key = result.get("s3_key")
 
             if s3_key:
-                # Генерируем временную ссылку (действует 5 минут)
-                download_url = s3_service.get_presigned_url(s3_key, expiration=300)
+                # Синхронный запрос к S3 вынесен в поток
+                download_url = await asyncio.to_thread(s3_service.get_presigned_url, s3_key, 300)
                 return {
                     "state": task_result.state,
                     "status": "done",
                     "download_url": download_url
                 }
 
-            # Фоллбэк для старых задач (если вдруг остались локальные файлы)
             filename = result.get('filename', 'document.pdf')
             return {
                 "state": task_result.state,
                 "status": "done",
-                "download_url": f"/static/generated_files/{filename}"  # Устаревший путь
+                "download_url": f"/static/generated_files/{filename}"
             }
 
         return {"state": task_result.state, "result": result}
@@ -211,8 +197,8 @@ async def create_bulk_zip(
 
     task = start_bulk_receipt_generation.delay(target_period_id)
     try:
-        # Ждем запуска цепочки задач, чтобы получить ID
-        result_data = task.get(timeout=10)
+        # get() блокирует поток. Оборачиваем в asyncio.to_thread
+        result_data = await asyncio.to_thread(task.get, timeout=10)
         final_task_id = result_data['task_id']
     except Exception as e:
         print(f"Error launching bulk tasks: {e}")

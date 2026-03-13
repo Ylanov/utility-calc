@@ -22,7 +22,7 @@ export const ManualModule = {
 
     cacheDOM() {
         this.dom = {
-            searchInput: document.getElementById('manualUserSearch'),
+            searchInput: document.getElementById('manualSearchInput'),
             userList: document.getElementById('manualUserList'),
             formCard: document.getElementById('manualFormCard'),
             form: document.getElementById('manualReadingForm'),

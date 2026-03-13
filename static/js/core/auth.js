@@ -33,21 +33,17 @@ export const Auth = {
     async logout() {
         console.log('Выполняется выход из системы...');
         try {
-            // Вызываем эндпоинт логаута на бэкенде, чтобы он удалил HttpOnly Cookie
-            await fetch('/api/auth/logout', {
+            // ИСПРАВЛЕНИЕ: Убрано /auth/ из URL
+            await fetch('/api/logout', {
                 method: 'POST',
-                credentials: 'include' // Обязательно, чтобы отправить текущую куку на удаление
+                credentials: 'include'
             });
         } catch (e) {
             console.warn('Сервер не ответил при выходе, продолжаем локальную очистку:', e);
         }
 
-        // Зачищаем все локальные данные
         sessionStorage.clear();
-        localStorage.clear(); // Чистим всё на случай мусора от старых версий
-
-        // Редирект на портал (или login.html)
-        // Используем replace, чтобы нельзя было вернуться кнопкой "Назад"
+        localStorage.clear();
         window.location.replace('portal.html');
     }
 };
