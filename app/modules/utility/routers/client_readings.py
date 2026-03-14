@@ -27,12 +27,12 @@ async def get_reading_state(
         db: AsyncSession = Depends(get_db)
 ):
     """Получение текущего состояния для Dashboard жильца."""
-    period_res = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))
+    period_res = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))
     active_period = period_res.scalars().first()
 
     prev_res = await db.execute(
         select(MeterReading)
-        .where(MeterReading.user_id == current_user.id, MeterReading.is_approved == True)
+        .where(MeterReading.user_id == current_user.id, MeterReading.is_approved)
         .order_by(MeterReading.created_at.desc())
         .limit(1)
     )
@@ -44,7 +44,7 @@ async def get_reading_state(
             select(MeterReading)
             .where(
                 MeterReading.user_id == current_user.id,
-                MeterReading.is_approved == False,
+                not MeterReading.is_approved,
                 MeterReading.period_id == active_period.id
             )
         )
@@ -88,7 +88,7 @@ async def save_reading(
     Расчеты вынесены ДО начала блокирующей транзакции.
     """
     # 1. Получение данных (Read-Only phase) - без блокировок
-    res_period = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))
+    res_period = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))
     active_period = res_period.scalars().first()
     if not active_period:
         raise HTTPException(status_code=400, detail="Расчетный период закрыт.")
@@ -99,7 +99,7 @@ async def save_reading(
     t = t_res.scalars().first()
 
     if not t:
-        t_res_def = await db.execute(select(Tariff).where(Tariff.is_active == True))
+        t_res_def = await db.execute(select(Tariff).where(Tariff.is_active))
         t = t_res_def.scalars().first()
         if not t:
             raise HTTPException(status_code=500, detail="Активный тариф не найден")
@@ -107,7 +107,7 @@ async def save_reading(
     # Получаем предыдущие показания
     prev_res = await db.execute(
         select(MeterReading)
-        .where(MeterReading.user_id == current_user.id, MeterReading.is_approved == True)
+        .where(MeterReading.user_id == current_user.id, MeterReading.is_approved)
         .order_by(MeterReading.created_at.desc()).limit(1)
     )
     prev = prev_res.scalars().first()
@@ -127,7 +127,7 @@ async def save_reading(
     # Получаем историю для аномалий
     history_res = await db.execute(
         select(MeterReading)
-        .where(MeterReading.user_id == current_user.id, MeterReading.is_approved == True)
+        .where(MeterReading.user_id == current_user.id, MeterReading.is_approved)
         .order_by(MeterReading.created_at.desc()).limit(4)
     )
     history = history_res.scalars().all()
@@ -170,7 +170,7 @@ async def save_reading(
             select(MeterReading)
             .where(
                 MeterReading.user_id == current_user.id,
-                MeterReading.is_approved == False,
+                not MeterReading.is_approved,
                 MeterReading.period_id == active_period.id
             )
             .with_for_update()
@@ -223,7 +223,7 @@ async def get_client_history(current_user: User = Depends(get_current_user), db:
     stmt = (
         select(MeterReading)
         .options(selectinload(MeterReading.period))
-        .where(MeterReading.user_id == current_user.id, MeterReading.is_approved == True)
+        .where(MeterReading.user_id == current_user.id, MeterReading.is_approved)
         .order_by(MeterReading.created_at.desc())
         .limit(24)  # Ограничиваем историю
     )
@@ -272,7 +272,7 @@ async def download_client_receipt(
 
     # Резервный поиск базового тарифа, если привязанный не найден
     if not tariff:
-        tariff_res_def = await db.execute(select(Tariff).where(Tariff.is_active == True))
+        tariff_res_def = await db.execute(select(Tariff).where(Tariff.is_active))
         tariff = tariff_res_def.scalars().first()
         if not tariff:
             raise HTTPException(500, "Активный тариф не найден")
@@ -281,7 +281,7 @@ async def download_client_receipt(
         select(MeterReading)
         .where(
             MeterReading.user_id == reading.user_id,
-            MeterReading.is_approved == True,
+            MeterReading.is_approved,
             MeterReading.created_at < reading.created_at
         )
         .order_by(MeterReading.created_at.desc()).limit(1)

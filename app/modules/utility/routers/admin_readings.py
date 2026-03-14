@@ -28,7 +28,7 @@ async def import_readings(
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="Разрешены только файлы Excel")
 
-    active_period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))).scalars().first()
+    active_period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))).scalars().first()
     if not active_period: raise HTTPException(status_code=400, detail="Нет активного периода")
 
     content = await file.read()

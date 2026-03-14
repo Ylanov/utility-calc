@@ -108,7 +108,7 @@ def sync_import_debts_process(file_path: str, db: Session, account_type: str) ->
             return {"status": "error", "message": "Нет активного периода для загрузки долгов"}
 
         # 2. Предзагрузка пользователей
-        users_raw = db.execute(select(User.id, User.username).where(User.is_deleted == False)).all()
+        users_raw = db.execute(select(User.id, User.username).where(not User.is_deleted)).all()
         # Карта: нормализованное имя -> ID
         users_map: Dict[str, int] = {normalize_name(u.username): u.id for u in users_raw}
         # Список ключей один раз для rapidfuzz (оптимизация)

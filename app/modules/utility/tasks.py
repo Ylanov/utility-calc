@@ -61,7 +61,7 @@ def generate_receipt_task(reading_id: int) -> dict:
 
         # 2. Если у пользователя нет своего тарифа (или он был удален), берем дефолтный активный
         if not tariff:
-            tariff = db.query(Tariff).filter(Tariff.is_active == True).first()
+            tariff = db.query(Tariff).filter(Tariff.is_active).first()
 
         if not tariff:
             raise ValueError("В системе нет активных тарифов для генерации квитанции")

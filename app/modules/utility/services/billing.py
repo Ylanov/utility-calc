@@ -34,7 +34,7 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
 
     # 2. Получаем ВСЕ активные тарифы (Профили тарификации)
     tariffs_result = await db.execute(
-        select(Tariff).where(Tariff.is_active == True)
+        select(Tariff).where(Tariff.is_active)
     )
     active_tariffs = tariffs_result.scalars().all()
     if not active_tariffs:
@@ -56,7 +56,7 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
     users_to_process_res = await db.execute(
         select(User).where(
             User.role == "user",
-            User.is_deleted == False,  # <-- Не делаем авто-расчет выселенным
+            not User.is_deleted,  # <-- Не делаем авто-расчет выселенным
             User.id.notin_(users_with_readings)
         )
     )

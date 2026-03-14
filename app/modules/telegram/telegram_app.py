@@ -83,7 +83,7 @@ async def tg_auto_login(data: TgAutoLoginRequest, db: AsyncSession = Depends(get
     tg_id = str(tg_user.get("id"))
 
     # Ищем пользователя с таким telegram_id
-    result = await db.execute(select(User).where(User.telegram_id == tg_id, User.is_deleted == False))
+    result = await db.execute(select(User).where(User.telegram_id == tg_id, not User.is_deleted))
     user = result.scalars().first()
 
     if not user:
@@ -102,7 +102,7 @@ async def tg_login_and_link(data: TgLoginRequest, db: AsyncSession = Depends(get
     tg_id = str(tg_user.get("id"))
 
     # Ищем пользователя по логину
-    result = await db.execute(select(User).where(User.username == data.username, User.is_deleted == False))
+    result = await db.execute(select(User).where(User.username == data.username, not User.is_deleted))
     user = result.scalars().first()
 
     if not user or not verify_password(data.password, user.hashed_password):

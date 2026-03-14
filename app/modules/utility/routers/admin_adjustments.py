@@ -28,7 +28,7 @@ async def create_adjustment(
         raise HTTPException(status_code=403, detail="Доступ запрещен")
 
     # 1. Находим активный период
-    res_period = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))
+    res_period = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))
     active_period = res_period.scalars().first()
     if not active_period:
         raise HTTPException(status_code=400, detail="Нет активного периода для внесения корректировок")
@@ -97,7 +97,7 @@ async def get_user_adjustments(
     if current_user.role not in allowed_roles:
         raise HTTPException(status_code=403, detail="Доступ запрещен")
 
-    res_period = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))
+    res_period = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))
     active_period = res_period.scalars().first()
 
     if not active_period:

@@ -24,7 +24,7 @@ async def get_tariffs(
 ):
     """Получить список всех активных тарифов, отсортированных по ID."""
     result = await db.execute(
-        select(Tariff).where(Tariff.is_active == True).order_by(Tariff.id)
+        select(Tariff).where(Tariff.is_active).order_by(Tariff.id)
     )
     return result.scalars().all()
 

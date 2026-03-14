@@ -21,7 +21,7 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
         workbook = await asyncio.to_thread(_load_workbook_sync, file_content)
         worksheet = workbook.active
 
-        users_result = await db.execute(select(User).where(User.is_deleted == False))
+        users_result = await db.execute(select(User).where(not User.is_deleted))
         existing_users: Dict[str, User] = {user.username: user for user in users_result.scalars().all()}
 
         added_count = 0
@@ -209,7 +209,7 @@ async def import_readings_from_excel(file_content: bytes, db: AsyncSession, peri
         workbook = await asyncio.to_thread(_load_workbook_sync, file_content)
         worksheet = workbook.active
 
-        users_result = await db.execute(select(User).where(User.is_deleted == False))
+        users_result = await db.execute(select(User).where(not User.is_deleted))
         users_map = {normalize_name(u.username): u.id for u in users_result.scalars().all()}
 
         added_count = 0
@@ -244,7 +244,7 @@ async def import_readings_from_excel(file_content: bytes, db: AsyncSession, peri
                 select(MeterReading).where(
                     MeterReading.user_id == user_id,
                     MeterReading.period_id == period_id,
-                    MeterReading.is_approved == False
+                    not MeterReading.is_approved
                 )
             )
             draft = exist_res.scalars().first()

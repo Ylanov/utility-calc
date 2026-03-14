@@ -119,7 +119,7 @@ async def create_document(
     try:
         parsed_data = json.loads(data)
         doc_obj = DocCreate(**parsed_data)
-    except Exception as e:
+    except Exception:
         raise HTTPException(status_code=400, detail="Неверный формат данных документа (JSON)")
 
     # Проверка прав доступа

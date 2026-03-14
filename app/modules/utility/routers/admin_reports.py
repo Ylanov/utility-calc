@@ -45,7 +45,7 @@ async def get_receipt_pdf(
     tariff = tariff_res.scalars().first()
 
     if not tariff:
-        tariff_res_def = await db.execute(select(Tariff).where(Tariff.is_active == True))
+        tariff_res_def = await db.execute(select(Tariff).where(Tariff.is_active))
         tariff = tariff_res_def.scalars().first()
         if not tariff:
             raise HTTPException(404, "Активный тариф не найден")
@@ -54,7 +54,7 @@ async def get_receipt_pdf(
         select(MeterReading)
         .where(
             MeterReading.user_id == reading.user_id,
-            MeterReading.is_approved == True,
+            MeterReading.is_approved,
             MeterReading.created_at < reading.created_at
         )
         .order_by(MeterReading.created_at.desc()).limit(1)
@@ -115,7 +115,7 @@ async def export_report(
 
     target_period_id = period_id
     if not target_period_id:
-        res = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))
+        res = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))
         period = res.scalars().first()
         if not period:
             res = await db.execute(select(BillingPeriod).order_by(BillingPeriod.id.desc()).limit(1))
@@ -219,7 +219,7 @@ async def get_accountant_summary(
     stmt = (
         select(User, MeterReading)
         .join(MeterReading, User.id == MeterReading.user_id)
-        .where(MeterReading.is_approved == True)
+        .where(MeterReading.is_approved)
     )
 
     if period_id:

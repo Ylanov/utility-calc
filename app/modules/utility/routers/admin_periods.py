@@ -66,7 +66,7 @@ async def get_active_period(
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
 ):
-    res = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))
+    res = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))
     return res.scalars().first()
 
 

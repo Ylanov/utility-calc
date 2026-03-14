@@ -16,16 +16,16 @@ async def get_paginated_readings(
         db: AsyncSession, page: int, limit: int, after_id: Optional[int], search: Optional[str],
         anomalies_only: bool, sort_by: str, sort_dir: str
 ):
-    active_period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))).scalars().first()
+    active_period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))).scalars().first()
     if not active_period:
         return {"total": 0, "page": page, "size": limit, "items": []}
 
     query = select(MeterReading, User).join(User, MeterReading.user_id == User.id).where(
-        MeterReading.is_approved == False, MeterReading.period_id == active_period.id
+        not MeterReading.is_approved, MeterReading.period_id == active_period.id
     )
 
     if anomalies_only:
-        query = query.where(MeterReading.anomaly_flags != None)
+        query = query.where(MeterReading.anomaly_flags is not None)
 
     if search:
         search_fmt = f"%{search}%"
@@ -57,7 +57,7 @@ async def get_paginated_readings(
 
     user_ids = [row[1].id for row in rows]
     subq_max_prev = select(MeterReading.user_id, func.max(MeterReading.created_at).label("max_created")).where(
-        MeterReading.user_id.in_(user_ids), MeterReading.is_approved == True
+        MeterReading.user_id.in_(user_ids), MeterReading.is_approved
     ).group_by(MeterReading.user_id).subquery()
 
     stmt_prev = select(MeterReading).join(subq_max_prev, (MeterReading.user_id == subq_max_prev.c.user_id) & (
@@ -90,24 +90,24 @@ async def get_paginated_readings(
 
 
 async def bulk_approve_drafts(db: AsyncSession):
-    active_period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))).scalars().first()
+    active_period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))).scalars().first()
     if not active_period: raise HTTPException(status_code=400, detail="Нет активного периода")
 
-    active_tariffs = (await db.execute(select(Tariff).where(Tariff.is_active == True))).scalars().all()
+    active_tariffs = (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().all()
     if not active_tariffs: raise HTTPException(500, detail="Активные тарифы не найдены")
 
     tariffs_map = {t.id: t for t in active_tariffs}
     default_tariff = tariffs_map.get(1) or active_tariffs[0]
 
     drafts_rows = (await db.execute(select(MeterReading, User).join(User, MeterReading.user_id == User.id).where(
-        MeterReading.is_approved == False, MeterReading.period_id == active_period.id))).all()
+        not MeterReading.is_approved, MeterReading.period_id == active_period.id))).all()
 
     if not drafts_rows: return {"status": "success", "approved_count": 0}
 
     user_ids = [row[0].user_id for row in drafts_rows]
 
     subq_max_date = select(MeterReading.user_id, func.max(MeterReading.created_at).label("max_created")).where(
-        MeterReading.user_id.in_(user_ids), MeterReading.is_approved == True
+        MeterReading.user_id.in_(user_ids), MeterReading.is_approved
     ).group_by(MeterReading.user_id).subquery()
 
     prev_readings_map = {r.user_id: r for r in (await db.execute(select(MeterReading).join(
@@ -172,10 +172,10 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
     user = await db.get(User, reading.user_id)
     t = (await db.execute(
         select(Tariff).where(Tariff.id == (getattr(user, 'tariff_id', None) or 1)))).scalars().first() or \
-        (await db.execute(select(Tariff).where(Tariff.is_active == True))).scalars().first()
+        (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().first()
 
     prev = (
-        await db.execute(select(MeterReading).where(MeterReading.user_id == user.id, MeterReading.is_approved == True)
+        await db.execute(select(MeterReading).where(MeterReading.user_id == user.id, MeterReading.is_approved)
                          .order_by(MeterReading.created_at.desc()).limit(1))).scalars().first()
 
     zero = Decimal("0.000")
@@ -212,14 +212,14 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
 
 
 async def get_manual_state(db: AsyncSession, user_id: int):
-    active_period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))).scalars().first()
+    active_period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))).scalars().first()
     if not active_period: raise HTTPException(status_code=400, detail="Нет активного периода")
 
     prev = (
-        await db.execute(select(MeterReading).where(MeterReading.user_id == user_id, MeterReading.is_approved == True)
+        await db.execute(select(MeterReading).where(MeterReading.user_id == user_id, MeterReading.is_approved)
                          .order_by(MeterReading.created_at.desc()).limit(1))).scalars().first()
     draft = (
-        await db.execute(select(MeterReading).where(MeterReading.user_id == user_id, MeterReading.is_approved == False,
+        await db.execute(select(MeterReading).where(MeterReading.user_id == user_id, not MeterReading.is_approved,
                                                     MeterReading.period_id == active_period.id))).scalars().first()
 
     zero = Decimal("0.000")
@@ -233,17 +233,17 @@ async def get_manual_state(db: AsyncSession, user_id: int):
 
 
 async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
-    active_period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))).scalars().first()
+    active_period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))).scalars().first()
     if not active_period: raise HTTPException(status_code=400, detail="Расчетный период закрыт.")
 
     user = await db.get(User, data.user_id)
     if not user or user.is_deleted: raise HTTPException(status_code=404, detail="Жилец не найден")
 
     t = (await db.execute(select(Tariff).where(Tariff.id == getattr(user, 'tariff_id', 1)))).scalars().first() or \
-        (await db.execute(select(Tariff).where(Tariff.is_active == True))).scalars().first()
+        (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().first()
 
     prev = (
-        await db.execute(select(MeterReading).where(MeterReading.user_id == user.id, MeterReading.is_approved == True)
+        await db.execute(select(MeterReading).where(MeterReading.user_id == user.id, MeterReading.is_approved)
                          .order_by(MeterReading.created_at.desc()).limit(1))).scalars().first()
 
     zero = Decimal("0.000")
@@ -260,7 +260,7 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
                                 volume_electricity_share=user_share_elect)
 
     history = (
-        await db.execute(select(MeterReading).where(MeterReading.user_id == user.id, MeterReading.is_approved == True)
+        await db.execute(select(MeterReading).where(MeterReading.user_id == user.id, MeterReading.is_approved)
                          .order_by(MeterReading.created_at.desc()).limit(4))).scalars().all()
     anomaly_flags = check_reading_for_anomalies(
         MeterReading(hot_water=data.hot_water, cold_water=data.cold_water, electricity=data.electricity), history, None)
@@ -272,7 +272,7 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
                    Adjustment.account_type))).all()}
 
     draft = (
-        await db.execute(select(MeterReading).where(MeterReading.user_id == user.id, MeterReading.is_approved == False,
+        await db.execute(select(MeterReading).where(MeterReading.user_id == user.id, not MeterReading.is_approved,
                                                     MeterReading.period_id == active_period.id).with_for_update())).scalars().first()
 
     total_209 = (costs['total_cost'] - costs['cost_social_rent']) + (draft.debt_209 or zero if draft else zero) - (
@@ -307,7 +307,7 @@ async def delete_reading(db: AsyncSession, reading_id: int):
 
 async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
     """Разовое (пропорциональное) начисление при выселении или переезде."""
-    active_period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active == True))).scalars().first()
+    active_period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))).scalars().first()
     if not active_period:
         raise HTTPException(status_code=400, detail="Нет активного периода")
 
@@ -322,10 +322,10 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
     fraction = Decimal(data.days_lived) / Decimal(data.total_days_in_month)
 
     t = (await db.execute(select(Tariff).where(Tariff.id == getattr(user, 'tariff_id', 1)))).scalars().first() or \
-        (await db.execute(select(Tariff).where(Tariff.is_active == True))).scalars().first()
+        (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().first()
 
     prev = (
-        await db.execute(select(MeterReading).where(MeterReading.user_id == user.id, MeterReading.is_approved == True)
+        await db.execute(select(MeterReading).where(MeterReading.user_id == user.id, MeterReading.is_approved)
                          .order_by(MeterReading.created_at.desc()).limit(1))).scalars().first()
 
     zero = Decimal("0.000")
@@ -354,7 +354,7 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
 
     # Пытаемся найти черновик, чтобы перезаписать его, либо создаем новую запись
     draft = (
-        await db.execute(select(MeterReading).where(MeterReading.user_id == user.id, MeterReading.is_approved == False,
+        await db.execute(select(MeterReading).where(MeterReading.user_id == user.id, not MeterReading.is_approved,
                                                     MeterReading.period_id == active_period.id).with_for_update())).scalars().first()
 
     total_209 = (costs['total_cost'] - costs['cost_social_rent']) + (draft.debt_209 or zero if draft else zero) - (
