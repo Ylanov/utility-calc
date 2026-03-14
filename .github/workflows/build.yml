@@ -9,6 +9,10 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
 jobs:
 
   quality-check:
@@ -33,9 +37,9 @@ jobs:
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Lint code
-        run: ruff check . --exit-zero
+        run: ruff check .
 
-      - name: Run security scan
+      - name: Security scan
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: fs
@@ -62,10 +66,9 @@ jobs:
 
     steps:
 
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Login to GitHub Container Registry
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -73,7 +76,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract Docker metadata
-        id: metadata
+        id: meta
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
@@ -84,13 +87,12 @@ jobs:
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push image
+      - name: Build and push
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
-          tags: ${{ steps.metadata.outputs.tags }}
-          labels: ${{ steps.metadata.outputs.labels }}
+          tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -122,7 +124,7 @@ jobs:
           echo "${{ secrets.PROD_ENV_FILE }}" > .env
 
 
-      - name: Login to Container Registry
+      - name: Login to GHCR
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -130,44 +132,54 @@ jobs:
           password: ${{ secrets.GH_PAT }}
 
 
-      - name: Make scripts executable
+      - name: Backup current containers
         working-directory: /opt/utility_calc
         run: |
-          chmod +x init_db.sh || true
-          chmod +x backup.sh || true
+          docker compose ps > previous_state.txt
 
 
-      - name: Backup current docker compose state
-        working-directory: /opt/utility_calc
-        run: |
-          docker compose ps > last_state.txt
-
-
-      - name: Pull new images
+      - name: Pull latest images
         working-directory: /opt/utility_calc
         run: |
           docker compose pull
 
 
-      - name: Deploy new containers
+      - name: Deploy containers
         working-directory: /opt/utility_calc
         run: |
           docker compose up -d --remove-orphans
 
 
-      - name: Wait for application to start
-        run: sleep 15
+      - name: Wait for startup
+        run: sleep 20
 
 
       - name: Health check
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8080 || true)
+          ATTEMPTS=10
+          SUCCESS=false
 
-          if [ "$STATUS" != "200" ]; then
-            echo "Application health check failed!"
+          for i in $(seq 1 $ATTEMPTS); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/docs || true)
+
+            if [ "$STATUS" = "200" ]; then
+              SUCCESS=true
+              break
+            fi
+
+            echo "Health check attempt $i failed"
+            sleep 5
+          done
+
+          if [ "$SUCCESS" != "true" ]; then
+            echo "Deployment failed, rolling back..."
+            docker compose down
+            docker compose up -d
             exit 1
           fi
 
 
-      - name: Cleanup unused docker images
-        run: docker image prune -af
+      - name: Cleanup docker
+        run: |
+          docker image prune -af
+          docker container prune -f
