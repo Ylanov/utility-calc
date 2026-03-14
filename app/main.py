@@ -234,12 +234,11 @@ app.include_router(gsm_reports.router)
 # НАСТРОЙКА FRONTEND (SPA)
 # =====================================================================
 
-# 1. Редирект с корневого URL на главную страницу портала
+# 1. Безопасный редирект: если заходят в корень сайта, кидаем в папку со статикой
 @app.get("/", include_in_schema=False)
 async def root():
-    """Перенаправляет пользователя в корень портала"""
-    return RedirectResponse(url="/portal.html")
+    """Перенаправляет пользователя на портал"""
+    return RedirectResponse(url="/static/portal.html")
 
-# 2. Монтируем папку static в корень сайта ("/").
-# html=True позволяет FastAPI автоматически отдавать HTML файлы (например, portal.html, admin.html).
-app.mount("/", StaticFiles(directory="static", html=True), name="frontend")
+# 2. Возвращаем монтирование статики в /static, но включаем поддержку HTML
+app.mount("/static", StaticFiles(directory="static", html=True), name="static")
