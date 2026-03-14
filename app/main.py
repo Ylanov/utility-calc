@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from typing import List
 
 from fastapi import FastAPI, Request
+from fastapi.responses import RedirectResponse  # <-- ДОБАВЛЕНО ДЛЯ РЕДИРЕКТА
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_limiter import FastAPILimiter
@@ -228,5 +229,17 @@ app.include_router(gsm_routes.router)
 app.include_router(gsm_auth.router)
 app.include_router(gsm_reports.router)
 
-# --- Статика ---
-app.mount("/static", StaticFiles(directory="static", html=False), name="static")
+
+# =====================================================================
+# НАСТРОЙКА FRONTEND (SPA)
+# =====================================================================
+
+# 1. Редирект с корневого URL на главную страницу портала
+@app.get("/", include_in_schema=False)
+async def root():
+    """Перенаправляет пользователя в корень портала"""
+    return RedirectResponse(url="/portal.html")
+
+# 2. Монтируем папку static в корень сайта ("/").
+# html=True позволяет FastAPI автоматически отдавать HTML файлы (например, portal.html, admin.html).
+app.mount("/", StaticFiles(directory="static", html=True), name="frontend")
