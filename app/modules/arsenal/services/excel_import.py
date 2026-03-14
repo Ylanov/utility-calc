@@ -33,7 +33,7 @@ def parse_price(value) -> Decimal:
     clean = str(value).replace(' ', '').replace(',', '.').replace('\xa0', '').strip()
     try:
         return Decimal(clean)
-    except:
+    except Exception:
         return ZERO
 
 
@@ -85,9 +85,10 @@ async def import_arsenal_from_excel(file_content: bytes, db: AsyncSession) -> di
 
                 qty_val = row[5] if len(row) > 5 else 1
                 try:
-                    qty = int(float(str(qty_val).replace(' ', '').replace('\xa0', '')))
-                    if qty < 1: qty = 1
-                except:
+                    qty = int(float(str(qty_val).replace(" ", "").replace("\xa0", "")))
+                    if qty < 1:
+                        qty = 1
+                except Exception:
                     qty = 1
 
                 total_sum_val = row[6] if len(row) > 6 else 0
