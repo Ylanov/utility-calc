@@ -13,7 +13,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./init_db.sh:/docker-entrypoint-initdb.d/init_db.sh
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}" ]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -86,8 +86,6 @@ services:
     image: ghcr.io/ylanov/utility-calc:latest
     container_name: utility_calc_migrations
     restart: "no"
-    security_opt:
-      - seccomp:unconfined
     env_file:
       - .env
     environment:
@@ -111,8 +109,6 @@ services:
     image: ghcr.io/ylanov/utility-calc:latest
     container_name: utility_calc_web
     restart: unless-stopped
-    security_opt:
-      - seccomp:unconfined
     env_file:
       - .env
     environment:
@@ -120,13 +116,15 @@ services:
       DB_PORT: 5432
       PYTHONUNBUFFERED: 1
       PYTHONDONTWRITEBYTECODE: 1
-    # 🔥 ИСПРАВЛЕНИЕ: Оптимальный Gunicorn (защита от утечек и быстрый tmp-dir)
+    ports:
+      - "8000:8000"
     command: >
       gunicorn app.main:app
       -k uvicorn.workers.UvicornWorker
       -w ${WEB_CONCURRENCY:-8}
       -b 0.0.0.0:8000
       --timeout 120
+      --keep-alive 5
       --worker-tmp-dir /dev/shm
       --max-requests 2000
       --max-requests-jitter 200
@@ -150,14 +148,11 @@ services:
     image: ghcr.io/ylanov/utility-calc:latest
     container_name: utility_calc_worker_default
     restart: unless-stopped
-    security_opt:
-      - seccomp:unconfined
     env_file:
       - .env
     environment:
       DB_HOST: pgbouncer
       DB_PORT: 5432
-    # 🔥 ИСПРАВЛЕНИЕ: max-tasks-per-child=500 для защиты от утечек памяти
     command: >
       celery -A app.worker worker
       --loglevel=info
@@ -176,8 +171,6 @@ services:
     image: ghcr.io/ylanov/utility-calc:latest
     container_name: utility_calc_worker_heavy
     restart: unless-stopped
-    security_opt:
-      - seccomp:unconfined
     env_file:
       - .env
     environment:
@@ -201,8 +194,6 @@ services:
     image: ghcr.io/ylanov/utility-calc:latest
     container_name: utility_calc_beat
     restart: unless-stopped
-    security_opt:
-      - seccomp:unconfined
     env_file:
       - .env
     command: celery -A app.worker beat --loglevel=info
@@ -211,21 +202,6 @@ services:
         condition: service_healthy
       migration_job:
         condition: service_completed_successfully
-    networks:
-      - utility_net
-
-  nginx:
-    image: nginx:alpine
-    container_name: utility_calc_nginx
-    restart: unless-stopped
-    ports:
-      - "8080:80"
-    volumes:
-      - ./nginx/conf.d:/etc/nginx/conf.d
-      - ./static:/usr/share/nginx/html/static
-    depends_on:
-      web:
-        condition: service_healthy
     networks:
       - utility_net
 
