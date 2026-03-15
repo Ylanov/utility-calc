@@ -2,21 +2,31 @@ import base64
 import io
 import pyotp
 import qrcode
+import random
+import string
+from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy import func
 from jose import jwt, JWTError
 
 from fastapi_limiter.depends import RateLimiter
 
 from app.core.database import get_db
 from app.modules.utility.models import User
-from app.core.auth import verify_password, create_access_token, get_current_user, encrypt_totp_secret, decrypt_totp_secret, get_password_hash
+from app.core.auth import verify_password, create_access_token, get_current_user, encrypt_totp_secret, \
+    decrypt_totp_secret, get_password_hash
 from app.core.config import settings
 from app.modules.utility.schemas import TotpSetupResponse, TotpVerify
 
 router = APIRouter()
+
+
+class PasswordResetRequest(BaseModel):
+    username: str
+    apartment_area: float  # Контрольный вопрос: площадь помещения
 
 
 def set_auth_cookie(response: Response, token: str):
@@ -59,21 +69,14 @@ async def login(
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
 
-    # --- ДОБАВИТЬ ЭТОТ БЛОК ---
     # Проверяем, нужно ли обновить хеш (если он старого формата, например bcrypt)
     if verify_password(form_data.password, user.hashed_password):
-        # Passlib умеет определять, устарел ли хеш относительно текущей конфигурации
-        # Но проще всего проверить префикс или просто перезаписать, если старый
-
-        # Самый простой способ без глубокого копания в Passlib:
         # Если хеш не начинается на "$argon2", значит он старый -> обновляем
         if not user.hashed_password.startswith("$argon2"):
             new_hash = get_password_hash(form_data.password)
             user.hashed_password = new_hash
-            # Не забудьте закоммитить изменения
             db.add(user)
             await db.commit()
-            # --------------------------
 
     # 2FA НЕТ -> Полный вход
     access_token = create_access_token(data={"sub": user.username, "role": user.role, "scope": "full"})
@@ -177,7 +180,6 @@ async def activate_2fa(
     current_user.totp_secret = encrypt_totp_secret(data.secret)
     await db.commit()
 
-
     return {"status": "activated", "message": "Двухфакторная аутентификация успешно включена"}
 
 
@@ -194,3 +196,45 @@ async def logout(response: Response):
         secure=(settings.ENVIRONMENT == "production")
     )
     return {"status": "success", "message": "Успешный выход"}
+
+
+# --- 6. СБРОС ПАРОЛЯ (Для жильцов) ---
+@router.post("/api/auth/reset-password")
+async def reset_password(data: PasswordResetRequest, db: AsyncSession = Depends(get_db)):
+    """Сброс пароля жильца по логину и площади помещения"""
+
+    # 1. Ищем пользователя (без учета регистра)
+    result = await db.execute(
+        select(User).where(func.lower(User.username) == data.username.lower(), not User.is_deleted)
+    )
+    user = result.scalars().first()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь с таким логином не найден")
+
+    # 2. Проверка безопасности: совпадает ли площадь (с точностью до десятых)
+    db_area = round(float(user.apartment_area or 0), 1)
+    input_area = round(float(data.apartment_area), 1)
+
+    if db_area != input_area:
+        raise HTTPException(
+            status_code=400,
+            detail="Данные не совпадают. Проверьте площадь в квитанции или обратитесь в бухгалтерию."
+        )
+
+    # 3. Генерируем новый случайный 6-значный цифровой пароль
+    temp_password = ''.join(random.choices(string.digits, k=6))
+
+    # 4. Обновляем пользователя
+    user.hashed_password = get_password_hash(temp_password)
+
+    # ВАЖНО: Заставляем его сменить этот временный пароль при следующем входе!
+    user.is_initial_setup_done = False
+
+    await db.commit()
+
+    return {
+        "status": "success",
+        "message": "Пароль успешно сброшен",
+        "temp_password": temp_password
+    }
