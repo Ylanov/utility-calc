@@ -43,17 +43,26 @@ document.addEventListener('DOMContentLoaded', () => {
             formData.append('username', username);
             formData.append('password', password);
 
-            const response = await api._request('/token', {
+            // ИСПРАВЛЕНИЕ: Делаем прямой запрос на /token, чтобы избежать подстановки /api
+            const response = await fetch('/token', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
                 body: formData.toString()
             });
 
+            if (!response.ok) {
+                // Пытаемся вытащить сообщение об ошибке от FastAPI
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.detail || 'Неверный логин или пароль');
+            }
+
+            const data = await response.json();
+
             // Если все ОК, сохраняем сессию
-            Auth.setSession(response.role, username);
+            Auth.setSession(data.role, username);
 
             // Перенаправляем в зависимости от роли
-            if (['admin', 'accountant', 'financier'].includes(response.role)) {
+            if (['admin', 'accountant', 'financier'].includes(data.role)) {
                 window.location.replace('admin.html');
             } else {
                 window.location.replace('index.html');
@@ -100,6 +109,7 @@ document.addEventListener('DOMContentLoaded', () => {
         setLoading(btnSubmitReset, true, 'Проверка...');
 
         try {
+            // Здесь запрос идет через api.js, так как путь /api/auth/reset-password
             const result = await api.post('/auth/reset-password', {
                 username: resetUsername,
                 apartment_area: resetArea

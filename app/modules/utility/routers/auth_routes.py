@@ -47,7 +47,7 @@ def set_auth_cookie(response: Response, token: str):
 
 # --- 1. ЛОГИН (ШАГ 1: Проверка пароля) ---
 @router.post(
-    "/token",
+    "/api/token",
     dependencies=[Depends(RateLimiter(times=5, seconds=60))]
 )
 async def login(
