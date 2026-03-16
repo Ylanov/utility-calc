@@ -22,7 +22,7 @@ from app.modules.arsenal.models import ArsenalUser
 from app.modules.gsm.models import GsmUser
 from app.modules.utility.routers import settings as settings_router
 
-# --- ЖКХ ---
+# --- ЖКХ-1 ---
 from app.modules.utility.routers import (
     admin_periods,
     client_readings,
