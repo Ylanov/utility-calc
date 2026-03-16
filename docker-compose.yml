@@ -98,8 +98,10 @@ services:
       sh -c "
       echo 'Waiting for PgBouncer...' &&
       sleep 5 &&
+      echo 'Running migrations...' &&
       alembic upgrade head &&
       alembic -c alembic_arsenal.ini upgrade head &&
+      echo 'Seeding initial data...' &&
       python -m app.core.initial_data
       "
     networks:
