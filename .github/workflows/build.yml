@@ -54,7 +54,6 @@ jobs:
           pytest || echo "Tests skipped"
 
 
-
   build:
     name: Build and Push Docker Image
     needs: quality-check
@@ -97,7 +96,6 @@ jobs:
           cache-to: type=gha,mode=max
 
 
-
   deploy:
     name: Deploy to Production
     needs: build
@@ -108,21 +106,36 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 🔴 ПРАВИЛЬНЫЙ ШАГ: Смотрим туда, где файл реально лежит (nginx/conf.d/default.conf)
+      - name: Prevent Docker Mount Bug & Check Config
+        run: |
+          if [ ! -f "nginx/conf.d/default.conf" ]; then
+            echo "❌ КРИТИЧЕСКАЯ ОШИБКА: Файл nginx/conf.d/default.conf не найден в репозитории!"
+            exit 1
+          fi
+          
+          # Убиваем "папку-мусор" (nginx.conf), которую Docker успел создать при прошлых ошибках
+          if [ -d "/opt/utility_calc/nginx.conf" ]; then
+             echo "Deleting broken nginx.conf directory from previous failed deployments..."
+             sudo rm -rf /opt/utility_calc/nginx.conf
+          fi
 
       - name: Sync project files
         run: |
+          # Создаем базовую папку (на случай свежего сервера)
+          sudo mkdir -p /opt/utility_calc/
+          sudo chown -R $USER:$USER /opt/utility_calc/ || true
+          
           rsync -av \
           --delete \
           --exclude backups \
           --exclude .env \
           ./ /opt/utility_calc/
 
-
       - name: Create environment file
         working-directory: /opt/utility_calc
         run: |
           echo "${{ secrets.PROD_ENV_FILE }}" > .env
-
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -131,53 +144,51 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GH_PAT }}
 
-
-      - name: Backup current containers
+      - name: Backup current state (optional debug)
         working-directory: /opt/utility_calc
         run: |
-          docker compose ps > previous_state.txt
-
+          docker compose ps > previous_state.txt || true
 
       - name: Pull latest images
         working-directory: /opt/utility_calc
         run: |
           docker compose pull
 
-
       - name: Deploy containers
         working-directory: /opt/utility_calc
         run: |
+          # Тушим предыдущую конфигурацию чтобы освободить старые волюмы
+          docker compose down
           docker compose up -d --remove-orphans
-
 
       - name: Wait for startup
         run: sleep 20
 
-
       - name: Health check
+        working-directory: /opt/utility_calc
         run: |
           ATTEMPTS=10
           SUCCESS=false
 
           for i in $(seq 1 $ATTEMPTS); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/docs || true)
+            # ИСПРАВЛЕНИЕ: Тестируем /health эндпоинт. Он возвращает 200 без лишних редиректов.
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health || true)
 
             if [ "$STATUS" = "200" ]; then
               SUCCESS=true
               break
             fi
 
-            echo "Health check attempt $i failed"
+            echo "Health check attempt $i failed (status code: $STATUS)"
             sleep 5
           done
 
           if [ "$SUCCESS" != "true" ]; then
-            echo "Deployment failed, rolling back..."
-            docker compose down
-            docker compose up -d
+            echo "Deployment failed! Dumping logs for 'web' and 'nginx'..."
+            docker compose logs --tail 50 web
+            docker compose logs --tail 50 nginx
             exit 1
           fi
-
 
       - name: Cleanup docker
         run: |
