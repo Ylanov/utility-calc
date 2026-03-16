@@ -107,10 +107,11 @@ services:
     command: >
       sh -c "
       echo 'Waiting for PgBouncer...' &&
-      until pg_isready -h pgbouncer -p 5432 -U ${POSTGRES_USER}; do
+      until nc -z pgbouncer 5432; do
         echo 'PgBouncer not ready yet...';
         sleep 2;
       done &&
+      echo 'PgBouncer ready' &&
       echo 'Running migrations...' &&
       alembic upgrade head &&
       alembic -c alembic_arsenal.ini upgrade head &&
