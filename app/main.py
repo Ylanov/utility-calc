@@ -5,14 +5,14 @@ from contextlib import asynccontextmanager
 from typing import List
 
 from fastapi import FastAPI, Request
-from fastapi.responses import RedirectResponse  # <-- ДОБАВЛЕНО ДЛЯ РЕДИРЕКТА
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_limiter import FastAPILimiter
 from fastapi_cache import FastAPICache
 from fastapi_cache.backends.redis import RedisBackend
 
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.future import select
 from passlib.context import CryptContext
 
 from app.core.config import settings
@@ -21,14 +21,23 @@ from app.modules.arsenal.models import ArsenalUser
 from app.modules.gsm.models import GsmUser
 from app.modules.utility.routers import settings as settings_router
 
-# --- Импорт Роутеров ЖКХ ---
+# --- ЖКХ ---
 from app.modules.utility.routers import (
-    admin_periods, client_readings, admin_reports, auth_routes,
-    tariffs, admin_readings, users, admin_adjustments, admin_user_ops, financier
+    admin_periods,
+    client_readings,
+    admin_reports,
+    auth_routes,
+    tariffs,
+    admin_readings,
+    users,
+    admin_adjustments,
+    admin_user_ops,
+    financier,
 )
+
 from app.modules.telegram import telegram_app
 
-# --- Импорт Роутеров Арсенала ---
+# --- АРСЕНАЛ ---
 from app.modules.arsenal.routers import (
     system as arsenal_system,
     objects as arsenal_objects,
@@ -37,28 +46,28 @@ from app.modules.arsenal.routers import (
     users as arsenal_users_router,
 )
 
-# Если reports.py, routes.py и auth.py остались в корне arsenal, оставьте их отдельно:
 from app.modules.arsenal import (
     reports as arsenal_reports,
     routes as arsenal_routes,
     auth as arsenal_auth
 )
 
-# --- Импорт Роутеров ГСМ ---
+# --- ГСМ ---
 from app.modules.gsm import (
     routes as gsm_routes,
     auth as gsm_auth,
     reports as gsm_reports
 )
 
-# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Контекст хеширования паролей
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
-# Инициализация Sentry (мониторинг ошибок)
+# =====================================================================
+# SENTRY
+# =====================================================================
+
 if settings.SENTRY_DSN:
     sentry_sdk.init(
         dsn=settings.SENTRY_DSN,
@@ -66,57 +75,57 @@ if settings.SENTRY_DSN:
         traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
     )
 
+# =====================================================================
+# LIFESPAN
+# =====================================================================
 
-# =====================================================================
-# LIFESPAN (Замена устаревшему @app.on_event("startup"))
-# =====================================================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Управление жизненным циклом приложения:
-    1. Подключение к Redis (Кэш + Лимитеры)
-    2. Проверка/Создание администраторов в БД
-    """
-    logger.info("🚀 Starting application initialization...")
 
-    # 1. Подключение к Redis
+    logger.info("Starting application initialization")
+
+    # Redis
     try:
         redis_client = redis.from_url(
             settings.REDIS_URL,
             encoding="utf-8",
             decode_responses=True
         )
-        # Инициализация Rate Limiter (защита от DDOS)
-        await FastAPILimiter.init(redis_client)
-        # Инициализация Cache (для KPI и справочников)
-        FastAPICache.init(RedisBackend(redis_client), prefix="fastapi-cache")
-        logger.info("✅ Redis connected successfully.")
-    except Exception as error:
-        logger.error(f"❌ Redis connection failed: {error}")
-        # Не прерываем запуск, но кэш работать не будет
 
-    # 2. Создание дефолтных админов (Idempotent check)
+        await FastAPILimiter.init(redis_client)
+
+        FastAPICache.init(
+            RedisBackend(redis_client),
+            prefix="fastapi-cache"
+        )
+
+        logger.info("Redis connected successfully")
+
+    except Exception as error:
+        logger.error(f"Redis connection failed: {error}")
+
+    # Admin checks
     try:
         await ensure_admin_exists(ArsenalSessionLocal, ArsenalUser)
-        logger.info("✅ Arsenal admin ensured.")
+        logger.info("Arsenal admin ensured")
     except Exception as e:
-        logger.error(f"⚠️ Failed to ensure Arsenal admin: {e}")
+        logger.error(f"Failed to ensure Arsenal admin: {e}")
 
     try:
         await ensure_admin_exists(GsmSessionLocal, GsmUser)
-        logger.info("✅ GSM admin ensured.")
+        logger.info("GSM admin ensured")
     except Exception as e:
-        logger.error(f"⚠️ Failed to ensure GSM admin: {e}")
+        logger.error(f"Failed to ensure GSM admin: {e}")
 
-    yield  # Приложение работает здесь
+    yield
 
-    # Shutdown logic (если нужно закрыть соединения)
-    logger.info("🛑 Application shutdown.")
+    logger.info("Application shutdown")
 
 
 # =====================================================================
-# Инициализация FastAPI
+# FASTAPI
 # =====================================================================
+
 app = FastAPI(
     title="Utility Calculator & Arsenal & GSM",
     version="2.0.0",
@@ -126,38 +135,45 @@ app = FastAPI(
 )
 
 # =====================================================================
-# НАСТРОЙКА БЕЗОПАСНОСТИ (CORS & Headers)
+# CORS
 # =====================================================================
 
-# Получаем список разрешенных доменов.
-# Если в config.py нет ALLOWED_ORIGINS, используем безопасный дефолт для локальной разработки.
-# В ПРОДАКШЕНЕ ОБЯЗАТЕЛЬНО ЗАДАЙТЕ ALLOWED_ORIGINS В .env!
 allowed_origins: List[str] = getattr(settings, "ALLOWED_ORIGINS", [])
+
 if not allowed_origins:
-    logger.warning("⚠️ ALLOWED_ORIGINS not set. Defaulting to localhost.")
-    allowed_origins = ["http://localhost", "http://localhost:8000", "http://127.0.0.1:8000"]
+    logger.warning("ALLOWED_ORIGINS not set. Using localhost")
+    allowed_origins = [
+        "http://localhost",
+        "http://localhost:8000",
+        "http://127.0.0.1:8000"
+    ]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "X-Requested-With", "Accept"],
+    allow_headers=[
+        "Content-Type",
+        "Authorization",
+        "X-Requested-With",
+        "Accept"
+    ],
 )
 
+# =====================================================================
+# SECURITY HEADERS
+# =====================================================================
 
-# Middleware безопасности (HSTS, XSS, Clickjacking)
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
+
     response = await call_next(request)
-    # Защита от сниффинга MIME-типов
+
     response.headers["X-Content-Type-Options"] = "nosniff"
-    # Защита от встраивания в iframe (Clickjacking) - разрешаем только с того же домена или запрещаем вовсе
     response.headers["X-Frame-Options"] = "SAMEORIGIN"
-    # Базовая защита от XSS (для старых браузеров)
     response.headers["X-XSS-Protection"] = "1; mode=block"
 
-    # HSTS (Strict-Transport-Security) только для продакшена
     if settings.ENVIRONMENT == "production":
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
 
@@ -165,35 +181,40 @@ async def add_security_headers(request: Request, call_next):
 
 
 # =====================================================================
-# Вспомогательная функция создания админа
+# SAFE ADMIN CREATION
 # =====================================================================
+
 async def ensure_admin_exists(session_factory, user_model):
-    """
-    Создает пользователя admin/admin, если его нет.
-    Использует UPSERT для идемпотентности.
-    """
-    default_password = "admin"
-    hashed_pw = pwd_context.hash(default_password)
 
     async with session_factory() as db:
-        # PostgreSQL: INSERT ... ON CONFLICT DO UPDATE
-        stmt = insert(user_model).values(
-            username="admin",
-            hashed_password=hashed_pw,
-            role="admin",
-            object_id=None
-        ).on_conflict_do_update(
-            index_elements=["username"],
-            set_={
-                "role": "admin"
-            }
+
+        result = await db.execute(
+            select(user_model).where(user_model.username == "admin")
         )
-        await db.execute(stmt)
-        await db.commit()
+
+        admin = result.scalars().first()
+
+        if not admin:
+
+            logger.warning("Admin user not found. Creating default admin")
+
+            admin = user_model(
+                username="admin",
+                hashed_password=pwd_context.hash("admin"),
+                role="admin",
+                object_id=None
+            )
+
+            db.add(admin)
+
+            await db.commit()
+
+        else:
+            logger.info("Admin already exists")
 
 
 # =====================================================================
-# Подключение Роутеров (Routes)
+# ROUTERS
 # =====================================================================
 
 # --- ЖКХ ---
@@ -210,35 +231,33 @@ app.include_router(financier.router)
 app.include_router(telegram_app.router)
 app.include_router(settings_router.router)
 
-# --- АРСЕНАЛ (Weaponry) ---
-app.include_router(arsenal_auth.router)  # Авторизация
-app.include_router(arsenal_system.router, prefix="/api/arsenal")  # KPI, Импорт
-app.include_router(arsenal_objects.router, prefix="/api/arsenal")  # Объекты, Баланс
-app.include_router(arsenal_nomenclature.router, prefix="/api/arsenal")  # Справочник
-app.include_router(arsenal_documents.router, prefix="/api/arsenal")  # Документы
-app.include_router(arsenal_users_router.router, prefix="/api/arsenal")  # Пользователи
-app.include_router(arsenal_reports.router)  # Отчеты (Timeline)
+# --- АРСЕНАЛ ---
+app.include_router(arsenal_auth.router)
+app.include_router(arsenal_system.router, prefix="/api/arsenal")
+app.include_router(arsenal_objects.router, prefix="/api/arsenal")
+app.include_router(arsenal_nomenclature.router, prefix="/api/arsenal")
+app.include_router(arsenal_documents.router, prefix="/api/arsenal")
+app.include_router(arsenal_users_router.router, prefix="/api/arsenal")
 
 app.include_router(arsenal_reports.router, prefix="/api/arsenal")
 
-# Для обратной совместимости старых путей (если были)
 app.include_router(arsenal_routes.router)
 
-# --- ГСМ (Fuel) ---
+# --- ГСМ ---
 app.include_router(gsm_routes.router)
 app.include_router(gsm_auth.router)
 app.include_router(gsm_reports.router)
 
-
 # =====================================================================
-# НАСТРОЙКА FRONTEND (SPA)
+# FRONTEND
 # =====================================================================
 
-# 1. Безопасный редирект: если заходят в корень сайта, кидаем в папку со статикой
 @app.get("/", include_in_schema=False)
 async def root():
-    """Перенаправляет пользователя на портал"""
     return RedirectResponse(url="/static/portal.html")
 
-# 2. Возвращаем монтирование статики в /static, но включаем поддержку HTML
-app.mount("/static", StaticFiles(directory="static", html=True), name="static")
+app.mount(
+    "/static",
+    StaticFiles(directory="static", html=True),
+    name="static"
+)

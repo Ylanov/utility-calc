@@ -39,8 +39,7 @@ def set_auth_cookie(response: Response, token: str):
         value=token,
         httponly=True,
         max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        samesite="lax",
-        # Включаем Secure только если это продакшен (HTTPS), иначе локально не заработает
+        samesite="strict",
         secure=(settings.ENVIRONMENT == "production")
     )
 

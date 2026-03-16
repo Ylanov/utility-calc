@@ -26,7 +26,7 @@ class OAuth2PasswordBearerWithCookie(OAuth2PasswordBearer):
 
 
 # 2. Используем наш класс вместо стандартного
-oauth2_scheme = OAuth2PasswordBearerWithCookie(tokenUrl="/token")
+oauth2_scheme = OAuth2PasswordBearerWithCookie(tokenUrl="/api/token")
 
 
 async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)):

@@ -4,6 +4,12 @@ services:
     image: postgres:15
     container_name: utility_calc_db
     restart: unless-stopped
+    command: >
+      postgres
+      -c shared_buffers=512MB
+      -c work_mem=16MB
+      -c maintenance_work_mem=128MB
+      -c max_connections=100
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -17,6 +23,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    security_opt:
+      - no-new-privileges:true
     networks:
       - utility_net
 
@@ -30,10 +38,10 @@ services:
       DB_USER: ${POSTGRES_USER}
       DB_PASSWORD: ${POSTGRES_PASSWORD}
       POOL_MODE: transaction
-      MAX_CLIENT_CONN: 1000
-      DEFAULT_POOL_SIZE: 20
-      RESERVE_POOL_SIZE: 10
-      MAX_DB_CONNECTIONS: 100
+      MAX_CLIENT_CONN: 500
+      DEFAULT_POOL_SIZE: 10
+      RESERVE_POOL_SIZE: 5
+      MAX_DB_CONNECTIONS: 50
       ADMIN_USERS: ${POSTGRES_USER}
       AUTH_TYPE: plain
       AUTH_USER: ${POSTGRES_USER}
@@ -41,10 +49,12 @@ services:
       db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "5432", "-U", "${POSTGRES_USER}"]
+      test: ["CMD-SHELL", "pg_isready -h localhost -p 5432 -U ${POSTGRES_USER} || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
+    security_opt:
+      - no-new-privileges:true
     networks:
       - utility_net
 
@@ -52,7 +62,13 @@ services:
     image: redis:7
     container_name: utility_calc_redis
     restart: unless-stopped
-    command: redis-server --appendonly yes --save 60 1000 --maxmemory 512mb --maxmemory-policy volatile-lru
+    command: >
+      redis-server
+      --appendonly yes
+      --appendfsync everysec
+      --save 60 1000
+      --maxmemory 512mb
+      --maxmemory-policy volatile-lru
     volumes:
       - redis_data:/data
     healthcheck:
@@ -61,6 +77,8 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
+    security_opt:
+      - no-new-privileges:true
     networks:
       - utility_net
 
@@ -73,12 +91,14 @@ services:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
       MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
     volumes:
-      - minio_data:/data
+      - minio_data:/data:rw
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
       timeout: 20s
       retries: 3
+    security_opt:
+      - no-new-privileges:true
     networks:
       - utility_net
 
@@ -96,14 +116,18 @@ services:
         condition: service_healthy
     command: >
       sh -c "
-      echo 'Waiting for PgBouncer...' &&
-      sleep 5 &&
-      echo 'Running migrations...' &&
-      alembic upgrade head &&
-      alembic -c alembic_arsenal.ini upgrade head &&
-      echo 'Seeding initial data...' &&
+      set -e
+      echo 'Waiting for PgBouncer...'
+      sleep 5
+      echo 'Running migrations...'
+      alembic upgrade head
+      alembic -c alembic_arsenal.ini upgrade head
+      echo 'Seeding initial data...'
       python -m app.core.initial_data
+      echo 'Migration completed'
       "
+    security_opt:
+      - no-new-privileges:true
     networks:
       - utility_net
 
@@ -118,18 +142,23 @@ services:
       DB_PORT: 5432
       PYTHONUNBUFFERED: 1
       PYTHONDONTWRITEBYTECODE: 1
+      WEB_CONCURRENCY: ${WEB_CONCURRENCY:-4}
     ports:
       - "8000:8000"
     command: >
       gunicorn app.main:app
       -k uvicorn.workers.UvicornWorker
-      -w ${WEB_CONCURRENCY:-8}
+      -w ${WEB_CONCURRENCY}
       -b 0.0.0.0:8000
       --timeout 120
       --keep-alive 5
       --worker-tmp-dir /dev/shm
       --max-requests 2000
       --max-requests-jitter 200
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
     depends_on:
       migration_job:
         condition: service_completed_successfully
@@ -138,11 +167,13 @@ services:
       minio:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 15s
       timeout: 10s
       retries: 5
       start_period: 60s
+    security_opt:
+      - no-new-privileges:true
     networks:
       - utility_net
 
@@ -166,6 +197,8 @@ services:
         condition: service_healthy
       migration_job:
         condition: service_completed_successfully
+    security_opt:
+      - no-new-privileges:true
     networks:
       - utility_net
 
@@ -189,6 +222,8 @@ services:
         condition: service_healthy
       migration_job:
         condition: service_completed_successfully
+    security_opt:
+      - no-new-privileges:true
     networks:
       - utility_net
 
@@ -204,6 +239,8 @@ services:
         condition: service_healthy
       migration_job:
         condition: service_completed_successfully
+    security_opt:
+      - no-new-privileges:true
     networks:
       - utility_net
 
@@ -225,8 +262,17 @@ services:
     command: >
       sh -c "
       chmod +x /usr/local/bin/backup.sh &&
-      while true; do /usr/local/bin/backup.sh; sleep 86400; done
+      while true; do
+        /usr/local/bin/backup.sh;
+        sleep 86400;
+      done
       "
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    security_opt:
+      - no-new-privileges:true
     networks:
       - utility_net
 
