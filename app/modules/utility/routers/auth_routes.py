@@ -62,7 +62,10 @@ async def login(
     """
     # Ищем пользователя, исключая удаленных (Soft Delete)
     result = await db.execute(
-        select(User).where(User.username == form_data.username, not User.is_deleted)
+        select(User).where(
+            User.username == form_data.username,
+            User.is_deleted.is_(False)
+        )
     )
     user = result.scalars().first()
 

@@ -126,10 +126,7 @@ async def get_current_user(
         raise credentials_exception
 
     result = await db.execute(
-        select(User).where(
-            User.username == form_data.username,
-            User.is_deleted.is_(False)
-        )
+        select(User).where(User.username == username)
     )
 
     user = result.scalars().first()
