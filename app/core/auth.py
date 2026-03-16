@@ -64,7 +64,7 @@ class OAuth2PasswordBearerWithCookie(OAuth2PasswordBearer):
         return await super().__call__(request)
 
 
-oauth2_scheme = OAuth2PasswordBearerWithCookie(tokenUrl="/token")
+oauth2_scheme = OAuth2PasswordBearerWithCookie(tokenUrl="/api/token")
 
 
 def create_access_token(data: dict) -> str:
@@ -126,7 +126,10 @@ async def get_current_user(
         raise credentials_exception
 
     result = await db.execute(
-        select(User).where(User.username == username)
+        select(User).where(
+            User.username == form_data.username,
+            User.is_deleted.is_(False)
+        )
     )
 
     user = result.scalars().first()
