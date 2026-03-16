@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi_limiter import FastAPILimiter
 from fastapi_cache import FastAPICache
 from fastapi_cache.backends.redis import RedisBackend
@@ -135,9 +136,16 @@ app = FastAPI(
 )
 
 # =====================================================================
-# CORS
+# MIDDLEWARES
 # =====================================================================
 
+# 1. Trusted Hosts (разрешаем проксирование через NPM и Tailscale)
+app.add_middleware(
+    TrustedHostMiddleware,
+    allowed_hosts=["asy-tk.ru", "www.asy-tk.ru", "localhost", "127.0.0.1", "*"]
+)
+
+# 2. CORS
 allowed_origins: List[str] = getattr(settings, "ALLOWED_ORIGINS", [])
 
 if not allowed_origins:
@@ -161,10 +169,7 @@ app.add_middleware(
     ],
 )
 
-# =====================================================================
-# SECURITY HEADERS
-# =====================================================================
-
+# 3. Security Headers
 @app.middleware("http")
 async def add_security_headers(request: Request, call_next):
 
@@ -217,6 +222,13 @@ async def ensure_admin_exists(session_factory, user_model):
 # ROUTERS
 # =====================================================================
 
+# --- Health Check ---
+@app.get("/health", include_in_schema=False)
+def health_check():
+    """Эндпоинт для проверки жизнеспособности контейнера Docker и Nginx"""
+    return {"status": "ok"}
+
+
 # --- ЖКХ ---
 app.include_router(auth_routes.router)
 app.include_router(users.router)
@@ -247,6 +259,7 @@ app.include_router(arsenal_routes.router)
 app.include_router(gsm_routes.router)
 app.include_router(gsm_auth.router)
 app.include_router(gsm_reports.router)
+
 
 # =====================================================================
 # FRONTEND

@@ -150,6 +150,7 @@ services:
       -k uvicorn.workers.UvicornWorker
       -w ${WEB_CONCURRENCY}
       -b 0.0.0.0:8000
+      --forwarded-allow-ips="*"
       --timeout 120
       --keep-alive 5
       --worker-tmp-dir /dev/shm
@@ -174,6 +175,22 @@ services:
       start_period: 60s
     security_opt:
       - no-new-privileges:true
+    networks:
+      - utility_net
+
+  nginx:
+    image: nginx:alpine
+    container_name: utility_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+      - ./static:/usr/share/nginx/html/static
+      - nginx_cache:/var/cache/nginx
+    depends_on:
+      web:
+        condition: service_healthy
     networks:
       - utility_net
 
@@ -280,6 +297,7 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
+  nginx_cache:
 
 networks:
   utility_net:
