@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
 
   db:
@@ -20,9 +18,7 @@ services:
       timeout: 5s
       retries: 10
     networks:
-      utility_net:
-        aliases:
-          - db
+      - utility_net
 
   pgbouncer:
     image: edoburu/pgbouncer:latest
@@ -45,14 +41,12 @@ services:
       db:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -p 5432 -U ${POSTGRES_USER}"]
-      interval: 5s
+      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "5432", "-U", "${POSTGRES_USER}"]
+      interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 5
     networks:
-      utility_net:
-        aliases:
-          - pgbouncer
+      - utility_net
 
   redis:
     image: redis:7
@@ -68,9 +62,7 @@ services:
       retries: 5
       start_period: 10s
     networks:
-      utility_net:
-        aliases:
-          - redis
+      - utility_net
 
   minio:
     image: minio/minio:latest
@@ -83,14 +75,12 @@ services:
     volumes:
       - minio_data:/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://127.0.0.1:9000/minio/health/live || exit 1"]
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
-      timeout: 10s
-      retries: 5
+      timeout: 20s
+      retries: 3
     networks:
-      utility_net:
-        aliases:
-          - minio
+      - utility_net
 
   migration_job:
     image: ghcr.io/ylanov/utility-calc:latest
@@ -107,22 +97,15 @@ services:
     command: >
       sh -c "
       echo 'Waiting for PgBouncer...' &&
-      until nc -z pgbouncer 5432; do
-        echo 'PgBouncer not ready yet...';
-        sleep 2;
-      done &&
-      echo 'PgBouncer ready' &&
+      sleep 5 &&
       echo 'Running migrations...' &&
       alembic upgrade head &&
       alembic -c alembic_arsenal.ini upgrade head &&
       echo 'Seeding initial data...' &&
-      python -m app.core.initial_data &&
-      echo 'Migrations completed'
+      python -m app.core.initial_data
       "
     networks:
-      utility_net:
-        aliases:
-          - migrations
+      - utility_net
 
   web:
     image: ghcr.io/ylanov/utility-calc:latest
@@ -133,8 +116,8 @@ services:
     environment:
       DB_HOST: pgbouncer
       DB_PORT: 5432
-      PYTHONUNBUFFERED: "1"
-      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: 1
+      PYTHONDONTWRITEBYTECODE: 1
     ports:
       - "8000:8000"
     command: >
@@ -155,15 +138,13 @@ services:
       minio:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://127.0.0.1:8000/docs || exit 1"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/docs"]
       interval: 15s
       timeout: 10s
       retries: 5
       start_period: 60s
     networks:
-      utility_net:
-        aliases:
-          - web
+      - utility_net
 
   worker_default:
     image: ghcr.io/ylanov/utility-calc:latest
@@ -186,9 +167,7 @@ services:
       migration_job:
         condition: service_completed_successfully
     networks:
-      utility_net:
-        aliases:
-          - worker_default
+      - utility_net
 
   worker_heavy:
     image: ghcr.io/ylanov/utility-calc:latest
@@ -211,9 +190,7 @@ services:
       migration_job:
         condition: service_completed_successfully
     networks:
-      utility_net:
-        aliases:
-          - worker_heavy
+      - utility_net
 
   worker_beat:
     image: ghcr.io/ylanov/utility-calc:latest
@@ -228,9 +205,7 @@ services:
       migration_job:
         condition: service_completed_successfully
     networks:
-      utility_net:
-        aliases:
-          - worker_beat
+      - utility_net
 
   backup:
     image: postgres:15-alpine
@@ -250,22 +225,15 @@ services:
     command: >
       sh -c "
       chmod +x /usr/local/bin/backup.sh &&
-      while true; do
-        /usr/local/bin/backup.sh;
-        sleep 86400;
-      done
+      while true; do /usr/local/bin/backup.sh; sleep 86400; done
       "
     networks:
-      utility_net:
-        aliases:
-          - backup
-
+      - utility_net
 
 volumes:
   postgres_data:
   redis_data:
   minio_data:
-
 
 networks:
   utility_net:
