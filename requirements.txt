@@ -43,3 +43,6 @@ httpx
 
 # --- Monitoring ---
 sentry-sdk[fastapi,celery,sqlalchemy]
+
+prometheus-client
+prometheus-fastapi-instrumentator

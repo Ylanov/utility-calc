@@ -204,12 +204,16 @@ services:
     environment:
       DB_HOST: pgbouncer
       DB_PORT: 5432
+      ENABLE_METRICS: "true"
+      METRICS_PORT: "8001"
     command: >
       celery -A app.worker worker
       --loglevel=info
       --queues=default
       --concurrency=${CELERY_WORKER_CONCURRENCY:-8}
       --max-tasks-per-child=500
+    ports:
+      - "8001:8001"
     depends_on:
       redis:
         condition: service_healthy
@@ -229,12 +233,16 @@ services:
     environment:
       DB_HOST: pgbouncer
       DB_PORT: 5432
+      ENABLE_METRICS: "true"
+      METRICS_PORT: "8001"
     command: >
       celery -A app.worker worker
       --loglevel=info
       --queues=heavy
       --concurrency=8
       --max-tasks-per-child=500
+    ports:
+      - "8002:8001"
     depends_on:
       redis:
         condition: service_healthy

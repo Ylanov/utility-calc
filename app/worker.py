@@ -1,10 +1,19 @@
+import time
+import os
+import socket
+
+from prometheus_client import Counter, Histogram, start_http_server
+from celery.signals import task_prerun, task_postrun, task_failure
 from celery import Celery
 import sentry_sdk
 from sentry_sdk.integrations.celery import CeleryIntegration
 from app.core.config import settings
 from celery.schedules import crontab
 
-# Инициализация Sentry для мониторинга ошибок в фоновых задачах
+# =====================================================
+# SENTRY
+# =====================================================
+
 if settings.SENTRY_DSN:
     sentry_sdk.init(
         dsn=settings.SENTRY_DSN,
@@ -13,7 +22,10 @@ if settings.SENTRY_DSN:
         integrations=[CeleryIntegration()],
     )
 
-# Инициализация приложения Celery
+# =====================================================
+# CELERY INIT
+# =====================================================
+
 celery = Celery(
     "app",
     broker=settings.REDIS_URL,
@@ -27,58 +39,114 @@ celery.conf.update(
     timezone="UTC",
     enable_utc=True,
 
-    # Настройки конкурентности берем из конфига
     worker_concurrency=settings.CELERY_WORKER_CONCURRENCY,
-
-    # Предотвращаем "жадность" воркера, чтобы задачи распределялись равномерно
     worker_prefetch_multiplier=1,
 
-    # Подтверждаем выполнение задачи только после завершения (защита от потери при крэше)
     task_acks_late=True,
     task_reject_on_worker_lost=True,
 
-    # Лимиты времени
     task_time_limit=settings.CELERY_TASK_TIME_LIMIT,
     result_expires=settings.CELERY_RESULT_EXPIRES,
 
-    # Повторная попытка подключения к брокеру при старте
     broker_connection_retry_on_startup=True,
 
     # =====================================================
-    # 🔥 ЗАЩИТА ОТ УТЕЧЕК ПАМЯТИ
+    # MEMORY SAFETY
     # =====================================================
-    # Перезапускаем процесс воркера после 500 задач
     worker_max_tasks_per_child=500,
-
-    # Резервный лимит по памяти: 1 500 000 КБ = ~1.5 ГБ.
-    # Это предотвратит убийство процесса генерации PDF,
-    # если отчет получится слишком большим, но спасет сервер от бесконечной утечки.
     worker_max_memory_per_child=1500000,
-    # =====================================================
 
-    # --- НАСТРОЙКИ ОЧЕРЕДЕЙ ---
+    # =====================================================
+    # QUEUES
+    # =====================================================
     task_default_queue="default",
     task_routes={
-        # Тяжелые задачи (PDF, ZIP, Импорт) отправляем в очередь "heavy"
         "app.modules.utility.tasks.generate_receipt_task": {"queue": "heavy"},
         "app.modules.utility.tasks.create_zip_archive_task": {"queue": "heavy"},
         "app.modules.utility.tasks.start_bulk_receipt_generation": {"queue": "heavy"},
         "app.modules.utility.tasks.import_debts_task": {"queue": "heavy"},
         "app.modules.utility.tasks.close_period_task": {"queue": "heavy"},
-
-        # Легкие и остальные задачи летят в default
         "*": {"queue": "default"},
     }
 )
 
-# Периодические задачи (Celery Beat)
+# =====================================================
+# CELERY BEAT
+# =====================================================
+
 celery.conf.beat_schedule = {
-    # Проверка каждый день в 00:05: нужно ли открыть новый период или закрыть старый
-    'check-submission-period-daily': {
-        'task': 'app.modules.utility.tasks.check_auto_period_task',
-        'schedule': crontab(minute=5, hour=0),
+    "check-submission-period-daily": {
+        "task": "app.modules.utility.tasks.check_auto_period_task",
+        "schedule": crontab(minute=5, hour=0),
     },
 }
 
-# Автоматический импорт задач из модуля
 celery.conf.imports = ["app.modules.utility.tasks"]
+
+# =====================================================
+# PROMETHEUS METRICS
+# =====================================================
+
+HOSTNAME = socket.gethostname()
+
+TASK_COUNT = Counter(
+    "celery_task_total",
+    "Total number of Celery tasks",
+    ["task_name", "status", "worker"]
+)
+
+TASK_TIME = Histogram(
+    "celery_task_duration_seconds",
+    "Time spent processing tasks",
+    ["task_name", "worker"]
+)
+
+_task_start_time = {}
+
+
+# =====================================================
+# SIGNALS
+# =====================================================
+
+@task_prerun.connect
+def task_prerun_handler(task_id, task, *args, **kwargs):
+    _task_start_time[task_id] = time.time()
+
+
+@task_postrun.connect
+def task_postrun_handler(task_id, task, *args, **kwargs):
+    start_time = _task_start_time.pop(task_id, None)
+
+    if start_time:
+        duration = time.time() - start_time
+        TASK_TIME.labels(task.name, HOSTNAME).observe(duration)
+
+    TASK_COUNT.labels(task.name, "success", HOSTNAME).inc()
+
+
+@task_failure.connect
+def task_failure_handler(task_id, exception, task, *args, **kwargs):
+    _task_start_time.pop(task_id, None)
+    TASK_COUNT.labels(task.name, "failure", HOSTNAME).inc()
+
+
+# =====================================================
+# METRICS SERVER (SAFE START)
+# =====================================================
+
+def start_metrics_server():
+    """
+    Запускаем HTTP сервер метрик только в одном процессе
+    """
+    try:
+        port = int(os.environ.get("METRICS_PORT", "8001"))
+        start_http_server(port)
+        print(f"[Metrics] Prometheus metrics started on port {port}")
+    except Exception as e:
+        print(f"[Metrics] Failed to start metrics server: {e}")
+
+
+if os.environ.get("ENABLE_METRICS", "true").lower() == "true":
+    # Только главный процесс запускает сервер
+    if os.environ.get("CELERY_WORKER_PID") is None:
+        start_metrics_server()

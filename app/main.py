@@ -21,6 +21,7 @@ from app.core.database import ArsenalSessionLocal, GsmSessionLocal
 from app.modules.arsenal.models import ArsenalUser
 from app.modules.gsm.models import GsmUser
 from app.modules.utility.routers import settings as settings_router
+from prometheus_fastapi_instrumentator import Instrumentator
 
 # --- ЖКХ-1 ---
 from app.modules.utility.routers import (
@@ -134,7 +135,7 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url=None
 )
-
+Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 # =====================================================================
 # MIDDLEWARES
 # =====================================================================
