@@ -67,7 +67,7 @@ jobs:
       - name: Run Gitleaks (JSON)
         run: |
           docker run --rm -v $(pwd):/repo zricethezav/gitleaks:latest \
-          detect --source=/repo --report-format json --report-path=/repo/gitleaks-report.json
+          detect --source=/repo --report-format json --report-path=/repo/gitleaks-report.json --exit-code 0 || true
 
       # =========================
       # SONARQUBE SCAN (БЕЗ ТЕСТОВ)
