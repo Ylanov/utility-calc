@@ -79,8 +79,6 @@ export const ManualModule = {
             }
 
             res.items.forEach(user => {
-                if (user.role !== 'user') return; // Показываем только жильцов
-
                 const li = el('li', {
                     style: {
                         padding: '12px 15px', borderBottom: '1px solid #e5e7eb', cursor: 'pointer',
