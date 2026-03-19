@@ -48,18 +48,8 @@ jobs:
             -v $PWD:/app \
             aquasec/trivy fs /app \
             --format json \
-            --output trivy-report.json \
+            --output /app/trivy-report.json \
             --severity HIGH,CRITICAL
-
-      - name: Upload Trivy report to DefectDojo (Internal)
-        run: |
-          curl -X POST "http://100.69.226.7:8081/api/v2/import-scan/" \
-            -H "Authorization: Token ${{ secrets.DEFECTDOJO_TOKEN }}" \
-            -F "scan_type=Trivy Scan" \
-            -F "file=@trivy-report.json" \
-            -F "engagement=1" \
-            -F "verified=true" \
-            -F "active=true"      
 
       # =========================
       # FAIL ON CRITICAL
@@ -228,7 +218,7 @@ jobs:
             sleep 5
           done
 
-          if[ "$SUCCESS" != "true" ]; then
+          if [ "$SUCCESS" != "true" ]; then
             echo "Deployment failed!"
             docker compose logs --tail 50 web
             docker compose logs --tail 50 nginx
