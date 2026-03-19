@@ -59,7 +59,6 @@ async def login(
     Если 2FA включена -> Возвращает 202 Accepted с временным токеном (scope="pre-auth").
     Если 2FA выключена -> Сразу ставит куку и пускает (200 OK).
     """
-    # Ищем пользователя, исключая удаленных (Soft Delete)
     result = await db.execute(
         select(User).where(
             User.username == form_data.username,
@@ -68,20 +67,20 @@ async def login(
     )
     user = result.scalars().first()
 
+    # ❗ Проверка пароля (ОДИН раз)
     if not user or not verify_password(form_data.password, user.hashed_password):
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
 
-    # Проверяем, нужно ли обновить хеш (если он старого формата, например bcrypt)
-    if verify_password(form_data.password, user.hashed_password):
-        # Если хеш не начинается на "$argon2", значит он старый -> обновляем
-        if not user.hashed_password.startswith("$argon2"):
-            new_hash = get_password_hash(form_data.password)
-            user.hashed_password = new_hash
-            db.add(user)
-            await db.commit()
+    # Обновление хеша при необходимости
+    if not user.hashed_password.startswith("$argon2"):
+        new_hash = get_password_hash(form_data.password)
+        user.hashed_password = new_hash
+        db.add(user)
+        await db.commit()
 
-    # 2FA НЕТ -> Полный вход
-    access_token = create_access_token(data={"sub": user.username, "role": user.role, "scope": "full"})
+    access_token = create_access_token(
+        data={"sub": user.username, "role": user.role, "scope": "full"}
+    )
     set_auth_cookie(response, access_token)
 
     return {"access_token": access_token, "role": user.role, "status": "success"}
@@ -94,16 +93,15 @@ async def verify_2fa_login(
         data: TotpVerify,
         db: AsyncSession = Depends(get_db)
 ):
-    """
-    Шаг 2: Принимает временный токен и код из Яндекс.Ключа / Google Auth.
-    """
-    # 1. Проверяем наличие временного токена
     if not data.temp_token:
         raise HTTPException(status_code=400, detail="Отсутствует временный токен")
 
-    # 2. Валидация временного токена (JWT)
     try:
-        payload = jwt.decode(data.temp_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        payload = jwt.decode(
+            data.temp_token,
+            settings.SECRET_KEY,
+            algorithms=[settings.ALGORITHM]
+        )
         username = payload.get("sub")
         scope = payload.get("scope")
 
@@ -113,44 +111,36 @@ async def verify_2fa_login(
     except JWTError:
         raise HTTPException(status_code=401, detail="Токен истек или неверен")
 
-    # 3. Получаем юзера из БД
     result = await db.execute(select(User).where(User.username == username))
     user = result.scalars().first()
 
     if not user or not user.totp_secret:
         raise HTTPException(status_code=400, detail="2FA не настроена или пользователь не найден")
 
-    # 4. Проверяем код через PyOTP
     decrypted_secret = decrypt_totp_secret(user.totp_secret)
     totp = pyotp.TOTP(decrypted_secret)
-    # valid_window=1 дает допуск +-30 секунд для рассинхронизации часов
+
     if not totp.verify(data.code, valid_window=1):
         raise HTTPException(status_code=400, detail="Неверный код из приложения")
 
-    # 5. Успех! Выдаем полный доступ
-    access_token = create_access_token(data={"sub": user.username, "role": user.role, "scope": "full"})
+    access_token = create_access_token(
+        data={"sub": user.username, "role": user.role, "scope": "full"}
+    )
     set_auth_cookie(response, access_token)
 
     return {"status": "success", "role": user.role}
 
 
-# --- 3. НАСТРОЙКА 2FA (Генерация QR) ---
+# --- 3. НАСТРОЙКА 2FA ---
 @router.post("/api/auth/setup-2fa", response_model=TotpSetupResponse)
 async def setup_2fa(current_user: User = Depends(get_current_user)):
-    """
-    Генерирует секрет и QR-код для подключения Яндекс.Ключа.
-    """
-    # Генерируем случайный секрет (32 символа base32)
     secret = pyotp.random_base32()
 
-    # Создаем ссылку для QR-кода (otpauth://)
-    # name - что будет написано в приложении (user@ЖКХ-Лидер)
     uri = pyotp.totp.TOTP(secret).provisioning_uri(
         name=current_user.username,
         issuer_name="ЖКХ Лидер"
     )
 
-    # Генерируем QR-код в формате PNG -> Base64
     img = qrcode.make(uri)
     buffered = io.BytesIO()
     img.save(buffered, format="PNG")
@@ -159,26 +149,20 @@ async def setup_2fa(current_user: User = Depends(get_current_user)):
     return {"secret": secret, "qr_code": qr_b64}
 
 
-# --- 4. АКТИВАЦИЯ 2FA (Подтверждение настройки) ---
+# --- 4. АКТИВАЦИЯ 2FA ---
 @router.post("/api/auth/activate-2fa")
 async def activate_2fa(
         data: TotpVerify,
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
 ):
-    """
-    Финализация настройки: юзер вводит код из приложения и секрет, который мы ему показали.
-    Если код верный — сохраняем секрет в БД.
-    """
     if not data.secret:
         raise HTTPException(status_code=400, detail="Секретный ключ не передан")
 
-    # Проверяем код с переданным секретом
     totp = pyotp.TOTP(data.secret)
     if not totp.verify(data.code, valid_window=1):
         raise HTTPException(status_code=400, detail="Неверный код. Попробуйте сканировать QR снова.")
 
-    # Сохраняем секрет в БД (включаем 2FA для этого юзера)
     current_user.totp_secret = encrypt_totp_secret(data.secret)
     await db.commit()
 
@@ -188,9 +172,6 @@ async def activate_2fa(
 # --- 5. ВЫХОД ---
 @router.post("/api/logout")
 async def logout(response: Response):
-    """
-    Выход пользователя (удаление куки).
-    """
     response.delete_cookie(
         key="access_token",
         samesite="lax",
@@ -200,21 +181,20 @@ async def logout(response: Response):
     return {"status": "success", "message": "Успешный выход"}
 
 
-# --- 6. СБРОС ПАРОЛЯ (Для жильцов) ---
+# --- 6. СБРОС ПАРОЛЯ ---
 @router.post("/api/auth/reset-password")
 async def reset_password(data: PasswordResetRequest, db: AsyncSession = Depends(get_db)):
-    """Сброс пароля жильца по логину и площади помещения"""
-
-    # 1. Ищем пользователя (без учета регистра)
     result = await db.execute(
-        select(User).where(func.lower(User.username) == data.username.lower(), not User.is_deleted)
+        select(User).where(
+            func.lower(User.username) == data.username.lower(),
+            User.is_deleted.is_(False)  # ✅ исправлено
+        )
     )
     user = result.scalars().first()
 
     if not user:
         raise HTTPException(status_code=404, detail="Пользователь с таким логином не найден")
 
-    # 2. Проверка безопасности: совпадает ли площадь (с точностью до десятых)
     db_area = round(float(user.apartment_area or 0), 1)
     input_area = round(float(data.apartment_area), 1)
 
@@ -224,13 +204,9 @@ async def reset_password(data: PasswordResetRequest, db: AsyncSession = Depends(
             detail="Данные не совпадают. Проверьте площадь в квитанции или обратитесь в бухгалтерию."
         )
 
-    # 3. Генерируем новый случайный 6-значный цифровой пароль
     temp_password = ''.join(random.choices(string.digits, k=6))
 
-    # 4. Обновляем пользователя
     user.hashed_password = get_password_hash(temp_password)
-
-    # ВАЖНО: Заставляем его сменить этот временный пароль при следующем входе!
     user.is_initial_setup_done = False
 
     await db.commit()

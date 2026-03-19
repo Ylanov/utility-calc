@@ -1,6 +1,6 @@
 from pydantic import BaseModel, condecimal, validator
 from typing import Optional, List
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 # ======================================================
@@ -81,22 +81,35 @@ class DocCreate(BaseModel):
     @validator("operation_date", pre=True, always=True)
     def normalize_date(cls, value):
         """
-        Преобразует строку даты с фронтенда (YYYY-MM-DD) в объект datetime.
-        Если дата не пришла — ставит текущее время.
+        Преобразует строку даты с фронтенда (YYYY-MM-DD) в UTC datetime.
         """
+
         if not value:
-            return datetime.utcnow()
+            return datetime.now(timezone.utc)
 
         if isinstance(value, str):
-            # Если приходит только дата без времени (из input type="date")
+            # Только дата (YYYY-MM-DD)
             if len(value) == 10:
-                return datetime.strptime(value, "%Y-%m-%d")
+                dt = datetime.strptime(value, "%Y-%m-%d")
+                return dt.replace(tzinfo=timezone.utc)
 
-            # Если приходит полный ISO формат
+            # ISO формат
             try:
-                return datetime.fromisoformat(value.replace("Z", "+00:00"))
+                dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+                # если вдруг без timezone — добавим
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+
+                return dt
+
             except ValueError:
                 pass
+
+        # если уже datetime
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                return value.replace(tzinfo=timezone.utc)
 
         return value
 
