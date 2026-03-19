@@ -170,8 +170,8 @@ async def read_users(
 ):
     """Получение списка пользователей с пагинацией, поиском и сортировкой."""
 
-    items_query = select(User).where(not User.is_deleted)
-    count_query = select(func.count(User.id)).where(not User.is_deleted)
+    items_query = select(User).where(User.is_deleted.is_(False))
+    count_query = select(func.count(User.id)).where(User.is_deleted.is_(False))
 
     if search:
         search_filter = f"%{search}%"

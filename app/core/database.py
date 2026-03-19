@@ -3,34 +3,37 @@
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy import create_engine
-from sqlalchemy.pool import NullPool  # <-- КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Отключаем локальный пулинг
+from sqlalchemy.pool import NullPool
 from app.core.config import settings
+
+# =====================================================
+# КОНСТАНТЫ
+# =====================================================
+
+ISOLATION_LEVEL = "READ COMMITTED"  # ✅ единая точка настройки
 
 # Определение базовых классов моделей
 Base = declarative_base()          # ЖКХ
 ArsenalBase = declarative_base()   # Арсенал
 GsmBase = declarative_base()       # ГСМ
 
-# 🔥 КРИТИЧЕСКИ ВАЖНО ДЛЯ PGBOUNCER (Transaction Mode) + ASYNCPG
-# Мы обязаны отключить кэширование prepared statements в драйвере.
-# Иначе при переключении соединений PgBouncer'ом будут вылетать ошибки.
+# 🔥 КРИТИЧЕСКИ ВАЖНО ДЛЯ PGBOUNCER
 asyncpg_connect_args = {
     "prepared_statement_cache_size": 0,
     "statement_cache_size": 0,
-    "command_timeout": 60  # Увеличиваем таймаут для тяжелых операций
+    "command_timeout": 60
 }
 
 # =========================================================================
-# 1. Конфигурация БД ЖКХ (Utility DB)
+# 1. ЖКХ (Utility DB)
 # =========================================================================
 
-# Асинхронный движок (используется FastAPI веб-воркерами)
 engine = create_async_engine(
     settings.DATABASE_URL_ASYNC,
     echo=False,
     future=True,
-    poolclass=NullPool,  # <-- ИСПРАВЛЕНИЕ: Отдаем управление пулом PgBouncer'у
-    isolation_level="READ COMMITTED",
+    poolclass=NullPool,
+    isolation_level=ISOLATION_LEVEL,  # ✅
     connect_args=asyncpg_connect_args
 )
 
@@ -41,13 +44,12 @@ AsyncSessionLocal = sessionmaker(
     autoflush=False
 )
 
-# Синхронный движок (используется Celery)
 engine_sync = create_engine(
     settings.DATABASE_URL_SYNC,
     echo=False,
     future=True,
-    poolclass=NullPool,  # <-- ИСПРАВЛЕНИЕ ДЛЯ CELERY: Предотвращает Connection Storm
-    isolation_level="READ COMMITTED"
+    poolclass=NullPool,
+    isolation_level=ISOLATION_LEVEL  # ✅
 )
 
 SessionLocalSync = sessionmaker(
@@ -57,7 +59,6 @@ SessionLocalSync = sessionmaker(
 )
 
 async def get_db():
-    """Dependency для ЖКХ"""
     async with AsyncSessionLocal() as session:
         try:
             yield session
@@ -75,15 +76,15 @@ def close_sync_engine():
 
 
 # =========================================================================
-# 2. Конфигурация БД СТРОБ Арсенал (Arsenal DB)
+# 2. Arsenal DB
 # =========================================================================
 
 arsenal_engine = create_async_engine(
     settings.ARSENAL_DATABASE_URL_ASYNC,
     echo=False,
     future=True,
-    poolclass=NullPool,  # <-- ИСПРАВЛЕНИЕ
-    isolation_level="READ COMMITTED",
+    poolclass=NullPool,
+    isolation_level=ISOLATION_LEVEL,  # ✅
     connect_args=asyncpg_connect_args
 )
 
@@ -95,7 +96,6 @@ ArsenalSessionLocal = sessionmaker(
 )
 
 async def get_arsenal_db():
-    """Dependency для Арсенала"""
     async with ArsenalSessionLocal() as session:
         try:
             yield session
@@ -110,15 +110,15 @@ async def close_arsenal_engine():
 
 
 # =========================================================================
-# 3. Конфигурация БД СТРОБ ГСМ (GSM DB)
+# 3. GSM DB
 # =========================================================================
 
 gsm_engine = create_async_engine(
     settings.ARSENAL_DATABASE_URL_ASYNC,
     echo=False,
     future=True,
-    poolclass=NullPool,  # <-- ИСПРАВЛЕНИЕ
-    isolation_level="READ COMMITTED",
+    poolclass=NullPool,
+    isolation_level=ISOLATION_LEVEL,  # ✅
     connect_args=asyncpg_connect_args
 )
 
@@ -130,7 +130,6 @@ GsmSessionLocal = sessionmaker(
 )
 
 async def get_gsm_db():
-    """Dependency для ГСМ"""
     async with GsmSessionLocal() as session:
         try:
             yield session

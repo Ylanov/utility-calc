@@ -5,24 +5,32 @@ from decimal import Decimal
 from openpyxl import Workbook, load_workbook
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+
 from app.modules.utility.models import User, MeterReading, BillingPeriod
 from app.core.auth import get_password_hash
 from app.modules.utility.services.debt_import import find_user_fuzzy, normalize_name
 
 ZERO = Decimal("0.00")
 
+
 def _load_workbook_sync(file_content: bytes):
-    """Синхронная функция загрузки Excel файла (для вызова в thread)"""
     return load_workbook(filename=io.BytesIO(file_content), read_only=True, data_only=True)
+
 
 async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict:
     try:
-        # 🔥 ИСПРАВЛЕНИЕ: Загрузка тяжелого Excel файла вынесена в отдельный поток
         workbook = await asyncio.to_thread(_load_workbook_sync, file_content)
         worksheet = workbook.active
 
-        users_result = await db.execute(select(User).where(not User.is_deleted))
-        existing_users: Dict[str, User] = {user.username: user for user in users_result.scalars().all()}
+        # ✅ исправлено: правильный where + нормализация
+        users_result = await db.execute(
+            select(User).where(User.is_deleted.is_(False))
+        )
+
+        existing_users: Dict[str, User] = {
+            normalize_name(user.username): user
+            for user in users_result.scalars().all()
+        }
 
         added_count = 0
         updated_count = 0
@@ -43,6 +51,8 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
                 if not username:
                     skipped_count += 1
                     continue
+
+                normalized_username = normalize_name(username)
 
                 password = str(row[1]).strip() if len(row) > 1 and row[1] else username
                 dormitory = str(row[2]).strip() if len(row) > 2 and row[2] else None
@@ -65,8 +75,9 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
                     hashed_password = get_password_hash(password)
                     password_cache[password] = hashed_password
 
-                if username in existing_users:
-                    user = existing_users[username]
+                if normalized_username in existing_users:
+                    user = existing_users[normalized_username]
+
                     user.dormitory = dormitory
                     user.apartment_area = apartment_area
                     user.residents_count = residents_count
@@ -76,8 +87,8 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
                     if password:
                         user.hashed_password = hashed_password
 
-                    if user not in new_users:
-                        updated_count += 1
+                    updated_count += 1
+
                 else:
                     new_user = User(
                         username=username,
@@ -91,7 +102,7 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
                         is_deleted=False
                     )
                     new_users.append(new_user)
-                    existing_users[username] = new_user
+                    existing_users[normalized_username] = new_user
                     added_count += 1
 
             except Exception as error:
@@ -126,11 +137,11 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
 
 
 def _save_workbook_sync(workbook) -> io.BytesIO:
-    """Синхронное сохранение Excel файла"""
     output = io.BytesIO()
     workbook.save(output)
     output.seek(0)
     return output
+
 
 async def generate_billing_report_xlsx(db: AsyncSession, period_id: int) -> Tuple[io.BytesIO, str]:
     period_result = await db.execute(select(BillingPeriod).where(BillingPeriod.id == period_id))
@@ -142,7 +153,10 @@ async def generate_billing_report_xlsx(db: AsyncSession, period_id: int) -> Tupl
     statement = (
         select(User, MeterReading)
         .join(MeterReading, User.id == MeterReading.user_id)
-        .where(MeterReading.period_id == period_id, MeterReading.is_approved.is_(True))
+        .where(
+            MeterReading.period_id == period_id,
+            MeterReading.is_approved.is_(True)
+        )
         .order_by(User.dormitory, User.username)
     )
 
@@ -197,20 +211,26 @@ async def generate_billing_report_xlsx(db: AsyncSession, period_id: int) -> Tupl
 
     worksheet.append([""] * 11 + ["ИТОГО:", total_209_sum, total_205_sum, total_sum])
 
-    # 🔥 ИСПРАВЛЕНИЕ: Сохранение файла в отдельном потоке
     output = await asyncio.to_thread(_save_workbook_sync, workbook)
     filename = f"Report_{period.name}".replace(" ", "_") + ".xlsx"
 
     return output, filename
 
+
 async def import_readings_from_excel(file_content: bytes, db: AsyncSession, period_id: int) -> dict:
     try:
-        # 🔥 ИСПРАВЛЕНИЕ: Загрузка в фоновом потоке
         workbook = await asyncio.to_thread(_load_workbook_sync, file_content)
         worksheet = workbook.active
 
-        users_result = await db.execute(select(User).where(not User.is_deleted))
-        users_map = {normalize_name(u.username): u.id for u in users_result.scalars().all()}
+        # ✅ исправлено
+        users_result = await db.execute(
+            select(User).where(User.is_deleted.is_(False))
+        )
+
+        users_map = {
+            normalize_name(u.username): u.id
+            for u in users_result.scalars().all()
+        }
 
         added_count = 0
         updated_count = 0
@@ -218,6 +238,7 @@ async def import_readings_from_excel(file_content: bytes, db: AsyncSession, peri
         errors = []
 
         rows = worksheet.iter_rows(min_row=2, values_only=True)
+
         for row_index, row in enumerate(rows, start=2):
             if not row or not row[0]:
                 skipped_count += 1
@@ -232,9 +253,9 @@ async def import_readings_from_excel(file_content: bytes, db: AsyncSession, peri
                 continue
 
             try:
-                hot = Decimal(str(row[1]).replace(',', '.').replace(' ', '')) if len(row) > 1 and row[1] is not None else Decimal("0.00")
-                cold = Decimal(str(row[2]).replace(',', '.').replace(' ', '')) if len(row) > 2 and row[2] is not None else Decimal("0.00")
-                elect = Decimal(str(row[3]).replace(',', '.').replace(' ', '')) if len(row) > 3 and row[3] is not None else Decimal("0.00")
+                hot = Decimal(str(row[1]).replace(',', '.').replace(' ', '')) if len(row) > 1 and row[1] is not None else ZERO
+                cold = Decimal(str(row[2]).replace(',', '.').replace(' ', '')) if len(row) > 2 and row[2] is not None else ZERO
+                elect = Decimal(str(row[3]).replace(',', '.').replace(' ', '')) if len(row) > 3 and row[3] is not None else ZERO
             except Exception:
                 errors.append(f"Строка {row_index}: Ошибка в числах для '{fio_raw}'")
                 skipped_count += 1
@@ -244,9 +265,10 @@ async def import_readings_from_excel(file_content: bytes, db: AsyncSession, peri
                 select(MeterReading).where(
                     MeterReading.user_id == user_id,
                     MeterReading.period_id == period_id,
-                    not MeterReading.is_approved
+                    MeterReading.is_approved.is_(False)  # ✅ исправлено
                 )
             )
+
             draft = exist_res.scalars().first()
 
             if draft:
@@ -280,4 +302,8 @@ async def import_readings_from_excel(file_content: bytes, db: AsyncSession, peri
 
     except Exception as error:
         await db.rollback()
-        return {"status": "error", "message": str(error), "errors": [str(error)]}
+        return {
+            "status": "error",
+            "message": str(error),
+            "errors": [str(error)]
+        }
