@@ -161,7 +161,7 @@ jobs:
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GH_PAT }}
 
@@ -176,19 +176,20 @@ jobs:
           docker compose up -d --remove-orphans
 
       - name: Wait for startup
-        run: sleep 25
+        run: sleep 40
 
       - name: Health check
         working-directory: /opt/utility_calc
         run: |
-          ATTEMPTS=10
+          ATTEMPTS=15
           SUCCESS=false
 
           for i in $(seq 1 $ATTEMPTS); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health || true)
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/health || true)
 
             if [ "$STATUS" = "200" ]; then
               SUCCESS=true
+              echo "Service is healthy!"
               break
             fi
 
@@ -198,8 +199,16 @@ jobs:
 
           if [ "$SUCCESS" != "true" ]; then
             echo "Deployment failed!"
-            docker compose logs --tail 50 web
-            docker compose logs --tail 50 nginx
+
+            echo "==== WEB_JKH LOGS ===="
+            docker compose logs --tail 50 web_jkh || true
+
+            echo "==== WEB_ARSENAL_GSM LOGS ===="
+            docker compose logs --tail 50 web_arsenal_gsm || true
+
+            echo "==== NGINX LOGS ===="
+            docker compose logs --tail 50 nginx || true
+
             exit 1
           fi
 
