@@ -1,3 +1,4 @@
+import os
 import logging
 import sentry_sdk
 import redis.asyncio as redis
@@ -67,6 +68,12 @@ logger = logging.getLogger(__name__)
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
 # =====================================================================
+# РЕЖИМ ЗАПУСКА (Разделение монолита)
+# =====================================================================
+# Получаем режим из docker-compose.yml. Варианты: "jkh", "arsenal_gsm", "all"
+APP_MODE = os.environ.get("APP_MODE", "all")
+
+# =====================================================================
 # SENTRY
 # =====================================================================
 
@@ -84,9 +91,9 @@ if settings.SENTRY_DSN:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
 
-    logger.info("Starting application initialization")
+    logger.info(f"Starting application initialization in mode: {APP_MODE.upper()}")
 
-    # Redis
+    # Redis (Нужен всем модулям для кэша и лимитов)
     try:
         redis_client = redis.from_url(
             settings.REDIS_URL,
@@ -106,18 +113,19 @@ async def lifespan(app: FastAPI):
     except Exception as error:
         logger.error(f"Redis connection failed: {error}")
 
-    # Admin checks
-    try:
-        await ensure_admin_exists(ArsenalSessionLocal, ArsenalUser)
-        logger.info("Arsenal admin ensured")
-    except Exception as e:
-        logger.error(f"Failed to ensure Arsenal admin: {e}")
+    # Проверка админов нужна только для Арсенала и ГСМ
+    if APP_MODE in ("all", "arsenal_gsm"):
+        try:
+            await ensure_admin_exists(ArsenalSessionLocal, ArsenalUser)
+            logger.info("Arsenal admin ensured")
+        except Exception as e:
+            logger.error(f"Failed to ensure Arsenal admin: {e}")
 
-    try:
-        await ensure_admin_exists(GsmSessionLocal, GsmUser)
-        logger.info("GSM admin ensured")
-    except Exception as e:
-        logger.error(f"Failed to ensure GSM admin: {e}")
+        try:
+            await ensure_admin_exists(GsmSessionLocal, GsmUser)
+            logger.info("GSM admin ensured")
+        except Exception as e:
+            logger.error(f"Failed to ensure GSM admin: {e}")
 
     yield
 
@@ -136,22 +144,23 @@ app = FastAPI(
     redoc_url=None
 )
 Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+
 # =====================================================================
 # MIDDLEWARES
 # =====================================================================
 
-# 1. Trusted Hosts (разрешаем проксирование через NPM и Tailscale)
+# 1. Trusted Hosts
 app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=["asy-tk.ru", "www.asy-tk.ru", "localhost", "127.0.0.1", "*"]
 )
 
 # 2. CORS
-allowed_origins: List[str] = getattr(settings, "ALLOWED_ORIGINS", [])
+allowed_origins: List[str] = getattr(settings, "ALLOWED_ORIGINS",[])
 
 if not allowed_origins:
     logger.warning("ALLOWED_ORIGINS not set. Using localhost")
-    allowed_origins = [
+    allowed_origins =[
         "http://localhost",
         "http://localhost:8000",
         "http://127.0.0.1:8000"
@@ -201,7 +210,6 @@ async def ensure_admin_exists(session_factory, user_model):
         admin = result.scalars().first()
 
         if not admin:
-
             logger.warning("Admin user not found. Creating default admin")
 
             admin = user_model(
@@ -212,58 +220,56 @@ async def ensure_admin_exists(session_factory, user_model):
             )
 
             db.add(admin)
-
             await db.commit()
-
         else:
             logger.info("Admin already exists")
 
 
 # =====================================================================
-# ROUTERS
+# ROUTERS (С РАЗДЕЛЕНИЕМ ПО РЕЖИМУ)
 # =====================================================================
 
-# --- Health Check ---
+# --- Health Check (Доступен всегда) ---
 @app.get("/health", include_in_schema=False)
 def health_check():
     """Эндпоинт для проверки жизнеспособности контейнера Docker и Nginx"""
-    return {"status": "ok"}
-
+    return {"status": "ok", "mode": APP_MODE}
 
 # --- ЖКХ ---
-app.include_router(auth_routes.router)
-app.include_router(users.router)
-app.include_router(tariffs.router)
-app.include_router(client_readings.router)
-app.include_router(admin_readings.router)
-app.include_router(admin_periods.router)
-app.include_router(admin_reports.router)
-app.include_router(admin_user_ops.router)
-app.include_router(admin_adjustments.router)
-app.include_router(financier.router)
-app.include_router(telegram_app.router)
-app.include_router(settings_router.router)
+if APP_MODE in ("all", "jkh"):
+    app.include_router(auth_routes.router)
+    app.include_router(users.router)
+    app.include_router(tariffs.router)
+    app.include_router(client_readings.router)
+    app.include_router(admin_readings.router)
+    app.include_router(admin_periods.router)
+    app.include_router(admin_reports.router)
+    app.include_router(admin_user_ops.router)
+    app.include_router(admin_adjustments.router)
+    app.include_router(financier.router)
+    app.include_router(telegram_app.router)
+    app.include_router(settings_router.router)
 
-# --- АРСЕНАЛ ---
-app.include_router(arsenal_auth.router)
-app.include_router(arsenal_system.router, prefix="/api/arsenal")
-app.include_router(arsenal_objects.router, prefix="/api/arsenal")
-app.include_router(arsenal_nomenclature.router, prefix="/api/arsenal")
-app.include_router(arsenal_documents.router, prefix="/api/arsenal")
-app.include_router(arsenal_users_router.router, prefix="/api/arsenal")
+# --- АРСЕНАЛ И ГСМ ---
+if APP_MODE in ("all", "arsenal_gsm"):
+    # АРСЕНАЛ
+    app.include_router(arsenal_auth.router)
+    app.include_router(arsenal_system.router, prefix="/api/arsenal")
+    app.include_router(arsenal_objects.router, prefix="/api/arsenal")
+    app.include_router(arsenal_nomenclature.router, prefix="/api/arsenal")
+    app.include_router(arsenal_documents.router, prefix="/api/arsenal")
+    app.include_router(arsenal_users_router.router, prefix="/api/arsenal")
+    app.include_router(arsenal_reports.router, prefix="/api/arsenal")
+    app.include_router(arsenal_routes.router)
 
-app.include_router(arsenal_reports.router, prefix="/api/arsenal")
-
-app.include_router(arsenal_routes.router)
-
-# --- ГСМ ---
-app.include_router(gsm_routes.router)
-app.include_router(gsm_auth.router)
-app.include_router(gsm_reports.router)
+    # ГСМ
+    app.include_router(gsm_routes.router)
+    app.include_router(gsm_auth.router)
+    app.include_router(gsm_reports.router)
 
 
 # =====================================================================
-# FRONTEND
+# FRONTEND (Доступен всегда)
 # =====================================================================
 
 @app.get("/", include_in_schema=False)

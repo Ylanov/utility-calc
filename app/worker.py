@@ -57,15 +57,22 @@ celery.conf.update(
     worker_max_memory_per_child=1500000,
 
     # =====================================================
-    # QUEUES
+    # QUEUES (РОУТИНГ ЗАДАЧ МЕЖДУ КОНТЕЙНЕРАМИ)
     # =====================================================
     task_default_queue="default",
     task_routes={
+        # ТЯЖЕЛЫЕ ЗАДАЧИ ЖКХ (PDF, ZIP, 1C) -> Уходят в контейнер worker_jkh_heavy
         "app.modules.utility.tasks.generate_receipt_task": {"queue": "heavy"},
         "app.modules.utility.tasks.create_zip_archive_task": {"queue": "heavy"},
         "app.modules.utility.tasks.start_bulk_receipt_generation": {"queue": "heavy"},
         "app.modules.utility.tasks.import_debts_task": {"queue": "heavy"},
         "app.modules.utility.tasks.close_period_task": {"queue": "heavy"},
+
+        # ЗАДАЧИ АРСЕНАЛА И ГСМ -> Уходят в изолированный контейнер worker_arsenal_gsm
+        "app.modules.arsenal.tasks.*": {"queue": "arsenal_gsm_default"},
+        "app.modules.gsm.tasks.*": {"queue": "arsenal_gsm_default"},
+
+        # ВСЕ ОСТАЛЬНЫЕ ЗАДАЧИ (Легкие задачи ЖКХ) -> Уходят в worker_jkh_default
         "*": {"queue": "default"},
     }
 )
@@ -81,7 +88,14 @@ celery.conf.beat_schedule = {
     },
 }
 
-celery.conf.imports = ["app.modules.utility.tasks"]
+# ИМПОРТЫ ЗАДАЧ
+celery.conf.imports = [
+    "app.modules.utility.tasks",
+    # Если в будущем появятся фоновые задачи у Арсенала или ГСМ,
+    # нужно будет создать там файлы tasks.py и раскомментировать строки ниже:
+    # "app.modules.arsenal.tasks",
+    # "app.modules.gsm.tasks"
+]
 
 # =====================================================
 # PROMETHEUS METRICS
@@ -91,8 +105,7 @@ HOSTNAME = socket.gethostname()
 
 TASK_COUNT = Counter(
     "celery_task_total",
-    "Total number of Celery tasks",
-    ["task_name", "status", "worker"]
+    "Total number of Celery tasks", ["task_name", "status", "worker"]
 )
 
 TASK_TIME = Histogram(
