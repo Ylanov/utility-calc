@@ -85,28 +85,6 @@ jobs:
             -Dsonar.sources=app,static,templates
             -Dsonar.exclusions=alembic/**,alembic_arsenal/**,app/tests/**,static/generated_files/**
 
-      # =========================
-      # UPLOAD TO DEFECTDOJO
-      # =========================
-      - name: Upload Trivy report to DefectDojo
-        run: |
-          curl -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
-            -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
-            -F "file=@trivy-report.json" \
-            -F "scan_type=Trivy Scan" \
-            -F "engagement=${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}" \
-            -F "active=true" \
-            -F "verified=true"
-
-      - name: Upload Gitleaks report to DefectDojo
-        run: |
-          curl -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
-            -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
-            -F "file=@gitleaks-report.json" \
-            -F "scan_type=Gitleaks Scan" \
-            -F "engagement=${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}" \
-            -F "active=true" \
-            -F "verified=true"
 
   build:
     name: Build and Push Docker Image
