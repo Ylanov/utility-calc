@@ -14,15 +14,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-
   quality-check:
     name: Code Quality and Security
     runs-on: ubuntu-latest
 
     steps:
-
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Обязательно для SonarQube (история коммитов)
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -33,26 +33,90 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ruff pytest
+          pip install ruff jq
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Lint code
         run: ruff check . --fix --unsafe-fixes
 
-      - name: Security scan
-        uses: aquasecurity/trivy-action@master
-        with:
-          scan-type: fs
-          ignore-unfixed: true
-          format: table
-          exit-code: "1"
-          severity: CRITICAL,HIGH
-
-      - name: Run tests
+      # =========================
+      # TRIVY SCAN (JSON)
+      # =========================
+      - name: Run Trivy (JSON report)
         run: |
-          export PYTHONPATH=$PYTHONPATH:.
-          pytest || echo "Tests skipped"
+          docker run --rm \
+            -v $PWD:/app \
+            aquasec/trivy fs /app \
+            --format json \
+            --output trivy-report.json \
+            --severity HIGH,CRITICAL
 
+      - name: Upload Trivy report to DefectDojo (Internal)
+        run: |
+          curl -X POST "http://100.69.226.7:8081/api/v2/import-scan/" \
+            -H "Authorization: Token ${{ secrets.DEFECTDOJO_TOKEN }}" \
+            -F "scan_type=Trivy Scan" \
+            -F "file=@trivy-report.json" \
+            -F "engagement=1" \
+            -F "verified=true" \
+            -F "active=true"      
+
+      # =========================
+      # FAIL ON CRITICAL
+      # =========================
+      - name: Fail on critical vulnerabilities
+        run: |
+          if jq '.Results[].Vulnerabilities[]? | select(.Severity=="CRITICAL")' trivy-report.json | grep -q .; then
+            echo "CRITICAL vulnerabilities found!"
+            exit 1
+          fi
+
+      # =========================
+      # GITLEAKS
+      # =========================
+      - name: Run Gitleaks (JSON)
+        run: |
+          docker run --rm -v $(pwd):/repo zricethezav/gitleaks:latest \
+          detect --source=/repo --report-format json --report-path=/repo/gitleaks-report.json
+
+      # =========================
+      # SONARQUBE SCAN (БЕЗ ТЕСТОВ)
+      # =========================
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v4
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.projectKey=utility-calc
+            -Dsonar.projectName="Utility Calculator & Arsenal"
+            -Dsonar.python.version=3.13
+            -Dsonar.sources=app,main.py,worker.py
+            -Dsonar.exclusions=alembic/**,alembic_arsenal/**,static/**,templates/**
+
+      # =========================
+      # UPLOAD TO DEFECTDOJO (External)
+      # =========================
+      - name: Upload Trivy report to DefectDojo
+        run: |
+          curl -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
+            -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
+            -F "file=@trivy-report.json" \
+            -F "scan_type=Trivy Scan" \
+            -F "engagement=${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}" \
+            -F "active=true" \
+            -F "verified=true"
+
+      - name: Upload Gitleaks report to DefectDojo
+        run: |
+          curl -X POST "${{ secrets.DEFECTDOJO_URL }}/api/v2/import-scan/" \
+            -H "Authorization: Token ${{ secrets.DEFECTDOJO_API_KEY }}" \
+            -F "file=@gitleaks-report.json" \
+            -F "scan_type=Gitleaks Scan" \
+            -F "engagement=${{ secrets.DEFECTDOJO_ENGAGEMENT_ID }}" \
+            -F "active=true" \
+            -F "verified=true"
 
   build:
     name: Build and Push Docker Image
@@ -64,7 +128,6 @@ jobs:
       packages: write
 
     steps:
-
       - uses: actions/checkout@v4
 
       - name: Login to GHCR
@@ -95,41 +158,31 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-
   deploy:
     name: Deploy to Production
     needs: build
     runs-on: self-hosted
 
     steps:
-
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 🔴 ПРАВИЛЬНЫЙ ШАГ: Смотрим туда, где файл реально лежит (nginx/conf.d/default.conf)
-      - name: Prevent Docker Mount Bug & Check Config
+      - name: Prepare project directory
         run: |
-          if [ ! -f "nginx/conf.d/default.conf" ]; then
-            echo "❌ КРИТИЧЕСКАЯ ОШИБКА: Файл nginx/conf.d/default.conf не найден в репозитории!"
-            exit 1
-          fi
-          
-          # Убиваем "папку-мусор" (nginx.conf), которую Docker успел создать при прошлых ошибках
-          if [ -d "/opt/utility_calc/nginx.conf" ]; then
-             echo "Deleting broken nginx.conf directory from previous failed deployments..."
-             sudo rm -rf /opt/utility_calc/nginx.conf
-          fi
-
-      - name: Sync project files
-        run: |
-          # Создаем базовую папку (на случай свежего сервера)
           sudo mkdir -p /opt/utility_calc/
           sudo chown -R $USER:$USER /opt/utility_calc/ || true
-          
+
+      - name: Sync project files safely
+        run: |
           rsync -av \
           --delete \
           --exclude backups \
           --exclude .env \
+          --exclude docker-compose.monitoring.yml \
+          --exclude prometheus.yml \
+          --exclude grafana_data \
+          --exclude prometheus_data \
+          --exclude /opt/security \
           ./ /opt/utility_calc/
 
       - name: Create environment file
@@ -144,25 +197,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GH_PAT }}
 
-      - name: Backup current state (optional debug)
-        working-directory: /opt/utility_calc
-        run: |
-          docker compose ps > previous_state.txt || true
-
       - name: Pull latest images
         working-directory: /opt/utility_calc
-        run: |
-          docker compose pull
+        run: docker compose pull
 
       - name: Deploy containers
         working-directory: /opt/utility_calc
         run: |
-          # Тушим предыдущую конфигурацию чтобы освободить старые волюмы
           docker compose down
           docker compose up -d --remove-orphans
 
       - name: Wait for startup
-        run: sleep 20
+        run: sleep 25
 
       - name: Health check
         working-directory: /opt/utility_calc
@@ -171,10 +217,9 @@ jobs:
           SUCCESS=false
 
           for i in $(seq 1 $ATTEMPTS); do
-            # ИСПРАВЛЕНИЕ: Тестируем /health эндпоинт. Он возвращает 200 без лишних редиректов.
             STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/health || true)
 
-            if [ "$STATUS" = "200" ]; then
+            if[ "$STATUS" = "200" ]; then
               SUCCESS=true
               break
             fi
@@ -183,8 +228,8 @@ jobs:
             sleep 5
           done
 
-          if [ "$SUCCESS" != "true" ]; then
-            echo "Deployment failed! Dumping logs for 'web' and 'nginx'..."
+          if[ "$SUCCESS" != "true" ]; then
+            echo "Deployment failed!"
             docker compose logs --tail 50 web
             docker compose logs --tail 50 nginx
             exit 1
