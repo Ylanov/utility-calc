@@ -22,7 +22,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Обязательно для SonarQube (история коммитов)
+          fetch-depth: 0 # Обязательно для SonarQube (нужна вся история коммитов)
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -34,7 +34,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install ruff jq
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if[ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Lint code
         run: ruff check . --fix --unsafe-fixes
@@ -52,7 +52,7 @@ jobs:
             --severity HIGH,CRITICAL
 
       # =========================
-      # FAIL ON CRITICAL
+      # FAIL ON CRITICAL (TRIVY)
       # =========================
       - name: Fail on critical vulnerabilities
         run: |
@@ -70,10 +70,10 @@ jobs:
           detect --source=/repo --report-format json --report-path=/repo/gitleaks-report.json --exit-code 0 || true
 
       # =========================
-      # SONARQUBE SCAN (БЕЗ ТЕСТОВ)
+      # SONARQUBE SCAN (БЭКЕНД + ФРОНТЕНД)
       # =========================
       - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@v4
+        uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
@@ -82,11 +82,11 @@ jobs:
             -Dsonar.projectKey=utility-calc
             -Dsonar.projectName="Utility Calculator & Arsenal"
             -Dsonar.python.version=3.13
-            -Dsonar.sources=app,main.py,worker.py
-            -Dsonar.exclusions=alembic/**,alembic_arsenal/**,static/**,templates/**
+            -Dsonar.sources=app,static,templates
+            -Dsonar.exclusions=alembic/**,alembic_arsenal/**,app/tests/**,static/generated_files/**
 
       # =========================
-      # UPLOAD TO DEFECTDOJO (External)
+      # UPLOAD TO DEFECTDOJO
       # =========================
       - name: Upload Trivy report to DefectDojo
         run: |
