@@ -50,7 +50,7 @@ class Settings(BaseSettings):
 
     # Ссылка, которую будет видеть клиент (браузер) при скачивании
     # Если работаешь локально, это localhost, на сервере - IP сервера или домен
-    S3_PUBLIC_URL: str = "http://localhost:9000"
+    S3_PUBLIC_URL: str = "https://asy-tk.ru"
 
     @property
     def DATABASE_URL_ASYNC(self) -> str:

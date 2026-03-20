@@ -20,7 +20,7 @@ from sqlalchemy.future import select
 from passlib.context import CryptContext
 
 from prometheus_fastapi_instrumentator import Instrumentator
-
+from fastapi.responses import JSONResponse
 # === CORE ===
 from app.core.config import settings
 from app.core.database import ArsenalSessionLocal, GsmSessionLocal
@@ -287,3 +287,18 @@ app.mount(
     StaticFiles(directory="static", html=True),
     name="static",
 )
+
+@app.middleware("http")
+async def catch_exceptions(request, call_next):
+    try:
+        return await call_next(request)
+    except Exception as e:
+        import traceback
+        print("\n🔥 BACKEND ERROR 🔥")
+        traceback.print_exc()
+        print("🔥 END ERROR 🔥\n")
+
+        return JSONResponse(
+            status_code=500,
+            content={"detail": str(e)}
+        )
