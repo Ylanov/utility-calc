@@ -44,7 +44,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /app
 
-# Устанавливаем runtime-зависимости (ВНЕДРЕНО: добавлен curl для healthcheck)
+# Устанавливаем runtime-зависимости, включая ШРИФТЫ для PDF
 RUN apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     libpq5 \
     libffi8 \
@@ -54,6 +54,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     libgdk-pixbuf-2.0-0 \
     shared-mime-info \
     fonts-liberation \
+    ttf-dejavu-core \
+    # 🔥 ИСПРАВЛЕНИЕ: Добавлен пакет со шрифтами DejaVu, который требует HTML-шаблон
     curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
