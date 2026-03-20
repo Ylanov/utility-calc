@@ -299,8 +299,10 @@ async def download_client_receipt(
     if not reading.is_approved:
         raise HTTPException(400, "Квитанция еще не сформирована")
 
+    tariff_id = reading.period.tariff_id if reading.period else 1
+
     tariff = (await db.execute(
-        select(Tariff).where(Tariff.id == (reading.user.tariff_id or 1))
+        select(Tariff).where(Tariff.id == tariff_id)
     )).scalars().first()
 
     # ВАЖНО: Получаем предыдущие показания и корректировки, чтобы квитанция была полная
@@ -325,7 +327,10 @@ async def download_client_receipt(
                                   output_dir="/tmp"
                                   )
 
-    key = f"receipts/{reading.period.id}/client_view_{reading.user.id}_{uuid.uuid4().hex[:8]}.pdf"
+    # ✅ безопасный вариант
+    period_id = reading.period.id if reading.period else "unknown"
+
+    key = f"receipts/{period_id}/client_view_{reading.user.id}_{uuid.uuid4().hex[:8]}.pdf"
 
     upload_success = await asyncio.to_thread(s3_service.upload_file, pdf, key)
     if upload_success:
