@@ -55,7 +55,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     shared-mime-info \
     fonts-liberation \
     ttf-dejavu-core \
-    # 🔥 ИСПРАВЛЕНИЕ: Добавлен пакет со шрифтами DejaVu, который требует HTML-шаблон
     curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
