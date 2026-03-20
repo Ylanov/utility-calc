@@ -54,7 +54,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends --fix-missing \
     libgdk-pixbuf-2.0-0 \
     shared-mime-info \
     fonts-liberation \
-    ttf-dejavu-core \
+    fonts-dejavu-core \
     curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
