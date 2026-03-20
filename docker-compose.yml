@@ -95,10 +95,11 @@ services:
     volumes:
       - minio_data:/data:rw
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:9000/minio/health/live || exit 1"]
+      test: [ "CMD-SHELL", "wget -qO- http://localhost:9000/minio/health/live || exit 1" ]
       interval: 30s
       timeout: 20s
-      retries: 3
+      retries: 5
+      start_period: 60s
     security_opt:
       - no-new-privileges:true
     networks:
