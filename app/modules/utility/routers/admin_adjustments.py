@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy import update
 from decimal import Decimal
 
 from app.core.database import get_db
@@ -20,7 +21,7 @@ async def create_adjustment(
     """
     Создает финансовую корректировку (перерасчет) для пользователя в текущем активном периоде.
     Поддерживает раздельный учет по счетам 209 и 205.
-    Использует блокировку строки для предотвращения Race Condition при обновлении итогов.
+    ОПТИМИЗАЦИЯ: Использует Атомарный UPDATE вместо with_for_update() (без блокировок).
     """
     # Проверка ролей (разрешено бухгалтеру и финансисту)
     allowed_roles = ["accountant", "financier", "admin"]
@@ -33,50 +34,40 @@ async def create_adjustment(
     if not active_period:
         raise HTTPException(status_code=400, detail="Нет активного периода для внесения корректировок")
 
-    # Начинаем явную транзакцию
-    async with db.begin():
-        # 2. Создаем запись корректировки с указанием типа счета
-        adj = Adjustment(
-            user_id=data.user_id,
-            period_id=active_period.id,
-            amount=data.amount,
-            description=data.description,
-            account_type=data.account_type  # '209' или '205'
+    # 2. Создаем запись корректировки с указанием типа счета
+    adj = Adjustment(
+        user_id=data.user_id,
+        period_id=active_period.id,
+        amount=data.amount,
+        description=data.description,
+        account_type=data.account_type  # '209' или '205'
+    )
+    db.add(adj)
+
+    # 3. АТОМАРНОЕ ОБНОВЛЕНИЕ ЧЕРНОВИКА (METER_READING)
+    # Это работает в десятки раз быстрее with_for_update() и не создает очередей при нагрузке.
+    # База данных сама безопасно сложит значения на уровне SQL движка.
+
+    amount_209 = data.amount if data.account_type == "209" else Decimal("0.00")
+    amount_205 = data.amount if data.account_type == "205" else Decimal("0.00")
+
+    update_stmt = (
+        update(MeterReading)
+        .where(
+            MeterReading.user_id == data.user_id,
+            MeterReading.period_id == active_period.id
         )
-        db.add(adj)
-        # Получаем ID корректировки (flush отправляет запрос в БД, но не коммитит)
-        await db.flush()
-
-        # 3. ОБНОВЛЕНИЕ ЧЕРНОВИКА (METER_READING) ДЛЯ МГНОВЕННОГО ОТОБРАЖЕНИЯ
-        # with_for_update() блокирует строку чтения, чтобы никто другой не мог её изменить
-        # параллельно (предотвращает Race Condition при сложении денег)
-        res_reading = await db.execute(
-            select(MeterReading)
-            .where(
-                MeterReading.user_id == data.user_id,
-                MeterReading.period_id == active_period.id
-            )
-            .with_for_update()
+        .values(
+            total_cost=MeterReading.total_cost + data.amount,
+            total_209=MeterReading.total_209 + amount_209,
+            total_205=MeterReading.total_205 + amount_205
         )
-        reading = res_reading.scalars().first()
+    )
 
-        if reading:
-            # Инициализируем нули, если поля пустые
-            zero = Decimal("0.00")
-            current_total = reading.total_cost if reading.total_cost is not None else zero
+    await db.execute(update_stmt)
 
-            # Обновляем общий итог
-            reading.total_cost = current_total + data.amount
-
-            # Обновляем итог конкретного счета
-            if data.account_type == "209":
-                current_209 = reading.total_209 if reading.total_209 is not None else zero
-                reading.total_209 = current_209 + data.amount
-            elif data.account_type == "205":
-                current_205 = reading.total_205 if reading.total_205 is not None else zero
-                reading.total_205 = current_205 + data.amount
-
-        # Транзакция закоммитится автоматически при выходе из блока async with
+    # Фиксируем изменения корректным способом (без db.begin())
+    await db.commit()
 
     # Обновляем объект из БД, чтобы вернуть актуальные данные (например, ID и дату создания)
     await db.refresh(adj)

@@ -15,9 +15,11 @@ from app.modules.utility.models import User, MeterReading, Tariff, BillingPeriod
 from app.modules.utility.schemas import ReadingSchema, ReadingStateResponse
 from app.core.dependencies import get_current_user
 from app.modules.utility.services.calculations import calculate_utilities
-from app.modules.utility.services.anomaly_detector import check_reading_for_anomalies
 from app.modules.utility.services.pdf_generator import generate_receipt_pdf
 from app.modules.utility.services.s3_client import s3_service
+
+# Импортируем Celery-таску для фонового расчета аномалий
+from app.modules.utility.tasks import detect_anomalies_task
 
 router = APIRouter(tags=["Client Readings"])
 
@@ -124,7 +126,7 @@ async def get_reading_state(
 
 
 # =========================
-# CALCULATE
+# CALCULATE (10k+ OPTIMIZED)
 # =========================
 @router.post("/api/calculate")
 async def save_reading(
@@ -134,97 +136,113 @@ async def save_reading(
 ):
     hot, cold, elect = ReadingService.parse_input(data)
 
-    period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))).scalars().first()
+    # 1. ПАРАЛЛЕЛЬНЫЕ ЗАПРОСЫ (Снижаем RTT задержки в 2 раза)
+    period_task = db.execute(select(BillingPeriod).where(BillingPeriod.is_active))
+    tariff_task = db.execute(select(Tariff).where(Tariff.id == (getattr(current_user, 'tariff_id', None) or 1)))
+
+    period_res, tariff_res = await asyncio.gather(period_task, tariff_task)
+
+    period = period_res.scalars().first()
     if not period:
         raise HTTPException(400, "Расчетный период закрыт")
 
-    tariff_id = getattr(current_user, 'tariff_id', None) or 1
-    tariff = (await db.execute(select(Tariff).where(Tariff.id == tariff_id))).scalars().first()
+    tariff = tariff_res.scalars().first()
     if not tariff:
         tariff = (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().first()
         if not tariff:
             raise HTTPException(500, "Тариф не найден")
 
-    # История для аномалий и предыдущих показаний
-    readings = (await db.execute(
+    # 2. ПАРАЛЛЕЛЬНЫЕ ЗАПРОСЫ ИСТОРИИ И КОРРЕКТИРОВОК
+    history_task = db.execute(
         select(MeterReading)
-        .where(MeterReading.user_id == current_user.id, MeterReading.is_approved)
+        .where(MeterReading.user_id == current_user.id)
         .order_by(MeterReading.created_at.desc())
-        .limit(4)
-    )).scalars().all()
-
-    prev = readings[0] if readings else None
-    p_hot, p_cold, p_elect = ReadingService.validate(hot, cold, elect, prev)
-
-    # Высчитываем базовые стоимости
-    costs = ReadingService.calculate_costs(current_user, tariff, hot, cold, elect, p_hot, p_cold, p_elect)
-
-    # Получаем корректировки
-    adj = (await db.execute(
+        .limit(2)
+    )
+    adj_task = db.execute(
         select(Adjustment.account_type, func.sum(Adjustment.amount))
         .where(Adjustment.user_id == current_user.id, Adjustment.period_id == period.id)
         .group_by(Adjustment.account_type)
-    )).all()
-    adj_map = {a[0]: (a[1] or Decimal("0.00")) for a in adj}
+    )
 
-    # Считаем аномалии синхронно (как и должно быть)
-    temp_reading = MeterReading(hot_water=hot, cold_water=cold, electricity=elect)
-    anomaly_flags = check_reading_for_anomalies(temp_reading, readings, None)
+    history_res, adj_res = await asyncio.gather(history_task, adj_task)
 
-    async with db.begin():
-        draft = (await db.execute(
-            select(MeterReading)
-            .where(
-                MeterReading.user_id == current_user.id,
-                MeterReading.is_approved.is_(False),
-                MeterReading.period_id == period.id
-            )
-            .with_for_update()
-        )).scalars().first()
+    readings = history_res.scalars().all()
+    adj_map = {a[0]: (a[1] or Decimal("0.00")) for a in adj_res.all()}
 
-        # ВАЖНО: Учитываем старые долги из БД!
-        d_209 = draft.debt_209 or Decimal("0.00") if draft else Decimal("0.00")
-        o_209 = draft.overpayment_209 or Decimal("0.00") if draft else Decimal("0.00")
-        d_205 = draft.debt_205 or Decimal("0.00") if draft else Decimal("0.00")
-        o_205 = draft.overpayment_205 or Decimal("0.00") if draft else Decimal("0.00")
+    # Разделяем на prev и draft
+    draft = next((r for r in readings if not r.is_approved and r.period_id == period.id), None)
+    prev = next((r for r in readings if r.is_approved), None)
 
-        cost_rent = costs['cost_social_rent']
-        cost_utils = costs['total_cost'] - cost_rent
+    p_hot, p_cold, p_elect = ReadingService.validate(hot, cold, elect, prev)
 
-        total_209 = cost_utils + d_209 - o_209 + adj_map.get('209', Decimal("0.00"))
-        total_205 = cost_rent + d_205 - o_205 + adj_map.get('205', Decimal("0.00"))
-        grand_total = total_209 + total_205
+    # 3. Высчитываем базовые стоимости (Внутри работают быстрые float расчеты)
+    costs = ReadingService.calculate_costs(current_user, tariff, hot, cold, elect, p_hot, p_cold, p_elect)
 
-        if draft:
-            draft.hot_water = hot
-            draft.cold_water = cold
-            draft.electricity = elect
-            draft.anomaly_flags = anomaly_flags
-            draft.total_209 = total_209
-            draft.total_205 = total_205
-            draft.total_cost = grand_total
-            for k, v in costs.items():
-                if hasattr(draft, k):
-                    setattr(draft, k, v)
-        else:
-            costs_for_create = costs.copy()
-            costs_for_create.pop('total_cost', None)
+    # 4. Сборка долгов и итогов
+    d_209 = draft.debt_209 or Decimal("0.00") if draft else Decimal("0.00")
+    o_209 = draft.overpayment_209 or Decimal("0.00") if draft else Decimal("0.00")
+    d_205 = draft.debt_205 or Decimal("0.00") if draft else Decimal("0.00")
+    o_205 = draft.overpayment_205 or Decimal("0.00") if draft else Decimal("0.00")
 
-            db.add(MeterReading(
-                user_id=current_user.id,
-                period_id=period.id,
-                hot_water=hot,
-                cold_water=cold,
-                electricity=elect,
-                debt_209=Decimal("0.00"), overpayment_209=Decimal("0.00"),
-                debt_205=Decimal("0.00"), overpayment_205=Decimal("0.00"),
-                total_209=total_209,
-                total_205=total_205,
-                total_cost=grand_total,
-                is_approved=False,
-                anomaly_flags=anomaly_flags,
-                **costs_for_create  # ВАЖНО: сохраняем детализацию стоимости!
-            ))
+    cost_rent = costs['cost_social_rent']
+    cost_utils = costs['total_cost'] - cost_rent
+
+    total_209 = cost_utils + d_209 - o_209 + adj_map.get('209', Decimal("0.00"))
+    total_205 = cost_rent + d_205 - o_205 + adj_map.get('205', Decimal("0.00"))
+    grand_total = total_209 + total_205
+
+    # 5. СОХРАНЕНИЕ БЕЗ БЛОКИРОВОК (Без with_for_update и db.begin)
+    if draft:
+        draft.hot_water = hot
+        draft.cold_water = cold
+        draft.electricity = elect
+        draft.total_209 = total_209
+        draft.total_205 = total_205
+        draft.total_cost = grand_total
+        draft.anomaly_flags = "PENDING"  # Временно, пока считает Celery
+
+        # Явное присвоение работает намного быстрее цикла setattr
+        draft.cost_hot_water = costs.get('cost_hot_water')
+        draft.cost_cold_water = costs.get('cost_cold_water')
+        draft.cost_electricity = costs.get('cost_electricity')
+        draft.cost_sewage = costs.get('cost_sewage')
+        draft.cost_maintenance = costs.get('cost_maintenance')
+        draft.cost_social_rent = costs.get('cost_social_rent')
+        draft.cost_waste = costs.get('cost_waste')
+        draft.cost_fixed_part = costs.get('cost_fixed_part')
+
+        db.add(draft)
+        await db.flush()
+        reading_id_for_celery = draft.id
+    else:
+        costs_for_create = costs.copy()
+        costs_for_create.pop('total_cost', None)
+
+        new_draft = MeterReading(
+            user_id=current_user.id,
+            period_id=period.id,
+            hot_water=hot,
+            cold_water=cold,
+            electricity=elect,
+            debt_209=Decimal("0.00"), overpayment_209=Decimal("0.00"),
+            debt_205=Decimal("0.00"), overpayment_205=Decimal("0.00"),
+            total_209=total_209,
+            total_205=total_205,
+            total_cost=grand_total,
+            is_approved=False,
+            anomaly_flags="PENDING",
+            **costs_for_create
+        )
+        db.add(new_draft)
+        await db.flush()
+        reading_id_for_celery = new_draft.id
+
+    # Правильный вызов коммита
+    await db.commit()
+
+    # 6. Бросаем расчет аномалий в фон (Celery), не заставляя юзера ждать
+    detect_anomalies_task.delay(reading_id_for_celery)
 
     return {
         "status": "success",

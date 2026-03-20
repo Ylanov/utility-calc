@@ -21,6 +21,7 @@ from app.modules.utility.services.pdf_generator import generate_receipt_pdf
 from app.modules.utility.services.debt_import import sync_import_debts_process
 from app.modules.utility.services.s3_client import s3_service
 from app.modules.utility.services.billing import close_current_period
+from app.modules.utility.services.anomaly_detector import check_reading_for_anomalies
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +185,7 @@ def start_bulk_receipt_generation(period_id: int):
         if not period:
             return {"status": "error", "message": "Период не найден"}
 
-        reading_ids = [
+        reading_ids =[
             r.id for r in db.query(MeterReading.id)
             .filter(MeterReading.period_id == period_id, MeterReading.is_approved.is_(True))
             .all()
@@ -333,7 +334,7 @@ def check_auto_period_task():
             active = db.query(BillingPeriod).filter_by(is_active=True).first()
             if not active:
                 # Генерируем имя: "Май 2026"
-                month_names = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
+                month_names =["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
                 period_name = f"{month_names[today.month]} {today.year}"
 
                 # Проверяем, не существует ли уже такой период
@@ -358,5 +359,41 @@ def check_auto_period_task():
 
     except Exception:
         logger.exception("[AUTO] Automation failed")
+    finally:
+        db.close()
+
+
+@celery.task(name="detect_anomalies_task", queue="default")
+def detect_anomalies_task(reading_id: int):
+    """
+    Фоновый анализ показаний на статистические аномалии.
+    """
+    db = get_sync_db()
+    try:
+        # 1. Получаем текущее показание
+        reading = db.query(MeterReading).filter(MeterReading.id == reading_id).first()
+        if not reading or reading.is_approved:
+            return
+
+        # 2. Получаем историю
+        history = (
+            db.query(MeterReading)
+            .filter(MeterReading.user_id == reading.user_id, MeterReading.is_approved == True)
+            .order_by(MeterReading.created_at.desc())
+            .limit(4)
+            .all()
+        )
+
+        # 3. Считаем аномалии
+        flags = check_reading_for_anomalies(reading, history, None)
+
+        # 4. Сохраняем результат
+        reading.anomaly_flags = flags if flags else None
+        db.commit()
+        logger.info(f"[ANOMALIES] Updated flags for reading {reading_id}: {flags}")
+
+    except Exception as e:
+        logger.error(f"[ANOMALIES] Error in detect_anomalies_task: {e}")
+        db.rollback()
     finally:
         db.close()
