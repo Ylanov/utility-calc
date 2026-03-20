@@ -288,54 +288,99 @@ async def download_client_receipt(
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
 ):
+    # 1. Получаем показание с нужными связями
     reading = (await db.execute(
         select(MeterReading)
-        .options(selectinload(MeterReading.user), selectinload(MeterReading.period))
+        .options(
+            selectinload(MeterReading.user),
+            selectinload(MeterReading.period)
+        )
         .where(MeterReading.id == reading_id)
     )).scalars().first()
 
+    # 2. Проверки доступа
     if not reading or reading.user_id != current_user.id:
         raise HTTPException(404, "Квитанция не найдена")
+
     if not reading.is_approved:
         raise HTTPException(400, "Квитанция еще не сформирована")
 
-    tariff_id = reading.period.tariff_id if reading.period else 1
+    # 3. Получаем тариф через период
+    tariff = None
 
-    tariff = (await db.execute(
-        select(Tariff).where(Tariff.id == tariff_id)
-    )).scalars().first()
+    if reading.period and reading.period.tariff_id:
+        tariff = (await db.execute(
+            select(Tariff).where(Tariff.id == reading.period.tariff_id)
+        )).scalars().first()
 
-    # ВАЖНО: Получаем предыдущие показания и корректировки, чтобы квитанция была полная
+    # fallback — берём активный тариф
+    if not tariff:
+        tariff = (await db.execute(
+            select(Tariff)
+            .where(Tariff.is_active)
+            .order_by(Tariff.valid_from.desc())
+        )).scalars().first()
+
+    # если вообще нет тарифов — это уже критическая ошибка
+    if not tariff:
+        raise HTTPException(500, "Тариф не найден")
+
+    # 4. Предыдущее показание
     prev = (await db.execute(
         select(MeterReading)
-        .where(MeterReading.user_id == reading.user_id, MeterReading.is_approved,
-               MeterReading.created_at < reading.created_at)
-        .order_by(MeterReading.created_at.desc()).limit(1)
+        .where(
+            MeterReading.user_id == reading.user_id,
+            MeterReading.is_approved,
+            MeterReading.created_at < reading.created_at
+        )
+        .order_by(MeterReading.created_at.desc())
+        .limit(1)
     )).scalars().first()
 
+    # 5. Корректировки
     adjustments = (await db.execute(
-        select(Adjustment).where(Adjustment.user_id == reading.user_id, Adjustment.period_id == reading.period_id)
+        select(Adjustment).where(
+            Adjustment.user_id == reading.user_id,
+            Adjustment.period_id == reading.period_id
+        )
     )).scalars().all()
 
-    pdf = await asyncio.to_thread(generate_receipt_pdf,
-                                  user=reading.user,
-                                  reading=reading,
-                                  period=reading.period,
-                                  tariff=tariff,
-                                  prev_reading=prev,
-                                  adjustments=adjustments,
-                                  output_dir="/tmp"
-                                  )
+    # 6. Генерация PDF (в отдельном потоке)
+    pdf_path = await asyncio.to_thread(
+        generate_receipt_pdf,
+        user=reading.user,
+        reading=reading,
+        period=reading.period,
+        tariff=tariff,
+        prev_reading=prev,
+        adjustments=adjustments,
+        output_dir="/tmp"
+    )
 
-    # ✅ безопасный вариант
+    # 7. Безопасный ключ для S3
     period_id = reading.period.id if reading.period else "unknown"
 
     key = f"receipts/{period_id}/client_view_{reading.user.id}_{uuid.uuid4().hex[:8]}.pdf"
 
-    upload_success = await asyncio.to_thread(s3_service.upload_file, pdf, key)
+    # 8. Загрузка в S3
+    upload_success = await asyncio.to_thread(
+        s3_service.upload_file,
+        pdf_path,
+        key
+    )
+
     if upload_success:
-        await asyncio.to_thread(os.remove, pdf)
-        url = await asyncio.to_thread(s3_service.get_presigned_url, key, 300)
+        # удаляем локальный файл
+        await asyncio.to_thread(os.remove, pdf_path)
+
+        # получаем ссылку
+        url = await asyncio.to_thread(
+            s3_service.get_presigned_url,
+            key,
+            300
+        )
+
         return RedirectResponse(url=url)
+
     else:
         raise HTTPException(500, "Ошибка генерации файла")
