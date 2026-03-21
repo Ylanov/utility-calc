@@ -1,15 +1,17 @@
 <div id="readings" class="tab-content">
 
-    <!-- Управление периодом (Карточка статуса) -->
+    <!-- Управление периодом (Автоматическое) -->
     <div class="status-card">
         <!-- Блок: Период открыт -->
         <div id="periodActiveState" style="display:none;" class="period-state open">
             <div class="state-icon">🟢</div>
             <div class="state-info">
                 <h2>Прием показаний открыт</h2>
-                <p>Текущий период: <strong id="activePeriodLabel">...</strong>. Жильцы вносят данные.</p>
+                <p>Текущий период: <strong id="activePeriodLabel">...</strong>. Жильцы могут вносить данные.</p>
+                <p style="font-size: 13px; color: #065f46; margin-top: 5px;">
+                    Система закроет период и начнет авто-расчеты автоматически согласно графику в настройках.
+                </p>
             </div>
-            <button class="action-btn danger-btn">🔒 Закрыть месяц</button>
         </div>
 
         <!-- Блок: Период закрыт -->
@@ -17,11 +19,10 @@
             <div class="state-icon">🔴</div>
             <div class="state-info">
                 <h2>Прием показаний закрыт</h2>
-                <p>Внесите изменения или начните новый отчетный период.</p>
-            </div>
-            <div class="new-period-form">
-                <input type="text" id="newPeriodNameInput" placeholder="Название (напр. Апрель 2025)">
-                <button class="action-btn success-btn">📂 Открыть новый</button>
+                <p>Текущий статус: ожидание открытия нового периода.</p>
+                <p style="font-size: 13px; color: #991b1b; margin-top: 5px;">
+                    Новый период откроется автоматически согласно графику, установленному в настройках.
+                </p>
             </div>
         </div>
     </div>
@@ -91,15 +92,30 @@
             <div class="modal-form">
                 <h4>Корректировка потребления (Разница)</h4>
                 <div class="form-grid-2">
-                    <div class="form-group"><label>ГВС</label><input type="number" step="0.001" id="m_corr_hot"></div>
-                    <div class="form-group"><label>ХВС</label><input type="number" step="0.001" id="m_corr_cold"></div>
-                    <div class="form-group"><label>Свет</label><input type="number" step="0.001" id="m_corr_elect"></div>
-                    <div class="form-group"><label>Водоотв.</label><input type="number" step="0.001" id="m_corr_sewage"></div>
+                    <div class="form-group">
+                        <label>ГВС</label>
+                        <input type="number" step="0.001" id="m_corr_hot">
+                    </div>
+                    <div class="form-group">
+                        <label>ХВС</label>
+                        <input type="number" step="0.001" id="m_corr_cold">
+                    </div>
+                    <div class="form-group">
+                        <label>Свет</label>
+                        <input type="number" step="0.001" id="m_corr_elect">
+                    </div>
+                    <div class="form-group">
+                        <label>Водоотв.</label>
+                        <input type="number" step="0.001" id="m_corr_sewage">
+                    </div>
                 </div>
             </div>
             <div class="modal-footer">
-                <button id="btnModalSubmit" class="action-btn primary-btn">Подтвердить и пересчитать</button>
+                <button id="btnModalSubmit" class="action-btn primary-btn">
+                    Подтвердить и пересчитать
+                </button>
             </div>
         </div>
     </div>
+
 </div>

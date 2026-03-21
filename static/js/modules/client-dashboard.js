@@ -3,7 +3,7 @@ import { api } from '../core/api.js';
 import { el, clear, toast, setLoading } from '../core/dom.js';
 import { Auth } from '../core/auth.js';
 
-// НОВОЕ: Мгновенная проверка
+// Мгновенная проверка авторизации
 if (!Auth.isAuthenticated()) {
     window.location.replace('login.html');
 }
@@ -11,7 +11,9 @@ if (!Auth.isAuthenticated()) {
 export const ClientDashboard = {
     state: {
         lastReadings: { hot: 0, cold: 0, elect: 0 },
-        isPeriodOpen: false
+        isPeriodOpen: false,
+        isDraft: false,           // НОВОЕ: Флаг наличия черновика
+        isAlreadyApproved: false  // НОВОЕ: Флаг утверждения бухгалтером
     },
 
     init() {
@@ -19,7 +21,7 @@ export const ClientDashboard = {
         this.setupTabs();
         this.bindEvents();
         this.loadAllData();
-        this.checkSchedule(); // <--- Вызываем новую функцию для баннера
+        this.checkSchedule();
     },
 
     cacheDOM() {
@@ -91,11 +93,9 @@ export const ClientDashboard = {
 
         tabs.forEach(tab => {
             tab.addEventListener('click', () => {
-                // Убираем активность со всех
                 tabs.forEach(t => t.classList.remove('active'));
                 contents.forEach(c => c.classList.remove('active'));
 
-                // Добавляем активность выбранному
                 tab.classList.add('active');
                 const targetId = tab.dataset.tab;
                 document.getElementById(targetId).classList.add('active');
@@ -104,29 +104,24 @@ export const ClientDashboard = {
     },
 
     bindEvents() {
-        // Форма показаний
         if (this.dom.form) {
             this.dom.form.addEventListener('submit', (e) => this.handleSubmit(e));
         }
 
-        // Замена запятой на точку и валидация при вводе показаний (умные карточки)
         ['hot', 'cold', 'elect'].forEach(key => {
             const input = this.dom.inputs[key];
             if (input) {
                 input.addEventListener('input', (e) => {
-                    // ИСПРАВЛЕНИЕ: Автоматически меняем запятую на точку для мобильных клавиатур
                     e.target.value = e.target.value.replace(',', '.');
                     this.validate();
                 });
             }
         });
 
-        // Форма смены пароля в профиле
         if (this.dom.cpForm) {
             this.dom.cpForm.addEventListener('submit', (e) => this.handleChangePassword(e));
         }
 
-        // --- События модалки Первичной Настройки ---
         if (this.dom.btnFsSkip) {
             this.dom.btnFsSkip.addEventListener('click', () => this.skipFirstSetup());
         }
@@ -161,14 +156,12 @@ export const ClientDashboard = {
         try {
             const user = await api.get('/users/me');
 
-            // Заполняем интерфейс
             this.dom.profile.user.textContent = user.username;
             this.dom.profile.address.textContent = user.dormitory || 'Адрес не указан';
             this.dom.profile.area.textContent = `${Number(user.apartment_area).toFixed(1)} м²`;
             this.dom.profile.residents.textContent = user.residents_count;
             this.dom.headerAddress.textContent = user.dormitory || 'ЖКХ — управление показаниями';
 
-            // ПРОВЕРКА ПЕРВИЧНОЙ НАСТРОЙКИ
             if (user.is_initial_setup_done === false) {
                 this.dom.fsCurrentLogin.textContent = user.username;
                 this.dom.fsModal.classList.add('open');
@@ -183,7 +176,11 @@ export const ClientDashboard = {
         try {
             const data = await api.get('/readings/state');
 
+            // Сохраняем статусы в стейт
             this.state.isPeriodOpen = data.is_period_open;
+            this.state.isDraft = data.is_draft;
+            this.state.isAlreadyApproved = data.is_already_approved;
+
             this.state.lastReadings = {
                 hot: Number(data.prev_hot),
                 cold: Number(data.prev_cold),
@@ -198,10 +195,8 @@ export const ClientDashboard = {
         }
     },
 
-    // --- ДОБАВЛЕНА НОВАЯ ФУНКЦИЯ ---
     async checkSchedule() {
         try {
-            // Запрашиваем настройки дат (этот эндпоинт открыт для всех)
             const settings = await api.get('/settings/submission-period');
             const now = new Date();
             const day = now.getDate();
@@ -215,24 +210,21 @@ export const ClientDashboard = {
             alertBox.style.display = 'flex';
 
             if (day >= settings.start_day && day <= settings.end_day) {
-                // Перио active
-                alertBox.style.background = '#ecfdf5'; // Зеленый фон
+                alertBox.style.background = '#ecfdf5';
                 alertBox.style.border = '1px solid #a7f3d0';
                 title.textContent = 'Прием показаний открыт!';
                 title.style.color = '#065f46';
                 const daysLeft = settings.end_day - day;
                 text.textContent = `Пожалуйста, внесите данные до ${settings.end_day}-го числа. Осталось дней: ${daysLeft}.`;
             } else if (day < settings.start_day) {
-                // Рано
-                alertBox.style.background = '#eff6ff'; // Синий фон
+                alertBox.style.background = '#eff6ff';
                 alertBox.style.border = '1px solid #bfdbfe';
                 title.textContent = 'Прием показаний скоро начнется';
                 title.style.color = '#1e40af';
                 const daysWait = settings.start_day - day;
                 text.textContent = `Ввод данных будет доступен с ${settings.start_day}-го числа (через ${daysWait} дн).`;
             } else {
-                // Опоздал
-                alertBox.style.background = '#fef2f2'; // Красный фон
+                alertBox.style.background = '#fef2f2';
                 alertBox.style.border = '1px solid #fecaca';
                 title.textContent = 'Прием показаний завершен';
                 title.style.color = '#991b1b';
@@ -242,21 +234,43 @@ export const ClientDashboard = {
             console.warn('Failed to load schedule info', e);
         }
     },
-    // --- КОНЕЦ НОВОЙ ФУНКЦИИ ---
 
     renderStatus(data) {
         this.dom.statusArea.innerHTML = '';
         let content;
+        const btnText = document.getElementById('submitBtnText');
 
         if (!data.is_period_open) {
+            // 1. Период закрыт
             content = this.createStatusBox('#f3f4f6', '#9ca3af', '#374151', '🔒 Прием закрыт', 'Подача показаний в данный момент недоступна.');
             this.dom.fieldset.disabled = true;
+            if (btnText) btnText.textContent = 'Прием закрыт';
+            this.dom.btnSubmit.style.background = '#9ca3af';
+            this.dom.btnSubmit.style.boxShadow = 'none';
+
+        } else if (data.is_already_approved) {
+            // 2. Период открыт, но бухгалтер уже всё проверил и заблокировал (ФИШКА 5)
+            content = this.createStatusBox('#eff6ff', '#3b82f6', '#1e3a8a', '🔒 Показания приняты', 'Ваши показания уже проверены и приняты бухгалтерией. Изменение данных недоступно.');
+            this.dom.fieldset.disabled = true;
+            if (btnText) btnText.textContent = 'Утверждено';
+            this.dom.btnSubmit.style.background = '#9ca3af';
+            this.dom.btnSubmit.style.boxShadow = 'none';
+
         } else if (data.is_draft) {
-            content = this.createStatusBox('#fef3c7', '#f59e0b', '#92400e', '✏️ Черновик сохранен', `Ваши показания приняты. Период: ${data.period_name}. Вы можете изменить их до закрытия месяца.`);
+            // 3. Период открыт, есть черновик (ФИШКА 3)
+            content = this.createStatusBox('#fef3c7', '#f59e0b', '#92400e', '✏️ Черновик сохранен', `Ваши показания приняты. Период: ${data.period_name}. Вы можете обновить их до закрытия месяца.`);
             this.dom.fieldset.disabled = false;
+            if (btnText) btnText.textContent = 'Обновить данные';
+            this.dom.btnSubmit.style.background = '#f59e0b'; // Оранжевая кнопка
+            this.dom.btnSubmit.style.boxShadow = '0 4px 15px rgba(245, 158, 11, 0.4)';
+
         } else {
+            // 4. Период открыт, черновика нет
             content = this.createStatusBox('#d1fae5', '#10b981', '#065f46', '🟢 Период открыт', `Текущий расчетный период: ${data.period_name}. Пожалуйста, внесите показания.`);
             this.dom.fieldset.disabled = false;
+            if (btnText) btnText.textContent = 'Отправить показания';
+            this.dom.btnSubmit.style.background = 'var(--primary-color)'; // Синяя кнопка
+            this.dom.btnSubmit.style.boxShadow = '0 4px 15px rgba(59, 130, 246, 0.4)';
         }
 
         this.dom.statusArea.appendChild(content);
@@ -283,11 +297,11 @@ export const ClientDashboard = {
         this.dom.prev.cold.textContent = Number(data.prev_cold).toFixed(3);
         this.dom.prev.elect.textContent = Number(data.prev_elect).toFixed(3);
 
-        if (data.is_draft) {
+        if (data.is_draft || data.is_already_approved) {
             this.dom.inputs.hot.value = data.current_hot;
             this.dom.inputs.cold.value = data.current_cold;
             this.dom.inputs.elect.value = data.current_elect;
-            this.validate(); // Прогоняем валидацию, чтобы снять красные рамки, если данные верны
+            this.validate();
         }
     },
 
@@ -313,7 +327,7 @@ export const ClientDashboard = {
             rTotal: data.total_cost
         };
 
-        for (const [id, val] of Object.entries(map)) {
+        for (const[id, val] of Object.entries(map)) {
             const elem = document.getElementById(id);
             if (elem) elem.textContent = fmt(val);
         }
@@ -356,8 +370,6 @@ export const ClientDashboard = {
         }
     },
 
-    // --- ЛОГИКА ВВОДА ПОКАЗАНИЙ ---
-
     validate() {
         let isValid = true;
 
@@ -397,9 +409,11 @@ export const ClientDashboard = {
         e.preventDefault();
         if (!this.validate()) return;
 
-        setLoading(this.dom.btnSubmit, true, 'Расчет...');
-        const spinner = document.getElementById('submitBtnSpinner');
-        if (spinner) spinner.classList.remove('hide');
+        // Двойная защита на клиенте, если кто-то попытается обойти disabled
+        if (this.state.isAlreadyApproved) {
+            toast('Ваши показания уже утверждены бухгалтерией!', 'error');
+            return;
+        }
 
         const data = {
             hot_water: parseFloat(this.dom.inputs.hot.value),
@@ -407,14 +421,27 @@ export const ClientDashboard = {
             electricity: parseFloat(this.dom.inputs.elect.value)
         };
 
+        // --- ФИШКА 4: Защита от случайной перезаписи черновика ---
+        if (this.state.isDraft) {
+            const msg = `Вы уверены, что хотите перезаписать показания?\n\nНовые данные:\n🔥 ГВС: ${data.hot_water}\n❄️ ХВС: ${data.cold_water}\n⚡ Свет: ${data.electricity}\n\nСтарые данные будут заменены.`;
+            if (!confirm(msg)) {
+                return;
+            }
+        }
+
+        const originalText = document.getElementById('submitBtnText')?.textContent || 'Отправка...';
+        setLoading(this.dom.btnSubmit, true, 'Расчет...');
+        const spinner = document.getElementById('submitBtnSpinner');
+        if (spinner) spinner.classList.remove('hide');
+
         try {
             await api.post('/calculate', data);
             toast('Показания успешно сохранены', 'success');
-            await this.loadState();
+            await this.loadState(); // Перезагружаем стейт, чтобы обновить UI
         } catch (e) {
             toast(e.message, 'error');
         } finally {
-            setLoading(this.dom.btnSubmit, false, 'Отправить показания');
+            setLoading(this.dom.btnSubmit, false, originalText);
             if (spinner) spinner.classList.add('hide');
         }
     },
@@ -424,12 +451,9 @@ export const ClientDashboard = {
         await api.download(`/client/receipts/${id}`, `receipt_${id}.pdf`);
     },
 
-    // --- ЛОГИКА ПЕРВИЧНОЙ НАСТРОЙКИ ---
-
     async skipFirstSetup() {
         setLoading(this.dom.btnFsSkip, true, 'Загрузка...');
         try {
-            // Отправляем пустые данные, бэкенд просто переключит флаг is_initial_setup_done
             await api.post('/users/me/setup', {});
             this.dom.fsModal.classList.remove('open');
             toast('Настройка завершена!', 'success');
@@ -453,15 +477,13 @@ export const ClientDashboard = {
             await api.post('/users/me/setup', payload);
 
             alert('Ваши данные успешно обновлены. Пожалуйста, войдите в систему с новыми данными.');
-            Auth.logout(); // Принудительно выкидываем на логин
+            Auth.logout();
 
         } catch (error) {
             toast(error.message, 'error');
             setLoading(this.dom.btnFsSave, false, 'Сохранить новые данные');
         }
     },
-
-    // --- ЛОГИКА СМЕНЫ ПАРОЛЯ ИЗ ПРОФИЛЯ ---
 
     async handleChangePassword(e) {
         e.preventDefault();

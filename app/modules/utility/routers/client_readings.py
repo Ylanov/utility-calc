@@ -2,6 +2,7 @@ import os
 import uuid
 import asyncio
 from decimal import Decimal
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
@@ -88,11 +89,17 @@ async def get_reading_state(
         select(MeterReading)
         .where(MeterReading.user_id == current_user.id)
         .order_by(MeterReading.created_at.desc())
-        .limit(2)
+        .limit(3)
     )).scalars().all()
 
-    prev = next((r for r in readings if r.is_approved), None)
-    draft = next((r for r in readings if not r.is_approved), None)
+    # Ищем показание за ТЕКУЩИЙ активный период
+    current_reading = next((r for r in readings if period and r.period_id == period.id), None)
+
+    # Ищем последнее утвержденное показание из ПРОШЛЫХ периодов (для расчета дельты)
+    prev = next((r for r in readings if r.is_approved and (not period or r.period_id != period.id)), None)
+
+    is_already_approved = current_reading.is_approved if current_reading else False
+    is_draft = current_reading is not None and not current_reading.is_approved
 
     zero = Decimal("0.000")
 
@@ -103,25 +110,26 @@ async def get_reading_state(
         "prev_cold": prev.cold_water if prev else zero,
         "prev_elect": prev.electricity if prev else zero,
 
-        "current_hot": draft.hot_water if draft else None,
-        "current_cold": draft.cold_water if draft else None,
-        "current_elect": draft.electricity if draft else None,
+        "current_hot": current_reading.hot_water if current_reading else None,
+        "current_cold": current_reading.cold_water if current_reading else None,
+        "current_elect": current_reading.electricity if current_reading else None,
 
-        "total_cost": draft.total_cost if draft else None,
-        "total_209": draft.total_209 if draft else None,
-        "total_205": draft.total_205 if draft else None,
+        "total_cost": current_reading.total_cost if current_reading else None,
+        "total_209": current_reading.total_209 if current_reading else None,
+        "total_205": current_reading.total_205 if current_reading else None,
 
-        "is_draft": bool(draft),
+        "is_draft": is_draft,
         "is_period_open": bool(period),
+        "is_already_approved": is_already_approved,
 
-        "cost_hot_water": draft.cost_hot_water if draft else None,
-        "cost_cold_water": draft.cost_cold_water if draft else None,
-        "cost_electricity": draft.cost_electricity if draft else None,
-        "cost_sewage": draft.cost_sewage if draft else None,
-        "cost_maintenance": draft.cost_maintenance if draft else None,
-        "cost_social_rent": draft.cost_social_rent if draft else None,
-        "cost_waste": draft.cost_waste if draft else None,
-        "cost_fixed_part": draft.cost_fixed_part if draft else None,
+        "cost_hot_water": current_reading.cost_hot_water if current_reading else None,
+        "cost_cold_water": current_reading.cost_cold_water if current_reading else None,
+        "cost_electricity": current_reading.cost_electricity if current_reading else None,
+        "cost_sewage": current_reading.cost_sewage if current_reading else None,
+        "cost_maintenance": current_reading.cost_maintenance if current_reading else None,
+        "cost_social_rent": current_reading.cost_social_rent if current_reading else None,
+        "cost_waste": current_reading.cost_waste if current_reading else None,
+        "cost_fixed_part": current_reading.cost_fixed_part if current_reading else None,
     }
 
 
@@ -157,7 +165,7 @@ async def save_reading(
         select(MeterReading)
         .where(MeterReading.user_id == current_user.id)
         .order_by(MeterReading.created_at.desc())
-        .limit(2)
+        .limit(3)
     )
     adj_task = db.execute(
         select(Adjustment.account_type, func.sum(Adjustment.amount))
@@ -170,9 +178,9 @@ async def save_reading(
     readings = history_res.scalars().all()
     adj_map = {a[0]: (a[1] or Decimal("0.00")) for a in adj_res.all()}
 
-    # Разделяем на prev и draft
-    draft = next((r for r in readings if not r.is_approved and r.period_id == period.id), None)
-    prev = next((r for r in readings if r.is_approved), None)
+    # Разделяем на current_reading (текущий период) и prev (прошлые периоды)
+    draft = next((r for r in readings if r.period_id == period.id), None)
+    prev = next((r for r in readings if r.is_approved and r.period_id != period.id), None)
 
     p_hot, p_cold, p_elect = ReadingService.validate(hot, cold, elect, prev)
 
@@ -194,6 +202,23 @@ async def save_reading(
 
     # 5. СОХРАНЕНИЕ БЕЗ БЛОКИРОВОК (Без with_for_update и db.begin)
     if draft:
+        # ЗАЩИТА: Если админ уже проверил, жильцу менять нельзя!
+        if draft.is_approved:
+            raise HTTPException(400, "Ваши показания уже проверены и приняты бухгалтерией. Изменение невозможно.")
+
+        # --- СОХРАНЯЕМ ИСТОРИЮ ПРАВОК ---
+        old_record = {
+            "hot": str(draft.hot_water),
+            "cold": str(draft.cold_water),
+            "elect": str(draft.electricity),
+            "date": datetime.utcnow().strftime("%d.%m.%Y %H:%M")
+        }
+        # Пересоздаем список, чтобы SQLAlchemy гарантированно увидела изменения JSONB
+        history_list = draft.edit_history if draft.edit_history else []
+        draft.edit_history = history_list + [old_record]
+        draft.edit_count = (draft.edit_count or 0) + 1
+        # --------------------------------
+
         draft.hot_water = hot
         draft.cold_water = cold
         draft.electricity = elect
@@ -232,6 +257,8 @@ async def save_reading(
             total_cost=grand_total,
             is_approved=False,
             anomaly_flags="PENDING",
+            edit_count=1,
+            edit_history=[],
             **costs_for_create
         )
         db.add(new_draft)

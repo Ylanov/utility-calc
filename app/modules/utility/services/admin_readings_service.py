@@ -18,7 +18,7 @@ async def get_paginated_readings(
 ):
     active_period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))).scalars().first()
     if not active_period:
-        return {"total": 0, "page": page, "size": limit, "items": []}
+        return {"total": 0, "page": page, "size": limit, "items":[]}
 
     # ИСПРАВЛЕНО ЗДЕСЬ: MeterReading.is_approved.is_(False)
     query = select(MeterReading, User).join(User, MeterReading.user_id == User.id).where(
@@ -38,7 +38,7 @@ async def get_paginated_readings(
         "username": User.username, "dormitory": User.dormitory, "total_cost": MeterReading.total_cost
     }.get(sort_by, MeterReading.id)
 
-    if after_id and sort_by in ["created_at", "id"]:
+    if after_id and sort_by in["created_at", "id"]:
         if sort_dir == "desc":
             query = query.where(MeterReading.id < after_id).order_by(desc(MeterReading.id))
         else:
@@ -49,7 +49,7 @@ async def get_paginated_readings(
         rows = (await db.execute(query.offset((page - 1) * limit).limit(limit))).all()
 
     if not rows:
-        return {"total": total, "page": page, "size": limit, "items": []}
+        return {"total": total, "page": page, "size": limit, "items":[]}
 
     user_ids = [row[1].id for row in rows]
     subq_max_prev = select(MeterReading.user_id, func.max(MeterReading.created_at).label("max_created")).where(
@@ -60,12 +60,12 @@ async def get_paginated_readings(
             MeterReading.created_at == subq_max_prev.c.max_created))
     prev_map = {r.user_id: r for r in (await db.execute(stmt_prev)).scalars().all()}
 
-    items = []
+    items =[]
     zero = Decimal("0.000")
 
     for current, user in rows:
         prev = prev_map.get(user.id)
-        anomaly_details = []
+        anomaly_details =[]
         if current.anomaly_flags:
             for flag_code in current.anomaly_flags.split(','):
                 details = ANOMALY_MAP.get(flag_code, ANOMALY_MAP["UNKNOWN"])
@@ -80,6 +80,9 @@ async def get_paginated_readings(
             "total_cost": current.total_cost, "residents_count": user.residents_count,
             "total_room_residents": user.total_room_residents, "created_at": current.created_at,
             "anomaly_flags": current.anomaly_flags, "anomaly_details": anomaly_details,
+            # --- НОВЫЕ ПОЛЯ ДЛЯ ИСТОРИИ ПРАВОК ---
+            "edit_count": current.edit_count or 0,
+            "edit_history": current.edit_history or[]
         })
 
     return {"total": total, "page": page, "size": limit, "items": items}
@@ -123,7 +126,7 @@ async def bulk_approve_drafts(db: AsyncSession):
         if uid not in adj_map: adj_map[uid] = {'209': zero, '205': zero}
         adj_map[uid][str(acc_type)] = amount or zero
 
-    update_mappings = []
+    update_mappings =[]
 
     for reading, user in drafts_rows:
         prev = prev_readings_map.get(reading.user_id)

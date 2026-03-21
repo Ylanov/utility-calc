@@ -12,6 +12,7 @@ from sqlalchemy.orm import sessionmaker
 from redis import asyncio as aioredis
 from fastapi_cache import FastAPICache
 from fastapi_cache.backends.redis import RedisBackend
+from redis import Redis
 
 from app.worker import celery
 from app.core.database import SessionLocalSync
@@ -297,29 +298,40 @@ async def run_async_close_period(admin_user_id: int):
 @celery.task(name="close_period_task", queue="heavy")
 def close_period_task(admin_user_id: int):
     """
-    Celery-задача, запускающая асинхронный код закрытия периода.
+    Celery-задача с Redis Lock (защита от двойного запуска)
     """
     logger.info(f"Starting close_period_task for admin {admin_user_id}")
+
+    redis_client = Redis.from_url(settings.REDIS_URL)
+    lock_key = "lock:close_period"
+
     try:
-        # Запускаем event loop для асинхронной работы с БД
         result = asyncio.run(run_async_close_period(admin_user_id))
         return result
+
     except Exception as e:
         logger.exception("Error in close_period_task")
         return {"status": "error", "message": str(e)}
+
+    finally:
+        # 🔥 ВСЕГДА освобождаем lock
+        try:
+            redis_client.delete(lock_key)
+            logger.info("[LOCK] Released close_period lock")
+        except Exception as e:
+            logger.warning(f"[LOCK] Failed to release: {e}")
 
 
 @celery.task(name="check_auto_period_task")
 def check_auto_period_task():
     """
-    Ежедневная задача (Beat): проверяет текущую дату и настройки.
-    Если сегодня день старта -> открывает новый период.
-    Если сегодня день конца + 1 -> закрывает период.
+    Ежедневная задача (Beat): автоматическое управление периодами
+    + защита от дублей через Redis Lock
     """
     logger.info("[AUTO] Checking period automation...")
-    db = get_sync_db()  # Используем синхронную сессию для простой задачи
+    db = get_sync_db()
+
     try:
-        # 1. Получаем настройки из БД
         start_setting = db.query(SystemSetting).filter_by(key="submission_start_day").first()
         end_setting = db.query(SystemSetting).filter_by(key="submission_end_day").first()
 
@@ -329,36 +341,54 @@ def check_auto_period_task():
         today = datetime.now()
         current_day = today.day
 
-        # 2. Логика ОТКРЫТИЯ (в день старта)
-        if current_day == start_day:
-            active = db.query(BillingPeriod).filter_by(is_active=True).first()
+        active = db.query(BillingPeriod).filter_by(is_active=True).first()
+
+        # =========================
+        # ОТКРЫТИЕ
+        # =========================
+        if start_day <= current_day <= end_day:
             if not active:
-                # Генерируем имя: "Май 2026"
-                month_names =["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
+                month_names = [
+                    "", "Январь", "Февраль", "Март", "Апрель", "Май",
+                    "Июнь", "Июль", "Август", "Сентябрь",
+                    "Октябрь", "Ноябрь", "Декабрь"
+                ]
+
                 period_name = f"{month_names[today.month]} {today.year}"
 
-                # Проверяем, не существует ли уже такой период
                 exists = db.query(BillingPeriod).filter_by(name=period_name).first()
                 if not exists:
                     new_period = BillingPeriod(name=period_name, is_active=True)
                     db.add(new_period)
                     db.commit()
                     logger.info(f"[AUTO] Opened new period: {period_name}")
-                    # Очищаем кэш через sync->async вызов, или просто ждем TTL
 
-        # 3. Логика ЗАКРЫТИЯ (на следующий день после конца приема)
-        elif current_day == end_day + 1:
-            active = db.query(BillingPeriod).filter_by(is_active=True).first()
-            if active:
-                # Находим активного админа для привязки действия (системного пользователя)
-                admin = db.query(User).filter_by(username="admin").first()
-                if admin:
-                    # Запускаем тяжелую задачу закрытия через очередь
-                    close_period_task.delay(admin.id)
-                    logger.info(f"[AUTO] Triggered closing task for period '{active.name}'")
+        # =========================
+        # ЗАКРЫТИЕ (С LOCK)
+        # =========================
+        elif active:
+            is_after_end = current_day > end_day
+            is_new_month = current_day < start_day
+
+            if is_after_end or is_new_month:
+                redis_client = Redis.from_url(settings.REDIS_URL)
+                lock_key = "lock:close_period"
+
+                # 🔒 Пытаемся захватить lock
+                lock_acquired = redis_client.set(lock_key, "1", nx=True, ex=1800)
+
+                if lock_acquired:
+                    admin = db.query(User).filter_by(username="admin").first()
+
+                    if admin:
+                        close_period_task.delay(admin.id)
+                        logger.info(f"[AUTO] Triggered closing task for period '{active.name}'")
+                else:
+                    logger.info("[AUTO] Close already running, skip duplicate")
 
     except Exception:
         logger.exception("[AUTO] Automation failed")
+
     finally:
         db.close()
 

@@ -1,4 +1,5 @@
-// static/js/modules/readings.js (ФИНАЛЬНАЯ ВЕРСИЯ)
+// static/js/modules/readings.js (ФИНАЛЬНАЯ ВЕРСИЯ С ИСТОРИЕЙ ПРАВОК)
+
 import { api } from '../core/api.js';
 import { el, toast, setLoading, showPrompt } from '../core/dom.js';
 import { TableController } from '../core/table-controller.js';
@@ -35,9 +36,6 @@ export const ReadingsModule = {
             periodActive: document.getElementById('periodActiveState'),
             periodClosed: document.getElementById('periodClosedState'),
             periodLabel: document.getElementById('activePeriodLabel'),
-            btnClosePeriod: document.querySelector('#periodActiveState button'),
-            periodNameInput: document.getElementById('newPeriodNameInput'),
-            btnOpenPeriod: document.querySelector('#periodClosedState button'),
             btnImport: document.getElementById('btnImportReadings'),
             inputImport: document.getElementById('importReadingsFile')
         };
@@ -47,6 +45,7 @@ export const ReadingsModule = {
         if (this.dom.btnRefresh) {
             this.dom.btnRefresh.addEventListener('click', () => this.table.refresh());
         }
+
         if (this.dom.btnImport) {
             this.dom.btnImport.addEventListener('click', () => this.importReadings());
         }
@@ -60,9 +59,9 @@ export const ReadingsModule = {
             });
         }
 
-        if (this.dom.btnBulk) this.dom.btnBulk.addEventListener('click', () => this.bulkApprove());
-        if (this.dom.btnClosePeriod) this.dom.btnClosePeriod.addEventListener('click', () => this.closePeriodAction());
-        if (this.dom.btnOpenPeriod) this.dom.btnOpenPeriod.addEventListener('click', () => this.openPeriodAction());
+        if (this.dom.btnBulk) {
+            this.dom.btnBulk.addEventListener('click', () => this.bulkApprove());
+        }
     },
 
     initTable() {
@@ -78,16 +77,32 @@ export const ReadingsModule = {
 
             getExtraParams: () => {
                 return {
-                    anomalies_only: this.dom.filterCheckbox.checked
+                    anomalies_only: this.dom.filterCheckbox?.checked || false
                 };
             },
 
             renderRow: (r) => {
-                const totalCost = r.total_cost !== null && r.total_cost !== undefined ? r.total_cost : 0;
+                const totalCost = r.total_cost ?? 0;
+
+                // --- НОВОЕ: Бейдж изменения показаний ---
+                let editBadge = null;
+                if (r.edit_count > 1 && r.edit_history && r.edit_history.length > 0) {
+                    const lastEdit = r.edit_history[r.edit_history.length - 1].date;
+                    editBadge = el('span', {
+                        title: `Последняя правка: ${lastEdit}`,
+                        style: {
+                            marginLeft: '8px', fontSize: '11px', background: '#fef08a', color: '#b45309',
+                            padding: '2px 6px', borderRadius: '12px', fontWeight: 'bold', cursor: 'help'
+                        }
+                    }, `⚠️ Изменено: ${r.edit_count} раз`);
+                }
 
                 return el('tr', {},
                     el('td', {},
-                        el('div', { style: { fontWeight: '600' } }, r.username),
+                        el('div', { style: { fontWeight: '600', display: 'flex', alignItems: 'center' } },
+                            r.username,
+                            editBadge // Вставляем бейдж прямо рядом с ФИО
+                        ),
                         el('div', { style: { fontSize: '11px', color: '#888' } }, r.dormitory || 'Общ. не указано')
                     ),
                     el('td', {}, this.createBadges(r.anomaly_flags)),
@@ -98,6 +113,14 @@ export const ReadingsModule = {
                         `${Number(totalCost).toFixed(2)} ₽`
                     ),
                     el('td', { class: 'text-center' },
+                        // --- НОВОЕ: Кнопка просмотра истории правок ---
+                        el('button', {
+                            class: 'btn-icon btn-history',
+                            title: 'История правок жильцом',
+                            style: { marginRight: '5px', background: '#f3f4f6', borderColor: '#d1d5db' },
+                            onclick: () => this.showHistoryModal(r)
+                        }, '🕒'),
+                        // ----------------------------------------------
                         el('button', {
                             class: 'btn-icon btn-adjust',
                             title: 'Финансовая корректировка',
@@ -117,8 +140,79 @@ export const ReadingsModule = {
         this.table.init();
     },
 
+    // --- НОВОЕ: Модальное окно истории изменений ---
+    showHistoryModal(reading) {
+        const overlay = el('div', { class: 'modal-overlay open', style: { zIndex: 10000 } });
+        const closeBtn = el('button', { class: 'close-icon' }, '×');
+        closeBtn.onclick = () => document.body.removeChild(overlay);
+
+        const content = el('div', { class: 'modal-form' });
+
+        if (!reading.edit_history || reading.edit_history.length === 0) {
+            content.appendChild(el('p', { style: { textAlign: 'center', color: '#6b7280', padding: '20px 0' } }, 'Жилец передал показания с первого раза. Истории правок нет.'));
+        } else {
+            const timeline = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } });
+
+            // Проходим по истории правок
+            reading.edit_history.forEach((h, index) => {
+                const isLast = index === reading.edit_history.length - 1; // Последняя правка в массиве
+
+                const item = el('div', {
+                    style: {
+                        padding: '12px', background: isLast ? '#eff6ff' : '#f9fafb',
+                        borderLeft: isLast ? '3px solid #3b82f6' : '3px solid #d1d5db',
+                        borderRadius: '6px', fontSize: '13px'
+                    }
+                },
+                    el('div', { style: { fontWeight: 'bold', marginBottom: '5px', color: '#374151' } },
+                        isLast ? `🗓️ ${h.date} (Предпоследний вариант)` : `🗓️ ${h.date}`
+                    ),
+                    el('div', { style: { color: '#4b5563', fontFamily: 'monospace', fontSize: '14px' } },
+                        `ГВС: ${h.hot} | ХВС: ${h.cold} | Свет: ${h.elect}`
+                    )
+                );
+                timeline.appendChild(item);
+            });
+
+            // Добавляем текущий (финальный) вариант для наглядности
+            const currentItem = el('div', {
+                style: {
+                    padding: '12px', background: '#ecfdf5',
+                    borderLeft: '3px solid #10b981',
+                    borderRadius: '6px', fontSize: '13px', marginTop: '10px'
+                }
+            },
+                el('div', { style: { fontWeight: 'bold', marginBottom: '5px', color: '#065f46' } }, `✅ Текущие показания (В таблице)`),
+                el('div', { style: { color: '#065f46', fontFamily: 'monospace', fontSize: '14px' } },
+                    `ГВС: ${reading.cur_hot} | ХВС: ${reading.cur_cold} | Свет: ${reading.cur_elect}`
+                )
+            );
+            timeline.appendChild(currentItem);
+
+            content.appendChild(timeline);
+        }
+
+        const btnOk = el('button', {
+            class: 'action-btn primary-btn full-width', style: { marginTop: '20px' }
+        }, 'Закрыть историю');
+        btnOk.onclick = () => document.body.removeChild(overlay);
+        content.appendChild(btnOk);
+
+        const modalWindow = el('div', { class: 'modal-window', style: { width: '450px' } },
+            el('div', { class: 'modal-header' },
+                el('h3', {}, `История: ${reading.username}`),
+                closeBtn
+            ),
+            content
+        );
+
+        overlay.appendChild(modalWindow);
+        document.body.appendChild(overlay);
+    },
+
     async importReadings() {
-        const file = this.dom.inputImport.files[0];
+        const file = this.dom.inputImport?.files?.[0];
+
         if (!file) {
             toast('Сначала выберите файл Excel', 'info');
             return;
@@ -131,11 +225,12 @@ export const ReadingsModule = {
 
         try {
             const res = await api.post('/admin/readings/import', formData);
-
-            // НОВОЕ: Используем красивую модалку вместо alert()
             this.showImportResultModal(res);
 
-            this.dom.inputImport.value = '';
+            if (this.dom.inputImport) {
+                this.dom.inputImport.value = '';
+            }
+
             this.table.refresh();
         } catch (e) {
             toast('Ошибка импорта: ' + e.message, 'error');
@@ -144,48 +239,87 @@ export const ReadingsModule = {
         }
     },
 
-    // НОВОЕ: Динамическое создание модалки для показа результатов импорта показаний
     showImportResultModal(result) {
         const hasErrors = result.errors && result.errors.length > 0;
 
         const overlay = el('div', { class: 'modal-overlay open', style: { zIndex: 10000 } });
-        const headerTitle = hasErrors ? '⚠️ Результат импорта (Есть ошибки)' : '✅ Импорт успешно завершен';
+
+        const headerTitle = hasErrors
+            ? '⚠️ Результат импорта (Есть ошибки)'
+            : '✅ Импорт успешно завершен';
+
         const headerColor = hasErrors ? '#d97706' : '#059669';
 
         const closeBtn = el('button', { class: 'close-icon' }, '×');
         closeBtn.onclick = () => document.body.removeChild(overlay);
 
         const content = el('div', { class: 'modal-form' },
-            el('ul', { style: { marginBottom: '15px', paddingLeft: '20px', fontSize: '15px', color: '#374151' } },
-                el('li', { style: { marginBottom: '5px' } }, `Добавлено черновиков: `, el('strong', { style: { color: '#059669'} }, String(result.added || 0))),
-                el('li', {}, `Обновлено существующих: `, el('strong', { style: { color: '#2563eb'} }, String(result.updated || 0)))
+            el('ul', {
+                style: {
+                    marginBottom: '15px',
+                    paddingLeft: '20px',
+                    fontSize: '15px',
+                    color: '#374151'
+                }
+            },
+                el('li', { style: { marginBottom: '5px' } },
+                    `Добавлено черновиков: `,
+                    el('strong', { style: { color: '#059669' } }, String(result.added || 0))
+                ),
+                el('li', {},
+                    `Обновлено существующих: `,
+                    el('strong', { style: { color: '#2563eb' } }, String(result.updated || 0))
+                )
             )
         );
 
         if (hasErrors) {
             const errorBox = el('div', {
                 style: {
-                    maxHeight: '250px', overflowY: 'auto', background: '#fef2f2',
-                    border: '1px solid #fecaca', borderRadius: '8px', padding: '12px',
-                    fontSize: '13px', color: '#991b1b', fontFamily: 'monospace'
+                    maxHeight: '250px',
+                    overflowY: 'auto',
+                    background: '#fef2f2',
+                    border: '1px solid #fecaca',
+                    borderRadius: '8px',
+                    padding: '12px',
+                    fontSize: '13px',
+                    color: '#991b1b',
+                    fontFamily: 'monospace'
                 }
             });
 
             result.errors.forEach(err => {
                 errorBox.appendChild(el('div', {
-                    style: { marginBottom: '6px', borderBottom: '1px dashed #fca5a5', paddingBottom: '6px' }
+                    style: {
+                        marginBottom: '6px',
+                        borderBottom: '1px dashed #fca5a5',
+                        paddingBottom: '6px'
+                    }
                 }, String(err)));
             });
 
-            content.appendChild(el('h4', { style: { marginBottom: '10px', color: '#dc2626', fontSize: '14px' } }, `Ошибки (${result.errors.length}):`));
+            content.appendChild(
+                el('h4', {
+                    style: { marginBottom: '10px', color: '#dc2626', fontSize: '14px' }
+                }, `Ошибки (${result.errors.length}):`)
+            );
+
             content.appendChild(errorBox);
         }
 
-        const btnOk = el('button', { class: 'action-btn primary-btn full-width', style: { marginTop: '20px' } }, 'Понятно, закрыть');
+        const btnOk = el('button', {
+            class: 'action-btn primary-btn full-width',
+            style: { marginTop: '20px' }
+        }, 'Понятно, закрыть');
+
         btnOk.onclick = () => document.body.removeChild(overlay);
+
         content.appendChild(btnOk);
 
-        const modalWindow = el('div', { class: 'modal-window', style: { width: '550px' } },
+        const modalWindow = el('div', {
+            class: 'modal-window',
+            style: { width: '550px' }
+        },
             el('div', { class: 'modal-header' },
                 el('h3', { style: { color: headerColor } }, headerTitle),
                 closeBtn
@@ -198,42 +332,61 @@ export const ReadingsModule = {
     },
 
     createBadges(flags) {
-        if (!flags) return el('span', { style: { color: '#ccc' } }, '-');
-        const container = el('div', { style: { display: 'flex', gap: '4px', flexWrap: 'wrap' } });
+        if (!flags) {
+            return el('span', { style: { color: '#ccc' } }, '-');
+        }
+
+        const container = el('div', {
+            style: { display: 'flex', gap: '4px', flexWrap: 'wrap' }
+        });
+
         flags.split(',').forEach(flag => {
             let type = "UNKNOWN";
+
             for (const key in ANOMALY_MAP) {
                 if (flag.includes(key)) {
                     type = key;
                     break;
                 }
             }
+
             const meta = ANOMALY_MAP[type] || { color: '#95a5a6', label: flag };
+
             container.appendChild(el('span', {
                 title: flag,
                 style: {
-                    background: meta.color, color: 'white', padding: '2px 6px',
-                    borderRadius: '4px', fontSize: '10px', fontWeight: 'bold', cursor: 'help'
+                    background: meta.color,
+                    color: 'white',
+                    padding: '2px 6px',
+                    borderRadius: '4px',
+                    fontSize: '10px',
+                    fontWeight: 'bold',
+                    cursor: 'help'
                 }
             }, meta.label));
         });
+
         return container;
     },
 
     async loadActivePeriod() {
         try {
             const data = await api.get('/admin/periods/active');
+
             if (data && data.name) {
-                this.dom.periodActive.style.display = 'flex';
-                this.dom.periodClosed.style.display = 'none';
-                this.dom.periodLabel.textContent = data.name;
+                if (this.dom.periodActive) this.dom.periodActive.style.display = 'flex';
+                if (this.dom.periodClosed) this.dom.periodClosed.style.display = 'none';
+                if (this.dom.periodLabel) this.dom.periodLabel.textContent = data.name;
             } else {
-                this.dom.periodActive.style.display = 'none';
-                this.dom.periodClosed.style.display = 'flex';
+                if (this.dom.periodActive) this.dom.periodActive.style.display = 'none';
+                if (this.dom.periodClosed) this.dom.periodClosed.style.display = 'flex';
             }
-        } catch (e) { console.warn("Ошибка проверки периода", e); }
+        } catch (e) {
+            console.warn("Ошибка проверки периода", e);
+        }
     },
 
+    // --- ВОССТАНОВЛЕННЫЕ ФУНКЦИИ ---
     async openApproveModal(reading) {
         const modal = document.getElementById('approveModal');
         if (!modal) return;
@@ -244,8 +397,7 @@ export const ReadingsModule = {
         const dElect = (Number(reading.cur_elect) - Number(reading.prev_elect)).toFixed(3);
         document.getElementById('m_hot_usage').textContent = dHot;
         document.getElementById('m_cold_usage').textContent = dCold;
-        document.getElementById('m_elect_usage').textContent = dElect;
-        ['m_corr_hot', 'm_corr_cold', 'm_corr_elect', 'm_corr_sewage'].forEach(id => {
+        document.getElementById('m_elect_usage').textContent = dElect;['m_corr_hot', 'm_corr_cold', 'm_corr_elect', 'm_corr_sewage'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.value = 0;
         });
@@ -259,10 +411,9 @@ export const ReadingsModule = {
     async submitApproval(id) {
         const btn = document.getElementById('btnModalSubmit');
 
-        // НОВОЕ: Заменяем запятую на точку перед парсингом, чтобы избежать NaN
         const parseInput = (elId) => {
             const el = document.getElementById(elId);
-            if (!el || !el.value) return 0; // Безопасный возврат 0
+            if (!el || !el.value) return 0;
             return parseFloat(el.value.replace(',', '.')) || 0;
         };
 
@@ -290,7 +441,6 @@ export const ReadingsModule = {
         const amountStr = await showPrompt(`Корректировка: ${username}`, 'Введите сумму (например -500 для скидки или 1000 для долга):');
         if (!amountStr) return;
 
-        // НОВОЕ: Защита от опечатки с запятой
         const amount = parseFloat(amountStr.replace(',', '.'));
         if (isNaN(amount)) {
             toast('Нужно ввести корректное число!', 'error');
@@ -310,7 +460,9 @@ export const ReadingsModule = {
 
     async bulkApprove() {
         if (!confirm('Вы уверены? Это утвердит ВСЕ текущие черновики без ошибок.')) return;
+
         setLoading(this.dom.btnBulk, true);
+
         try {
             const res = await api.post('/admin/approve-bulk', {});
             toast(`Утверждено записей: ${res.approved_count}`, 'success');
@@ -319,89 +471,6 @@ export const ReadingsModule = {
             toast(e.message, 'error');
         } finally {
             setLoading(this.dom.btnBulk, false);
-        }
-    },
-
-    async closePeriodAction() {
-        if (!confirm('Закрыть месяц? Будет произведен авто-расчет для всех должников. Это может занять время.')) return;
-
-        const btn = this.dom.btnClosePeriod;
-        setLoading(btn, true, 'Запуск...');
-
-        try {
-            const res = await api.post('/admin/periods/close', {});
-
-            if (res.task_id) {
-                toast('Процесс закрытия запущен. Пожалуйста, подождите...', 'info');
-                await this.pollCloseTask(res.task_id, btn);
-            } else {
-                toast(`Месяц закрыт. Авто-расчетов: ${res.auto_generated || 0}`, 'success');
-                setTimeout(() => window.location.reload(), 1500);
-            }
-
-        } catch (e) {
-            toast(e.message, 'error');
-            setLoading(btn, false, '🔒 Закрыть месяц');
-        }
-    },
-
-    async pollCloseTask(taskId, btn) {
-        const maxAttempts = 60;
-        let attempts = 0;
-
-        const check = async () => {
-            attempts++;
-            if (attempts > maxAttempts) {
-                setLoading(btn, false, '🔒 Закрыть месяц');
-                toast('Время ожидания истекло. Проверьте статус позже.', 'warning');
-                return;
-            }
-
-            try {
-                const statusData = await api.get(`/admin/tasks/${taskId}`);
-
-                if (statusData.state === 'PENDING' || statusData.state === 'STARTED' || statusData.status === 'processing') {
-                    btn.innerText = `Обработка... ${attempts}с`;
-                    setTimeout(check, 2000);
-                }
-                else if (statusData.status === 'done' || statusData.state === 'SUCCESS') {
-                    const result = statusData.result || {};
-
-                    if (result.status === 'error') {
-                        throw new Error(result.message);
-                    }
-
-                    toast(`Месяц успешно закрыт! Авто-расчетов: ${result.auto_generated || 0}`, 'success');
-                    setLoading(btn, false, 'Готово');
-
-                    setTimeout(() => window.location.reload(), 1500);
-                }
-                else if (statusData.state === 'FAILURE') {
-                    throw new Error(statusData.error || 'Ошибка выполнения задачи');
-                }
-            } catch (e) {
-                setLoading(btn, false, '🔒 Закрыть месяц');
-                toast('Ошибка при закрытии: ' + e.message, 'error');
-            }
-        };
-
-        check();
-    },
-
-    async openPeriodAction() {
-        const name = this.dom.periodNameInput.value.trim();
-        if (!name) {
-            toast('Введите название месяца!', 'info');
-            return;
-        }
-        setLoading(this.dom.btnOpenPeriod, true);
-        try {
-            await api.post('/admin/periods/open', { name });
-            toast(`Период "${name}" открыт`, 'success');
-            setTimeout(() => window.location.reload(), 1500);
-        } catch (e) {
-            toast(e.message, 'error');
-            setLoading(this.dom.btnOpenPeriod, false);
         }
     }
 };

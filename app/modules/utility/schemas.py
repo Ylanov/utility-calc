@@ -184,6 +184,7 @@ class ReadingStateResponse(BaseModel):
 
     is_draft: bool
     is_period_open: bool
+    is_already_approved: bool = False
 
     cost_hot_water: Optional[Decimal] = None
     cost_cold_water: Optional[Decimal] = None

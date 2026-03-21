@@ -12,7 +12,7 @@ from sqlalchemy.orm import relationship
 from datetime import datetime
 
 from app.core.database import Base
-
+from sqlalchemy.dialects.postgresql import JSONB
 
 # ======================================================
 # USER
@@ -202,6 +202,8 @@ class MeterReading(Base):
     # ==================================================
     anomaly_flags = Column(String, nullable=True)
     is_approved = Column(Boolean, default=False)
+    edit_count = Column(Integer, default=0)
+    edit_history = Column(JSONB, nullable=True)
 
 # ======================================================
 # SYSTEM SETTINGS (Глобальные настройки)
