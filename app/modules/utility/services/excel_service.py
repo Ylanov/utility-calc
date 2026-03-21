@@ -166,7 +166,7 @@ async def generate_billing_report_xlsx(db: AsyncSession, period_id: int) -> Tupl
     worksheet = workbook.active
     worksheet.title = "Сводная ведомость"
 
-    headers = [
+    headers =[
         "Общежитие/Комната", "ФИО (Логин)", "Площадь", "Жильцов",
         "ГВС (руб)", "ХВС (руб)", "Водоотв. (руб)", "Электроэнергия (руб)",
         "Содержание (руб)", "Наем (руб)", "ТКО (руб)", "Отопление + ОДН (руб)",
@@ -209,7 +209,7 @@ async def generate_billing_report_xlsx(db: AsyncSession, period_id: int) -> Tupl
             total_cost
         ])
 
-    worksheet.append([""] * 11 + ["ИТОГО:", total_209_sum, total_205_sum, total_sum])
+    worksheet.append([""] * 11 +["ИТОГО:", total_209_sum, total_205_sum, total_sum])
 
     output = await asyncio.to_thread(_save_workbook_sync, workbook)
     filename = f"Report_{period.name}".replace(" ", "_") + ".xlsx"
@@ -235,7 +235,7 @@ async def import_readings_from_excel(file_content: bytes, db: AsyncSession, peri
         added_count = 0
         updated_count = 0
         skipped_count = 0
-        errors = []
+        errors =[]
 
         rows = worksheet.iter_rows(min_row=2, values_only=True)
 
@@ -275,6 +275,10 @@ async def import_readings_from_excel(file_content: bytes, db: AsyncSession, peri
                 draft.hot_water = hot
                 draft.cold_water = cold
                 draft.electricity = elect
+                # --- НОВОЕ: СБРОС СКОРИНГА И ФЛАГОВ ПРИ ПОВТОРНОМ ИМПОРТЕ ---
+                draft.anomaly_flags = "IMPORTED_DRAFT"
+                draft.anomaly_score = 0
+                # ------------------------------------------------------------
                 updated_count += 1
             else:
                 new_draft = MeterReading(
@@ -284,7 +288,10 @@ async def import_readings_from_excel(file_content: bytes, db: AsyncSession, peri
                     cold_water=cold,
                     electricity=elect,
                     is_approved=False,
-                    anomaly_flags="IMPORTED_DRAFT"
+                    # --- НОВОЕ: ИНИЦИАЛИЗАЦИЯ СКОРИНГА ДЛЯ ИМПОРТА ---
+                    anomaly_flags="IMPORTED_DRAFT",
+                    anomaly_score=0
+                    # -------------------------------------------------
                 )
                 db.add(new_draft)
                 added_count += 1

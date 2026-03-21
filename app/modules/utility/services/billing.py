@@ -114,7 +114,7 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
 
     zero = Decimal("0.000")
     zero_money = Decimal("0.00")
-    insert_values = []
+    insert_values =[]
     generated_count = 0
 
     # 6. Главный цикл расчета (теперь быстрый, т.к. history_map маленький)
@@ -124,13 +124,13 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
         if not user_tariff:
             user_tariff = default_tariff
 
-        history = history_map.get(user.id, [])
+        history = history_map.get(user.id,[])
         # Сортируем на всякий случай, если БД вернула не в том порядке (0 - самая новая)
         history.sort(key=lambda r: r.created_at, reverse=True)
 
         # --- Логика авто-расчета по среднему ---
         if len(history) >= 2:
-            deltas_hot, deltas_cold, deltas_elect = [], [], []
+            deltas_hot, deltas_cold, deltas_elect = [], [],[]
             for i in range(len(history) - 1):
                 curr, prev = history[i], history[i + 1]
                 deltas_hot.append(max(zero, D(curr.hot_water) - D(prev.hot_water)))
@@ -195,7 +195,10 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
             "total_209": cost_utils_209,
             "total_205": cost_rent_205,
             "is_approved": True,
+            # --- НОВОЕ: Система сама начислила, риск 0 ---
             "anomaly_flags": "AUTO_GENERATED",
+            "anomaly_score": 0,
+            # ---------------------------------------------
             "created_at": datetime.utcnow(),
             **costs
         }

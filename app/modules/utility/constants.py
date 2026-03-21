@@ -1,22 +1,33 @@
 # app/modules/utility/constants.py
 from typing import Dict
 
-# Карта для детализации аномалий
+# Карта для детализации аномалий (Risk Engine)
 ANOMALY_MAP: Dict[str, Dict[str, str]] = {
-    "NEGATIVE_HOT": {"message": "Ошибка: Текущие показания ГВС меньше предыдущих!", "severity": "high"},
-    "NEGATIVE_COLD": {"message": "Ошибка: Текущие показания ХВС меньше предыдущих!", "severity": "high"},
-    "NEGATIVE_ELECT": {"message": "Ошибка: Текущие показания электричества меньше предыдущих!", "severity": "high"},
-    "HIGH_HOT": {"message": "Очень высокий расход горячей воды по сравнению с историей.", "severity": "medium"},
-    "HIGH_COLD": {"message": "Очень высокий расход холодной воды по сравнению с историей.", "severity": "medium"},
-    "HIGH_ELECT": {"message": "Очень высокий расход электричества по сравнению с историей.", "severity": "medium"},
-    "HIGH_VS_PEERS_HOT": {"message": "Расход ГВС значительно выше среднего по общежитию.", "severity": "medium"},
-    "HIGH_VS_PEERS_COLD": {"message": "Расход ХВС значительно выше среднего по общежитию.", "severity": "medium"},
-    "HIGH_VS_PEERS_ELECT": {"message": "Расход электричества значительно выше среднего по общежитию.", "severity": "medium"},
-    "ZERO_HOT": {"message": "Нулевой расход горячей воды (возможно, комната пустует).", "severity": "low"},
-    "ZERO_COLD": {"message": "Нулевой расход холодной воды (возможно, комната пустует).", "severity": "low"},
-    "ZERO_ELECT": {"message": "Нулевой расход электричества (возможно, ком-та пустует).", "severity": "low"},
-    "FROZEN_HOT": {"message": "Показания счетчика ГВС не менялись 3+ месяца.", "severity": "low"},
-    "FROZEN_COLD": {"message": "Показания счетчика ХВС не менялись 3+ месяца.", "severity": "low"},
-    "FROZEN_ELECT": {"message": "Показания счетчика света не менялись 3+ месяца.", "severity": "low"},
-    "UNKNOWN": {"message": "Обнаружена неопознанная аномалия.", "severity": "low"}
+    # КРИТИЧЕСКИЕ (Risk +50..100)
+    "NEGATIVE": {"message": "Счетчик скручен (отрицательный расход)!", "severity": "critical", "color": "#dc2626"},
+
+    # ПОВЕДЕНЧЕСКИЕ / ФРОД (Risk +30..40)
+    "DROP_AFTER_SPIKE": {"message": "Резкое падение после выброса (попытка скрыть расход)", "severity": "high",
+                         "color": "#b91c1c"},
+    "FLAT": {"message": "Подозрительно одинаковый расход (рисуют цифры)", "severity": "high", "color": "#ea580c"},
+    "FROZEN": {"message": "Показания счетчика не меняются (замерз/сломан)", "severity": "medium", "color": "#0284c7"},
+    "TREND_UP": {"message": "Постоянный рост расхода 4 месяца подряд (возможна скрытая утечка)", "severity": "high",
+                 "color": "#c2410c"},
+
+    # СТАТИСТИЧЕСКИЕ (Risk +20..40)
+    "SPIKE": {"message": "Аномальный скачок расхода (выброс)", "severity": "high", "color": "#e11d48"},
+    "HIGH": {"message": "Расход выше нормы для этого жильца", "severity": "medium", "color": "#f59e0b"},
+    "ZERO": {"message": "Нулевой расход (хотя раньше потреблял)", "severity": "low", "color": "#64748b"},
+
+    # КОНТЕКСТНЫЕ (Risk +20)
+    "HIGH_PER_PERSON": {"message": "Критический перерасход на 1 прописанного человека", "severity": "high",
+                        "color": "#9333ea"},
+    "HIGH_VS_PEERS": {"message": "Расход значительно выше среднего по общежитию", "severity": "medium",
+                      "color": "#7c3aed"},
+
+    # СИСТЕМНЫЕ
+    "AUTO_GENERATED": {"message": "Начислено по среднему (системой)", "severity": "info", "color": "#0ea5e9"},
+    "ONE_TIME_CHARGE": {"message": "Разовое начисление (выселение)", "severity": "info", "color": "#8b5cf6"},
+    "IMPORTED_DRAFT": {"message": "Загружено из Excel", "severity": "info", "color": "#10b981"},
+    "UNKNOWN": {"message": "Неизвестная аномалия", "severity": "low", "color": "#9ca3af"}
 }

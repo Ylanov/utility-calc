@@ -1,3 +1,5 @@
+# app/modules/utility/services/admin_readings_service.py
+
 from decimal import Decimal
 from typing import Optional
 from fastapi import HTTPException
@@ -8,7 +10,8 @@ from sqlalchemy import desc, asc, func, or_, update
 from app.modules.utility.models import User, MeterReading, Tariff, BillingPeriod, Adjustment
 from app.modules.utility.schemas import ApproveRequest, AdminManualReadingSchema, OneTimeChargeSchema
 from app.modules.utility.services.calculations import calculate_utilities, D
-from app.modules.utility.services.anomaly_detector import check_reading_for_anomalies
+# ИМПОРТ ИЗМЕНЕН НА V2
+from app.modules.utility.services.anomaly_detector import check_reading_for_anomalies_v2
 from app.modules.utility.constants import ANOMALY_MAP
 
 
@@ -18,9 +21,8 @@ async def get_paginated_readings(
 ):
     active_period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))).scalars().first()
     if not active_period:
-        return {"total": 0, "page": page, "size": limit, "items":[]}
+        return {"total": 0, "page": page, "size": limit, "items": []}
 
-    # ИСПРАВЛЕНО ЗДЕСЬ: MeterReading.is_approved.is_(False)
     query = select(MeterReading, User).join(User, MeterReading.user_id == User.id).where(
         MeterReading.is_approved.is_(False), MeterReading.period_id == active_period.id
     )
@@ -34,11 +36,15 @@ async def get_paginated_readings(
 
     total = (await db.execute(select(func.count()).select_from(query.subquery()))).scalar_one()
 
+    # Сортировка: добавляем возможность сортировать по risk score
     sort_col = {
-        "username": User.username, "dormitory": User.dormitory, "total_cost": MeterReading.total_cost
+        "username": User.username,
+        "dormitory": User.dormitory,
+        "total_cost": MeterReading.total_cost,
+        "anomaly_score": MeterReading.anomaly_score
     }.get(sort_by, MeterReading.id)
 
-    if after_id and sort_by in["created_at", "id"]:
+    if after_id and sort_by in ["created_at", "id"]:
         if sort_dir == "desc":
             query = query.where(MeterReading.id < after_id).order_by(desc(MeterReading.id))
         else:
@@ -49,7 +55,7 @@ async def get_paginated_readings(
         rows = (await db.execute(query.offset((page - 1) * limit).limit(limit))).all()
 
     if not rows:
-        return {"total": total, "page": page, "size": limit, "items":[]}
+        return {"total": total, "page": page, "size": limit, "items": []}
 
     user_ids = [row[1].id for row in rows]
     subq_max_prev = select(MeterReading.user_id, func.max(MeterReading.created_at).label("max_created")).where(
@@ -60,17 +66,27 @@ async def get_paginated_readings(
             MeterReading.created_at == subq_max_prev.c.max_created))
     prev_map = {r.user_id: r for r in (await db.execute(stmt_prev)).scalars().all()}
 
-    items =[]
+    items = []
     zero = Decimal("0.000")
 
     for current, user in rows:
         prev = prev_map.get(user.id)
-        anomaly_details =[]
+        anomaly_details = []
+
+        # УМНЫЙ МАППИНГ ФЛАГОВ ИЗ V2
         if current.anomaly_flags:
             for flag_code in current.anomaly_flags.split(','):
-                details = ANOMALY_MAP.get(flag_code, ANOMALY_MAP["UNKNOWN"])
-                anomaly_details.append(
-                    {"code": flag_code, "message": details["message"], "severity": details["severity"]})
+                if not flag_code: continue
+                # Ищем базовый ключ (например, для SPIKE_HOT найдем SPIKE)
+                base_key = next((k for k in ANOMALY_MAP.keys() if flag_code.startswith(k)), "UNKNOWN")
+                meta = ANOMALY_MAP.get(base_key, ANOMALY_MAP["UNKNOWN"])
+
+                anomaly_details.append({
+                    "code": flag_code,
+                    "message": meta["message"],
+                    "severity": meta["severity"],
+                    "color": meta.get("color", "#9ca3af")
+                })
 
         items.append({
             "id": current.id, "user_id": user.id, "username": user.username, "dormitory": user.dormitory,
@@ -79,10 +95,11 @@ async def get_paginated_readings(
             "prev_elect": prev.electricity if prev else zero, "cur_elect": current.electricity,
             "total_cost": current.total_cost, "residents_count": user.residents_count,
             "total_room_residents": user.total_room_residents, "created_at": current.created_at,
-            "anomaly_flags": current.anomaly_flags, "anomaly_details": anomaly_details,
-            # --- НОВЫЕ ПОЛЯ ДЛЯ ИСТОРИИ ПРАВОК ---
+            "anomaly_flags": current.anomaly_flags,
+            "anomaly_score": getattr(current, 'anomaly_score', 0),  # ВЫВОДИМ SCORE ДЛЯ ФРОНТА
+            "anomaly_details": anomaly_details,
             "edit_count": current.edit_count or 0,
-            "edit_history": current.edit_history or[]
+            "edit_history": current.edit_history or []
         })
 
     return {"total": total, "page": page, "size": limit, "items": items}
@@ -98,7 +115,6 @@ async def bulk_approve_drafts(db: AsyncSession):
     tariffs_map = {t.id: t for t in active_tariffs}
     default_tariff = tariffs_map.get(1) or active_tariffs[0]
 
-    # ИСПРАВЛЕНО ЗДЕСЬ: MeterReading.is_approved.is_(False)
     drafts_rows = (await db.execute(select(MeterReading, User).join(User, MeterReading.user_id == User.id).where(
         MeterReading.is_approved.is_(False), MeterReading.period_id == active_period.id))).all()
 
@@ -126,7 +142,7 @@ async def bulk_approve_drafts(db: AsyncSession):
         if uid not in adj_map: adj_map[uid] = {'209': zero, '205': zero}
         adj_map[uid][str(acc_type)] = amount or zero
 
-    update_mappings =[]
+    update_mappings = []
 
     for reading, user in drafts_rows:
         prev = prev_readings_map.get(reading.user_id)
@@ -225,7 +241,6 @@ async def get_manual_state(db: AsyncSession, user_id: int):
         await db.execute(select(MeterReading).where(MeterReading.user_id == user_id, MeterReading.is_approved)
                          .order_by(MeterReading.created_at.desc()).limit(1))).scalars().first()
 
-    # ИСПРАВЛЕНО ЗДЕСЬ: MeterReading.is_approved.is_(False)
     draft = (
         await db.execute(
             select(MeterReading).where(MeterReading.user_id == user_id, MeterReading.is_approved.is_(False),
@@ -273,9 +288,11 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
 
     history = (
         await db.execute(select(MeterReading).where(MeterReading.user_id == user.id, MeterReading.is_approved)
-                         .order_by(MeterReading.created_at.desc()).limit(4))).scalars().all()
-    anomaly_flags = check_reading_for_anomalies(
-        MeterReading(hot_water=data.hot_water, cold_water=data.cold_water, electricity=data.electricity), history, None)
+                         .order_by(MeterReading.created_at.desc()).limit(6))).scalars().all()
+
+    # ИСПОЛЬЗУЕМ V2 ДЛЯ РАСЧЕТА РИСКА
+    temp_reading = MeterReading(hot_water=data.hot_water, cold_water=data.cold_water, electricity=data.electricity)
+    flags, score = check_reading_for_anomalies_v2(temp_reading, history, user=user)
 
     adj_map = {row[0]: (row[1] or zero) for row in
                (await db.execute(select(Adjustment.account_type, func.sum(Adjustment.amount))
@@ -283,7 +300,6 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
                       Adjustment.period_id == active_period.id).group_by(
                    Adjustment.account_type))).all()}
 
-    # ИСПРАВЛЕНО ЗДЕСЬ: MeterReading.is_approved.is_(False)
     draft = (
         await db.execute(
             select(MeterReading).where(MeterReading.user_id == user.id, MeterReading.is_approved.is_(False),
@@ -295,7 +311,9 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
         draft.overpayment_205 or zero if draft else zero) + adj_map.get('205', zero)
 
     if draft:
-        draft.hot_water, draft.cold_water, draft.electricity, draft.anomaly_flags = data.hot_water, data.cold_water, data.electricity, anomaly_flags
+        draft.hot_water, draft.cold_water, draft.electricity = data.hot_water, data.cold_water, data.electricity
+        draft.anomaly_flags = flags
+        draft.anomaly_score = score
         for k, v in costs.items():
             if hasattr(draft, k): setattr(draft, k, v)
         draft.total_209, draft.total_205, draft.total_cost = total_209, total_205, total_209 + total_205
@@ -305,7 +323,8 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
                             cold_water=data.cold_water, electricity=data.electricity,
                             debt_209=zero, overpayment_209=zero, debt_205=zero, overpayment_205=zero,
                             total_209=total_209, total_205=total_205,
-                            total_cost=total_209 + total_205, is_approved=False, anomaly_flags=anomaly_flags, **costs))
+                            total_cost=total_209 + total_205, is_approved=False,
+                            anomaly_flags=flags, anomaly_score=score, **costs))
 
     await db.commit()
     return {"status": "success"}
@@ -366,7 +385,6 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
                       Adjustment.period_id == active_period.id).group_by(
                    Adjustment.account_type))).all()}
 
-    # ИСПРАВЛЕНО ЗДЕСЬ: MeterReading.is_approved.is_(False)
     draft = (
         await db.execute(
             select(MeterReading).where(MeterReading.user_id == user.id, MeterReading.is_approved.is_(False),
@@ -378,9 +396,12 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
         draft.overpayment_205 or zero if draft else zero) + adj_map.get('205', zero)
 
     anomaly_flags = "ONE_TIME_CHARGE"
+    anomaly_score = 0
 
     if draft:
-        draft.hot_water, draft.cold_water, draft.electricity, draft.anomaly_flags = data.hot_water, data.cold_water, data.electricity, anomaly_flags
+        draft.hot_water, draft.cold_water, draft.electricity = data.hot_water, data.cold_water, data.electricity
+        draft.anomaly_flags = anomaly_flags
+        draft.anomaly_score = anomaly_score
         for k, v in costs.items(): getattr(draft, k)
         for k, v in costs.items(): setattr(draft, k, v)
         draft.total_209, draft.total_205, draft.total_cost = total_209, total_205, total_209 + total_205
@@ -391,7 +412,8 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
                             cold_water=data.cold_water, electricity=data.electricity,
                             debt_209=zero, overpayment_209=zero, debt_205=zero, overpayment_205=zero,
                             total_209=total_209, total_205=total_205,
-                            total_cost=total_209 + total_205, is_approved=True, anomaly_flags=anomaly_flags, **costs))
+                            total_cost=total_209 + total_205, is_approved=True,
+                            anomaly_flags=anomaly_flags, anomaly_score=anomaly_score, **costs))
 
     if data.is_moving_out:
         user.is_deleted = True

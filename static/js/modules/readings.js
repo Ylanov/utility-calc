@@ -1,17 +1,8 @@
-// static/js/modules/readings.js (ФИНАЛЬНАЯ ВЕРСИЯ С ИСТОРИЕЙ ПРАВОК)
+// static/js/modules/readings.js
 
 import { api } from '../core/api.js';
 import { el, toast, setLoading, showPrompt } from '../core/dom.js';
 import { TableController } from '../core/table-controller.js';
-
-const ANOMALY_MAP = {
-    "NEGATIVE": { color: "#c0392b", label: "Ошибка (<0)" },
-    "ZERO": { color: "#f39c12", label: "Нулевой" },
-    "HIGH": { color: "#e74c3c", label: "Высокий" },
-    "FROZEN": { color: "#3498db", label: "Замерзший" },
-    "PEERS": { color: "#9b59b6", label: "Аномалия (Группа)" },
-    "IMPORTED_DRAFT": { color: "#8e44ad", label: "Импорт" }
-};
 
 export const ReadingsModule = {
     table: null,
@@ -84,7 +75,7 @@ export const ReadingsModule = {
             renderRow: (r) => {
                 const totalCost = r.total_cost ?? 0;
 
-                // --- НОВОЕ: Бейдж изменения показаний ---
+                // --- Бейдж изменения показаний ---
                 let editBadge = null;
                 if (r.edit_count > 1 && r.edit_history && r.edit_history.length > 0) {
                     const lastEdit = r.edit_history[r.edit_history.length - 1].date;
@@ -97,15 +88,46 @@ export const ReadingsModule = {
                     }, `⚠️ Изменено: ${r.edit_count} раз`);
                 }
 
+                // --- Формирование колонки статуса с Risk Score ---
+                const statusCell = el('td', {});
+
+                let scoreColor = '#10b981'; // Зеленый (Норма)
+                let scoreText = 'Низкий риск';
+
+                if (r.anomaly_score >= 80) {
+                    scoreColor = '#ef4444'; // Красный
+                    scoreText = 'Критичный риск';
+                } else if (r.anomaly_score >= 40) {
+                    scoreColor = '#f59e0b'; // Оранжевый
+                    scoreText = 'Средний риск';
+                }
+
+                if (r.anomaly_flags === 'PENDING') {
+                    statusCell.appendChild(el('div', {
+                        style: { fontSize: '12px', color: '#6b7280', fontStyle: 'italic', marginBottom: '4px' }
+                    }, '⏳ Считаем риски...'));
+                } else if (r.anomaly_score > 0 || (r.anomaly_flags && r.anomaly_flags !== '')) {
+                    statusCell.appendChild(el('div', {
+                        style: { fontSize: '12px', fontWeight: 'bold', color: scoreColor, marginBottom: '4px' }
+                    }, `Рейтинг риска: ${r.anomaly_score}/100 (${scoreText})`));
+                } else {
+                    statusCell.appendChild(el('div', {
+                        style: { fontSize: '12px', color: '#10b981', marginBottom: '4px' }
+                    }, '✅ Норма'));
+                }
+
+                // Добавляем сами бейджи аномалий под Risk Score
+                statusCell.appendChild(this.createBadges(r.anomaly_details, r.anomaly_flags));
+
                 return el('tr', {},
                     el('td', {},
                         el('div', { style: { fontWeight: '600', display: 'flex', alignItems: 'center' } },
                             r.username,
-                            editBadge // Вставляем бейдж прямо рядом с ФИО
+                            editBadge
                         ),
                         el('div', { style: { fontSize: '11px', color: '#888' } }, r.dormitory || 'Общ. не указано')
                     ),
-                    el('td', {}, this.createBadges(r.anomaly_flags)),
+                    statusCell,
                     el('td', { class: 'text-right' }, Number(r.cur_hot).toFixed(3)),
                     el('td', { class: 'text-right' }, Number(r.cur_cold).toFixed(3)),
                     el('td', { class: 'text-right' }, Number(r.cur_elect).toFixed(3)),
@@ -113,14 +135,12 @@ export const ReadingsModule = {
                         `${Number(totalCost).toFixed(2)} ₽`
                     ),
                     el('td', { class: 'text-center' },
-                        // --- НОВОЕ: Кнопка просмотра истории правок ---
                         el('button', {
                             class: 'btn-icon btn-history',
                             title: 'История правок жильцом',
                             style: { marginRight: '5px', background: '#f3f4f6', borderColor: '#d1d5db' },
                             onclick: () => this.showHistoryModal(r)
                         }, '🕒'),
-                        // ----------------------------------------------
                         el('button', {
                             class: 'btn-icon btn-adjust',
                             title: 'Финансовая корректировка',
@@ -140,7 +160,6 @@ export const ReadingsModule = {
         this.table.init();
     },
 
-    // --- НОВОЕ: Модальное окно истории изменений ---
     showHistoryModal(reading) {
         const overlay = el('div', { class: 'modal-overlay open', style: { zIndex: 10000 } });
         const closeBtn = el('button', { class: 'close-icon' }, '×');
@@ -153,9 +172,8 @@ export const ReadingsModule = {
         } else {
             const timeline = el('div', { style: { display: 'flex', flexDirection: 'column', gap: '10px' } });
 
-            // Проходим по истории правок
             reading.edit_history.forEach((h, index) => {
-                const isLast = index === reading.edit_history.length - 1; // Последняя правка в массиве
+                const isLast = index === reading.edit_history.length - 1;
 
                 const item = el('div', {
                     style: {
@@ -174,7 +192,6 @@ export const ReadingsModule = {
                 timeline.appendChild(item);
             });
 
-            // Добавляем текущий (финальный) вариант для наглядности
             const currentItem = el('div', {
                 style: {
                     padding: '12px', background: '#ecfdf5',
@@ -331,40 +348,45 @@ export const ReadingsModule = {
         document.body.appendChild(overlay);
     },
 
-    createBadges(flags) {
-        if (!flags) {
-            return el('span', { style: { color: '#ccc' } }, '-');
-        }
-
+    createBadges(details, rawFlags) {
         const container = el('div', {
             style: { display: 'flex', gap: '4px', flexWrap: 'wrap' }
         });
 
-        flags.split(',').forEach(flag => {
-            let type = "UNKNOWN";
+        // Используем детальную информацию от бэкенда (из новой V2 логики)
+        if (details && details.length > 0) {
+            details.forEach(d => {
+                container.appendChild(el('span', {
+                    title: d.message,
+                    style: {
+                        background: d.color || '#95a5a6',
+                        color: 'white',
+                        padding: '2px 6px',
+                        borderRadius: '4px',
+                        fontSize: '10px',
+                        fontWeight: 'bold',
+                        cursor: 'help'
+                    }
+                }, d.code)); // Код (например SPIKE_HOT)
+            });
+            return container;
+        }
 
-            for (const key in ANOMALY_MAP) {
-                if (flag.includes(key)) {
-                    type = key;
-                    break;
-                }
-            }
-
-            const meta = ANOMALY_MAP[type] || { color: '#95a5a6', label: flag };
-
-            container.appendChild(el('span', {
-                title: flag,
-                style: {
-                    background: meta.color,
-                    color: 'white',
-                    padding: '2px 6px',
-                    borderRadius: '4px',
-                    fontSize: '10px',
-                    fontWeight: 'bold',
-                    cursor: 'help'
-                }
-            }, meta.label));
-        });
+        // Fallback для старых данных
+        if (rawFlags && rawFlags !== 'PENDING') {
+            rawFlags.split(',').forEach(flag => {
+                container.appendChild(el('span', {
+                    style: {
+                        background: '#9ca3af',
+                        color: 'white',
+                        padding: '2px 6px',
+                        borderRadius: '4px',
+                        fontSize: '10px',
+                        fontWeight: 'bold'
+                    }
+                }, flag));
+            });
+        }
 
         return container;
     },
@@ -386,7 +408,6 @@ export const ReadingsModule = {
         }
     },
 
-    // --- ВОССТАНОВЛЕННЫЕ ФУНКЦИИ ---
     async openApproveModal(reading) {
         const modal = document.getElementById('approveModal');
         if (!modal) return;

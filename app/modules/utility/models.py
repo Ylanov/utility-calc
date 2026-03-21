@@ -201,6 +201,7 @@ class MeterReading(Base):
     # СЛУЖЕБНЫЕ ПОЛЯ
     # ==================================================
     anomaly_flags = Column(String, nullable=True)
+    anomaly_score = Column(Integer, default=0)
     is_approved = Column(Boolean, default=False)
     edit_count = Column(Integer, default=0)
     edit_history = Column(JSONB, nullable=True)

@@ -7,7 +7,6 @@ Create Date: 2026-03-05 20:00:00.000000
 """
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
 
 
 # revision identifiers, used by Alembic.
@@ -34,22 +33,23 @@ def upgrade() -> None:
         unique=False
     )
 
-    # --- добавление новых колонок в readings ---
-    op.add_column(
-        'readings',
-        sa.Column('edit_count', sa.Integer(), nullable=True)
-    )
-
-    op.add_column(
-        'readings',
-        sa.Column('edit_history', postgresql.JSONB(), nullable=True)
-    )
+    # --- ПРАВИЛЬНОЕ добавление колонок в partitioned table ---
+    op.execute("""
+        ALTER TABLE public.readings
+        ADD COLUMN IF NOT EXISTS edit_count INTEGER,
+        ADD COLUMN IF NOT EXISTS edit_history JSONB,
+        ADD COLUMN IF NOT EXISTS anomaly_score INTEGER DEFAULT 0;
+    """)
 
 
 def downgrade() -> None:
-    # --- удаление колонок из readings ---
-    op.drop_column('readings', 'edit_history')
-    op.drop_column('readings', 'edit_count')
+    # --- удаление колонок из partitioned table ---
+    op.execute("""
+        ALTER TABLE public.readings
+        DROP COLUMN IF EXISTS anomaly_score,
+        DROP COLUMN IF EXISTS edit_history,
+        DROP COLUMN IF EXISTS edit_count;
+    """)
 
     # --- удаление таблицы system_settings ---
     op.drop_index(

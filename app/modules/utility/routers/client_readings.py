@@ -225,7 +225,11 @@ async def save_reading(
         draft.total_209 = total_209
         draft.total_205 = total_205
         draft.total_cost = grand_total
-        draft.anomaly_flags = "PENDING"  # Временно, пока считает Celery
+
+        # --- НОВОЕ: Сброс риск-скоринга перед отправкой в Celery ---
+        draft.anomaly_flags = "PENDING"
+        draft.anomaly_score = 0
+        # -----------------------------------------------------------
 
         # Явное присвоение работает намного быстрее цикла setattr
         draft.cost_hot_water = costs.get('cost_hot_water')
@@ -256,7 +260,10 @@ async def save_reading(
             total_205=total_205,
             total_cost=grand_total,
             is_approved=False,
+            # --- НОВОЕ: Инициализация риск-скоринга ---
             anomaly_flags="PENDING",
+            anomaly_score=0,
+            # ------------------------------------------
             edit_count=1,
             edit_history=[],
             **costs_for_create
