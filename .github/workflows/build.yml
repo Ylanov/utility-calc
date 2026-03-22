@@ -174,9 +174,12 @@ jobs:
 
       - name: Scan Docker image (Trivy)
         run: |
+          IMAGE=$(echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
+
           docker run --rm aquasec/trivy image \
-          --severity HIGH,CRITICAL \
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+            --scanners vuln \
+            --severity HIGH,CRITICAL \
+            ${IMAGE}:latest
 
 # ==========================================
 # ===== DEPLOY ==============================
