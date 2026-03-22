@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: false
 
 # ==========================================
-# ===== MIGRATION CHECK (ОЧЕНЬ ВАЖНО) ======
+# ===== MIGRATION CHECK =====================
 # ==========================================
 jobs:
   migration-check:
@@ -37,7 +37,8 @@ jobs:
           --health-retries=5
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -85,21 +86,15 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install ruff jq pip-audit
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          pip install -r requirements.txt
 
       - name: Lint code
         run: ruff check . --fix --unsafe-fixes
 
-      # =========================
-      # DEPENDENCY SECURITY
-      # =========================
       - name: Run pip-audit
         run: pip-audit --ignore-vuln CVE-2024-23342
 
-      # =========================
-      # TRIVY SCAN (FILESYSTEM)
-      # =========================
-      - name: Run Trivy (JSON report)
+      - name: Run Trivy (filesystem)
         run: |
           docker run --rm \
             -v $PWD:/app \
@@ -115,17 +110,11 @@ jobs:
             exit 1
           fi
 
-      # =========================
-      # GITLEAKS
-      # =========================
       - name: Run Gitleaks
         run: |
           docker run --rm -v $(pwd):/repo zricethezav/gitleaks:latest \
           detect --source=/repo --exit-code 1
 
-      # =========================
-      # SONARQUBE
-      # =========================
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v6
         env:
@@ -152,7 +141,8 @@ jobs:
       packages: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -167,13 +157,13 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest
+            latest
             type=sha
 
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build and push
+      - name: Build and push image
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -182,15 +172,11 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # =========================
-      # TRIVY IMAGE SCAN
-      # =========================
-      - name: Scan image with Trivy
+      - name: Scan Docker image (Trivy)
         run: |
           docker run --rm aquasec/trivy image \
-          --scanners vuln \
-          ghcr.io/ylanov/utility-calc:latest \
-          --severity HIGH,CRITICAL
+          --severity HIGH,CRITICAL \
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
 
 # ==========================================
 # ===== DEPLOY ==============================
@@ -209,18 +195,18 @@ jobs:
           sudo mkdir -p /opt/utility_calc/
           sudo chown -R $USER:$USER /opt/utility_calc/ || true
 
-      - name: Sync project files safely
+      - name: Sync project files
         run: |
           rsync -av \
-          --delete \
-          --exclude backups \
-          --exclude .env \
-          --exclude docker-compose.monitoring.yml \
-          --exclude prometheus.yml \
-          --exclude grafana_data \
-          --exclude prometheus_data \
-          --exclude /opt/security \
-          ./ /opt/utility_calc/
+            --delete \
+            --exclude backups \
+            --exclude .env \
+            --exclude docker-compose.monitoring.yml \
+            --exclude prometheus.yml \
+            --exclude grafana_data \
+            --exclude prometheus_data \
+            --exclude /opt/security \
+            ./ /opt/utility_calc/
 
       - name: Create environment file
         working-directory: /opt/utility_calc
@@ -238,14 +224,16 @@ jobs:
         working-directory: /opt/utility_calc
         run: docker compose pull
 
-      # ✅ БЕЗ downtime
-      - name: Deploy containers
+      # ✅ ZERO-DOWNTIME DEPLOY
+      - name: Start containers
         working-directory: /opt/utility_calc
         run: docker compose up -d --remove-orphans
 
+      # ✅ ЖДЕМ РЕАЛЬНЫЙ СТАРТ
       - name: Wait for startup
-        run: sleep 80
+        run: sleep 60
 
+      # ✅ ПРОВЕРЯЕМ ЧЕРЕЗ NGINX (production flow)
       - name: Health check
         working-directory: /opt/utility_calc
         run: |
@@ -268,9 +256,9 @@ jobs:
           if [ "$SUCCESS" != "true" ]; then
             echo "Deployment failed!"
 
-            docker compose logs --tail 50 web_jkh || true
-            docker compose logs --tail 50 web_arsenal_gsm || true
-            docker compose logs --tail 50 nginx || true
+            docker compose logs --tail 100 web_jkh || true
+            docker compose logs --tail 100 web_arsenal_gsm || true
+            docker compose logs --tail 100 nginx || true
 
             exit 1
           fi
