@@ -48,13 +48,16 @@ jobs:
         run: |
           pip install -r requirements.txt
 
+      - name: Wait for DB
+        run: |
+          until pg_isready -h localhost -p 5432; do
+            sleep 2
+          done
+
       - name: Run migrations
         env:
           DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/test_db
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: test_db
         run: |
           alembic upgrade head
 
