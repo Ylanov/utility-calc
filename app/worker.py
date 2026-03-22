@@ -148,9 +148,6 @@ def task_failure_handler(task_id, exception, task, *args, **kwargs):
 # =====================================================
 
 def start_metrics_server():
-    """
-    Запускаем HTTP сервер метрик только в одном процессе
-    """
     try:
         port = int(os.environ.get("METRICS_PORT", "8001"))
         start_http_server(port)
@@ -159,7 +156,8 @@ def start_metrics_server():
         print(f"[Metrics] Failed to start metrics server: {e}")
 
 
-if os.environ.get("ENABLE_METRICS", "true").lower() == "true":
-    # Только главный процесс запускает сервер
-    if os.environ.get("CELERY_WORKER_PID") is None:
+# 🔥 ВКЛЮЧАЕМ ТОЛЬКО ЯВНО
+if os.environ.get("ENABLE_METRICS", "false").lower() == "true":
+    # Запускаем только в одном процессе (защита от gunicorn/celery fork)
+    if os.getpid() == 1:
         start_metrics_server()
