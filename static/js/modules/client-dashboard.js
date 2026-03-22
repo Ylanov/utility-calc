@@ -447,8 +447,18 @@ export const ClientDashboard = {
     },
 
     async downloadReceipt(id) {
-        toast('Скачивание квитанции...', 'info');
-        await api.download(`/client/receipts/${id}`, `receipt_${id}.pdf`);
+        toast('Генерация квитанции...', 'info');
+        try {
+            // БЫЛО: await api.download(`/client/receipts/${id}`, `receipt_${id}.pdf`);
+            // СТАЛО:
+            const res = await api.get(`/client/receipts/${id}`);
+            if (res.url) {
+                // Открываем ссылку в новой вкладке — браузер сам скачает PDF без поломок
+                window.open(res.url, '_blank');
+            }
+        } catch (e) {
+            toast('Ошибка скачивания: ' + e.message, 'error');
+        }
     },
 
     async skipFirstSetup() {

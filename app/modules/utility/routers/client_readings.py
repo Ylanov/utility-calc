@@ -5,7 +5,6 @@ from decimal import Decimal
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -40,18 +39,6 @@ class ReadingService:
             )
         except Exception:
             raise HTTPException(400, "Некорректный формат данных")
-
-    @staticmethod
-    def validate(hot, cold, elect, prev):
-        zero = Decimal("0.000")
-        p_hot = prev.hot_water if prev and prev.hot_water is not None else zero
-        p_cold = prev.cold_water if prev and prev.cold_water is not None else zero
-        p_elect = prev.electricity if prev and prev.electricity is not None else zero
-
-        if hot < p_hot or cold < p_cold or elect < p_elect:
-            raise HTTPException(400, "Новые показания не могут быть меньше предыдущих")
-
-        return p_hot, p_cold, p_elect
 
     @staticmethod
     def calculate_costs(user: User, tariff: Tariff, hot, cold, elect, p_hot, p_cold, p_elect):
@@ -165,7 +152,7 @@ async def save_reading(
         select(MeterReading)
         .where(MeterReading.user_id == current_user.id)
         .order_by(MeterReading.created_at.desc())
-        .limit(3)
+        .limit(6)  # Запрашиваем 6, чтобы точно найти последнее ручное
     )
     adj_task = db.execute(
         select(Adjustment.account_type, func.sum(Adjustment.amount))
@@ -180,11 +167,31 @@ async def save_reading(
 
     # Разделяем на current_reading (текущий период) и prev (прошлые периоды)
     draft = next((r for r in readings if r.period_id == period.id), None)
-    prev = next((r for r in readings if r.is_approved and r.period_id != period.id), None)
 
-    p_hot, p_cold, p_elect = ReadingService.validate(hot, cold, elect, prev)
+    # Последнее УТВЕРЖДЕННОЕ показание (включая AUTO_GENERATED) для расчета дельты и денег
+    prev_latest = next((r for r in readings if r.is_approved and r.period_id != period.id), None)
 
-    # 3. Высчитываем базовые стоимости (Внутри работают быстрые float расчеты)
+    # Последнее РЕАЛЬНОЕ показание (переданное человеком) - для строгой проверки на "дурака"
+    prev_manual = next(
+        (r for r in readings if r.is_approved and r.period_id != period.id and r.anomaly_flags != "AUTO_GENERATED"),
+        None)
+
+    zero = Decimal("0.000")
+
+    # --- УМНАЯ ВАЛИДАЦИЯ ---
+    p_hot_man = prev_manual.hot_water if prev_manual and prev_manual.hot_water is not None else zero
+    p_cold_man = prev_manual.cold_water if prev_manual and prev_manual.cold_water is not None else zero
+    p_elect_man = prev_manual.electricity if prev_manual and prev_manual.electricity is not None else zero
+
+    if hot < p_hot_man or cold < p_cold_man or elect < p_elect_man:
+        raise HTTPException(400, "Новые показания не могут быть меньше ваших последних реально переданных показаний.")
+
+    # Для расчета дельты объемов и денег берем ПОСЛЕДНИЕ (даже если они накручены системой)
+    p_hot = prev_latest.hot_water if prev_latest else zero
+    p_cold = prev_latest.cold_water if prev_latest else zero
+    p_elect = prev_latest.electricity if prev_latest else zero
+
+    # 3. Высчитываем базовые стоимости (Внутри работают быстрые float расчеты, разрешающие минусы)
     costs = ReadingService.calculate_costs(current_user, tariff, hot, cold, elect, p_hot, p_cold, p_elect)
 
     # 4. Сборка долгов и итогов
@@ -226,10 +233,8 @@ async def save_reading(
         draft.total_205 = total_205
         draft.total_cost = grand_total
 
-        # --- НОВОЕ: Сброс риск-скоринга перед отправкой в Celery ---
         draft.anomaly_flags = "PENDING"
         draft.anomaly_score = 0
-        # -----------------------------------------------------------
 
         # Явное присвоение работает намного быстрее цикла setattr
         draft.cost_hot_water = costs.get('cost_hot_water')
@@ -260,10 +265,8 @@ async def save_reading(
             total_205=total_205,
             total_cost=grand_total,
             is_approved=False,
-            # --- НОВОЕ: Инициализация риск-скоринга ---
             anomaly_flags="PENDING",
             anomaly_score=0,
-            # ------------------------------------------
             edit_count=1,
             edit_history=[],
             **costs_for_create
@@ -355,7 +358,6 @@ async def download_client_receipt(
             .order_by(Tariff.valid_from.desc())
         )).scalars().first()
 
-    # если вообще нет тарифов — это уже критическая ошибка
     if not tariff:
         raise HTTPException(500, "Тариф не найден")
 
@@ -393,28 +395,16 @@ async def download_client_receipt(
 
     # 7. Безопасный ключ для S3
     period_id = reading.period.id if reading.period else "unknown"
-
     key = f"receipts/{period_id}/client_view_{reading.user.id}_{uuid.uuid4().hex[:8]}.pdf"
 
     # 8. Загрузка в S3
-    upload_success = await asyncio.to_thread(
-        s3_service.upload_file,
-        pdf_path,
-        key
-    )
+    upload_success = await asyncio.to_thread(s3_service.upload_file, pdf_path, key)
 
     if upload_success:
-        # удаляем локальный файл
         await asyncio.to_thread(os.remove, pdf_path)
+        url = await asyncio.to_thread(s3_service.get_presigned_url, key, 300)
 
-        # получаем ссылку
-        url = await asyncio.to_thread(
-            s3_service.get_presigned_url,
-            key,
-            300
-        )
-
-        return RedirectResponse(url=url)
-
+        # ВОЗВРАЩАЕМ JSON С ССЫЛКОЙ
+        return {"status": "success", "url": url}
     else:
         raise HTTPException(500, "Ошибка генерации файла")

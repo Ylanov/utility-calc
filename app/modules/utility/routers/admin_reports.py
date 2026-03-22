@@ -3,7 +3,7 @@ import uuid
 import asyncio
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import RedirectResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -72,7 +72,7 @@ async def get_receipt_pdf(
     try:
         temp_dir = "/tmp"
 
-        # 🔥 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Выносим рендеринг PDF в отдельный поток
+        # Выносим рендеринг PDF в отдельный поток
         pdf_path = await asyncio.to_thread(
             generate_receipt_pdf,
             user=reading.user,
@@ -86,16 +86,15 @@ async def get_receipt_pdf(
 
         s3_key = f"receipts/{reading.period.id}/admin_view_{reading.user.id}_{uuid.uuid4().hex[:8]}.pdf"
 
-        # 🔥 КРИТИЧЕСКОЕ ИСПРАВЛЕНИЕ: Синхронный вызов Boto3 вынесен в отдельный поток
+        # Синхронный вызов Boto3 вынесен в отдельный поток
         upload_success = await asyncio.to_thread(s3_service.upload_file, pdf_path, s3_key)
 
         if upload_success:
-            await asyncio.to_thread(os.remove, pdf_path)  # Удаляем локальный файл в потоке
-
-            # Генерация ссылки (тоже синхронный запрос к AWS/MinIO)
+            await asyncio.to_thread(os.remove, pdf_path)
             download_url = await asyncio.to_thread(s3_service.get_presigned_url, s3_key, 300)
 
-            return RedirectResponse(url=download_url)
+            # Возвращаем JSON со ссылкой (Решение проблемы с CORS)
+            return {"status": "success", "url": download_url}
         else:
             raise HTTPException(500, "Ошибка загрузки файла в хранилище")
 

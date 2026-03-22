@@ -1,5 +1,3 @@
-# app/modules/utility/services/admin_readings_service.py
-
 from decimal import Decimal
 from typing import Optional
 from fastapi import HTTPException
@@ -146,11 +144,14 @@ async def bulk_approve_drafts(db: AsyncSession):
 
     for reading, user in drafts_rows:
         prev = prev_readings_map.get(reading.user_id)
-        p_hot, p_cold, p_elect = D(prev.hot_water) if prev else zero, D(prev.cold_water) if prev else zero, D(
-            prev.electricity) if prev else zero
+        p_hot = D(prev.hot_water) if prev else zero
+        p_cold = D(prev.cold_water) if prev else zero
+        p_elect = D(prev.electricity) if prev else zero
+
         cur_hot, cur_cold, cur_elect = D(reading.hot_water), D(reading.cold_water), D(reading.electricity)
 
-        if cur_hot < p_hot or cur_cold < p_cold or cur_elect < p_elect: continue
+        # ❗ ВАЖНО: Строка валидации удалена. Если черновик существует, значит он уже прошел
+        # валидацию при сохранении жильцом или админом. Разрешаем минусовые объемы (перерасчет).
 
         user_tariff = tariffs_map.get(user.tariff_id) if getattr(user, 'tariff_id', None) else default_tariff
 
@@ -266,15 +267,28 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
     t = (await db.execute(select(Tariff).where(Tariff.id == getattr(user, 'tariff_id', 1)))).scalars().first() or \
         (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().first()
 
-    prev = (
+    # ❗ ИСПРАВЛЕНИЕ: Умная история для ручного ввода
+    history = (
         await db.execute(select(MeterReading).where(MeterReading.user_id == user.id, MeterReading.is_approved)
-                         .order_by(MeterReading.created_at.desc()).limit(1))).scalars().first()
+                         .order_by(MeterReading.created_at.desc()).limit(6))).scalars().all()
+
+    prev_latest = history[0] if history else None
+    prev_manual = next((r for r in history if r.anomaly_flags != "AUTO_GENERATED"), None)
 
     zero = Decimal("0.000")
-    p_hot, p_cold, p_elect = prev.hot_water if prev else zero, prev.cold_water if prev else zero, prev.electricity if prev else zero
 
-    if data.hot_water < p_hot or data.cold_water < p_cold or data.electricity < p_elect:
-        raise HTTPException(400, "Новые показания не могут быть меньше предыдущих!")
+    # Строгая проверка на опечатки: сравниваем с ручными показаниями
+    p_hot_man = prev_manual.hot_water if prev_manual else zero
+    p_cold_man = prev_manual.cold_water if prev_manual else zero
+    p_elect_man = prev_manual.electricity if prev_manual else zero
+
+    if data.hot_water < p_hot_man or data.cold_water < p_cold_man or data.electricity < p_elect_man:
+        raise HTTPException(400, "Новые показания не могут быть меньше реально переданных ранее!")
+
+    # Расчет дельты объемов от самых последних (включая автоматические начисления)
+    p_hot = prev_latest.hot_water if prev_latest else zero
+    p_cold = prev_latest.cold_water if prev_latest else zero
+    p_elect = prev_latest.electricity if prev_latest else zero
 
     d_hot, d_cold, d_elect = data.hot_water - p_hot, data.cold_water - p_cold, data.electricity - p_elect
 
@@ -285,10 +299,6 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
 
     costs = calculate_utilities(user=user, tariff=t, volume_hot=d_hot, volume_cold=d_cold, volume_sewage=d_hot + d_cold,
                                 volume_electricity_share=user_share_elect)
-
-    history = (
-        await db.execute(select(MeterReading).where(MeterReading.user_id == user.id, MeterReading.is_approved)
-                         .order_by(MeterReading.created_at.desc()).limit(6))).scalars().all()
 
     # ИСПОЛЬЗУЕМ V2 ДЛЯ РАСЧЕТА РИСКА
     temp_reading = MeterReading(hot_water=data.hot_water, cold_water=data.cold_water, electricity=data.electricity)
@@ -356,15 +366,26 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
     t = (await db.execute(select(Tariff).where(Tariff.id == getattr(user, 'tariff_id', 1)))).scalars().first() or \
         (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().first()
 
-    prev = (
+    # ❗ ИСПРАВЛЕНИЕ: Умная история для разового начисления
+    history = (
         await db.execute(select(MeterReading).where(MeterReading.user_id == user.id, MeterReading.is_approved)
-                         .order_by(MeterReading.created_at.desc()).limit(1))).scalars().first()
+                         .order_by(MeterReading.created_at.desc()).limit(6))).scalars().all()
+
+    prev_latest = history[0] if history else None
+    prev_manual = next((r for r in history if r.anomaly_flags != "AUTO_GENERATED"), None)
 
     zero = Decimal("0.000")
-    p_hot, p_cold, p_elect = prev.hot_water if prev else zero, prev.cold_water if prev else zero, prev.electricity if prev else zero
 
-    if data.hot_water < p_hot or data.cold_water < p_cold or data.electricity < p_elect:
-        raise HTTPException(400, "Новые показания не могут быть меньше предыдущих!")
+    p_hot_man = prev_manual.hot_water if prev_manual else zero
+    p_cold_man = prev_manual.cold_water if prev_manual else zero
+    p_elect_man = prev_manual.electricity if prev_manual else zero
+
+    if data.hot_water < p_hot_man or data.cold_water < p_cold_man or data.electricity < p_elect_man:
+        raise HTTPException(400, "Новые показания не могут быть меньше реально переданных ранее!")
+
+    p_hot = prev_latest.hot_water if prev_latest else zero
+    p_cold = prev_latest.cold_water if prev_latest else zero
+    p_elect = prev_latest.electricity if prev_latest else zero
 
     d_hot, d_cold, d_elect = data.hot_water - p_hot, data.cold_water - p_cold, data.electricity - p_elect
 

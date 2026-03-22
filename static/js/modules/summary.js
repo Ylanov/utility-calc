@@ -200,8 +200,9 @@ export const SummaryModule = {
             const res = await api.post(`/admin/receipts/${id}/generate`, {});
             const result = await this.pollTask(res.task_id);
             if (result.download_url) {
-                this.triggerFileDownload(result.download_url, `receipt_${id}.pdf`);
-                toast('Файл скачивается', 'success');
+                // ❗ ИСПРАВЛЕНИЕ: Открываем ссылку в новой вкладке, чтобы браузер сам скачал PDF
+                window.open(result.download_url, '_blank');
+                toast('Файл открыт в новой вкладке', 'success');
             } else {
                 throw new Error('Ссылка на файл не получена');
             }
@@ -232,7 +233,8 @@ export const SummaryModule = {
             const res = await api.post(`/admin/reports/bulk-zip?period_id=${this.state.selectedPeriodId}`, {});
             const result = await this.pollTask(res.task_id);
             if (result.download_url) {
-                this.triggerFileDownload(result.download_url, `archive_${this.state.selectedPeriodId}.zip`);
+                 // Для ZIP тоже надежнее использовать window.open
+                window.open(result.download_url, '_blank');
                 toast('Архив скачивается', 'success');
             }
         } catch (e) {
@@ -240,16 +242,6 @@ export const SummaryModule = {
         } finally {
             setLoading(this.dom.btnZip, false);
         }
-    },
-
-    triggerFileDownload(url, filename) {
-        const link = document.createElement('a');
-        link.href = url;
-        link.setAttribute('download', filename || '');
-        link.style.display = 'none';
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
     },
 
     async pollTask(taskId) {
