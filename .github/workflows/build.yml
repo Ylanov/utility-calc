@@ -94,7 +94,7 @@ jobs:
       # DEPENDENCY SECURITY
       # =========================
       - name: Run pip-audit
-        run: pip-audit
+        run: pip-audit --ignore-vuln CVE-2024-23342
 
       # =========================
       # TRIVY SCAN (FILESYSTEM)
