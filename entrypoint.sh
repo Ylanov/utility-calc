@@ -40,7 +40,6 @@ exec gunicorn app.main:app \
   --max-requests=$MAX_REQUESTS \
   --max-requests-jitter=$MAX_REQUESTS_JITTER \
   --worker-tmp-dir /dev/shm \
-  --preload \
   --log-level info \
   --access-logfile - \
   --error-logfile -

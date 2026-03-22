@@ -244,12 +244,12 @@ jobs:
         run: docker compose up -d --remove-orphans
 
       - name: Wait for startup
-        run: sleep 40
+        run: sleep 80
 
       - name: Health check
         working-directory: /opt/utility_calc
         run: |
-          ATTEMPTS=15
+          ATTEMPTS=30
           SUCCESS=false
 
           for i in $(seq 1 $ATTEMPTS); do
@@ -262,7 +262,7 @@ jobs:
             fi
 
             echo "Health check attempt $i failed (status code: $STATUS)"
-            sleep 5
+            sleep 3
           done
 
           if [ "$SUCCESS" != "true" ]; then
