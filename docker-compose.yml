@@ -148,7 +148,7 @@ services:
       APP_MODE: "jkh"
       DB_HOST: pgbouncer
       DB_PORT: 5432
-      GUNICORN_MAX_WORKERS: 24
+      GUNICORN_MAX_WORKERS: 4
       GUNICORN_THREADS: 4
     ports:
       - "8001:8000"
@@ -184,7 +184,7 @@ services:
       APP_MODE: "arsenal_gsm"
       DB_HOST: pgbouncer
       DB_PORT: 5432
-      GUNICORN_MAX_WORKERS: 16
+      GUNICORN_MAX_WORKERS: 4
       GUNICORN_THREADS: 4
     ports:
       - "8002:8000"
