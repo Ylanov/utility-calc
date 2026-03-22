@@ -185,10 +185,11 @@ jobs:
       # =========================
       # TRIVY IMAGE SCAN
       # =========================
-      - name: Scan Docker image
+      - name: Scan image with Trivy
         run: |
           docker run --rm aquasec/trivy image \
-          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+          --scanners vuln \
+          ghcr.io/ylanov/utility-calc:latest \
           --severity HIGH,CRITICAL
 
 # ==========================================
