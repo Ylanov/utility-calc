@@ -13,16 +13,60 @@ concurrency:
   group: production-deploy
   cancel-in-progress: false
 
+# ==========================================
+# ===== MIGRATION CHECK (ОЧЕНЬ ВАЖНО) ======
+# ==========================================
 jobs:
+  migration-check:
+    name: Check DB Migrations
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run migrations
+        env:
+          DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/test_db
+        run: |
+          alembic upgrade head
+
+# ==========================================
+# ===== QUALITY =============================
+# ==========================================
   quality-check:
     name: Code Quality and Security
+    needs: migration-check
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Обязательно для SonarQube (нужна вся история коммитов)
+          fetch-depth: 0
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -33,14 +77,20 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ruff jq
+          pip install ruff jq pip-audit
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
       - name: Lint code
         run: ruff check . --fix --unsafe-fixes
 
       # =========================
-      # TRIVY SCAN (JSON)
+      # DEPENDENCY SECURITY
+      # =========================
+      - name: Run pip-audit
+        run: pip-audit
+
+      # =========================
+      # TRIVY SCAN (FILESYSTEM)
       # =========================
       - name: Run Trivy (JSON report)
         run: |
@@ -51,9 +101,6 @@ jobs:
             --output /app/trivy-report.json \
             --severity HIGH,CRITICAL
 
-      # =========================
-      # FAIL ON CRITICAL (TRIVY)
-      # =========================
       - name: Fail on critical vulnerabilities
         run: |
           if jq '.Results[].Vulnerabilities[]? | select(.Severity=="CRITICAL")' trivy-report.json | grep -q .; then
@@ -64,13 +111,13 @@ jobs:
       # =========================
       # GITLEAKS
       # =========================
-      - name: Run Gitleaks (JSON)
+      - name: Run Gitleaks
         run: |
           docker run --rm -v $(pwd):/repo zricethezav/gitleaks:latest \
-          detect --source=/repo --report-format json --report-path=/repo/gitleaks-report.json --exit-code 0 || true
+          detect --source=/repo --exit-code 1
 
       # =========================
-      # SONARQUBE SCAN (БЭКЕНД + ФРОНТЕНД)
+      # SONARQUBE
       # =========================
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v6
@@ -85,7 +132,9 @@ jobs:
             -Dsonar.sources=app,static,templates
             -Dsonar.exclusions=alembic/**,alembic_arsenal/**,app/tests/**,static/generated_files/**
 
-
+# ==========================================
+# ===== BUILD ===============================
+# ==========================================
   build:
     name: Build and Push Docker Image
     needs: quality-check
@@ -126,6 +175,18 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # =========================
+      # TRIVY IMAGE SCAN
+      # =========================
+      - name: Scan Docker image
+        run: |
+          docker run --rm aquasec/trivy image \
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest \
+          --severity HIGH,CRITICAL
+
+# ==========================================
+# ===== DEPLOY ==============================
+# ==========================================
   deploy:
     name: Deploy to Production
     needs: build
@@ -169,11 +230,10 @@ jobs:
         working-directory: /opt/utility_calc
         run: docker compose pull
 
+      # ✅ БЕЗ downtime
       - name: Deploy containers
         working-directory: /opt/utility_calc
-        run: |
-          docker compose down
-          docker compose up -d --remove-orphans
+        run: docker compose up -d --remove-orphans
 
       - name: Wait for startup
         run: sleep 40
@@ -200,13 +260,8 @@ jobs:
           if [ "$SUCCESS" != "true" ]; then
             echo "Deployment failed!"
 
-            echo "==== WEB_JKH LOGS ===="
             docker compose logs --tail 50 web_jkh || true
-
-            echo "==== WEB_ARSENAL_GSM LOGS ===="
             docker compose logs --tail 50 web_arsenal_gsm || true
-
-            echo "==== NGINX LOGS ===="
             docker compose logs --tail 50 nginx || true
 
             exit 1

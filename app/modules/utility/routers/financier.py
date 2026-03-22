@@ -19,6 +19,7 @@ TEMP_DIR = "/app/static/temp_imports"
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
 os.makedirs(TEMP_DIR, exist_ok=True)
 
+
 @router.post("/import-debts", summary="Фоновый импорт долгов из 1С")
 async def upload_debts_1c(
     account_type: str = Form(..., pattern="^(209|205)$", description="Тип счета: 209 или 205"),
@@ -41,19 +42,24 @@ async def upload_debts_1c(
     await file.seek(0)
 
     if file_size > MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail=f"Файл слишком большой. Максимум {MAX_FILE_SIZE / 1024 / 1024} MB")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Файл слишком большой. Максимум {MAX_FILE_SIZE / 1024 / 1024} MB"
+        )
 
     ext = file.filename.split(".")[-1]
     unique_name = f"{uuid.uuid4()}.{ext}"
     file_path = os.path.join(TEMP_DIR, unique_name)
 
     try:
-        # 🔥 ИСПРАВЛЕНИЕ: Читаем файл асинхронно и сохраняем в фоновом потоке
         content = await file.read()
+
         def save_file():
             with open(file_path, "wb") as buffer:
                 buffer.write(content)
+
         await asyncio.to_thread(save_file)
+
     except Exception:
         logger.exception("Failed to save uploaded file")
         raise HTTPException(status_code=500, detail="Ошибка сохранения файла")
@@ -67,7 +73,12 @@ async def upload_debts_1c(
         "account_type": account_type
     }
 
-@router.get("/users-status", response_model=PaginatedResponse[UserDebtResponse], summary="Список пользователей с долгами")
+
+@router.get(
+    "/users-status",
+    response_model=PaginatedResponse[UserDebtResponse],
+    summary="Список пользователей с долгами"
+)
 async def get_users_with_debts(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=500),
@@ -80,29 +91,42 @@ async def get_users_with_debts(
 
     offset = (page - 1) * limit
 
-    res_period = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active.is_(True)))
+    res_period = await db.execute(
+        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
+    )
     active_period = res_period.scalars().first()
     period_id = active_period.id if active_period else None
 
+    # ✅ ГЛАВНОЕ ИСПРАВЛЕНИЕ — группировка + суммирование
     stmt = select(
         User.id,
         User.username,
         User.dormitory,
-        MeterReading.debt_209,
-        MeterReading.overpayment_209,
-        MeterReading.debt_205,
-        MeterReading.overpayment_205,
-        MeterReading.total_cost
+        func.coalesce(func.sum(MeterReading.debt_209), 0).label("debt_209"),
+        func.coalesce(func.sum(MeterReading.overpayment_209), 0).label("overpayment_209"),
+        func.coalesce(func.sum(MeterReading.debt_205), 0).label("debt_205"),
+        func.coalesce(func.sum(MeterReading.overpayment_205), 0).label("overpayment_205"),
+        func.coalesce(func.sum(MeterReading.total_cost), 0).label("current_total_cost"),
     ).outerjoin(
         MeterReading,
-        (User.id == MeterReading.user_id) & (MeterReading.period_id == period_id)
+        (User.id == MeterReading.user_id) &
+        (MeterReading.period_id == period_id)
+    ).where(
+        User.is_deleted.is_(False)
     )
 
     if search:
         search_value = f"%{search.lower()}%"
         stmt = stmt.where(func.lower(User.username).like(search_value))
 
-    count_stmt = select(func.count(User.id))
+    # ✅ группировка убирает дубли
+    stmt = stmt.group_by(User.id, User.username, User.dormitory)
+
+    # ✅ корректный count (без join)
+    count_stmt = select(func.count(User.id)).where(
+        User.is_deleted.is_(False)
+    )
+
     if search:
         count_stmt = count_stmt.where(func.lower(User.username).like(search_value))
 
@@ -110,6 +134,7 @@ async def get_users_with_debts(
     total_items = total_res.scalar_one()
 
     stmt = stmt.order_by(User.dormitory, User.username).limit(limit).offset(offset)
+
     result = await db.execute(stmt)
     rows = result.all()
 
@@ -119,11 +144,11 @@ async def get_users_with_debts(
             "id": row.id,
             "username": row.username,
             "dormitory": row.dormitory,
-            "debt_209": row.debt_209 or 0,
-            "overpayment_209": row.overpayment_209 or 0,
-            "debt_205": row.debt_205 or 0,
-            "overpayment_205": row.overpayment_205 or 0,
-            "current_total_cost": row.total_cost or 0
+            "debt_209": row.debt_209,
+            "overpayment_209": row.overpayment_209,
+            "debt_205": row.debt_205,
+            "overpayment_205": row.overpayment_205,
+            "current_total_cost": row.current_total_cost
         })
 
     return {

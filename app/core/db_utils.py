@@ -18,17 +18,6 @@ def add_column_partitioned(table: str, column_sql: str) -> str:
 
 
 def add_column_partitioned_safe(table: str, column_sql: str) -> str:
-    """
-    Генерирует SQL для безопасного добавления колонки во все partition.
-
-    Используется, если есть риск рассинхронизации (как у тебя было).
-    Добавляет колонку:
-    1. В parent таблицу
-    2. Во все дочерние partition
-
-    Пример:
-        add_column_partitioned_safe("public.readings", "anomaly_score INTEGER DEFAULT 0")
-    """
     return f"""
     ALTER TABLE {table}
     ADD COLUMN IF NOT EXISTS {column_sql};
@@ -44,7 +33,7 @@ def add_column_partitioned_safe(table: str, column_sql: str) -> str:
         LOOP
             BEGIN
                 EXECUTE format(
-                    'ALTER TABLE %s ADD COLUMN {column_sql}',
+                    'ALTER TABLE %s ADD COLUMN IF NOT EXISTS {column_sql}',
                     r.child
                 );
             EXCEPTION
