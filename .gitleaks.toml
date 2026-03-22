@@ -1,0 +1,6 @@
+[allowlist]
+description = "ignore old secrets in history"
+paths = [
+  '''nginx/certs/server.key''',
+  '''app/config.py'''
+]
