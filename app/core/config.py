@@ -104,16 +104,17 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
+# Проверки для production
 if settings.ENVIRONMENT == "production":
-    if settings.SECRET_KEY.lower().startswith("default"):
-        raise RuntimeError("В production запрещено использовать default SECRET_KEY")
 
-    # ДОБАВЛЕНО: Защита от использования тестового ключа шифрования в продакшене
-    if settings.ENCRYPTION_KEY == "gR8g_2t9R2YwO9yZ0qEa7L_M4-c8Kx2mJ1rYvW4PZ7o=":
-        raise RuntimeError("В production запрещено использовать default ENCRYPTION_KEY. Укажите новый в .env")
+    if not settings.SECRET_KEY or len(settings.SECRET_KEY) < 32:
+        raise RuntimeError("В production требуется безопасный SECRET_KEY (не менее 32 символов)")
 
-    if settings.DB_USER == "postgres" and settings.DB_PASS == "postgres":
-        # Это предупреждение можно убрать, если PgBouncer использует те же креды внутри сети
-        pass
+    if not settings.ENCRYPTION_KEY:
+        raise RuntimeError("В production требуется ENCRYPTION_KEY. Укажите его в .env")
+
+    if len(settings.ENCRYPTION_KEY) < 43:
+        raise RuntimeError("ENCRYPTION_KEY должен быть корректным ключом Fernet")
+
     if not settings.REDIS_URL.startswith("redis://"):
         raise RuntimeError("Некорректный REDIS_URL для production")
