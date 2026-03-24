@@ -18,22 +18,6 @@ def check_role(user: User, allowed_roles: list):
     if user.role not in allowed_roles:
         raise HTTPException(status_code=403, detail="Доступ запрещен")
 
-@router.post("/api/admin/readings/import")
-async def import_readings(
-        file: UploadFile = File(...),
-        current_user: User = Depends(get_current_user),
-        db: AsyncSession = Depends(get_db)
-):
-    check_role(current_user, ["accountant", "admin"])
-    if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="Разрешены только файлы Excel")
-
-    active_period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))).scalars().first()
-    if not active_period: raise HTTPException(status_code=400, detail="Нет активного периода")
-
-    content = await file.read()
-    return await import_readings_from_excel(content, db, active_period.id)
-
 @router.get("/api/admin/readings")
 async def get_admin_readings(
         page: int = Query(1, ge=1),
