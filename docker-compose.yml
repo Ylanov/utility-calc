@@ -112,15 +112,15 @@ services:
     env_file:
       - .env
     environment:
-      DB_HOST: pgbouncer
+      DB_HOST: db           # <--- ИЗМЕНЕНО: Подключаемся напрямую к Postgres!
       DB_PORT: 5432
     depends_on:
-      pgbouncer:
+      db: # <--- ИЗМЕНЕНО: Ждем саму базу, а не PgBouncer
         condition: service_healthy
     command: >
       sh -c "
       set -e
-      echo 'Waiting for PgBouncer...'
+      echo 'Waiting for DB...'
       sleep 5
       echo 'Running migrations...'
       alembic upgrade head
