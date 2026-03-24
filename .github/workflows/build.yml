@@ -102,10 +102,14 @@ jobs:
 
       - name: Run Trivy (filesystem)
         run: |
+          mkdir -p .trivy-cache
+
           docker run --rm \
             -u $(id -u):$(id -g) \
+            -e TRIVY_CACHE_DIR=/tmp/trivy-cache \
+            -e XDG_CACHE_HOME=/tmp \
             -v $PWD:/app \
-            -v ~/.cache/trivy:/root/.cache/trivy \
+            -v $PWD/.trivy-cache:/tmp/trivy-cache \
             aquasec/trivy:0.50.1 fs /app \
             --format json \
             --output /app/trivy-report.json \

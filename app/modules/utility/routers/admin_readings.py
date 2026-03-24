@@ -1,11 +1,10 @@
 # app/modules/utility/routers/admin_readings.py
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.future import select
 
 from app.core.database import get_db
-from app.modules.utility.models import User, BillingPeriod
+from app.modules.utility.models import User
 from app.modules.utility.schemas import ApproveRequest, AdminManualReadingSchema
 from app.core.dependencies import get_current_user
 
