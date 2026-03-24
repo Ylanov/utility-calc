@@ -1,7 +1,6 @@
 # app/modules/utility/services/calculations.py
 import logging
 from decimal import Decimal, ROUND_HALF_UP
-from app.modules.utility.models import User, Tariff
 
 logger = logging.getLogger("utility_calculations")
 

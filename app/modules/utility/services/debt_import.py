@@ -2,7 +2,7 @@
 import openpyxl
 import logging
 from decimal import Decimal
-from typing import Dict, Optional, List
+from typing import Dict, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from rapidfuzz import process, fuzz

@@ -17,7 +17,7 @@ from fastapi_limiter.depends import RateLimiter
 
 from app.core.database import get_db
 # ИЗМЕНЕНИЕ: Добавляем импорт Room
-from app.modules.utility.models import User, Room
+from app.modules.utility.models import User
 from app.core.auth import verify_password, create_access_token, get_current_user, encrypt_totp_secret, \
     decrypt_totp_secret, get_password_hash
 from app.core.config import settings

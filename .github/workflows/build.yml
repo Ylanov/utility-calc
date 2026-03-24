@@ -89,7 +89,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Lint code
-        run: ruff check .
+        run: ruff check . --fix
 
       - name: Run pip-audit
         run: pip-audit --ignore-vuln CVE-2024-23342

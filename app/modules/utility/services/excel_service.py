@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.modules.utility.models import User, MeterReading, BillingPeriod, Room
 from app.core.auth import get_password_hash
-from app.modules.utility.services.debt_import import find_user_fuzzy, normalize_name
+from app.modules.utility.services.debt_import import normalize_name
 
 ZERO = Decimal("0.00")
 

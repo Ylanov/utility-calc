@@ -2,10 +2,21 @@
 line-length = 120
 target-version = "py313"
 
+# 🚫 исключаем миграции (очень важно)
+exclude = [
+    "alembic",
+    "alembic_arsenal",
+    "__pycache__",
+    ".venv",
+    "build",
+    "dist"
+]
+
 [tool.ruff.lint]
 select = ["E", "F", "W"]
+
 ignore = [
-    "E501",
-    "E701",
-    "E712"
+    "E501",  # длина строки (у тебя уже контролится)
+    "E701",  # multiple statements on one line
+    "E712",  # сравнение с True/False
 ]

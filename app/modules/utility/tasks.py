@@ -17,7 +17,7 @@ from app.worker import celery
 from app.core.database import SessionLocalSync
 from app.core.config import settings
 # ИЗМЕНЕНИЕ: Добавляем импорт Room
-from app.modules.utility.models import MeterReading, Tariff, BillingPeriod, Adjustment, SystemSetting, User, Room
+from app.modules.utility.models import MeterReading, Tariff, BillingPeriod, Adjustment, SystemSetting, User
 from app.modules.utility.services.pdf_generator import generate_receipt_pdf
 from app.modules.utility.services.debt_import import sync_import_debts_process
 from app.modules.utility.services.s3_client import s3_service
