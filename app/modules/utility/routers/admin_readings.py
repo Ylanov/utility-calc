@@ -8,7 +8,7 @@ from app.core.database import get_db
 from app.modules.utility.models import User, BillingPeriod
 from app.modules.utility.schemas import ApproveRequest, AdminManualReadingSchema
 from app.core.dependencies import get_current_user
-from app.modules.utility.services.excel_service import import_readings_from_excel
+
 from app.modules.utility.services import admin_readings_service
 from app.modules.utility.schemas import OneTimeChargeSchema
 

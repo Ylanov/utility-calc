@@ -103,6 +103,7 @@ jobs:
       - name: Run Trivy (filesystem)
         run: |
           docker run --rm \
+            -u $(id -u):$(id -g) \
             -v $PWD:/app \
             -v ~/.cache/trivy:/root/.cache/trivy \
             aquasec/trivy:0.50.1 fs /app \
@@ -183,7 +184,9 @@ jobs:
         run: |
           IMAGE=$(echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
 
-          docker run --rm aquasec/trivy:0.50.1 image \
+          docker run --rm \
+            -u $(id -u):$(id -g) \
+            aquasec/trivy:0.50.1 image \
             --scanners vuln \
             --severity HIGH,CRITICAL \
             ${IMAGE}:latest
