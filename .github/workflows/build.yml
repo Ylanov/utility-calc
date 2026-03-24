@@ -188,11 +188,17 @@ jobs:
         run: |
           IMAGE=$(echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
 
+          mkdir -p .trivy-cache
+
           docker run --rm \
             -u $(id -u):$(id -g) \
+            -e TRIVY_CACHE_DIR=/tmp/trivy-cache \
+            -e XDG_CACHE_HOME=/tmp \
+            -v $PWD/.trivy-cache:/tmp/trivy-cache \
             aquasec/trivy:0.50.1 image \
             --scanners vuln \
             --severity HIGH,CRITICAL \
+            --cache-dir /tmp/trivy-cache \
             ${IMAGE}:latest
 
 # ==========================================
