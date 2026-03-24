@@ -9,7 +9,6 @@ from alembic import context
 
 # Импорты ваших моделей
 from app.modules.utility.models import Base
-from app.core.config import settings
 
 config = context.config
 
@@ -19,25 +18,33 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 
-def get_database_url() -> str:
-    # Забираем доступы (с фоллбэком на стандартные имена переменных Postgres)
-    db_user = os.getenv("POSTGRES_USER", os.getenv("DB_USER", "postgres"))
-    db_pass = os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASS", ""))
+def get_async_url() -> str:
+    """
+    Получает URL базы данных и принудительно устанавливает асинхронный драйвер asyncpg.
+    Это решает проблему с GitHub Actions, который передает 'postgresql://...'
+    """
+    url = os.getenv("DATABASE_URL")
 
-    # ❗ ВАЖНО: подключаемся напрямую к postgres (по умолчанию 'db')
-    db_host = os.getenv("DB_HOST_DIRECT", "db")
-    db_port = os.getenv("DB_PORT", "5432")
-    db_name = os.getenv("POSTGRES_DB", os.getenv("DB_NAME", "utility_db"))
+    if not url:
+        db_user = os.getenv("POSTGRES_USER", os.getenv("DB_USER", "postgres"))
+        db_pass = os.getenv("POSTGRES_PASSWORD", os.getenv("DB_PASS", ""))
+        db_host = os.getenv("DB_HOST_DIRECT", os.getenv("DB_HOST", "localhost"))
+        db_port = os.getenv("DB_PORT", "5432")
+        db_name = os.getenv("POSTGRES_DB", os.getenv("DB_NAME", "utility_db"))
+        url = f"postgresql://{db_user}:{db_pass}@{db_host}:{db_port}/{db_name}"
 
-    # Драйвер обязательно должен быть +asyncpg для асинхронного движка
-    return f"postgresql+asyncpg://{db_user}:{db_pass}@{db_host}:{db_port}/{db_name}"
+    # ❗ ПРИНУДИТЕЛЬНО МЕНЯЕМ ДРАЙВЕР НА asyncpg
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql+asyncpg://", 1)
+    elif url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+    return url
 
 
 def run_migrations_offline() -> None:
-    url = os.getenv("DATABASE_URL") or get_database_url()
-
     context.configure(
-        url=url,
+        url=get_async_url(),
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -56,10 +63,7 @@ def do_run_migrations(connection: Connection) -> None:
 
 async def run_migrations_online() -> None:
     configuration = config.get_section(config.config_ini_section) or {}
-
-    database_url = os.getenv("DATABASE_URL") or get_database_url()
-
-    configuration["sqlalchemy.url"] = database_url
+    configuration["sqlalchemy.url"] = get_async_url()
 
     connectable = async_engine_from_config(
         configuration,
@@ -73,10 +77,6 @@ async def run_migrations_online() -> None:
     await connectable.dispose()
 
 
-# ======================================================================
-# ❗ САМАЯ ВАЖНАЯ ЧАСТЬ, КОТОРОЙ НЕ БЫЛО: БЛОК ЗАПУСКА МИГРАЦИЙ
-# Без этого блока Alembic просто прочитает файл и ничего не сделает
-# ======================================================================
 if context.is_offline_mode():
     run_migrations_offline()
 else:
