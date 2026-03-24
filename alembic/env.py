@@ -18,22 +18,15 @@ target_metadata = Base.metadata
 
 
 def get_database_url() -> str:
-    """
-    Универсальный способ получения DATABASE_URL
-    (с fallback на settings)
-    """
-
     db_user = os.getenv("DB_USER")
     db_pass = os.getenv("DB_PASS")
-    db_host = os.getenv("DB_HOST")
-    db_port = os.getenv("DB_PORT")
+
+    # ❗ ВАЖНО: подключаемся напрямую к postgres
+    db_host = os.getenv("DB_HOST_DIRECT", "db")  # ← вот фикс
+    db_port = os.getenv("DB_PORT", "5432")
     db_name = os.getenv("DB_NAME")
 
-    if all([db_user, db_pass, db_host, db_port, db_name]):
-        return f"postgresql://{db_user}:{db_pass}@{db_host}:{db_port}/{db_name}"
-
-    # fallback
-    return settings.DATABASE_URL_SYNC
+    return f"postgresql://{db_user}:{db_pass}@{db_host}:{db_port}/{db_name}"
 
 
 def run_migrations_offline() -> None:
