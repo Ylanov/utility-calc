@@ -6,27 +6,38 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 
-# Импорт моделей и настроек проекта
-# Убедитесь, что пути app.models и app.config верны относительно корня проекта
 from app.modules.utility.models import Base
 from app.core.config import settings
 
-# Конфигурация Alembic
 config = context.config
 
-# Настройка логирования
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# Метаданные моделей для автогенерации миграций
 target_metadata = Base.metadata
 
 
+def get_database_url() -> str:
+    """
+    Универсальный способ получения DATABASE_URL
+    (с fallback на settings)
+    """
+
+    db_user = os.getenv("DB_USER")
+    db_pass = os.getenv("DB_PASS")
+    db_host = os.getenv("DB_HOST")
+    db_port = os.getenv("DB_PORT")
+    db_name = os.getenv("DB_NAME")
+
+    if all([db_user, db_pass, db_host, db_port, db_name]):
+        return f"postgresql://{db_user}:{db_pass}@{db_host}:{db_port}/{db_name}"
+
+    # fallback
+    return settings.DATABASE_URL_SYNC
+
+
 def run_migrations_offline() -> None:
-    url = (
-        os.getenv("DATABASE_URL")
-        or settings.DATABASE_URL_SYNC
-    )
+    url = os.getenv("DATABASE_URL") or get_database_url()
 
     context.configure(
         url=url,
@@ -40,7 +51,6 @@ def run_migrations_offline() -> None:
 
 
 def do_run_migrations(connection: Connection) -> None:
-    """Вспомогательная функция для запуска миграций в синхронном контексте."""
     context.configure(connection=connection, target_metadata=target_metadata)
 
     with context.begin_transaction():
@@ -50,12 +60,7 @@ def do_run_migrations(connection: Connection) -> None:
 async def run_migrations_online() -> None:
     configuration = config.get_section(config.config_ini_section) or {}
 
-    # 🔥 универсальный выбор URL
-    database_url = (
-        os.getenv("DATABASE_URL")
-        or os.getenv("DATABASE_URL_ASYNC")
-        or settings.DATABASE_URL_ASYNC
-    )
+    database_url = os.getenv("DATABASE_URL") or get_database_url()
 
     configuration["sqlalchemy.url"] = database_url
 
