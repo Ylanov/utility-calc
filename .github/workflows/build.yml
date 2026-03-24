@@ -51,7 +51,7 @@ jobs:
 
       - name: Wait for DB
         run: |
-          until pg_isready -h localhost -p 5432; do
+          until pg_isready -h localhost -p 5432 -U postgres; do
             sleep 2
           done
 
@@ -89,16 +89,23 @@ jobs:
           pip install -r requirements.txt
 
       - name: Lint code
-        run: ruff check . --fix --unsafe-fixes
+        run: ruff check .
 
       - name: Run pip-audit
         run: pip-audit --ignore-vuln CVE-2024-23342
+
+      - name: Cache Trivy DB
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db
 
       - name: Run Trivy (filesystem)
         run: |
           docker run --rm \
             -v $PWD:/app \
-            aquasec/trivy fs /app \
+            -v ~/.cache/trivy:/root/.cache/trivy \
+            aquasec/trivy:0.50.1 fs /app \
             --format json \
             --output /app/trivy-report.json \
             --severity HIGH,CRITICAL
@@ -176,7 +183,7 @@ jobs:
         run: |
           IMAGE=$(echo "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}" | tr '[:upper:]' '[:lower:]')
 
-          docker run --rm aquasec/trivy image \
+          docker run --rm aquasec/trivy:0.50.1 image \
             --scanners vuln \
             --severity HIGH,CRITICAL \
             ${IMAGE}:latest
@@ -227,16 +234,13 @@ jobs:
         working-directory: /opt/utility_calc
         run: docker compose pull
 
-      # ✅ ZERO-DOWNTIME DEPLOY
       - name: Start containers
         working-directory: /opt/utility_calc
         run: docker compose up -d --remove-orphans
 
-      # ✅ ЖДЕМ РЕАЛЬНЫЙ СТАРТ
       - name: Wait for startup
         run: sleep 60
 
-      # ✅ ПРОВЕРЯЕМ ЧЕРЕЗ NGINX (production flow)
       - name: Health check
         working-directory: /opt/utility_calc
         run: |
