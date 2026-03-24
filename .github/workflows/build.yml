@@ -135,7 +135,7 @@ jobs:
         with:
           args: >
             -Dsonar.projectKey=utility-calc
-            -Dsonar.projectName=Utility Calculator & Arsenal
+            -Dsonar.projectName="Utility Calculator & Arsenal"
             -Dsonar.python.version=3.13
             -Dsonar.sources=app,static,templates
             -Dsonar.exclusions=alembic/**,alembic_arsenal/**,app/tests/**,static/generated_files/**
