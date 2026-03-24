@@ -17,7 +17,36 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 
 # ======================================================
-# USER
+# ROOM (НОВАЯ ОСНОВА СИСТЕМЫ)
+# ======================================================
+class Room(Base):
+    __tablename__ = "rooms"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    dormitory_name = Column(String, index=True)  # общежитие
+    room_number = Column(String, index=True)     # комната / квартира
+
+    apartment_area = Column(Numeric(10, 2), default=0.00)
+    total_room_residents = Column(Integer, default=1)
+
+    # Кэш последних показаний (ускорение расчетов)
+    last_hot_water = Column(Numeric(12, 3), default=0.000)
+    last_cold_water = Column(Numeric(12, 3), default=0.000)
+    last_electricity = Column(Numeric(12, 3), default=0.000)
+
+    __table_args__ = (
+        Index(
+            "uq_room_dormitory_number",
+            "dormitory_name",
+            "room_number",
+            unique=True
+        ),
+    )
+
+
+# ======================================================
+# USER (ТЕПЕРЬ ТОЛЬКО ЖИЛЕЦ)
 # ======================================================
 class User(Base):
     __tablename__ = "users"
@@ -26,11 +55,15 @@ class User(Base):
     username = Column(String, unique=True, index=True)
     hashed_password = Column(String, nullable=False)
     role = Column(String, nullable=False)
-    dormitory = Column(String, nullable=True, index=True)
+
     workplace = Column(String, nullable=True)
+
+    # Сколько человек платит с этого аккаунта
     residents_count = Column(Integer, default=1)
-    total_room_residents = Column(Integer, default=1)
-    apartment_area = Column(Numeric(10, 2), default=0.00)
+
+    # 🔑 Связь с комнатой
+    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=True)
+    room = relationship("Room", backref="users")
 
     totp_secret = Column(String, nullable=True)
 
@@ -39,25 +72,19 @@ class User(Base):
     telegram_id = Column(String, unique=True, nullable=True, index=True)
 
     __table_args__ = (
-        # ✅ ГЛАВНОЕ ИСПРАВЛЕНИЕ (защита от дублей в разном регистре)
+        # защита от дублей username (без учета регистра)
         Index(
             "uq_user_username_lower",
             func.lower(username),
             unique=True
         ),
 
-        # 🔍 Поиск
+        # поиск по username
         Index(
             "idx_user_username_trgm",
             "username",
             postgresql_using="gin",
             postgresql_ops={"username": "gin_trgm_ops"}
-        ),
-        Index(
-            "idx_user_dormitory_trgm",
-            "dormitory",
-            postgresql_using="gin",
-            postgresql_ops={"dormitory": "gin_trgm_ops"}
         ),
     )
 
@@ -93,6 +120,7 @@ class BillingPeriod(Base):
     id = Column(Integer, primary_key=True, index=True)
     tariff_id = Column(Integer, ForeignKey("tariffs.id"), nullable=True)
     tariff = relationship("Tariff")
+
     name = Column(String, unique=True, nullable=False)
     is_active = Column(Boolean, default=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -105,6 +133,7 @@ class Adjustment(Base):
     __tablename__ = "adjustments"
 
     id = Column(Integer, primary_key=True, index=True)
+
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     period_id = Column(Integer, ForeignKey("periods.id"), nullable=False)
 
@@ -123,15 +152,15 @@ class Adjustment(Base):
 
 
 # ======================================================
-# METER READING
+# METER READING (ПРИВЯЗКА К КОМНАТЕ — КЛЮЧЕВОЕ)
 # ======================================================
 class MeterReading(Base):
     __tablename__ = "readings"
 
     __table_args__ = (
-        Index("idx_reading_user_period", "user_id", "period_id"),
+        Index("idx_reading_room_period", "room_id", "period_id"),
         Index("idx_reading_approved_period", "is_approved", "period_id"),
-        Index("idx_reading_user_approved", "user_id", "is_approved"),
+        Index("idx_reading_room_approved", "room_id", "is_approved"),
         {
             "postgresql_partition_by": "RANGE (created_at)"
         }
@@ -140,9 +169,15 @@ class MeterReading(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     created_at = Column(DateTime, primary_key=True, default=datetime.utcnow)
 
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # 🔑 Главное — комната
+    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=False)
+
+    # Кто передал (может быть NULL)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
     period_id = Column(Integer, ForeignKey("periods.id"), nullable=True)
 
+    room = relationship("Room")
     user = relationship("User")
     period = relationship("BillingPeriod")
 
@@ -175,7 +210,9 @@ class MeterReading(Base):
 
     anomaly_flags = Column(String, nullable=True)
     anomaly_score = Column(Integer, default=0)
+
     is_approved = Column(Boolean, default=False)
+
     edit_count = Column(Integer, default=0)
     edit_history = Column(JSONB, nullable=True)
 

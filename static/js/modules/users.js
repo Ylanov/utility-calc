@@ -6,7 +6,7 @@ import { TableController } from '../core/table-controller.js';
 export const UsersModule = {
     table: null,
     isInitialized: false,
-    tariffs: [], // Хранилище загруженных тарифов
+    tariffs:[], // Хранилище загруженных тарифов
 
     async init() {
         this.cacheDOM();
@@ -153,13 +153,18 @@ export const UsersModule = {
             },
 
             renderRow: (user) => {
+                // ИЗМЕНЕНИЕ: Безопасно извлекаем данные из объекта room (если он есть)
+                const address = user.room ? `${user.room.dormitory_name} / ком. ${user.room.room_number}` : '-';
+                const area = user.room && user.room.apartment_area ? Number(user.room.apartment_area).toFixed(1) : '-';
+                const totalResidents = user.room ? user.room.total_room_residents : 1;
+
                 return el('tr', { class: 'hover:bg-gray-50 transition-colors' },
                     el('td', { class: 'text-gray-500 text-sm' }, `#${user.id}`),
                     el('td', {}, el('div', { style: { fontWeight: '600' } }, user.username)),
                     el('td', {}, el('span', { class: `role-badge ${user.role}` }, user.role)),
-                    el('td', {}, user.dormitory || '-'),
-                    el('td', {}, user.apartment_area ? Number(user.apartment_area).toFixed(1) : '-'),
-                    el('td', { class: 'text-center text-sm' }, `${user.residents_count} / ${user.total_room_residents}`),
+                    el('td', {}, address), // <-- Используем склеенный адрес
+                    el('td', {}, area),    // <-- Используем площадь из комнаты
+                    el('td', { class: 'text-center text-sm' }, `${user.residents_count} / ${totalResidents}`), // <-- Берем из комнаты
                     el('td', {}, user.workplace || '-'),
                     el('td', { class: 'text-center' },
                         el('button', {
@@ -191,6 +196,7 @@ export const UsersModule = {
         const button = this.dom.addForm.querySelector('button');
         const tariffIdVal = this.dom.newTariffSelect.value;
 
+        // Данные формы не меняются, бэкенд сам разобьет dormitory на название и номер комнаты
         const data = {
             username: document.getElementById('newUsername').value.trim(),
             password: document.getElementById('newPassword').value,
@@ -251,7 +257,7 @@ export const UsersModule = {
         }
     },
 
-    // НОВОЕ: Динамическое создание модалки для показа результатов импорта 20к жильцов
+    // Динамическое создание модалки для показа результатов импорта 20к жильцов
     showImportResultModal(result) {
         const hasErrors = result.errors && result.errors.length > 0;
 
@@ -306,7 +312,7 @@ export const UsersModule = {
     },
 
     async deleteUser(id) {
-        if (!confirm('Вы действительно хотите удалить этого пользователя?')) return;
+        if (!confirm('Вы действительно хотите удалить этого пользователя? (Будет произведено мягкое удаление. История показаний сохранится за комнатой.)')) return;
 
         try {
             await api.delete(`/users/${id}`);
@@ -327,10 +333,20 @@ export const UsersModule = {
             inputs.password.value = '';
             inputs.role.value = user.role;
             inputs.tariff.value = user.tariff_id || '';
-            inputs.dorm.value = user.dormitory || '';
-            inputs.area.value = user.apartment_area;
+
+            // ИЗМЕНЕНИЕ: Безопасно заполняем поля модалки из объекта room
+            if (user.room) {
+                // Склеиваем обратно для формы, бэкенд разделит по последнему пробелу
+                inputs.dorm.value = `${user.room.dormitory_name} ${user.room.room_number}`.trim();
+                inputs.area.value = user.room.apartment_area;
+                inputs.total.value = user.room.total_room_residents;
+            } else {
+                inputs.dorm.value = '';
+                inputs.area.value = 0;
+                inputs.total.value = 1;
+            }
+
             inputs.residents.value = user.residents_count;
-            inputs.total.value = user.total_room_residents;
             inputs.work.value = user.workplace || '';
 
             this.modal.window.classList.add('open');
@@ -381,8 +397,11 @@ export const UsersModule = {
     async openOneTimeModal(user) {
         if (!this.otc.modal) return;
 
+        // ИЗМЕНЕНИЕ: Выводим правильный адрес
+        const address = user.room ? `${user.room.dormitory_name} ком. ${user.room.room_number}` : 'без адреса';
+
         this.otc.userId.value = user.id;
-        this.otc.userName.textContent = `${user.username} (${user.dormitory || 'без адреса'})`;
+        this.otc.userName.textContent = `${user.username} (${address})`;
 
         const date = new Date();
         const totalDays = new Date(date.getFullYear(), date.getMonth() + 1, 0).getDate();
@@ -427,7 +446,7 @@ export const UsersModule = {
         };
 
         if (payload.is_moving_out) {
-            if (!confirm('ВНИМАНИЕ! Вы выбрали выселение. Пользователь будет помечен как удаленный, а его логин освободится. Продолжить?')) return;
+            if (!confirm('ВНИМАНИЕ! Вы выбрали выселение. Пользователь будет помечен как удаленный, комната будет освобождена. Продолжить?')) return;
         }
 
         setLoading(this.otc.btnSubmit, true, 'Расчет...');

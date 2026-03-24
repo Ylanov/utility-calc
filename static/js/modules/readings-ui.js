@@ -8,7 +8,6 @@ import { el, toast, setLoading } from '../core/dom.js';
 export function createBadges(details, rawFlags) {
     const container = el('div', { style: { display: 'flex', gap: '4px', flexWrap: 'wrap' } });
 
-    // Новая логика (детализированные данные от V2)
     if (details && details.length > 0) {
         details.forEach(d => {
             container.appendChild(el('span', {
@@ -22,7 +21,6 @@ export function createBadges(details, rawFlags) {
         return container;
     }
 
-    // Fallback для старых данных
     if (rawFlags && rawFlags !== 'PENDING') {
         rawFlags.split(',').forEach(flag => {
             container.appendChild(el('span', {
@@ -89,8 +87,11 @@ export function showHistoryModal(reading) {
     btnOk.onclick = () => document.body.removeChild(overlay);
     content.appendChild(btnOk);
 
+    // ИЗМЕНЕНИЕ: В заголовок добавлен адрес (reading.dormitory)
+    const titleText = reading.dormitory ? `История: ${reading.username} (${reading.dormitory})` : `История: ${reading.username}`;
+
     const modalWindow = el('div', { class: 'modal-window', style: { width: '450px' } },
-        el('div', { class: 'modal-header' }, el('h3', {}, `История: ${reading.username}`), closeBtn),
+        el('div', { class: 'modal-header' }, el('h3', { style: { fontSize: '16px'} }, titleText), closeBtn),
         content
     );
 
@@ -153,7 +154,10 @@ export function openApproveModal(reading, refreshTableCallback) {
     if (!modal) return;
 
     document.getElementById('modal_reading_id').value = reading.id;
-    document.getElementById('m_username').textContent = reading.username;
+
+    // ИЗМЕНЕНИЕ: В модалке утверждения показываем точный адрес, чтобы не перепутать
+    const displayInfo = reading.dormitory ? `${reading.username} (${reading.dormitory})` : reading.username;
+    document.getElementById('m_username').textContent = displayInfo;
 
     document.getElementById('m_hot_usage').textContent = (Number(reading.cur_hot) - Number(reading.prev_hot)).toFixed(3);
     document.getElementById('m_cold_usage').textContent = (Number(reading.cur_cold) - Number(reading.prev_cold)).toFixed(3);
@@ -195,7 +199,6 @@ async function submitApproval(id, refreshTableCallback) {
         toast(`Утверждено! Сумма: ${Number(res.new_total).toFixed(2)} ₽`, 'success');
         document.getElementById('approveModal').classList.remove('open');
 
-        // Вызываем коллбэк для обновления таблицы
         if (typeof refreshTableCallback === 'function') refreshTableCallback();
     } catch (e) {
         toast('Ошибка: ' + e.message, 'error');

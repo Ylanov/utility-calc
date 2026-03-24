@@ -7,13 +7,8 @@ from decimal import Decimal
 # DECIMAL TYPES
 # ======================================================
 
-# Для денег (2 знака)
 DecimalAmount = condecimal(max_digits=12, decimal_places=2)
-
-# Для объемов (3 знака)
 DecimalVolume = condecimal(max_digits=12, decimal_places=3)
-
-# Для тарифов (4 знака)
 DecimalTariff = condecimal(max_digits=10, decimal_places=4)
 
 # ======================================================
@@ -31,36 +26,48 @@ class PaginatedResponse(BaseModel, Generic[M]):
 
 
 # ======================================================
-# USER SCHEMAS
+# ROOM SCHEMAS (НОВОЕ)
+# ======================================================
+
+class RoomResponse(BaseModel):
+    id: int
+    dormitory_name: str
+    room_number: str
+    apartment_area: DecimalAmount
+    total_room_residents: int
+
+    class Config:
+        from_attributes = True
+
+
+# ======================================================
+# USER SCHEMAS (ОБНОВЛЕНО)
 # ======================================================
 
 class UserCreate(BaseModel):
     username: str
     password: str
     role: str = "user"
-    dormitory: str = ""
     workplace: str = ""
     residents_count: int = 1
-    total_room_residents: int = 1
-    apartment_area: DecimalAmount = Decimal("0.00")
-    tariff_id: Optional[int] = None  # <--- Добавили
+    tariff_id: Optional[int] = None
 
 
 class UserResponse(BaseModel):
     id: int
     username: str
     role: str
-    dormitory: Optional[str] = None
+
     workplace: Optional[str] = None
     residents_count: int
-    total_room_residents: int
-    apartment_area: Optional[Decimal] = None
-    tariff_id: Optional[int] = None  # <--- Добавили
-    # Флаг, включена ли 2FA у пользователя (для отображения в UI)
-    is_2fa_enabled: bool = False
 
-    # НОВОЕ ПОЛЕ: Флаг первичной настройки (сменил ли логин/пароль)
+    tariff_id: Optional[int] = None
+
+    is_2fa_enabled: bool = False
     is_initial_setup_done: bool = False
+
+    # 🔥 КЛЮЧЕВОЕ ИЗМЕНЕНИЕ
+    room: Optional[RoomResponse] = None
 
     class Config:
         from_attributes = True
@@ -70,12 +77,10 @@ class UserUpdate(BaseModel):
     username: Optional[str] = None
     password: Optional[str] = None
     role: Optional[str] = None
-    dormitory: Optional[str] = None
     workplace: Optional[str] = None
     residents_count: Optional[int] = None
-    total_room_residents: Optional[int] = None
-    apartment_area: Optional[DecimalAmount] = None
-    tariff_id: Optional[int] = None # <--- Добавили
+    tariff_id: Optional[int] = None
+
 
 # ======================================================
 # 2FA (TOTP) SCHEMAS
@@ -83,14 +88,12 @@ class UserUpdate(BaseModel):
 
 class TotpSetupResponse(BaseModel):
     secret: str
-    qr_code: str  # Base64 string картинки
+    qr_code: str
 
 
 class TotpVerify(BaseModel):
     code: str
-    # Временный токен нужен при входе, но при активации из профиля он не обязателен
     temp_token: Optional[str] = None
-    # Секрет нужен при активации (первичной настройке), чтобы подтвердить сохранение
     secret: Optional[str] = None
 
 
@@ -141,7 +144,6 @@ class AdjustmentCreate(BaseModel):
     user_id: int
     amount: DecimalAmount
     description: str
-    # Тип счета: "209" (коммуналка) или "205" (найм)
     account_type: str = "209"
 
 
@@ -178,7 +180,7 @@ class ReadingStateResponse(BaseModel):
     current_elect: Optional[Decimal]
 
     total_cost: Optional[Decimal]
-    # Новые поля для раздельного учета
+
     total_209: Optional[Decimal] = None
     total_205: Optional[Decimal] = None
 
@@ -204,36 +206,38 @@ class ApproveRequest(BaseModel):
 
 
 # ======================================================
-# FINANCIER RESPONSE (UPDATED FOR SPLIT BILLING)
+# FINANCIER RESPONSE (ОБНОВЛЕНО)
 # ======================================================
 
 class UserDebtResponse(BaseModel):
     id: int
     username: str
-    dormitory: Optional[str] = None
 
-    # Раздельные долги/переплаты для счета 209 (Коммуналка)
+    # 🔥 теперь через комнату
+    room: Optional[RoomResponse] = None
+
     debt_209: Decimal
     overpayment_209: Decimal
 
-    # Раздельные долги/переплаты для счета 205 (Найм)
     debt_205: Decimal
     overpayment_205: Decimal
 
-    # Текущий общий итог квитанции (для справки)
     current_total_cost: Decimal
 
     class Config:
         from_attributes = True
 
+
 # ======================================================
 # ADMIN MANUAL ENTRY SCHEMAS
 # ======================================================
+
 class AdminManualReadingSchema(BaseModel):
     user_id: int
     hot_water: DecimalVolume
     cold_water: DecimalVolume
     electricity: DecimalVolume
+
 
 class OneTimeChargeSchema(BaseModel):
     user_id: int

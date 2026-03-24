@@ -56,7 +56,7 @@ export const ManualModule = {
             this.dom.form.addEventListener('submit', (e) => this.handleSubmit(e));
         }
 
-        // НОВОЕ: Автоматическая замена запятой на точку для скорости ввода с numpad
+        // Автоматическая замена запятой на точку для скорости ввода с numpad
         ['inHot', 'inCold', 'inElect'].forEach(key => {
             if (this.dom[key]) {
                 this.dom[key].addEventListener('input', function() {
@@ -83,18 +83,23 @@ export const ManualModule = {
                     style: {
                         padding: '12px 15px', borderBottom: '1px solid #e5e7eb', cursor: 'pointer',
                         display: 'flex', flexDirection: 'column', gap: '4px', transition: 'background 0.2s'
-                    },
-                    onclick: () => this.selectUser(user)
+                    }
                 });
 
-                // Эффект наведения
+                // Эффект наведения и клик
+                li.onclick = () => this.selectUser(user, li);
                 li.addEventListener('mouseover', () => li.style.background = '#eff6ff');
                 li.addEventListener('mouseout', () => {
                     if (this.state.selectedUserId !== user.id) li.style.background = 'transparent';
                 });
 
+                // ИЗМЕНЕНИЕ: Формируем правильный адрес из объекта room
+                const address = user.room
+                    ? `${user.room.dormitory_name} / ком. ${user.room.room_number}`
+                    : 'Без адреса (Не привязан к комнате)';
+
                 li.appendChild(el('strong', { style: { color: '#1f2937', fontSize: '14px' } }, user.username));
-                li.appendChild(el('span', { style: { color: '#6b7280', fontSize: '12px' } }, user.dormitory || 'Без адреса'));
+                li.appendChild(el('span', { style: { color: '#6b7280', fontSize: '12px' } }, address));
 
                 this.dom.userList.appendChild(li);
             });
@@ -108,14 +113,14 @@ export const ManualModule = {
         }
     },
 
-    async selectUser(user) {
+    async selectUser(user, liElement) {
         this.state.selectedUserId = user.id;
         this.dom.inId.value = user.id;
         this.dom.lblSelectedUser.textContent = user.username;
 
         // Визуальное выделение списка
         Array.from(this.dom.userList.children).forEach(li => li.style.background = 'transparent');
-        event.currentTarget.style.background = '#dbeafe';
+        if (liElement) liElement.style.background = '#dbeafe';
 
         // Разблокируем форму
         this.dom.formCard.style.opacity = '1';
@@ -149,7 +154,7 @@ export const ManualModule = {
             }
 
         } catch (e) {
-            toast('Ошибка получения истории: ' + e.message, 'error');
+            toast('Ошибка получения истории (возможно, жилец не привязан к комнате): ' + e.message, 'error');
             this.dom.formCard.style.opacity = '0.5';
             this.dom.formCard.style.pointerEvents = 'none';
         }
@@ -185,11 +190,6 @@ export const ManualModule = {
             await api.post('/admin/readings/manual', payload);
             toast('Показания успешно сохранены (Черновик)', 'success');
 
-            // Если вкладка "Сверка показаний" уже инициализирована, обновим ее данные на фоне
-            if (window.ReadingsModule && window.ReadingsModule.table) {
-                window.ReadingsModule.table.refresh();
-            }
-
             // Сбрасываем форму
             this.dom.formCard.style.opacity = '0.5';
             this.dom.formCard.style.pointerEvents = 'none';
@@ -199,7 +199,7 @@ export const ManualModule = {
             this.dom.alertDraft.style.display = 'none';
             this.dom.form.reset();
 
-            // НОВОЕ UX УЛУЧШЕНИЕ: Автоматически возвращаем курсор в строку поиска для следующего жильца!
+            // Возвращаем курсор в строку поиска для следующего жильца
             this.dom.searchInput.value = '';
             this.dom.searchInput.focus();
 

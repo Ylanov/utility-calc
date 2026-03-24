@@ -96,7 +96,6 @@ export const ReadingsModule = {
                     statusCell.appendChild(el('div', { style: { fontSize: '12px', color: '#10b981', marginBottom: '4px' } }, '✅ Норма'));
                 }
 
-                // Используем вынесенную функцию
                 statusCell.appendChild(createBadges(r.anomaly_details, r.anomaly_flags));
 
                 return el('tr', {},
@@ -113,15 +112,15 @@ export const ReadingsModule = {
                         el('button', {
                             class: 'btn-icon btn-history', title: 'История правок жильцом',
                             style: { marginRight: '5px', background: '#f3f4f6', borderColor: '#d1d5db' },
-                            onclick: () => showHistoryModal(r) // Вынесенная функция
+                            onclick: () => showHistoryModal(r)
                         }, '🕒'),
                         el('button', {
                             class: 'btn-icon btn-adjust', title: 'Финансовая корректировка', style: { marginRight: '5px' },
-                            onclick: () => this.openAdjustmentModal(r.user_id, r.username)
+                            // ИЗМЕНЕНИЕ: Передаем dormitory, чтобы в модалке был точный адрес
+                            onclick: () => this.openAdjustmentModal(r.user_id, r.username, r.dormitory)
                         }, '±'),
                         el('button', {
                             class: 'btn-icon btn-check', title: 'Проверить и утвердить',
-                            // Вынесенная функция. Передаем callback обновления таблицы.
                             onclick: () => openApproveModal(r, () => this.table.refresh())
                         }, '✓')
                     )
@@ -141,7 +140,7 @@ export const ReadingsModule = {
 
         try {
             const res = await api.post('/admin/readings/import', formData);
-            showImportResultModal(res); // Вынесенная функция
+            showImportResultModal(res);
             if (this.dom.inputImport) this.dom.inputImport.value = '';
             this.table.refresh();
         } catch (e) {
@@ -151,8 +150,10 @@ export const ReadingsModule = {
         }
     },
 
-    async openAdjustmentModal(userId, username) {
-        const amountStr = await showPrompt(`Корректировка: ${username}`, 'Введите сумму (например -500 для скидки или 1000 для долга):');
+    // ИЗМЕНЕНИЕ: Принимаем параметр dormitory для красивого заголовка
+    async openAdjustmentModal(userId, username, dormitory) {
+        const displayInfo = dormitory ? `${username} (${dormitory})` : username;
+        const amountStr = await showPrompt(`Корректировка: ${displayInfo}`, 'Введите сумму (например -500 для скидки или 1000 для долга):');
         if (!amountStr) return;
 
         const amount = parseFloat(amountStr.replace(',', '.'));

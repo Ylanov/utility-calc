@@ -101,6 +101,7 @@ if settings.SENTRY_DSN:
         traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
     )
 
+
 # =====================================================================
 # LIFESPAN
 # =====================================================================
@@ -136,6 +137,7 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("Application shutdown")
+
 
 # =====================================================================
 # FASTAPI INIT
@@ -176,6 +178,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
@@ -188,6 +191,21 @@ async def security_headers(request: Request, call_next):
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
 
     return response
+
+
+# 🔥 ИСПРАВЛЕНИЕ: Middleware для запрета кэширования API
+@app.middleware("http")
+async def no_cache_api_headers(request: Request, call_next):
+    response = await call_next(request)
+
+    # Жестко запрещаем кэшировать любые API-запросы, чтобы избежать утечки сессий через прокси
+    if request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+
+    return response
+
 
 # =====================================================================
 # HELPERS
@@ -215,6 +233,7 @@ async def ensure_admin_exists_safe(session_factory, user_model, name: str):
 
     except Exception as e:
         logger.error(f"{name}: admin init failed: {e}")
+
 
 # =====================================================================
 # ROUTERS REGISTRATION (ENTERPRISE)
@@ -258,12 +277,14 @@ def register_gsm_routes(app: FastAPI):
 
     app.include_router(router)
 
+
 # =====================================================================
 # HEALTH
 # =====================================================================
 @app.get("/health", include_in_schema=False)
 def health():
     return {"status": "ok", "mode": APP_MODE}
+
 
 # =====================================================================
 # ROUTER LOADING
@@ -275,6 +296,7 @@ if APP_MODE in ("all", "arsenal_gsm"):
     register_arsenal_routes(app)
     register_gsm_routes(app)
 
+
 # =====================================================================
 # FRONTEND
 # =====================================================================
@@ -282,11 +304,13 @@ if APP_MODE in ("all", "arsenal_gsm"):
 async def root():
     return RedirectResponse(url="/static/portal.html")
 
+
 app.mount(
     "/static",
     StaticFiles(directory="static", html=True),
     name="static",
 )
+
 
 @app.middleware("http")
 async def catch_exceptions(request, call_next):

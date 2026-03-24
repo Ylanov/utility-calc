@@ -1,3 +1,4 @@
+# app/modules/utility/services/debt_import.py
 import openpyxl
 import logging
 from decimal import Decimal
@@ -10,7 +11,6 @@ from app.modules.utility.models import User, MeterReading, BillingPeriod
 logger = logging.getLogger(__name__)
 
 FUZZY_THRESHOLD = 88
-CHUNK_SIZE = 2000  # Размер пакета для БД
 
 
 def clean_decimal(value) -> Decimal:
@@ -56,25 +56,16 @@ def is_valid_name_row(cell_value: str) -> bool:
     return True
 
 
-# --- ЭТА ФУНКЦИЯ НУЖНА ДЛЯ excel_service.py ---
 def find_user_fuzzy(target_name: str, users_map: Dict[str, int]) -> Optional[int]:
-    """
-    Глобальная функция поиска (используется внешними модулями).
-    В users_map ключи должны быть уже нормализованы!
-    """
+    """Глобальная функция поиска (используется внешними модулями)."""
     if not target_name:
         return None
 
     norm_target = normalize_name(target_name)
 
-    # 1. Точное совпадение
     if norm_target in users_map:
         return users_map[norm_target]
 
-    # 2. Нечеткий поиск
-    # Примечание: process.extractOne каждый раз проходит по всем ключам.
-    # Это нормально для единичных вызовов из excel_service,
-    # но внутри массового импорта мы используем оптимизацию (см. ниже).
     match = process.extractOne(norm_target, list(users_map.keys()), scorer=fuzz.token_sort_ratio)
 
     if match:
@@ -87,7 +78,8 @@ def find_user_fuzzy(target_name: str, users_map: Dict[str, int]) -> Optional[int
 
 def sync_import_debts_process(file_path: str, db: Session, account_type: str) -> dict:
     """
-    Функция массового импорта с оптимизациями (буферизация, кэширование).
+    Функция массового импорта долгов.
+    Долг из 1С привязывается к КОМНАТЕ жильца. Долги соседей по комнате суммируются.
     """
     logger.info(f"Starting debts import from {file_path} for Account {account_type}")
 
@@ -99,7 +91,6 @@ def sync_import_debts_process(file_path: str, db: Session, account_type: str) ->
         return {"status": "error", "message": f"Ошибка чтения файла: {str(error)}"}
 
     try:
-        # 1. Получаем активный период
         active_period = db.execute(
             select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
         ).scalars().first()
@@ -107,56 +98,47 @@ def sync_import_debts_process(file_path: str, db: Session, account_type: str) ->
         if not active_period:
             return {"status": "error", "message": "Нет активного периода для загрузки долгов"}
 
-        # 2. Предзагрузка пользователей
-        users_raw = db.execute(select(User.id, User.username).where(not User.is_deleted)).all()
-        # Карта: нормализованное имя -> ID
-        users_map: Dict[str, int] = {normalize_name(u.username): u.id for u in users_raw}
-        # Список ключей один раз для rapidfuzz (оптимизация)
+        # 1. Предзагрузка пользователей (сохраняем id и room_id)
+        users_raw = db.execute(select(User).where(User.is_deleted.is_(False))).scalars().all()
+        users_map = {normalize_name(u.username): {"id": u.id, "room_id": u.room_id} for u in users_raw}
         users_keys = list(users_map.keys())
 
-        # 3. Предзагрузка показаний
+        # 2. Предзагрузка показаний (черновиков) по КОМНАТАМ
         readings_raw = db.execute(
-            select(MeterReading.id, MeterReading.user_id)
-            .where(MeterReading.period_id == active_period.id)
-        ).all()
-        readings_map: Dict[int, int] = {user_id: r_id for r_id, user_id in readings_raw}
+            select(MeterReading).where(MeterReading.period_id == active_period.id)
+        ).scalars().all()
 
-        # Статистика и буферы
+        readings_map = {r.room_id: r for r in readings_raw if r.room_id is not None}
+
         stats = {
             "processed": 0, "updated": 0, "created": 0,
             "not_found_users": [], "errors": [], "account": account_type
         }
-        updates_buffer: List[dict] = []
-        inserts_buffer: List[MeterReading] = []
 
-        # Локальный кэш нечеткого поиска (чтобы не искать одни и те же ФИО повторно)
-        fuzzy_cache: Dict[str, Optional[int]] = {}
+        updates_dict = {}  # reading_id -> reading object (для обновления)
+        inserts_dict = {}  # room_id -> reading object (для вставки)
+        fuzzy_cache = {}
+        processed_rooms = set()  # Для обнуления старых долгов комнаты перед прибавлением новых из 1С
 
-        # Внутренняя оптимизированная функция поиска
-        def get_user_id_optimized(fio: str) -> Optional[int]:
+        def get_user_data_optimized(fio: str):
             norm = normalize_name(fio)
-
-            # Точное совпадение
             if norm in users_map:
                 return users_map[norm]
-
-            # Проверка кэша
             if norm in fuzzy_cache:
                 return fuzzy_cache[norm]
 
-            # Тяжелый поиск
             match = process.extractOne(norm, users_keys, scorer=fuzz.token_sort_ratio)
             if match:
                 best_match_name, score, _ = match
                 if score >= FUZZY_THRESHOLD:
-                    found_id = users_map[best_match_name]
-                    fuzzy_cache[norm] = found_id
-                    return found_id
+                    found_data = users_map[best_match_name]
+                    fuzzy_cache[norm] = found_data
+                    return found_data
 
             fuzzy_cache[norm] = None
             return None
 
-        # 4. Чтение строк Excel
+        # 3. Чтение строк Excel
         for row in worksheet.iter_rows(min_row=8, values_only=True):
             if not row or len(row) < 7:
                 continue
@@ -168,33 +150,60 @@ def sync_import_debts_process(file_path: str, db: Session, account_type: str) ->
             fio_raw = str(name_cell).strip()
             stats["processed"] += 1
 
-            # Используем оптимизированный поиск с кэшем
-            user_id = get_user_id_optimized(fio_raw)
+            user_data = get_user_data_optimized(fio_raw)
 
-            if not user_id:
+            if not user_data or not user_data["room_id"]:
                 stats["not_found_users"].append(fio_raw)
                 continue
+
+            user_id = user_data["id"]
+            room_id = user_data["room_id"]
 
             debt_val = clean_decimal(row[5])
             over_val = clean_decimal(row[6])
 
-            # 5. Подготовка данных (Update или Insert)
-            if user_id in readings_map:
-                r_id = readings_map[user_id]
-                update_data = {"id": r_id}
+            # 4. Если для этой комнаты уже есть черновик в БД
+            if room_id in readings_map:
+                reading = readings_map[room_id]
 
+                # Если мы первый раз встречаем эту комнату в файле 1С - сбрасываем старые долги в 0
+                if room_id not in processed_rooms:
+                    if account_type == "209":
+                        reading.debt_209 = Decimal("0.00")
+                        reading.overpayment_209 = Decimal("0.00")
+                    elif account_type == "205":
+                        reading.debt_205 = Decimal("0.00")
+                        reading.overpayment_205 = Decimal("0.00")
+                    processed_rooms.add(room_id)
+                    updates_dict[reading.id] = reading
+
+                # ПРИБАВЛЯЕМ долги (если в 1С несколько жильцов из одной комнаты, долги просуммируются)
                 if account_type == "209":
-                    update_data["debt_209"] = debt_val
-                    update_data["overpayment_209"] = over_val
+                    reading.debt_209 += debt_val
+                    reading.overpayment_209 += over_val
                 elif account_type == "205":
-                    update_data["debt_205"] = debt_val
-                    update_data["overpayment_205"] = over_val
+                    reading.debt_205 += debt_val
+                    reading.overpayment_205 += over_val
 
-                updates_buffer.append(update_data)
                 stats["updated"] += 1
+
+            # 5. Если черновика в БД нет, но мы его уже создали в памяти в цикле
+            elif room_id in inserts_dict:
+                reading = inserts_dict[room_id]
+                if account_type == "209":
+                    reading.debt_209 += debt_val
+                    reading.overpayment_209 += over_val
+                elif account_type == "205":
+                    reading.debt_205 += debt_val
+                    reading.overpayment_205 += over_val
+
+                stats["updated"] += 1
+
+            # 6. Если черновика нет вообще - создаем новый
             else:
                 new_reading = MeterReading(
-                    user_id=user_id,
+                    user_id=user_id,  # Первый встреченный жилец становится номинальным автором черновика
+                    room_id=room_id,
                     period_id=active_period.id,
                     is_approved=False,
                     debt_209=Decimal("0.00"), overpayment_209=Decimal("0.00"),
@@ -208,31 +217,30 @@ def sync_import_debts_process(file_path: str, db: Session, account_type: str) ->
                     new_reading.debt_205 = debt_val
                     new_reading.overpayment_205 = over_val
 
-                inserts_buffer.append(new_reading)
+                inserts_dict[room_id] = new_reading
+                processed_rooms.add(room_id)
                 stats["created"] += 1
 
-            # 6. Сброс буферов в БД (Чанкинг)
-            if len(inserts_buffer) >= CHUNK_SIZE:
-                db.add_all(inserts_buffer)
-                db.flush()
-                inserts_buffer.clear()
+        # 7. Сохраняем в БД
+        if inserts_dict:
+            db.add_all(list(inserts_dict.values()))
 
-            if len(updates_buffer) >= CHUNK_SIZE:
-                db.bulk_update_mappings(MeterReading, updates_buffer)
-                updates_buffer.clear()
-
-        # Сохранение остатков
-        if inserts_buffer:
-            db.add_all(inserts_buffer)
-        if updates_buffer:
-            db.bulk_update_mappings(MeterReading, updates_buffer)
+        if updates_dict:
+            updates_list = []
+            for r in updates_dict.values():
+                updates_list.append({
+                    "id": r.id,
+                    "debt_209": r.debt_209,
+                    "overpayment_209": r.overpayment_209,
+                    "debt_205": r.debt_205,
+                    "overpayment_205": r.overpayment_205
+                })
+            db.bulk_update_mappings(MeterReading, updates_list)
 
         db.commit()
         workbook.close()
 
-        # Уникализируем список ненайденных
         stats["not_found_users"] = list(set(stats["not_found_users"]))
-
         logger.info(
             f"Import finished. Processed: {stats['processed']}, Updated: {stats['updated']}, Created: {stats['created']}")
         return stats

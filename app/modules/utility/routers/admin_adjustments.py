@@ -1,3 +1,4 @@
+# app/modules/utility/routers/admin_adjustments.py
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -21,20 +22,23 @@ async def create_adjustment(
     """
     Создает финансовую корректировку (перерасчет) для пользователя в текущем активном периоде.
     Поддерживает раздельный учет по счетам 209 и 205.
-    ОПТИМИЗАЦИЯ: Использует Атомарный UPDATE вместо with_for_update() (без блокировок).
     """
-    # Проверка ролей (разрешено бухгалтеру и финансисту)
     allowed_roles = ["accountant", "financier", "admin"]
     if current_user.role not in allowed_roles:
         raise HTTPException(status_code=403, detail="Доступ запрещен")
 
-    # 1. Находим активный период
+    # 1. Находим жильца, чтобы узнать его КОМНАТУ
+    target_user = await db.get(User, data.user_id)
+    if not target_user or not target_user.room_id:
+        raise HTTPException(status_code=400, detail="Жилец не найден или не привязан к комнате")
+
+    # 2. Находим активный период
     res_period = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))
     active_period = res_period.scalars().first()
     if not active_period:
         raise HTTPException(status_code=400, detail="Нет активного периода для внесения корректировок")
 
-    # 2. Создаем запись корректировки с указанием типа счета
+    # 3. Создаем запись корректировки (для истории)
     adj = Adjustment(
         user_id=data.user_id,
         period_id=active_period.id,
@@ -44,17 +48,14 @@ async def create_adjustment(
     )
     db.add(adj)
 
-    # 3. АТОМАРНОЕ ОБНОВЛЕНИЕ ЧЕРНОВИКА (METER_READING)
-    # Это работает в десятки раз быстрее with_for_update() и не создает очередей при нагрузке.
-    # База данных сама безопасно сложит значения на уровне SQL движка.
-
+    # 4. Обновляем итоговые цифры в показаниях КОМНАТЫ
     amount_209 = data.amount if data.account_type == "209" else Decimal("0.00")
     amount_205 = data.amount if data.account_type == "205" else Decimal("0.00")
 
     update_stmt = (
         update(MeterReading)
         .where(
-            MeterReading.user_id == data.user_id,
+            MeterReading.room_id == target_user.room_id, # 🔥 ИСПРАВЛЕНИЕ: Ищем черновик по комнате
             MeterReading.period_id == active_period.id
         )
         .values(
@@ -65,11 +66,7 @@ async def create_adjustment(
     )
 
     await db.execute(update_stmt)
-
-    # Фиксируем изменения корректным способом (без db.begin())
     await db.commit()
-
-    # Обновляем объект из БД, чтобы вернуть актуальные данные (например, ID и дату создания)
     await db.refresh(adj)
 
     return adj
@@ -81,10 +78,8 @@ async def get_user_adjustments(
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
 ):
-    """
-    Получает список всех корректировок пользователя в ТЕКУЩЕМ АКТИВНОМ периоде.
-    """
-    allowed_roles = ["accountant", "financier", "admin"]
+    """Получает список всех корректировок пользователя в ТЕКУЩЕМ АКТИВНОМ периоде."""
+    allowed_roles =["accountant", "financier", "admin"]
     if current_user.role not in allowed_roles:
         raise HTTPException(status_code=403, detail="Доступ запрещен")
 
@@ -92,12 +87,4 @@ async def get_user_adjustments(
     active_period = res_period.scalars().first()
 
     if not active_period:
-        return []
-
-    res = await db.execute(
-        select(Adjustment)
-        .where(Adjustment.user_id == user_id, Adjustment.period_id == active_period.id)
-        # Сортировка по дате добавления
-        .order_by(Adjustment.created_at.desc())
-    )
-    return res.scalars().all()
+        return

@@ -10,8 +10,8 @@ from typing import Optional, List
 from jinja2 import Environment, FileSystemLoader
 from weasyprint import HTML
 
-from app.modules.utility.models import User, MeterReading, Tariff, BillingPeriod, Adjustment
-
+# ИЗМЕНЕНИЕ: Добавляем импорт Room
+from app.modules.utility.models import User, MeterReading, Tariff, BillingPeriod, Adjustment, Room
 
 # =========================
 # TEMPLATE PATH
@@ -29,7 +29,6 @@ DEFAULT_PDF_DIR = "/app/static/generated_files"
 os.makedirs(DEFAULT_PDF_DIR, exist_ok=True)
 
 env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)), autoescape=True)
-
 
 # =========================
 # ORG DATA
@@ -64,7 +63,8 @@ def D(value) -> Decimal:
 # =========================
 # QR GENERATOR
 # =========================
-def generate_qr_base64(kbk: str, total_sum: Decimal, user: User, purpose: str) -> str:
+# ИЗМЕНЕНИЕ: Функция теперь принимает объект Room для адреса
+def generate_qr_base64(kbk: str, total_sum: Decimal, user: User, room: Room, purpose: str) -> str:
     total_sum = quantize_money(max(total_sum, Decimal("0.00")))
     sum_kopecks = int(total_sum * 100)
 
@@ -73,11 +73,14 @@ def generate_qr_base64(kbk: str, total_sum: Decimal, user: User, purpose: str) -
     first = fio[1] if len(fio) > 1 else ""
     middle = fio[2] if len(fio) > 2 else ""
 
+    # ИЗМЕНЕНИЕ: Адрес берется из комнаты
+    address = f"{room.dormitory_name}, {room.room_number}" if room else "Адрес не указан"
+
     qr_data = (
         f"ST00012|Name={ORG_DETAILS['name']}|PersonalAcc={ORG_DETAILS['account']}|"
         f"BankName={ORG_DETAILS['bank']}|BIC={ORG_DETAILS['bik']}|PayeeINN={ORG_DETAILS['inn']}|"
         f"KPP={ORG_DETAILS['kpp']}|Sum={sum_kopecks}|Purpose={purpose} л/с {user.id}|"
-        f"lastName={last}|firstName={first}|middleName={middle}|payerAddress={user.dormitory or 'Не указан'}|"
+        f"lastName={last}|firstName={first}|middleName={middle}|payerAddress={address}|"
         f"CBC={kbk}|OKTMO={ORG_DETAILS['oktmo']}"
     )
 
@@ -90,8 +93,10 @@ def generate_qr_base64(kbk: str, total_sum: Decimal, user: User, purpose: str) -
 # =========================
 # MAIN PDF GENERATOR
 # =========================
+# ИЗМЕНЕНИЕ: Функция теперь принимает объект Room
 def generate_receipt_pdf(
         user: User,
+        room: Room,
         reading: MeterReading,
         period: BillingPeriod,
         tariff: Tariff,
@@ -99,95 +104,74 @@ def generate_receipt_pdf(
         adjustments: Optional[List[Adjustment]] = None,
         output_dir: Optional[str] = None
 ) -> str:
-
     if adjustments is None:
         adjustments = []
 
     # =========================
-    # ФИНАНСЫ
+    # ФИНАНСЫ (без изменений)
     # =========================
     total_debt = (reading.debt_209 or Decimal(0)) + (reading.debt_205 or Decimal(0))
     total_overpayment = (reading.overpayment_209 or Decimal(0)) + (reading.overpayment_205 or Decimal(0))
-
     recalc = sum((adj.amount for adj in adjustments), Decimal("0.00"))
-
     total_209_due = reading.total_209 or Decimal(0)
     total_205_due = reading.total_205 or Decimal(0)
     grand_total = reading.total_cost or Decimal(0)
 
     # =========================
-    # ОБЪЕМЫ (🔥 БЕЗ ОБНУЛЕНИЯ)
+    # ОБЪЕМЫ (без изменений, т.к. расчеты корректные)
     # =========================
-    cur_hot = D(reading.hot_water)
-    cur_cold = D(reading.cold_water)
-    cur_elect = D(reading.electricity)
+    cur_hot, cur_cold, cur_elect = D(reading.hot_water), D(reading.cold_water), D(reading.electricity)
+    prev_hot, prev_cold, prev_elect = D(prev_reading.hot_water if prev_reading else 0), D(
+        prev_reading.cold_water if prev_reading else 0), D(prev_reading.electricity if prev_reading else 0)
 
-    prev_hot = D(prev_reading.hot_water) if prev_reading else D(0)
-    prev_cold = D(prev_reading.cold_water) if prev_reading else D(0)
-    prev_elect = D(prev_reading.electricity) if prev_reading else D(0)
+    raw_delta_hot, raw_delta_cold, raw_delta_elect = cur_hot - prev_hot, cur_cold - prev_cold, cur_elect - prev_elect
+    corr_hot, corr_cold, corr_elect, corr_sewage = D(reading.hot_correction), D(reading.cold_correction), D(
+        reading.electricity_correction), D(reading.sewage_correction)
 
-    raw_delta_hot = cur_hot - prev_hot
-    raw_delta_cold = cur_cold - prev_cold
-    raw_delta_elect = cur_elect - prev_elect
-
-    corr_hot = D(reading.hot_correction)
-    corr_cold = D(reading.cold_correction)
-    corr_elect = D(reading.electricity_correction)
-    corr_sewage = D(reading.sewage_correction)
-
-    # ❗ ГЛАВНОЕ ИЗМЕНЕНИЕ: УБРАЛИ max(0, ...)
     vol_hot = raw_delta_hot - corr_hot
     vol_cold = raw_delta_cold - corr_cold
 
     residents = D(user.residents_count)
-    total_residents = D(user.total_room_residents) if user.total_room_residents > 0 else D(1)
+    total_residents = D(room.total_room_residents) if room and room.total_room_residents > 0 else D(1)
 
-    share_elect = (residents / total_residents) * raw_delta_elect
+    share_elect = (residents / total_residents) * raw_delta_elect if total_residents > 0 else D(0)
     vol_elect = share_elect - corr_elect
-
     vol_sewage = (vol_hot + vol_cold) - corr_sewage
 
     # =========================
-    # QR
+    # QR (ИЗМЕНЕНИЕ: передаем room)
     # =========================
-    qr_rent = generate_qr_base64(KBC_RENT, total_205_due, user, "Плата за наем")
-    qr_utils = generate_qr_base64(KBC_UTILS, total_209_due, user, "Коммунальные услуги")
+    qr_rent = generate_qr_base64(KBC_RENT, total_205_due, user, room, "Плата за наем")
+    qr_utils = generate_qr_base64(KBC_UTILS, total_209_due, user, room, "Коммунальные услуги")
 
     # =========================
     # TEMPLATE CONTEXT
     # =========================
     context = {
         "user": user,
+        "room": room,  # <-- Передаем комнату в шаблон!
         "period": period,
         "tariff": tariff,
         "reading": reading,
         "prev_reading": prev_reading,
         "adjustments": adjustments,
-
         "total_209_due": total_209_due,
         "total_205_due": total_205_due,
         "grand_total": grand_total,
-
         "total_debt": total_debt,
         "total_overpayment": total_overpayment,
         "recalc": recalc,
-
         "vol_hot": vol_hot,
         "vol_cold": vol_cold,
         "vol_elect": vol_elect,
         "vol_sewage": vol_sewage,
-
         "org": ORG_DETAILS,
         "kbk_rent": KBC_RENT,
         "kbk_utils": KBC_UTILS,
-
         "qr_rent": qr_rent,
         "qr_utils": qr_utils
     }
 
-    # =========================
-    # TEMPLATE
-    # =========================
     try:
         template = env.get_template("receipt.html")
     except Exception as e:
@@ -195,9 +179,6 @@ def generate_receipt_pdf(
 
     html = template.render(context)
 
-    # =========================
-    # PDF GENERATION
-    # =========================
     target_dir = output_dir or DEFAULT_PDF_DIR
     os.makedirs(target_dir, exist_ok=True)
 

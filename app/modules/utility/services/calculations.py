@@ -1,10 +1,9 @@
+# app/modules/utility/services/calculations.py
 import logging
 from decimal import Decimal, ROUND_HALF_UP
 from app.modules.utility.models import User, Tariff
 
-
 logger = logging.getLogger("utility_calculations")
-
 
 ZERO = Decimal("0.00")
 MONEY_QUANT = Decimal("0.01")
@@ -29,17 +28,26 @@ def safe_positive(value: Decimal) -> Decimal:
 
 
 def calculate_utilities(
-        user, tariff, volume_hot, volume_cold, volume_sewage, volume_electricity_share, fraction=1.0
+        user,
+        room,
+        tariff,
+        volume_hot,
+        volume_cold,
+        volume_sewage,
+        volume_electricity_share,
+        fraction=1.0  # Доля прожитых дней в месяце (для выселения)
 ) -> dict:
-    # ❗ РАЗРЕШАЕМ отрицательные объемы (перерасчёт)
+
     v_hot = float(volume_hot)
     v_cold = float(volume_cold)
     v_sew = float(volume_sewage)
     v_el = float(volume_electricity_share)
 
-    area = float(user.apartment_area or 0.0)
+    # Площадь комнаты
+    area = float(room.apartment_area or 0.0)
     frac = float(fraction)
 
+    # Тарифы
     t_w_sup = float(tariff.water_supply)
     t_w_heat = float(tariff.water_heating)
     t_sewage = float(tariff.sewage)
@@ -50,12 +58,13 @@ def calculate_utilities(
     t_heat = float(tariff.heating)
     t_el_sqm = float(tariff.electricity_per_sqm)
 
-    # 🔢 расчёты (теперь могут быть отрицательные)
+    # Расчет по счетчикам
     c_hot = round(v_hot * (t_w_sup + t_w_heat), 2)
     c_cold = round(v_cold * t_w_sup, 2)
     c_sewage = round(v_sew * t_sewage, 2)
     c_elect = round(v_el * t_el_rate, 2)
 
+    # Расчет по площади (без деления на жильцов, так как счет общий)
     c_maint = round(area * t_maint * frac, 2)
     c_rent = round(area * t_rent * frac, 2)
     c_waste = round(area * t_waste * frac, 2)
