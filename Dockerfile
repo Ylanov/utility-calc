@@ -76,9 +76,9 @@ COPY --chown=appuser:appuser \
     templates/ templates/ \
     static/ static/ \
     alembic/ alembic/ \
-    alembic.ini ./ \
+    alembic.ini . \
     alembic_arsenal/ alembic_arsenal/ \
-    alembic_arsenal.ini ./
+    alembic_arsenal.ini .
 
 # Копируем наш entrypoint-скрипт и делаем его исполняемым.
 COPY --chown=appuser:appuser entrypoint.sh /entrypoint.sh
