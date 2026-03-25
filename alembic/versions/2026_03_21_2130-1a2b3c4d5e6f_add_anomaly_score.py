@@ -17,39 +17,17 @@ depends_on = None
 
 def upgrade() -> None:
     # --- Добавляем колонку в parent (основную таблицу) ---
+    # В PostgreSQL 11+ добавление колонки в главную таблицу
+    # автоматически и мгновенно пробрасывает её во все дочерние партиции.
     op.execute("""
         ALTER TABLE public.readings
         ADD COLUMN IF NOT EXISTS anomaly_score INTEGER DEFAULT 0;
     """)
 
-    # --- Гарантируем наличие колонки во всех partition ---
-    op.execute("""
-    DO $$
-    DECLARE
-        r RECORD;
-    BEGIN
-        FOR r IN
-            SELECT inhrelid::regclass AS child
-            FROM pg_inherits
-            WHERE inhparent = 'public.readings'::regclass
-        LOOP
-            BEGIN
-                EXECUTE format(
-                    'ALTER TABLE %s ADD COLUMN anomaly_score INTEGER DEFAULT 0',
-                    r.child
-                );
-            EXCEPTION
-                WHEN duplicate_column THEN
-                    -- колонка уже существует, ничего не делаем
-                    NULL;
-            END;
-        END LOOP;
-    END $$;
-    """)
-
 
 def downgrade() -> None:
     # --- Удаляем колонку из parent ---
+    # Аналогично, удаление из родительской таблицы каскадно удалит её из всех партиций
     op.execute("""
         ALTER TABLE public.readings
         DROP COLUMN IF EXISTS anomaly_score;
