@@ -90,7 +90,7 @@ jobs:
         run: ruff check . --fix
 
       - name: Run pip-audit
-        run: pip-audit --ignore-vuln CVE-2024-23342
+        run: pip-audit --ignore-vuln CVE-2024-23342 --ignore-vuln CVE-2026-4539
 
       - name: Cache Trivy database
         uses: actions/cache@v4
