@@ -38,6 +38,7 @@ from app.modules.utility.routers import (
     tariffs,
     admin_readings,
     users,
+    rooms,
     admin_adjustments,
     admin_user_ops,
     financier,
@@ -241,6 +242,7 @@ async def ensure_admin_exists_safe(session_factory, user_model, name: str):
 def register_jkh_routes(app: FastAPI):
     app.include_router(auth_routes.router)
     app.include_router(users.router)
+    app.include_router(rooms.router)
     app.include_router(tariffs.router)
     app.include_router(client_readings.router)
     app.include_router(admin_readings.router)

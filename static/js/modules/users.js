@@ -6,7 +6,9 @@ import { TableController } from '../core/table-controller.js';
 export const UsersModule = {
     table: null,
     isInitialized: false,
-    tariffs:[], // Хранилище загруженных тарифов
+    tariffs: [],
+    dormsCache:[], // Кэш названий общежитий
+    roomsCache: {}, // Кэш комнат по названию общежития { "Общежитие 1": [room1, room2] }
 
     async init() {
         this.cacheDOM();
@@ -16,10 +18,12 @@ export const UsersModule = {
             this.isInitialized = true;
         }
 
-        // 1. Сначала загружаем список тарифов (с кэшированием)
-        await this.loadTariffs();
+        // Параллельно загружаем тарифы и список общежитий из нового API Жилфонда
+        await Promise.all([
+            this.loadTariffs(),
+            this.loadDormitories()
+        ]);
 
-        // 2. Затем инициализируем таблицу пользователей
         this.initTable();
     },
 
@@ -29,7 +33,17 @@ export const UsersModule = {
             importInput: document.getElementById('importUsersFile'),
             btnImport: document.getElementById('btnImportUsers'),
             btnRefresh: document.getElementById('btnRefreshUsers'),
-            newTariffSelect: document.getElementById('newTariffId') // Селект тарифа при создании
+            newTariffSelect: document.getElementById('newTariffId'),
+
+            // Новые селекты и блоки информации (Создание жильца)
+            newDormSelect: document.getElementById('newDormSelect'),
+            newRoomSelect: document.getElementById('newRoomSelect'),
+            newRoomInfo: document.getElementById('newRoomInfo'),
+            infoArea: document.getElementById('infoArea'),
+            infoCap: document.getElementById('infoCap'),
+            infoHw: document.getElementById('infoHw'),
+            infoCw: document.getElementById('infoCw'),
+            infoEl: document.getElementById('infoEl')
         };
 
         this.modal = {
@@ -40,17 +54,19 @@ export const UsersModule = {
                 username: document.getElementById('editUsername'),
                 password: document.getElementById('editPassword'),
                 role: document.getElementById('editRole'),
-                tariff: document.getElementById('editTariffId'), // Селект тарифа при редактировании
-                dorm: document.getElementById('editDormitory'),
-                area: document.getElementById('editArea'),
+                tariff: document.getElementById('editTariffId'),
                 residents: document.getElementById('editResidentsCount'),
-                total: document.getElementById('editTotalRoomResidents'),
                 work: document.getElementById('editWorkplace'),
 
-                // НОВОЕ: Поля счетчиков в модалке редактирования
-                hwSerial: document.getElementById('editHwSerial'),
-                cwSerial: document.getElementById('editCwSerial'),
-                elSerial: document.getElementById('editElSerial')
+                // Новые селекты и блоки информации (Редактирование жильца)
+                dormSelect: document.getElementById('editDormSelect'),
+                roomSelect: document.getElementById('editRoomSelect'),
+                roomInfo: document.getElementById('editRoomInfo'),
+                infoArea: document.getElementById('editInfoArea'),
+                infoCap: document.getElementById('editInfoCap'),
+                infoHw: document.getElementById('editInfoHw'),
+                infoCw: document.getElementById('editInfoCw'),
+                infoEl: document.getElementById('editInfoEl')
             },
             btnClose: document.querySelector('#userEditModal .close-btn')
         };
@@ -73,54 +89,55 @@ export const UsersModule = {
     },
 
     bindEvents() {
-        if (this.dom.btnRefresh) {
-            this.dom.btnRefresh.addEventListener('click', () => {
-                if (this.table) this.table.refresh();
-            });
-        }
+        if (this.dom.btnRefresh) this.dom.btnRefresh.addEventListener('click', () => this.table?.refresh());
+        if (this.dom.addForm) this.dom.addForm.addEventListener('submit', (e) => this.handleAdd(e));
+        if (this.dom.btnImport) this.dom.btnImport.addEventListener('click', (e) => { e.preventDefault(); this.handleImport(this.dom.btnImport); });
 
-        if (this.dom.addForm) {
-            this.dom.addForm.addEventListener('submit', (event) => {
-                event.preventDefault();
-                this.handleAdd(event);
-            });
-        }
-
-        if (this.dom.btnImport) {
-            this.dom.btnImport.addEventListener('click', (event) => {
-                event.preventDefault();
-                this.handleImport(this.dom.btnImport);
-            });
-        }
-
-        if (this.modal.form) {
-            this.modal.form.addEventListener('submit', (event) => {
-                event.preventDefault();
-                this.handleEditSubmit(event);
-            });
-        }
-
-        if (this.modal.btnClose) {
-            this.modal.btnClose.addEventListener('click', () => {
-                this.closeModal();
-            });
-        }
+        if (this.modal.form) this.modal.form.addEventListener('submit', (e) => this.handleEditSubmit(e));
+        if (this.modal.btnClose) this.modal.btnClose.addEventListener('click', () => this.closeModal());
 
         if (this.otc.form) {
             this.otc.form.addEventListener('submit', (e) => this.handleOneTimeSubmit(e));
             this.otc.btnClose.addEventListener('click', (e) => { e.preventDefault(); this.otc.modal.classList.remove('open'); });
             this.otc.btnCancel.addEventListener('click', (e) => { e.preventDefault(); this.otc.modal.classList.remove('open'); });
         }
+
+        // ====================================================
+        // КАСКАДНЫЕ СЕЛЕКТЫ (Загрузка комнат при выборе общаги)
+        // ====================================================
+
+        // Для формы создания
+        if (this.dom.newDormSelect) {
+            this.dom.newDormSelect.addEventListener('change', (e) => {
+                this.handleDormChange(e.target.value, this.dom.newRoomSelect, this.dom.newRoomInfo);
+            });
+        }
+        if (this.dom.newRoomSelect) {
+            this.dom.newRoomSelect.addEventListener('change', (e) => {
+                this.handleRoomChange(e.target.value, this.dom.newDormSelect.value, this.dom);
+            });
+        }
+
+        // Для модалки редактирования
+        if (this.modal.inputs.dormSelect) {
+            this.modal.inputs.dormSelect.addEventListener('change', (e) => {
+                this.handleDormChange(e.target.value, this.modal.inputs.roomSelect, this.modal.inputs.roomInfo);
+            });
+        }
+        if (this.modal.inputs.roomSelect) {
+            this.modal.inputs.roomSelect.addEventListener('change', (e) => {
+                this.handleRoomChange(e.target.value, this.modal.inputs.dormSelect.value, this.modal.inputs);
+            });
+        }
     },
 
-    // ОПТИМИЗАЦИЯ: Кэширование тарифов в браузере
     async loadTariffs() {
         try {
             const cached = sessionStorage.getItem('tariffs_cache');
             if (cached) {
                 this.tariffs = JSON.parse(cached);
                 this.populateTariffSelects();
-                return; // Берем из кэша, экономим запрос к БД
+                return;
             }
 
             this.tariffs = await api.get('/tariffs');
@@ -136,18 +153,94 @@ export const UsersModule = {
         const optionsHtml = '<option value="">Базовый тариф (По умолчанию)</option>' +
             this.tariffs.map(t => `<option value="${t.id}">${t.name}</option>`).join('');
 
-        if (this.dom.newTariffSelect) {
-            this.dom.newTariffSelect.innerHTML = optionsHtml;
+        if (this.dom.newTariffSelect) this.dom.newTariffSelect.innerHTML = optionsHtml;
+        if (this.modal.inputs.tariff) this.modal.inputs.tariff.innerHTML = optionsHtml;
+    },
+
+    // Загрузка уникальных названий общежитий
+    async loadDormitories() {
+        try {
+            this.dormsCache = await api.get('/rooms/dormitories');
+
+            const options = '<option value="">-- Выберите общежитие --</option>' +
+                            this.dormsCache.map(d => `<option value="${d}">${d}</option>`).join('');
+
+            if (this.dom.newDormSelect) this.dom.newDormSelect.innerHTML = options;
+            if (this.modal.inputs.dormSelect) this.modal.inputs.dormSelect.innerHTML = '<option value="">Не привязан к комнате</option>' + options;
+        } catch (error) {
+            toast('Ошибка загрузки списка общежитий', 'error');
         }
-        if (this.modal.inputs.tariff) {
-            this.modal.inputs.tariff.innerHTML = optionsHtml;
+    },
+
+    // Обработчик выбора общежития -> Загружает список комнат
+    async handleDormChange(dormName, roomSelectEl, infoBoxEl) {
+        if (infoBoxEl) infoBoxEl.style.display = 'none'; // Прячем инфо
+
+        if (!dormName) {
+            if (roomSelectEl) {
+                roomSelectEl.innerHTML = '<option value="">Сначала выберите общежитие</option>';
+                roomSelectEl.disabled = true;
+            }
+            return;
+        }
+
+        if (roomSelectEl) {
+            roomSelectEl.innerHTML = '<option value="">Загрузка комнат...</option>';
+            roomSelectEl.disabled = true;
+        }
+
+        try {
+            // Кэшируем комнаты
+            if (!this.roomsCache[dormName]) {
+                const res = await api.get(`/rooms?dormitory=${encodeURIComponent(dormName)}&limit=1000`);
+                this.roomsCache[dormName] = res.items;
+            }
+
+            const rooms = this.roomsCache[dormName];
+
+            if (!roomSelectEl) return;
+
+            if (rooms.length === 0) {
+                roomSelectEl.innerHTML = '<option value="">В этом общежитии нет комнат</option>';
+                return;
+            }
+
+            roomSelectEl.innerHTML = '<option value="">-- Выберите комнату --</option>' +
+                rooms.map(r => `<option value="${r.id}">${r.room_number}</option>`).join('');
+            roomSelectEl.disabled = false;
+
+        } catch (e) {
+            toast('Ошибка загрузки комнат', 'error');
+        }
+    },
+
+    // Обработчик выбора комнаты -> Показывает площадь, вместимость и счетчики
+    handleRoomChange(roomIdStr, dormName, domContext) {
+        const infoBox = domContext.newRoomInfo || domContext.roomInfo;
+
+        if (!roomIdStr || !dormName || !this.roomsCache[dormName]) {
+            if (infoBox) infoBox.style.display = 'none';
+            return;
+        }
+
+        const roomId = parseInt(roomIdStr);
+        const room = this.roomsCache[dormName].find(r => r.id === roomId);
+
+        if (room && infoBox) {
+            infoBox.style.display = 'block';
+
+            // Используем textContent для span'ов и b-тегов
+            if (domContext.infoArea) domContext.infoArea.textContent = Number(room.apartment_area).toFixed(1);
+            if (domContext.infoCap) domContext.infoCap.textContent = room.total_room_residents;
+            if (domContext.infoHw) domContext.infoHw.textContent = room.hw_meter_serial || '-';
+            if (domContext.infoCw) domContext.infoCw.textContent = room.cw_meter_serial || '-';
+            if (domContext.infoEl) domContext.infoEl.textContent = room.el_meter_serial || '-';
         }
     },
 
     initTable() {
         this.table = new TableController({
             endpoint: '/users',
-
             dom: {
                 tableBody: 'usersTableBody',
                 searchInput: 'usersSearchInput',
@@ -158,7 +251,6 @@ export const UsersModule = {
             },
 
             renderRow: (user) => {
-                // Безопасно извлекаем данные из объекта room (если он есть)
                 const address = user.room ? `${user.room.dormitory_name} / ком. ${user.room.room_number}` : '-';
                 const area = user.room && user.room.apartment_area ? Number(user.room.apartment_area).toFixed(1) : '-';
                 const totalResidents = user.room ? user.room.total_room_residents : 1;
@@ -167,9 +259,9 @@ export const UsersModule = {
                     el('td', { class: 'text-gray-500 text-sm' }, `#${user.id}`),
                     el('td', {}, el('div', { style: { fontWeight: '600' } }, user.username)),
                     el('td', {}, el('span', { class: `role-badge ${user.role}` }, user.role)),
-                    el('td', {}, address), // <-- Используем склеенный адрес
-                    el('td', {}, area),    // <-- Используем площадь из комнаты
-                    el('td', { class: 'text-center text-sm' }, `${user.residents_count} / ${totalResidents}`), // <-- Берем из комнаты
+                    el('td', {}, address),
+                    el('td', {}, area),
+                    el('td', { class: 'text-center text-sm' }, `${user.residents_count} / ${totalResidents}`),
                     el('td', {}, user.workplace || '-'),
                     el('td', { class: 'text-center' },
                         el('button', {
@@ -199,24 +291,17 @@ export const UsersModule = {
 
     async handleAdd(event) {
         const button = this.dom.addForm.querySelector('button');
-        const tariffIdVal = this.dom.newTariffSelect.value;
+        const tariffIdVal = this.dom.newTariffSelect ? this.dom.newTariffSelect.value : null;
+        const roomIdVal = this.dom.newRoomSelect ? this.dom.newRoomSelect.value : null;
 
-        // Данные формы не меняются, бэкенд сам разобьет dormitory на название и номер комнаты
         const data = {
             username: document.getElementById('newUsername').value.trim(),
             password: document.getElementById('newPassword').value,
             role: document.getElementById('newRole').value,
             tariff_id: tariffIdVal ? parseInt(tariffIdVal) : null,
-            dormitory: document.getElementById('dormitory').value.trim(),
-            apartment_area: parseFloat(document.getElementById('area').value) || 0,
+            room_id: roomIdVal ? parseInt(roomIdVal) : null, // Сохраняем только ID комнаты
             residents_count: parseInt(document.getElementById('residentsCount').value) || 1,
-            total_room_residents: parseInt(document.getElementById('totalRoomResidents').value) || 1,
-            workplace: document.getElementById('workplace').value.trim(),
-
-            // НОВОЕ: Передаем данные счетчиков
-            hw_meter_serial: document.getElementById('hwSerial').value.trim(),
-            cw_meter_serial: document.getElementById('cwSerial').value.trim(),
-            el_meter_serial: document.getElementById('elSerial').value.trim()
+            workplace: document.getElementById('workplace').value.trim()
         };
 
         setLoading(button, true, 'Создание...');
@@ -225,6 +310,16 @@ export const UsersModule = {
             await api.post('/users', data);
             toast('Пользователь успешно создан', 'success');
             this.dom.addForm.reset();
+
+            // Сбрасываем каскадные селекты
+            if (this.dom.newRoomSelect) {
+                this.dom.newRoomSelect.disabled = true;
+                this.dom.newRoomSelect.innerHTML = '<option value="">Сначала выберите общежитие</option>';
+            }
+            if (this.dom.newRoomInfo) {
+                this.dom.newRoomInfo.style.display = 'none';
+            }
+
             this.table.refresh();
         } catch (error) {
             toast(error.message, 'error');
@@ -253,13 +348,9 @@ export const UsersModule = {
 
         try {
             const result = await api.post('/users/import_excel', formData);
-
-            // UX УЛУЧШЕНИЕ: Вызываем красивую модалку вместо alert()
             this.showImportResultModal(result);
-
             this.dom.importInput.value = '';
             this.table.refresh();
-
         } catch (error) {
             toast(error.message, 'error');
         } finally {
@@ -267,7 +358,6 @@ export const UsersModule = {
         }
     },
 
-    // Динамическое создание модалки для показа результатов импорта 20к жильцов
     showImportResultModal(result) {
         const hasErrors = result.errors && result.errors.length > 0;
 
@@ -286,7 +376,6 @@ export const UsersModule = {
         );
 
         if (hasErrors) {
-            // Контейнер с прокруткой для ошибок
             const errorBox = el('div', {
                 style: {
                     maxHeight: '250px', overflowY: 'auto', background: '#fef2f2',
@@ -298,7 +387,7 @@ export const UsersModule = {
             result.errors.forEach(err => {
                 errorBox.appendChild(el('div', {
                     style: { marginBottom: '6px', borderBottom: '1px dashed #fca5a5', paddingBottom: '6px' }
-                }, String(err))); // String() + el() защищает от XSS
+                }, String(err)));
             });
 
             content.appendChild(el('h4', { style: { marginBottom: '10px', color: '#dc2626', fontSize: '14px' } }, `Ошибки (${result.errors.length}):`));
@@ -318,7 +407,7 @@ export const UsersModule = {
         );
 
         overlay.appendChild(modalWindow);
-        document.body.appendChild(overlay); // Вставляем в DOM на лету
+        document.body.appendChild(overlay);
     },
 
     async deleteUser(id) {
@@ -338,36 +427,34 @@ export const UsersModule = {
             const user = await api.get(`/users/${id}`);
             const inputs = this.modal.inputs;
 
-            inputs.id.value = user.id;
-            inputs.username.value = user.username;
-            inputs.password.value = '';
-            inputs.role.value = user.role;
-            inputs.tariff.value = user.tariff_id || '';
+            if (inputs.id) inputs.id.value = user.id;
+            if (inputs.username) inputs.username.value = user.username;
+            if (inputs.password) inputs.password.value = '';
+            if (inputs.role) inputs.role.value = user.role;
+            if (inputs.tariff) inputs.tariff.value = user.tariff_id || '';
+            if (inputs.residents) inputs.residents.value = user.residents_count;
+            if (inputs.work) inputs.work.value = user.workplace || '';
 
-            // Безопасно заполняем поля модалки из объекта room
+            // Восстанавливаем каскадные селекты для редактирования
             if (user.room) {
-                // Склеиваем обратно для формы, бэкенд разделит по последнему пробелу
-                inputs.dorm.value = `${user.room.dormitory_name} ${user.room.room_number}`.trim();
-                inputs.area.value = user.room.apartment_area;
-                inputs.total.value = user.room.total_room_residents;
+                if (inputs.dormSelect) {
+                    inputs.dormSelect.value = user.room.dormitory_name;
+                    // Ждем загрузки комнат
+                    await this.handleDormChange(user.room.dormitory_name, inputs.roomSelect, inputs.roomInfo);
 
-                // НОВОЕ: Заполняем счетчики
-                inputs.hwSerial.value = user.room.hw_meter_serial || '';
-                inputs.cwSerial.value = user.room.cw_meter_serial || '';
-                inputs.elSerial.value = user.room.el_meter_serial || '';
+                    if (inputs.roomSelect) {
+                        inputs.roomSelect.value = user.room.id;
+                        this.handleRoomChange(user.room.id, user.room.dormitory_name, inputs);
+                    }
+                }
             } else {
-                inputs.dorm.value = '';
-                inputs.area.value = 0;
-                inputs.total.value = 1;
-
-                // Очищаем счетчики
-                inputs.hwSerial.value = '';
-                inputs.cwSerial.value = '';
-                inputs.elSerial.value = '';
+                if (inputs.dormSelect) inputs.dormSelect.value = '';
+                if (inputs.roomSelect) {
+                    inputs.roomSelect.innerHTML = '<option value="">Сначала выберите общежитие</option>';
+                    inputs.roomSelect.disabled = true;
+                }
+                if (inputs.roomInfo) inputs.roomInfo.style.display = 'none';
             }
-
-            inputs.residents.value = user.residents_count;
-            inputs.work.value = user.workplace || '';
 
             this.modal.window.classList.add('open');
 
@@ -383,22 +470,16 @@ export const UsersModule = {
     async handleEditSubmit(event) {
         const button = this.modal.form.querySelector('.confirm-btn');
         const id = this.modal.inputs.id.value;
-        const tariffIdVal = this.modal.inputs.tariff.value;
+        const tariffIdVal = this.modal.inputs.tariff ? this.modal.inputs.tariff.value : null;
+        const roomIdVal = this.modal.inputs.roomSelect ? this.modal.inputs.roomSelect.value : null;
 
         const data = {
             username: this.modal.inputs.username.value.trim(),
             role: this.modal.inputs.role.value,
             tariff_id: tariffIdVal ? parseInt(tariffIdVal) : null,
-            dormitory: this.modal.inputs.dorm.value.trim(),
-            apartment_area: parseFloat(this.modal.inputs.area.value),
+            room_id: roomIdVal ? parseInt(roomIdVal) : null,
             residents_count: parseInt(this.modal.inputs.residents.value),
-            total_room_residents: parseInt(this.modal.inputs.total.value),
-            workplace: this.modal.inputs.work.value.trim(),
-
-            // НОВОЕ: Отправляем обновленные счетчики на бэкенд
-            hw_meter_serial: this.modal.inputs.hwSerial.value.trim(),
-            cw_meter_serial: this.modal.inputs.cwSerial.value.trim(),
-            el_meter_serial: this.modal.inputs.elSerial.value.trim()
+            workplace: this.modal.inputs.work.value.trim()
         };
 
         if (this.modal.inputs.password.value) {
@@ -422,7 +503,6 @@ export const UsersModule = {
     async openOneTimeModal(user) {
         if (!this.otc.modal) return;
 
-        // Выводим правильный адрес
         const address = user.room ? `${user.room.dormitory_name} ком. ${user.room.room_number}` : 'без адреса';
 
         this.otc.userId.value = user.id;

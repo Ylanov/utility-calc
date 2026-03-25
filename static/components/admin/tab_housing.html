@@ -1,0 +1,117 @@
+<div id="housing" class="tab-content">
+    <div class="grid-2-col" style="grid-template-columns: 300px 1fr;">
+        <!-- Левая колонка: Фильтр по общежитиям -->
+        <div class="card" style="align-self: start;">
+            <div class="card-header">
+                <h3>🏢 Общежития</h3>
+            </div>
+            <div style="padding: 10px 0;">
+                <label style="font-size: 13px; color: #666; margin-bottom: 5px; display: block;">Фильтр:</label>
+                <select id="dormFilterSelect" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+                    <option value="">Все объекты</option>
+                    <!-- Заполняется из API -->
+                </select>
+            </div>
+            <hr style="border: 0; border-top: 1px solid #eee; margin: 15px 0;">
+            <button id="btnOpenAddRoom" class="action-btn primary-btn full-width">➕ Добавить помещение</button>
+        </div>
+
+        <!-- Правая колонка: Таблица помещений -->
+        <div class="card table-card" style="margin: 0;">
+            <div class="card-header">
+                <h3>Список помещений</h3>
+                <div class="toolbar-controls" style="display: flex; gap: 10px; align-items: center;">
+                    <select id="roomsLimitSelect" style="width: auto; padding: 6px;">
+                        <option value="25">25</option>
+                        <option value="50" selected>50</option>
+                        <option value="100">100</option>
+                    </select>
+                    <input type="text" id="roomsSearchInput" placeholder="Поиск (№ комн., № счетчика)..." style="min-width: 250px; padding: 6px;">
+                    <button id="btnRefreshRooms" class="icon-btn refresh" title="Обновить">↻</button>
+                </div>
+            </div>
+            <div class="table-responsive">
+                <table class="sticky-header-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Общежитие</th>
+                            <th>Комната</th>
+                            <th>Площадь</th>
+                            <th>Мест</th>
+                            <th style="color: #dc2626;">№ ГВС</th>
+                            <th style="color: #2563eb;">№ ХВС</th>
+                            <th style="color: #d97706;">№ Электр.</th>
+                            <th class="text-center">Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody id="roomsTableBody"></tbody>
+                </table>
+            </div>
+            <div class="pagination-footer" style="padding: 15px; border-top: 1px solid #eee; display: flex; justify-content: center; align-items: center; gap: 15px;">
+                <button id="btnPrevRooms" class="page-btn">← Назад</button>
+                <span id="roomsPageInfo" style="font-weight: 500; color: #555;">Стр. 1</span>
+                <button id="btnNextRooms" class="page-btn">Вперед →</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- МОДАЛКА: ДОБАВЛЕНИЕ / РЕДАКТИРОВАНИЕ ПОМЕЩЕНИЯ -->
+    <div id="roomModal" class="modal-overlay">
+        <div class="modal-window" style="width: 600px;">
+            <div class="modal-header">
+                <h3 id="roomModalTitle">Добавить помещение</h3>
+                <button class="close-btn close-icon">&times;</button>
+            </div>
+            <form id="roomForm">
+                <div class="modal-form">
+                    <input type="hidden" id="roomEditId">
+
+                    <div class="form-grid-2 mb-3">
+                        <div class="form-group">
+                            <label>Название Общежития</label>
+                            <!-- Используем datalist для подсказок существующих общежитий -->
+                            <input type="text" id="roomDormitory" required list="dormList" placeholder="Например: Общежитие №1">
+                            <datalist id="dormList"></datalist>
+                        </div>
+                        <div class="form-group">
+                            <label>Номер комнаты / квартиры</label>
+                            <input type="text" id="roomNumber" required placeholder="Например: 101А">
+                        </div>
+                    </div>
+
+                    <div class="form-grid-2 mb-3">
+                        <div class="form-group">
+                            <label>Площадь (м²)</label>
+                            <input type="number" step="0.1" id="roomArea" required min="0" placeholder="0.0">
+                        </div>
+                        <div class="form-group">
+                            <label>Макс. мест для проживания</label>
+                            <input type="number" id="roomCapacity" required min="1" value="1">
+                        </div>
+                    </div>
+
+                    <h4 style="margin-top: 20px; margin-bottom: 10px; font-size: 14px; border-bottom: 1px solid #eee; padding-bottom: 5px;">Серийные номера счетчиков (Опционально)</h4>
+                    <div class="form-grid-3" style="background: #f9fafb; padding: 15px; border-radius: 8px;">
+                        <div class="form-group">
+                            <label style="color: #dc2626;">🔥 № ГВС</label>
+                            <input type="text" id="roomHwSerial">
+                        </div>
+                        <div class="form-group">
+                            <label style="color: #2563eb;">💧 № ХВС</label>
+                            <input type="text" id="roomCwSerial">
+                        </div>
+                        <div class="form-group">
+                            <label style="color: #d97706;">⚡ № Электр.</label>
+                            <input type="text" id="roomElSerial">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="action-btn secondary-btn close-btn">Отмена</button>
+                    <button type="submit" class="action-btn primary-btn confirm-btn">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>

@@ -29,22 +29,36 @@ class PaginatedResponse(BaseModel, Generic[M]):
 # ROOM SCHEMAS (НОВОЕ)
 # ======================================================
 
-# Обновите RoomResponse
+class RoomCreate(BaseModel):
+    dormitory_name: str
+    room_number: str
+    apartment_area: DecimalAmount
+    total_room_residents: int = 1
+    hw_meter_serial: Optional[str] = None
+    cw_meter_serial: Optional[str] = None
+    el_meter_serial: Optional[str] = None
+
+class RoomUpdate(BaseModel):
+    dormitory_name: Optional[str] = None
+    room_number: Optional[str] = None
+    apartment_area: Optional[DecimalAmount] = None
+    total_room_residents: Optional[int] = None
+    hw_meter_serial: Optional[str] = None
+    cw_meter_serial: Optional[str] = None
+    el_meter_serial: Optional[str] = None
+
 class RoomResponse(BaseModel):
     id: int
     dormitory_name: str
     room_number: str
     apartment_area: DecimalAmount
     total_room_residents: int
-
-    # НОВОЕ
     hw_meter_serial: Optional[str] = None
     cw_meter_serial: Optional[str] = None
     el_meter_serial: Optional[str] = None
 
     class Config:
         from_attributes = True
-
 
 # ======================================================
 # USER SCHEMAS (ОБНОВЛЕНО)
@@ -57,6 +71,7 @@ class UserCreate(BaseModel):
     workplace: str = ""
     residents_count: int = 1
     tariff_id: Optional[int] = None
+    room_id: Optional[int] = None
     hw_meter_serial: Optional[str] = None
     cw_meter_serial: Optional[str] = None
     el_meter_serial: Optional[str] = None
@@ -89,6 +104,7 @@ class UserUpdate(BaseModel):
     workplace: Optional[str] = None
     residents_count: Optional[int] = None
     tariff_id: Optional[int] = None
+    room_id: Optional[int] = None
     hw_meter_serial: Optional[str] = None
     cw_meter_serial: Optional[str] = None
     el_meter_serial: Optional[str] = None

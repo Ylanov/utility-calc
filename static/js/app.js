@@ -11,6 +11,7 @@ import { TariffsModule } from './modules/tariffs.js';
 import { SummaryModule } from './modules/summary.js';
 import { DebtsModule } from './modules/debts.js';     // Модуль долгов
 import { ManualModule } from './modules/manual.js';   // Модуль ручного ввода показаний
+import { HousingModule } from './modules/housing.js'; // Модуль жилфонда
 
 // --- 1. Глобальная проверка авторизации ---
 // Если в памяти нет токена (роли), сразу выкидываем на страницу логина.
@@ -233,8 +234,8 @@ function handleRoute() {
     const hash = window.location.hash.substring(1);
     const defaultTab = 'readings';
 
-    // Массив разрешенных вкладок. ДОБАВЛЕН 'manual'
-    const validTabs = ['readings', 'users', 'tariffs', 'accountant', 'debts', 'manual'];
+    // Массив разрешенных вкладок
+    const validTabs =['readings', 'housing', 'users', 'tariffs', 'accountant', 'debts', 'manual'];
     const tabToLoad = validTabs.includes(hash) ? hash : defaultTab;
 
     switchTab(tabToLoad);
@@ -307,6 +308,9 @@ function initModule(tabId) {
         case 'readings':
             ReadingsModule.init();
             break;
+        case 'housing':
+            HousingModule.init();
+            break;
         case 'users':
             UsersModule.init();
             break;
@@ -333,6 +337,11 @@ function refreshModuleData(tabId) {
         case 'readings':
             if (ReadingsModule.isInitialized && ReadingsModule.table) {
                 ReadingsModule.table.refresh();
+            }
+            break;
+        case 'housing':
+            if (HousingModule.isInitialized && HousingModule.table) {
+                HousingModule.table.refresh();
             }
             break;
         case 'users':

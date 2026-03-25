@@ -26,7 +26,6 @@
                             <option value="admin">Администратор</option>
                         </select>
                     </div>
-                    <!-- НОВОЕ: ВЫБОР ТАРИФА -->
                     <div class="form-group">
                         <label>Тарифный профиль</label>
                         <select id="newTariffId" class="tariff-select">
@@ -34,44 +33,41 @@
                         </select>
                     </div>
                 </div>
-                <div class="form-row">
+
+                <!-- ========================================================= -->
+                <!-- НОВЫЙ БЛОК: Выбор помещения из Жилфонда                   -->
+                <!-- ========================================================= -->
+                <div class="form-row" style="background: #f9fafb; padding: 10px; border-radius: 8px; border: 1px solid #e5e7eb; margin-top: 10px;">
                     <div class="form-group">
                         <label>Общежитие</label>
-                        <input type="text" id="dormitory">
+                        <select id="newDormSelect">
+                            <option value="">Загрузка...</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Комната</label>
+                        <select id="newRoomSelect" disabled>
+                            <option value="">Сначала выберите общежитие</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Блок с информацией о выбранной комнате (площадь, счетчики) -->
+                <div id="newRoomInfo" style="display: none; background: #ecfdf5; padding: 10px; border-radius: 8px; border: 1px solid #a7f3d0; margin-top: 10px; font-size: 12px;">
+                    <strong style="color: #065f46; display: block; margin-bottom: 5px;">Параметры комнаты:</strong>
+                    Площадь: <b id="infoArea">0</b> м² | Всего мест: <b id="infoCap">0</b><br>
+                    Счетчики: ГВС (<span id="infoHw" style="color: #dc2626; font-family: monospace;">-</span>), ХВС (<span id="infoCw" style="color: #2563eb; font-family: monospace;">-</span>), Электр. (<span id="infoEl" style="color: #d97706; font-family: monospace;">-</span>)
+                </div>
+                <!-- ========================================================= -->
+
+                <div class="form-row" style="margin-top: 15px;">
+                    <div class="form-group">
+                        <label>Сколько человек платит с этого Л/С</label>
+                        <input type="number" id="residentsCount" value="1" min="1">
                     </div>
                     <div class="form-group">
                         <label>Место работы</label>
                         <input type="text" id="workplace">
-                    </div>
-                </div>
-                <div class="form-row three-col">
-                    <div class="form-group">
-                        <label>Площадь (м²)</label>
-                        <input type="number" step="0.1" id="area" value="0">
-                    </div>
-                    <div class="form-group">
-                        <label>Жильцов</label>
-                        <input type="number" id="residentsCount" value="1">
-                    </div>
-                    <div class="form-group">
-                        <label>Всего мест</label>
-                        <input type="number" id="totalRoomResidents" value="1">
-                    </div>
-                </div>
-
-                <!-- НОВОЕ: НОМЕРА СЧЕТЧИКОВ -->
-                <div class="form-row three-col" style="margin-top: 15px; background: #f9fafb; padding: 10px; border-radius: 8px;">
-                    <div class="form-group">
-                        <label>№ счетчика ГВС</label>
-                        <input type="text" id="hwSerial" placeholder="Например: 12345-А">
-                    </div>
-                    <div class="form-group">
-                        <label>№ счетчика ХВС</label>
-                        <input type="text" id="cwSerial" placeholder="Например: 67890-В">
-                    </div>
-                    <div class="form-group">
-                        <label>№ счетчика Электр.</label>
-                        <input type="text" id="elSerial" placeholder="Например: 00112233">
                     </div>
                 </div>
 
@@ -135,7 +131,7 @@
         </div>
     </div>
 
-    <!-- Модалка редактирования -->
+    <!-- Модалка редактирования жильца -->
     <div id="userEditModal" class="modal-overlay">
         <div class="modal-window" style="width: 700px;">
             <div class="modal-header">
@@ -145,6 +141,7 @@
             <form id="editUserForm">
                 <div class="modal-form">
                     <input type="hidden" id="editUserId">
+
                     <div class="form-grid-2">
                         <div class="form-group">
                             <label>Логин</label>
@@ -160,49 +157,47 @@
                                 <option value="user">Жилец</option>
                                 <option value="accountant">Бухгалтер</option>
                                 <option value="financier">Финансист</option>
+                                <option value="admin">Администратор</option>
                             </select>
                         </div>
                         <div class="form-group">
                             <label>Тарифный профиль</label>
                             <select id="editTariffId" class="tariff-select"></select>
                         </div>
+                    </div>
+
+                    <!-- ========================================================= -->
+                    <!-- БЛОК: Редактирование привязки к комнате                   -->
+                    <!-- ========================================================= -->
+                    <div class="form-grid-2" style="background: #f9fafb; padding: 10px; border-radius: 8px; border: 1px solid #e5e7eb; margin-top: 15px;">
                         <div class="form-group">
                             <label>Общежитие</label>
-                            <input type="text" id="editDormitory">
+                            <select id="editDormSelect">
+                                <option value="">Не привязан</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Комната</label>
+                            <select id="editRoomSelect" disabled>
+                                <option value="">Сначала выберите общежитие</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <div id="editRoomInfo" style="display: none; background: #ecfdf5; padding: 10px; border-radius: 8px; border: 1px solid #a7f3d0; margin-top: 10px; font-size: 12px;">
+                        Площадь: <b id="editInfoArea">0</b> м² | Мест: <b id="editInfoCap">0</b><br>
+                        Счетчики: ГВС (<span id="editInfoHw" style="color: #dc2626; font-family: monospace;">-</span>), ХВС (<span id="editInfoCw" style="color: #2563eb; font-family: monospace;">-</span>), Электр. (<span id="editInfoEl" style="color: #d97706; font-family: monospace;">-</span>)
+                    </div>
+                    <!-- ========================================================= -->
+
+                    <div class="form-grid-2" style="margin-top: 15px;">
+                        <div class="form-group">
+                            <label>Жильцов (платит за)</label>
+                            <input type="number" id="editResidentsCount" min="1">
                         </div>
                         <div class="form-group">
                             <label>Место работы</label>
                             <input type="text" id="editWorkplace">
-                        </div>
-                    </div>
-                    <div class="form-grid-3">
-                        <div class="form-group">
-                            <label>Площадь</label>
-                            <input type="number" step="0.1" id="editArea">
-                        </div>
-                        <div class="form-group">
-                            <label>Жильцов (платит за)</label>
-                            <input type="number" id="editResidentsCount">
-                        </div>
-                        <div class="form-group">
-                            <label>Всего мест в комнате</label>
-                            <input type="number" id="editTotalRoomResidents">
-                        </div>
-                    </div>
-
-                    <!-- НОВОЕ: НОМЕРА СЧЕТЧИКОВ В МОДАЛКЕ -->
-                    <div class="form-grid-3" style="margin-top: 15px; background: #f9fafb; padding: 10px; border-radius: 8px;">
-                        <div class="form-group">
-                            <label>№ счетчика ГВС</label>
-                            <input type="text" id="editHwSerial" placeholder="Например: 12345-А">
-                        </div>
-                        <div class="form-group">
-                            <label>№ счетчика ХВС</label>
-                            <input type="text" id="editCwSerial" placeholder="Например: 67890-В">
-                        </div>
-                        <div class="form-group">
-                            <label>№ счетчика Электр.</label>
-                            <input type="text" id="editElSerial" placeholder="Например: 00112233">
                         </div>
                     </div>
 
