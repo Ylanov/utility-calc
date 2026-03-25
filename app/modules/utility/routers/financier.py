@@ -5,9 +5,10 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from app.core.database import get_db
-from app.modules.utility.models import User, MeterReading, BillingPeriod
+# Добавлен импорт модели Room
+from app.modules.utility.models import User, MeterReading, BillingPeriod, Room
 from app.core.dependencies import get_current_user
 from app.modules.utility.schemas import PaginatedResponse, UserDebtResponse
 from app.modules.utility.tasks import import_debts_task
@@ -22,9 +23,9 @@ os.makedirs(TEMP_DIR, exist_ok=True)
 
 @router.post("/import-debts", summary="Фоновый импорт долгов из 1С")
 async def upload_debts_1c(
-    account_type: str = Form(..., pattern="^(209|205)$", description="Тип счета: 209 или 205"),
-    file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user)
+        account_type: str = Form(..., pattern="^(209|205)$", description="Тип счета: 209 или 205"),
+        file: UploadFile = File(...),
+        current_user: User = Depends(get_current_user)
 ):
     if current_user.role not in ("financier", "accountant", "admin"):
         raise HTTPException(status_code=403, detail="Доступ запрещен")
@@ -80,11 +81,11 @@ async def upload_debts_1c(
     summary="Список пользователей с долгами"
 )
 async def get_users_with_debts(
-    page: int = Query(1, ge=1),
-    limit: int = Query(50, ge=1, le=500),
-    search: str | None = Query(None),
-    current_user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db)
+        page: int = Query(1, ge=1),
+        limit: int = Query(50, ge=1, le=500),
+        search: str | None = Query(None),
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db)
 ):
     if current_user.role not in ("financier", "accountant", "admin"):
         raise HTTPException(status_code=403, detail="Доступ запрещен")
@@ -97,16 +98,17 @@ async def get_users_with_debts(
     active_period = res_period.scalars().first()
     period_id = active_period.id if active_period else None
 
-    # ✅ ГЛАВНОЕ ИСПРАВЛЕНИЕ — группировка + суммирование
+    # Выбираем объекты User, Room и агрегированные суммы долгов/переплат
     stmt = select(
-        User.id,
-        User.username,
-        User.dormitory,
+        User,
+        Room,
         func.coalesce(func.sum(MeterReading.debt_209), 0).label("debt_209"),
         func.coalesce(func.sum(MeterReading.overpayment_209), 0).label("overpayment_209"),
         func.coalesce(func.sum(MeterReading.debt_205), 0).label("debt_205"),
         func.coalesce(func.sum(MeterReading.overpayment_205), 0).label("overpayment_205"),
         func.coalesce(func.sum(MeterReading.total_cost), 0).label("current_total_cost"),
+    ).outerjoin(
+        Room, User.room_id == Room.id
     ).outerjoin(
         MeterReading,
         (User.id == MeterReading.user_id) &
@@ -115,40 +117,52 @@ async def get_users_with_debts(
         User.is_deleted.is_(False)
     )
 
+    search_condition = None
     if search:
         search_value = f"%{search.lower()}%"
-        stmt = stmt.where(func.lower(User.username).like(search_value))
+        # Ищем по ФИО (username), названию общежития или номеру комнаты
+        search_condition = or_(
+            func.lower(User.username).like(search_value),
+            func.lower(Room.dormitory_name).like(search_value),
+            func.lower(Room.room_number).like(search_value)
+        )
+        stmt = stmt.where(search_condition)
 
-    # ✅ группировка убирает дубли
-    stmt = stmt.group_by(User.id, User.username, User.dormitory)
+    # Группируем по ID юзера и комнаты
+    stmt = stmt.group_by(User.id, Room.id)
 
-    # ✅ корректный count (без join)
-    count_stmt = select(func.count(User.id)).where(
-        User.is_deleted.is_(False)
-    )
-
-    if search:
-        count_stmt = count_stmt.where(func.lower(User.username).like(search_value))
+    # Запрос для подсчета общего количества элементов
+    count_stmt = select(func.count(User.id)).outerjoin(Room, User.room_id == Room.id).where(User.is_deleted.is_(False))
+    if search_condition is not None:
+        count_stmt = count_stmt.where(search_condition)
 
     total_res = await db.execute(count_stmt)
     total_items = total_res.scalar_one()
 
-    stmt = stmt.order_by(User.dormitory, User.username).limit(limit).offset(offset)
+    # Сортировка с учетом того, что комната может быть не привязана (nulls_last)
+    stmt = stmt.order_by(
+        Room.dormitory_name.asc().nulls_last(),
+        Room.room_number.asc().nulls_last(),
+        User.username.asc()
+    ).limit(limit).offset(offset)
 
     result = await db.execute(stmt)
     rows = result.all()
 
     items = []
     for row in rows:
+        user_obj = row[0]
+        room_obj = row[1]
+
         items.append({
-            "id": row.id,
-            "username": row.username,
-            "dormitory": row.dormitory,
-            "debt_209": row.debt_209,
-            "overpayment_209": row.overpayment_209,
-            "debt_205": row.debt_205,
-            "overpayment_205": row.overpayment_205,
-            "current_total_cost": row.current_total_cost
+            "id": user_obj.id,
+            "username": user_obj.username,
+            "room": room_obj,  # Pydantic схема UserDebtResponse автоматически преобразует Room в RoomResponse
+            "debt_209": row[2],
+            "overpayment_209": row[3],
+            "debt_205": row[4],
+            "overpayment_205": row[5],
+            "current_total_cost": row[6]
         })
 
     return {

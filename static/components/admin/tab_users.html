@@ -58,7 +58,24 @@
                         <input type="number" id="totalRoomResidents" value="1">
                     </div>
                 </div>
-                <button type="submit" class="action-btn primary-btn full-width">Зарегистрировать</button>
+
+                <!-- НОВОЕ: НОМЕРА СЧЕТЧИКОВ -->
+                <div class="form-row three-col" style="margin-top: 15px; background: #f9fafb; padding: 10px; border-radius: 8px;">
+                    <div class="form-group">
+                        <label>№ счетчика ГВС</label>
+                        <input type="text" id="hwSerial" placeholder="Например: 12345-А">
+                    </div>
+                    <div class="form-group">
+                        <label>№ счетчика ХВС</label>
+                        <input type="text" id="cwSerial" placeholder="Например: 67890-В">
+                    </div>
+                    <div class="form-group">
+                        <label>№ счетчика Электр.</label>
+                        <input type="text" id="elSerial" placeholder="Например: 00112233">
+                    </div>
+                </div>
+
+                <button type="submit" class="action-btn primary-btn full-width" style="margin-top: 15px;">Зарегистрировать</button>
             </form>
         </div>
 
@@ -145,7 +162,6 @@
                                 <option value="financier">Финансист</option>
                             </select>
                         </div>
-                        <!-- НОВОЕ: ВЫБОР ТАРИФА В МОДАЛКЕ -->
                         <div class="form-group">
                             <label>Тарифный профиль</label>
                             <select id="editTariffId" class="tariff-select"></select>
@@ -173,6 +189,23 @@
                             <input type="number" id="editTotalRoomResidents">
                         </div>
                     </div>
+
+                    <!-- НОВОЕ: НОМЕРА СЧЕТЧИКОВ В МОДАЛКЕ -->
+                    <div class="form-grid-3" style="margin-top: 15px; background: #f9fafb; padding: 10px; border-radius: 8px;">
+                        <div class="form-group">
+                            <label>№ счетчика ГВС</label>
+                            <input type="text" id="editHwSerial" placeholder="Например: 12345-А">
+                        </div>
+                        <div class="form-group">
+                            <label>№ счетчика ХВС</label>
+                            <input type="text" id="editCwSerial" placeholder="Например: 67890-В">
+                        </div>
+                        <div class="form-group">
+                            <label>№ счетчика Электр.</label>
+                            <input type="text" id="editElSerial" placeholder="Например: 00112233">
+                        </div>
+                    </div>
+
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="action-btn secondary-btn close-btn">Отмена</button>

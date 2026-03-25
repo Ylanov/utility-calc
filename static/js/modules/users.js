@@ -45,7 +45,12 @@ export const UsersModule = {
                 area: document.getElementById('editArea'),
                 residents: document.getElementById('editResidentsCount'),
                 total: document.getElementById('editTotalRoomResidents'),
-                work: document.getElementById('editWorkplace')
+                work: document.getElementById('editWorkplace'),
+
+                // НОВОЕ: Поля счетчиков в модалке редактирования
+                hwSerial: document.getElementById('editHwSerial'),
+                cwSerial: document.getElementById('editCwSerial'),
+                elSerial: document.getElementById('editElSerial')
             },
             btnClose: document.querySelector('#userEditModal .close-btn')
         };
@@ -153,7 +158,7 @@ export const UsersModule = {
             },
 
             renderRow: (user) => {
-                // ИЗМЕНЕНИЕ: Безопасно извлекаем данные из объекта room (если он есть)
+                // Безопасно извлекаем данные из объекта room (если он есть)
                 const address = user.room ? `${user.room.dormitory_name} / ком. ${user.room.room_number}` : '-';
                 const area = user.room && user.room.apartment_area ? Number(user.room.apartment_area).toFixed(1) : '-';
                 const totalResidents = user.room ? user.room.total_room_residents : 1;
@@ -206,7 +211,12 @@ export const UsersModule = {
             apartment_area: parseFloat(document.getElementById('area').value) || 0,
             residents_count: parseInt(document.getElementById('residentsCount').value) || 1,
             total_room_residents: parseInt(document.getElementById('totalRoomResidents').value) || 1,
-            workplace: document.getElementById('workplace').value.trim()
+            workplace: document.getElementById('workplace').value.trim(),
+
+            // НОВОЕ: Передаем данные счетчиков
+            hw_meter_serial: document.getElementById('hwSerial').value.trim(),
+            cw_meter_serial: document.getElementById('cwSerial').value.trim(),
+            el_meter_serial: document.getElementById('elSerial').value.trim()
         };
 
         setLoading(button, true, 'Создание...');
@@ -334,16 +344,26 @@ export const UsersModule = {
             inputs.role.value = user.role;
             inputs.tariff.value = user.tariff_id || '';
 
-            // ИЗМЕНЕНИЕ: Безопасно заполняем поля модалки из объекта room
+            // Безопасно заполняем поля модалки из объекта room
             if (user.room) {
                 // Склеиваем обратно для формы, бэкенд разделит по последнему пробелу
                 inputs.dorm.value = `${user.room.dormitory_name} ${user.room.room_number}`.trim();
                 inputs.area.value = user.room.apartment_area;
                 inputs.total.value = user.room.total_room_residents;
+
+                // НОВОЕ: Заполняем счетчики
+                inputs.hwSerial.value = user.room.hw_meter_serial || '';
+                inputs.cwSerial.value = user.room.cw_meter_serial || '';
+                inputs.elSerial.value = user.room.el_meter_serial || '';
             } else {
                 inputs.dorm.value = '';
                 inputs.area.value = 0;
                 inputs.total.value = 1;
+
+                // Очищаем счетчики
+                inputs.hwSerial.value = '';
+                inputs.cwSerial.value = '';
+                inputs.elSerial.value = '';
             }
 
             inputs.residents.value = user.residents_count;
@@ -373,7 +393,12 @@ export const UsersModule = {
             apartment_area: parseFloat(this.modal.inputs.area.value),
             residents_count: parseInt(this.modal.inputs.residents.value),
             total_room_residents: parseInt(this.modal.inputs.total.value),
-            workplace: this.modal.inputs.work.value.trim()
+            workplace: this.modal.inputs.work.value.trim(),
+
+            // НОВОЕ: Отправляем обновленные счетчики на бэкенд
+            hw_meter_serial: this.modal.inputs.hwSerial.value.trim(),
+            cw_meter_serial: this.modal.inputs.cwSerial.value.trim(),
+            el_meter_serial: this.modal.inputs.elSerial.value.trim()
         };
 
         if (this.modal.inputs.password.value) {
@@ -397,7 +422,7 @@ export const UsersModule = {
     async openOneTimeModal(user) {
         if (!this.otc.modal) return;
 
-        // ИЗМЕНЕНИЕ: Выводим правильный адрес
+        // Выводим правильный адрес
         const address = user.room ? `${user.room.dormitory_name} ком. ${user.room.room_number}` : 'без адреса';
 
         this.otc.userId.value = user.id;

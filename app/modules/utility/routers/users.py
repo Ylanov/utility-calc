@@ -7,7 +7,6 @@ from typing import Optional
 from pydantic import BaseModel
 
 from app.core.database import get_db
-# ИЗМЕНЕНИЕ: Добавляем импорт Room
 from app.modules.utility.models import User, Room
 from app.modules.utility.schemas import UserCreate, UserResponse, UserUpdate, PaginatedResponse
 from app.core.dependencies import get_current_user, RoleChecker
@@ -143,15 +142,25 @@ async def create_user(
     )
     room = room_res.scalars().first()
 
+    # НОВОЕ: Добавлено сохранение номеров счетчиков при создании или обновлении комнаты
     if not room:
         room = Room(
             dormitory_name=dormitory_name,
             room_number=room_number,
             apartment_area=new_user.apartment_area,
-            total_room_residents=new_user.total_room_residents
+            total_room_residents=new_user.total_room_residents,
+            hw_meter_serial=new_user.hw_meter_serial,
+            cw_meter_serial=new_user.cw_meter_serial,
+            el_meter_serial=new_user.el_meter_serial
         )
         db.add(room)
         await db.flush()  # Получаем room.id
+    else:
+        # Если комната уже есть, обновляем номера счетчиков
+        if new_user.hw_meter_serial: room.hw_meter_serial = new_user.hw_meter_serial
+        if new_user.cw_meter_serial: room.cw_meter_serial = new_user.cw_meter_serial
+        if new_user.el_meter_serial: room.el_meter_serial = new_user.el_meter_serial
+        db.add(room)
 
     db_user = User(
         username=new_user.username,
@@ -181,13 +190,13 @@ async def read_users(
 ):
     """Получение списка пользователей с пагинацией, поиском и сортировкой."""
 
-    # ИЗМЕНЕНИЕ: Основной запрос теперь соединяет User и Room
+    # Основной запрос соединяет User и Room
     items_query = select(User).options(selectinload(User.room)).where(User.is_deleted.is_(False))
     count_query = select(func.count(User.id)).where(User.is_deleted.is_(False))
 
     if search:
         search_filter = f"%{search}%"
-        # ИЗМЕНЕНИЕ: Поиск теперь идет и по полям комнаты
+        # Поиск идет и по полям комнаты
         search_condition = or_(
             User.username.ilike(search_filter),
             Room.dormitory_name.ilike(search_filter),
@@ -203,7 +212,7 @@ async def read_users(
     total_result = await db.execute(count_query)
     total = total_result.scalar_one()
 
-    # ИЗМЕНЕНИЕ: Добавляем сортировку по полям комнаты
+    # Сортировка по полям комнаты
     valid_sort_fields = {
         "id": User.id,
         "username": User.username,
@@ -244,7 +253,7 @@ async def read_user(
         db: AsyncSession = Depends(get_db)
 ):
     """Получение информации о конкретном пользователе по ID с данными о комнате."""
-    # ИЗМЕНЕНИЕ: Подгружаем комнату одним запросом
+    # Подгружаем комнату одним запросом
     result = await db.execute(select(User).options(selectinload(User.room)).where(User.id == user_id))
     user = result.scalars().first()
     if not user:
@@ -287,6 +296,20 @@ async def update_user(
 
         await db.flush()
         db_user.room_id = room.id
+
+    # НОВОЕ: Обновление номеров счетчиков в комнате
+    hw_serial = update_dict.pop("hw_meter_serial", None)
+    cw_serial = update_dict.pop("cw_meter_serial", None)
+    el_serial = update_dict.pop("el_meter_serial", None)
+
+    if any(s is not None for s in[hw_serial, cw_serial, el_serial]):
+        if db_user.room_id:
+            room = await db.get(Room, db_user.room_id)
+            if room:
+                if hw_serial is not None: room.hw_meter_serial = hw_serial
+                if cw_serial is not None: room.cw_meter_serial = cw_serial
+                if el_serial is not None: room.el_meter_serial = el_serial
+                db.add(room)
 
     if "password" in update_dict and update_dict["password"]:
         db_user.hashed_password = get_password_hash(update_dict["password"])

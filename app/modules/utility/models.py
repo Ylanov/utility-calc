@@ -29,6 +29,10 @@ class Room(Base):
 
     apartment_area = Column(Numeric(10, 2), default=0.00)
     total_room_residents = Column(Integer, default=1)
+    # === НОВЫЕ ПОЛЯ: Номера счетчиков ===
+    hw_meter_serial = Column(String, nullable=True)  # ГВС (Горячая вода)
+    cw_meter_serial = Column(String, nullable=True)  # ХВС (Холодная вода)
+    el_meter_serial = Column(String, nullable=True)  # Электричество
 
     # Кэш последних показаний (ускорение расчетов)
     last_hot_water = Column(Numeric(12, 3), default=0.000)

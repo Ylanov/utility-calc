@@ -156,7 +156,7 @@
     <!-- ============================================== -->
     <div id="tab-home" class="tab-content active">
 
-                <!-- Инфо-баннер о сроках -->
+        <!-- Инфо-баннер о сроках -->
         <div id="submissionAlert" style="display:none; margin-bottom: 20px; padding: 15px; border-radius: 8px; align-items: center; gap: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
             <div style="font-size: 24px;">📅</div>
             <div>
@@ -176,7 +176,10 @@
                     <div class="smart-meter-card" id="cardHot">
                         <div class="meter-header">
                             <div class="meter-icon" style="background: #fee2e2; color: #dc2626;">🔥</div>
-                            <h3>Горячая вода</h3>
+                            <div>
+                                <h3>Горячая вода</h3>
+                                <div style="font-size: 11px; color: #6b7280; margin-top: 2px;">№ <span id="lblHwSerial">Не указан</span></div>
+                            </div>
                         </div>
                         <div class="meter-prev">Предыдущее: <span id="prevHot">0.000</span> м³</div>
                         <div class="meter-input-wrapper">
@@ -190,7 +193,10 @@
                     <div class="smart-meter-card" id="cardCold">
                         <div class="meter-header">
                             <div class="meter-icon" style="background: #dbeafe; color: #2563eb;">❄️</div>
-                            <h3>Холодная вода</h3>
+                            <div>
+                                <h3>Холодная вода</h3>
+                                <div style="font-size: 11px; color: #6b7280; margin-top: 2px;">№ <span id="lblCwSerial">Не указан</span></div>
+                            </div>
                         </div>
                         <div class="meter-prev">Предыдущее: <span id="prevCold">0.000</span> м³</div>
                         <div class="meter-input-wrapper">
@@ -204,7 +210,10 @@
                     <div class="smart-meter-card" id="cardElect">
                         <div class="meter-header">
                             <div class="meter-icon" style="background: #fef3c7; color: #d97706;">⚡</div>
-                            <h3>Электричество</h3>
+                            <div>
+                                <h3>Электричество</h3>
+                                <div style="font-size: 11px; color: #6b7280; margin-top: 2px;">№ <span id="lblElSerial">Не указан</span></div>
+                            </div>
                         </div>
                         <div class="meter-prev">Предыдущее: <span id="prevElect">0.000</span> кВт⋅ч</div>
                         <div class="meter-input-wrapper">

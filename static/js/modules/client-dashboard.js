@@ -12,8 +12,8 @@ export const ClientDashboard = {
     state: {
         lastReadings: { hot: 0, cold: 0, elect: 0 },
         isPeriodOpen: false,
-        isDraft: false,           // НОВОЕ: Флаг наличия черновика
-        isAlreadyApproved: false  // НОВОЕ: Флаг утверждения бухгалтером
+        isDraft: false,           // Флаг наличия черновика
+        isAlreadyApproved: false  // Флаг утверждения бухгалтером
     },
 
     init() {
@@ -41,6 +41,14 @@ export const ClientDashboard = {
             statusArea: document.getElementById('statusArea'),
             form: document.getElementById('meterForm'),
             fieldset: document.getElementById('meterFieldset'),
+
+            // НОВОЕ: Элементы для отображения серийных номеров счетчиков
+            serials: {
+                hot: document.getElementById('lblHwSerial'),
+                cold: document.getElementById('lblCwSerial'),
+                elect: document.getElementById('lblElSerial')
+            },
+
             cards: {
                 hot: document.getElementById('cardHot'),
                 cold: document.getElementById('cardCold'),
@@ -156,11 +164,30 @@ export const ClientDashboard = {
         try {
             const user = await api.get('/users/me');
 
+            // ИЗМЕНЕНИЕ: Формируем красивый адрес из объекта комнаты
+            let addressDisplay = 'Адрес не указан';
+            if (user.room) {
+                addressDisplay = `${user.room.dormitory_name}, комната ${user.room.room_number}`;
+            } else if (user.dormitory) {
+                addressDisplay = user.dormitory; // fallback
+            }
+
+            // Общая информация
             this.dom.profile.user.textContent = user.username;
-            this.dom.profile.address.textContent = user.dormitory || 'Адрес не указан';
-            this.dom.profile.area.textContent = `${Number(user.apartment_area).toFixed(1)} м²`;
+            this.dom.profile.address.textContent = addressDisplay;
+            this.dom.headerAddress.textContent = addressDisplay;
+
+            // Если есть комната, берем площадь из неё, иначе из юзера (для обратной совместимости)
+            const area = user.room ? user.room.apartment_area : user.apartment_area;
+            this.dom.profile.area.textContent = `${Number(area || 0).toFixed(1)} м²`;
             this.dom.profile.residents.textContent = user.residents_count;
-            this.dom.headerAddress.textContent = user.dormitory || 'ЖКХ — управление показаниями';
+
+            // НОВОЕ: Заполняем серийные номера счетчиков над полями ввода
+            if (user.room) {
+                if (this.dom.serials.hot) this.dom.serials.hot.textContent = user.room.hw_meter_serial || 'Не указан';
+                if (this.dom.serials.cold) this.dom.serials.cold.textContent = user.room.cw_meter_serial || 'Не указан';
+                if (this.dom.serials.elect) this.dom.serials.elect.textContent = user.room.el_meter_serial || 'Не указан';
+            }
 
             if (user.is_initial_setup_done === false) {
                 this.dom.fsCurrentLogin.textContent = user.username;
@@ -421,7 +448,7 @@ export const ClientDashboard = {
             electricity: parseFloat(this.dom.inputs.elect.value)
         };
 
-        // --- ФИШКА 4: Защита от случайной перезаписи черновика ---
+        // Защита от случайной перезаписи черновика
         if (this.state.isDraft) {
             const msg = `Вы уверены, что хотите перезаписать показания?\n\nНовые данные:\n🔥 ГВС: ${data.hot_water}\n❄️ ХВС: ${data.cold_water}\n⚡ Свет: ${data.electricity}\n\nСтарые данные будут заменены.`;
             if (!confirm(msg)) {
@@ -449,8 +476,6 @@ export const ClientDashboard = {
     async downloadReceipt(id) {
         toast('Генерация квитанции...', 'info');
         try {
-            // БЫЛО: await api.download(`/client/receipts/${id}`, `receipt_${id}.pdf`);
-            // СТАЛО:
             const res = await api.get(`/client/receipts/${id}`);
             if (res.url) {
                 // Открываем ссылку в новой вкладке — браузер сам скачает PDF без поломок

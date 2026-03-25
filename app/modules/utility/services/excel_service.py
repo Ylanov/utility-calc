@@ -19,7 +19,7 @@ def _load_workbook_sync(file_content: bytes):
 
 
 # ======================================================
-# IMPORT USERS (ПЕРЕПИСАНО ПОД ROOM)
+# IMPORT USERS (ОБНОВЛЕНО ДЛЯ СЧЕТЧИКОВ)
 # ======================================================
 
 async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict:
@@ -63,8 +63,6 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
 
                 password = str(row[1]).strip() if len(row) > 1 and row[1] else username
                 dormitory = str(row[2]).strip() if len(row) > 2 and row[2] else "Неизвестно"
-
-                # 🔥 НОВОЕ: номер комнаты
                 room_number = str(row[7]).strip() if len(row) > 7 and row[7] else f"Комната {username}"
 
                 try:
@@ -79,6 +77,11 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
 
                 workplace = str(row[6]).strip() if len(row) > 6 and row[6] else None
 
+                # === НОВОЕ: Читаем номера счетчиков из следующих колонок (H, I, J) ===
+                hw_serial = str(row[8]).strip() if len(row) > 8 and row[8] else None
+                cw_serial = str(row[9]).strip() if len(row) > 9 and row[9] else None
+                el_serial = str(row[10]).strip() if len(row) > 10 and row[10] else None
+
                 # ======================================================
                 # РАБОТА С КОМНАТОЙ
                 # ======================================================
@@ -89,12 +92,20 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
                     room = existing_rooms[room_key]
                     room.apartment_area = apartment_area
                     room.total_room_residents = total_room_residents
+                    # Обновляем счетчики, если они указаны в файле
+                    if hw_serial: room.hw_meter_serial = hw_serial
+                    if cw_serial: room.cw_meter_serial = cw_serial
+                    if el_serial: room.el_meter_serial = el_serial
                 else:
                     room = Room(
                         dormitory_name=dormitory,
                         room_number=room_number,
                         apartment_area=apartment_area,
-                        total_room_residents=total_room_residents
+                        total_room_residents=total_room_residents,
+                        # Добавляем счетчики при создании
+                        hw_meter_serial=hw_serial,
+                        cw_meter_serial=cw_serial,
+                        el_meter_serial=el_serial
                     )
                     db.add(room)
                     await db.flush()
@@ -165,7 +176,7 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
 
 
 # ======================================================
-# EXPORT REPORT (ПЕРЕПИСАНО ПОД ROOM)
+# EXPORT REPORT (без изменений)
 # ======================================================
 
 async def generate_billing_report_xlsx(db: AsyncSession, period_id: int) -> Tuple[io.BytesIO, str]:
