@@ -56,7 +56,7 @@ jobs:
 
       - name: Run migrations
         env:
-          DATABASE_URL: postgresql+psycopg://postgres:postgres@localhost:5432/test_db
+          DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/test_db
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
         run: alembic upgrade head
 
