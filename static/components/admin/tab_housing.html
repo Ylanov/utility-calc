@@ -1,3 +1,4 @@
+<!-- static/components/admin/tab_housing.html -->
 <div id="housing" class="tab-content">
     <div class="grid-2-col" style="grid-template-columns: 300px 1fr;">
         <!-- Левая колонка: Фильтр по общежитиям -->
@@ -6,7 +7,7 @@
                 <h3>🏢 Общежития</h3>
             </div>
             <div style="padding: 10px 0;">
-                <label style="font-size: 13px; color: #666; margin-bottom: 5px; display: block;">Фильтр:</label>
+                <label style="font-size: 13px; color: #666; margin-bottom: 5px; display: block;">Фильтр по зданию:</label>
                 <select id="dormFilterSelect" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
                     <option value="">Все объекты</option>
                     <!-- Заполняется из API -->
@@ -14,6 +15,12 @@
             </div>
             <hr style="border: 0; border-top: 1px solid #eee; margin: 15px 0;">
             <button id="btnOpenAddRoom" class="action-btn primary-btn full-width">➕ Добавить помещение</button>
+
+            <!-- НОВАЯ КНОПКА АНАЛИЗАТОРА -->
+            <button id="btnAnalyzeHousing" class="action-btn warning-btn full-width" style="margin-top: 10px; background: #f59e0b; color: white;">
+                🕵️ Анализ жилфонда
+            </button>
+            <p style="font-size: 11px; color: #888; text-align: center; margin-top: 5px;">Поиск дублей, пустых комнат и раздельных счетов</p>
         </div>
 
         <!-- Правая колонка: Таблица помещений -->
@@ -70,7 +77,6 @@
                     <div class="form-grid-2 mb-3">
                         <div class="form-group">
                             <label>Название Общежития</label>
-                            <!-- Используем datalist для подсказок существующих общежитий -->
                             <input type="text" id="roomDormitory" required list="dormList" placeholder="Например: Общежитие №1">
                             <datalist id="dormList"></datalist>
                         </div>
@@ -112,6 +118,24 @@
                     <button type="submit" class="action-btn primary-btn confirm-btn">Сохранить</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- НОВАЯ МОДАЛКА: АНАЛИЗАТОР ЖИЛФОНДА -->
+    <div id="analyzerModal" class="modal-overlay">
+        <div class="modal-window" style="width: 800px; max-height: 90vh; display: flex; flex-direction: column;">
+            <div class="modal-header" style="background: #fef3c7; border-bottom: 1px solid #fde68a;">
+                <h3 style="color: #b45309; margin: 0; display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 24px;">🕵️</span> Анализатор аномалий Жилфонда
+                </h3>
+                <button class="close-btn close-icon">&times;</button>
+            </div>
+            <div class="modal-form" style="overflow-y: auto; padding: 20px; background: #f9fafb; flex: 1;">
+                <div id="analyzerResults"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="action-btn secondary-btn close-btn full-width">Закрыть отчет</button>
+            </div>
         </div>
     </div>
 </div>
