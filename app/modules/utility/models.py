@@ -69,6 +69,10 @@ class User(Base):
     room_id = Column(Integer, ForeignKey("rooms.id"), nullable=True)
     room = relationship("Room", backref="users")
 
+    # 🔑 НОВОЕ: Связь с тарифным профилем
+    tariff_id = Column(Integer, ForeignKey("tariffs.id"), nullable=True)
+    tariff = relationship("Tariff")
+
     totp_secret = Column(String, nullable=True)
 
     is_deleted = Column(Boolean, default=False, index=True)
