@@ -6,3 +6,4 @@ __pycache__/
 .env.*
 postgres-data/
 nginx/certs/
+project-7cb77-firebase-adminsdk-fbsvc-1fe4f000ec.json
