@@ -1,3 +1,5 @@
+# app/modules/utility/routers/users.py
+import io
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -5,6 +7,9 @@ from sqlalchemy import or_, asc, desc, func
 from sqlalchemy.orm import selectinload
 from typing import Optional
 from pydantic import BaseModel
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill
+from fastapi.responses import StreamingResponse
 
 from app.core.database import get_db
 from app.modules.utility.models import User, Room
@@ -30,12 +35,10 @@ class ChangeCredentials(BaseModel):
 
 
 # =================================================================
-# СПЕЦИАЛЬНЫЕ МАРШРУТЫ (ДОЛЖНЫ БЫТЬ ВНАЧАЛЕ)
+# ЛИЧНЫЙ ПРОФИЛЬ
 # =================================================================
-
 @router.get("/me", response_model=UserResponse)
 async def get_me(current_user: User = Depends(get_current_user)):
-    """Получение профиля текущего пользователя."""
     return current_user
 
 
@@ -45,38 +48,22 @@ async def initial_setup(
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user)
 ):
-    """
-    Единоразовая смена логина и/или пароля при первом входе.
-    Если пользователь оставляет старый логин (передает пустые поля),
-    флаг все равно переключается, чтобы окно больше не появлялось.
-    """
-    # Защита: обычный жилец может сделать это только один раз
     if current_user.is_initial_setup_done and current_user.role == "user":
-        raise HTTPException(
-            status_code=400,
-            detail="Первичная настройка уже пройдена. Логин можно изменить только через администратора."
-        )
+        raise HTTPException(status_code=400, detail="Первичная настройка уже пройдена.")
 
-    # Если передан новый логин и он отличается от текущего
     if data.new_username and data.new_username != current_user.username:
-        # Проверка, не занят ли логин (без учета регистра)
         existing_check = await db.execute(
-            select(User).where(func.lower(User.username) == func.lower(data.new_username))
-        )
+            select(User).where(func.lower(User.username) == func.lower(data.new_username)))
         if existing_check.scalars().first():
             raise HTTPException(status_code=400, detail="Этот логин уже занят другим пользователем")
         current_user.username = data.new_username
 
-    # Если передан новый пароль
     if data.new_password:
         current_user.hashed_password = get_password_hash(data.new_password)
 
-    # Помечаем, что настройка пройдена
     current_user.is_initial_setup_done = True
-
     db.add(current_user)
     await db.commit()
-
     return {"status": "success", "message": "Данные успешно обновлены."}
 
 
@@ -86,7 +73,6 @@ async def change_password(
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user)
 ):
-    """Смена пароля из профиля (доступна всегда и для всех ролей)"""
     if not data.old_password or not data.new_password:
         raise HTTPException(status_code=400, detail="Необходимо указать старый и новый пароль")
 
@@ -96,71 +82,23 @@ async def change_password(
     current_user.hashed_password = get_password_hash(data.new_password)
     db.add(current_user)
     await db.commit()
-
     return {"status": "success", "message": "Пароль успешно изменен"}
 
 
-@router.post("/import_excel", summary="Массовый импорт пользователей из Excel",
-             dependencies=[Depends(allow_accountant)])
-async def import_users(file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
-    if not file.filename.endswith(('.xlsx', '.xls')):
-        raise HTTPException(status_code=400, detail="Поддерживаются только файлы Excel (.xlsx, .xls)")
-
-    # Проверка Magic Numbers
-    header = await file.read(8)
-    await file.seek(0)  # Обязательно возвращаем курсор в начало файла
-
-    if not (header.startswith(b"PK\x03\x04") or header.startswith(b"\xd0\xcf\x11\xe0")):
-        raise HTTPException(status_code=400,
-                            detail="Файл поврежден или содержит вредоносный код (Неверная сигнатура Excel)")
-
-    content = await file.read()
-    result = await import_users_from_excel(content, db)
-    return result
-
 # =================================================================
-# ОБЩИЕ МАРШРУТЫ (CRUD)
+# CRUD ЖИЛЬЦОВ
 # =================================================================
-
 @router.post("", response_model=UserResponse, dependencies=[Depends(allow_accountant)])
-async def create_user(
-        new_user: UserCreate,
-        db: AsyncSession = Depends(get_db)
-):
-    """Создание нового пользователя с автоматическим созданием/привязкой комнаты."""
-    existing_check_query = select(User).where(func.lower(User.username) == func.lower(new_user.username))
-    existing_result = await db.execute(existing_check_query)
-    if existing_result.scalars().first():
+async def create_user(new_user: UserCreate, db: AsyncSession = Depends(get_db)):
+    """Создание нового пользователя с привязкой к комнате по room_id."""
+    existing_check = await db.execute(select(User).where(func.lower(User.username) == func.lower(new_user.username)))
+    if existing_check.scalars().first():
         raise HTTPException(status_code=400, detail="Пользователь с таким логином уже существует")
 
-    # Логика поиска или создания комнаты
-    room_number = new_user.dormitory.split(" ")[-1]  # Предполагаем, что номер в конце
-    dormitory_name = new_user.dormitory.replace(f" {room_number}", "").strip()
-
-    room_res = await db.execute(
-        select(Room).where(Room.dormitory_name == dormitory_name, Room.room_number == room_number)
-    )
-    room = room_res.scalars().first()
-
-    # НОВОЕ: Добавлено сохранение номеров счетчиков при создании или обновлении комнаты
-    if not room:
-        room = Room(
-            dormitory_name=dormitory_name,
-            room_number=room_number,
-            apartment_area=new_user.apartment_area,
-            total_room_residents=new_user.total_room_residents,
-            hw_meter_serial=new_user.hw_meter_serial,
-            cw_meter_serial=new_user.cw_meter_serial,
-            el_meter_serial=new_user.el_meter_serial
-        )
-        db.add(room)
-        await db.flush()  # Получаем room.id
-    else:
-        # Если комната уже есть, обновляем номера счетчиков
-        if new_user.hw_meter_serial: room.hw_meter_serial = new_user.hw_meter_serial
-        if new_user.cw_meter_serial: room.cw_meter_serial = new_user.cw_meter_serial
-        if new_user.el_meter_serial: room.el_meter_serial = new_user.el_meter_serial
-        db.add(room)
+    if new_user.room_id:
+        room_check = await db.get(Room, new_user.room_id)
+        if not room_check:
+            raise HTTPException(status_code=400, detail="Указанная комната не найдена в Жилфонде")
 
     db_user = User(
         username=new_user.username,
@@ -168,7 +106,8 @@ async def create_user(
         role=new_user.role,
         workplace=new_user.workplace,
         residents_count=new_user.residents_count,
-        room_id=room.id,  # <-- Привязываем к комнате
+        room_id=new_user.room_id,  # Просто сохраняем ID из Жилфонда
+        tariff_id=new_user.tariff_id,
         is_initial_setup_done=False
     )
 
@@ -176,7 +115,8 @@ async def create_user(
     await db.commit()
     await db.refresh(db_user)
 
-    return db_user
+    result = await db.execute(select(User).options(selectinload(User.room)).where(User.id == db_user.id))
+    return result.scalars().first()
 
 
 @router.get("", response_model=PaginatedResponse[UserResponse], dependencies=[Depends(allow_fin_acc)])
@@ -188,148 +128,74 @@ async def read_users(
         sort_dir: str = Query("asc", pattern="^(asc|desc)$"),
         db: AsyncSession = Depends(get_db)
 ):
-    """Получение списка пользователей с пагинацией, поиском и сортировкой."""
-
-    # Основной запрос соединяет User и Room
+    """Список пользователей с подгрузкой комнат (outerjoin для поиска)."""
     items_query = select(User).options(selectinload(User.room)).where(User.is_deleted.is_(False))
     count_query = select(func.count(User.id)).where(User.is_deleted.is_(False))
 
     if search:
         search_filter = f"%{search}%"
-        # Поиск идет и по полям комнаты
         search_condition = or_(
             User.username.ilike(search_filter),
             Room.dormitory_name.ilike(search_filter),
             Room.room_number.ilike(search_filter),
             User.workplace.ilike(search_filter)
         )
-        # Применяем фильтр через join
-        items_query = items_query.join(Room, User.room_id == Room.id).where(search_condition)
-        # Для подсчета тоже нужен join
-        count_query = select(func.count(User.id)).join(Room, User.room_id == Room.id).where(
-            User.is_deleted.is_(False)).where(search_condition)
+        items_query = items_query.outerjoin(Room, User.room_id == Room.id).where(search_condition)
+        count_query = count_query.outerjoin(Room, User.room_id == Room.id).where(search_condition)
 
-    total_result = await db.execute(count_query)
-    total = total_result.scalar_one()
+    total = (await db.execute(count_query)).scalar_one()
 
-    # Сортировка по полям комнаты
     valid_sort_fields = {
-        "id": User.id,
-        "username": User.username,
-        "role": User.role,
-        "dormitory": Room.dormitory_name,
-        "apartment_area": Room.apartment_area,
-        "workplace": User.workplace
+        "id": User.id, "username": User.username, "role": User.role,
+        "dormitory": Room.dormitory_name, "apartment_area": Room.apartment_area, "workplace": User.workplace
     }
-
     sort_column = valid_sort_fields.get(sort_by, User.id)
 
-    # Если сортируем по полю из Room, нужно добавить join
     if sort_by in ["dormitory", "apartment_area"] and not search:
-        items_query = items_query.join(Room, User.room_id == Room.id)
+        items_query = items_query.outerjoin(Room, User.room_id == Room.id)
 
-    if sort_dir == "desc":
-        items_query = items_query.order_by(desc(sort_column))
-    else:
-        items_query = items_query.order_by(asc(sort_column))
+    items_query = items_query.order_by(desc(sort_column) if sort_dir == "desc" else asc(sort_column))
+    items_query = items_query.offset((page - 1) * limit).limit(limit)
+    items = (await db.execute(items_query)).scalars().all()
 
-    offset = (page - 1) * limit
-    items_query = items_query.offset(offset).limit(limit)
-
-    items_result = await db.execute(items_query)
-    items = items_result.scalars().all()
-
-    return {
-        "total": total,
-        "page": page,
-        "size": limit,
-        "items": items
-    }
+    return {"total": total, "page": page, "size": limit, "items": items}
 
 
 @router.get("/{user_id}", response_model=UserResponse, dependencies=[Depends(allow_accountant)])
-async def read_user(
-        user_id: int,
-        db: AsyncSession = Depends(get_db)
-):
-    """Получение информации о конкретном пользователе по ID с данными о комнате."""
-    # Подгружаем комнату одним запросом
+async def read_user(user_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).options(selectinload(User.room)).where(User.id == user_id))
     user = result.scalars().first()
-    if not user:
-        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    if not user: raise HTTPException(status_code=404, detail="Пользователь не найден")
     return user
 
 
 @router.put("/{user_id}", response_model=UserResponse, dependencies=[Depends(allow_accountant)])
-async def update_user(
-        user_id: int,
-        update_data: UserUpdate,
-        db: AsyncSession = Depends(get_db)
-):
-    """Обновление информации о пользователе (Админ/Бухгалтер)."""
+async def update_user(user_id: int, update_data: UserUpdate, db: AsyncSession = Depends(get_db)):
     db_user = await db.get(User, user_id)
-    if not db_user:
-        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    if not db_user: raise HTTPException(status_code=404, detail="Пользователь не найден")
 
     update_dict = update_data.dict(exclude_unset=True)
 
-    if "dormitory" in update_dict:
-        dormitory_full = update_dict.pop("dormitory")
-        area = update_dict.pop("apartment_area", None)
-        total_residents = update_dict.pop("total_room_residents", None)
-
-        room_number = dormitory_full.split(" ")[-1]
-        dormitory_name = dormitory_full.replace(f" {room_number}", "").strip()
-
-        room_res = await db.execute(
-            select(Room).where(Room.dormitory_name == dormitory_name, Room.room_number == room_number)
-        )
-        room = room_res.scalars().first()
-
-        if not room:
-            room = Room(dormitory_name=dormitory_name, room_number=room_number)
-            db.add(room)
-
-        if area is not None: room.apartment_area = area
-        if total_residents is not None: room.total_room_residents = total_residents
-
-        await db.flush()
-        db_user.room_id = room.id
-
-    # НОВОЕ: Обновление номеров счетчиков в комнате
-    hw_serial = update_dict.pop("hw_meter_serial", None)
-    cw_serial = update_dict.pop("cw_meter_serial", None)
-    el_serial = update_dict.pop("el_meter_serial", None)
-
-    if any(s is not None for s in[hw_serial, cw_serial, el_serial]):
-        if db_user.room_id:
-            room = await db.get(Room, db_user.room_id)
-            if room:
-                if hw_serial is not None: room.hw_meter_serial = hw_serial
-                if cw_serial is not None: room.cw_meter_serial = cw_serial
-                if el_serial is not None: room.el_meter_serial = el_serial
-                db.add(room)
+    if "room_id" in update_dict and update_dict["room_id"]:
+        room_check = await db.get(Room, update_dict["room_id"])
+        if not room_check:
+            raise HTTPException(status_code=400, detail="Комната не найдена в Жилфонде")
 
     if "password" in update_dict and update_dict["password"]:
-        db_user.hashed_password = get_password_hash(update_dict["password"])
-        del update_dict["password"]
+        db_user.hashed_password = get_password_hash(update_dict.pop("password"))
 
     for key, value in update_dict.items():
-        if hasattr(db_user, key):
-            setattr(db_user, key, value)
+        setattr(db_user, key, value)
 
     await db.commit()
     await db.refresh(db_user)
-    return db_user
+
+    result = await db.execute(select(User).options(selectinload(User.room)).where(User.id == db_user.id))
+    return result.scalars().first()
 
 
 @router.delete("/{user_id}", status_code=204, dependencies=[Depends(allow_accountant)])
-async def delete_user(
-        user_id: int,
-        db: AsyncSession = Depends(get_db)
-):
-    """Удаление пользователя (мягкое)."""
+async def delete_user(user_id: int, db: AsyncSession = Depends(get_db)):
     try:
         await delete_user_service(user_id, db)
         await db.commit()
@@ -338,6 +204,58 @@ async def delete_user(
         raise HTTPException(status_code=404, detail=str(e))
     except Exception:
         await db.rollback()
-        raise HTTPException(status_code=500, detail="Ошибка при удалении пользователя")
-
+        raise HTTPException(status_code=500, detail="Ошибка при удалении")
     return None
+
+
+# =================================================================
+# ИМПОРТ И ЭКСПОРТ EXCEL
+# =================================================================
+@router.post("/import_excel", summary="Умный импорт (Жилфонд + Жильцы)", dependencies=[Depends(allow_accountant)])
+async def import_users(file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
+    if not file.filename.endswith(('.xlsx', '.xls')):
+        raise HTTPException(status_code=400, detail="Только файлы Excel (.xlsx, .xls)")
+
+    header = await file.read(8)
+    await file.seek(0)
+    if not (header.startswith(b"PK\x03\x04") or header.startswith(b"\xd0\xcf\x11\xe0")):
+        raise HTTPException(status_code=400, detail="Неверная сигнатура Excel файла")
+
+    content = await file.read()
+    return await import_users_from_excel(content, db)
+
+
+@router.get("/export/template", summary="Скачать шаблон для импорта")
+async def download_import_template():
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Шаблон импорта"
+
+    headers = [
+        "Логин (Оставьте пустым для создания только комнаты)",
+        "Пароль (Можно пусто)", "Общежитие (ОБЯЗАТЕЛЬНО)", "Номер комнаты (ОБЯЗАТЕЛЬНО)",
+        "Площадь м2", "Макс. мест в комнате", "Кол-во жильцов на Л/С",
+        "№ ГВС", "№ ХВС", "№ Электр.", "Место работы"
+    ]
+    ws.append(headers)
+
+    header_fill = PatternFill(start_color="3B82F6", end_color="3B82F6", fill_type="solid")
+    header_font = Font(color="FFFFFF", bold=True)
+
+    for cell in ws[1]:
+        cell.fill = header_fill
+        cell.font = header_font
+        ws.column_dimensions[cell.column_letter].width = 25
+
+    ws.append(["ivanov_i", "pass123", "Общежитие №1", "101", 18.5, 2, 1, "HW-001", "CW-002", "EL-003", "МЧС"])
+    ws.append(["", "", "Общежитие №1", "102", 20.0, 3, "", "HW-004", "CW-005", "EL-006", ""])
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=Import_Template.xlsx"}
+    )

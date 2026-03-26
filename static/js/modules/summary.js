@@ -3,9 +3,11 @@ import { api } from '../core/api.js';
 import { el, setLoading, toast } from '../core/dom.js';
 
 export const SummaryModule = {
+    isInitialized: false,
     state: {
         selectedPeriodId: null,
-        controller: null
+        controller: null,
+        pollTimer: null
     },
 
     dom: {},
@@ -13,7 +15,6 @@ export const SummaryModule = {
     init() {
         if (!this.dom.container) {
             this.cacheDOM();
-
             if (!this.isInitialized) {
                 this.bindEvents();
                 this.isInitialized = true;
@@ -40,171 +41,111 @@ export const SummaryModule = {
 
     async loadPeriods() {
         if (!this.dom.periodSelector) return;
-        this.dom.periodSelector.innerHTML = '<span class="text-gray-500">Загрузка периодов...</span>';
+        this.dom.periodSelector.innerHTML = '<span>Загрузка периодов...</span>';
 
         try {
             const periods = await api.get('/admin/periods/history');
             this.dom.periodSelector.innerHTML = '';
-            if (!periods || !periods.length) {
-                this.dom.periodSelector.textContent = "Нет доступных периодов";
-                return;
-            }
 
             const select = el('select', {
-                class: 'border p-2 rounded bg-white',
-                style: { fontSize: '14px', minWidth: '200px' },
                 onchange: (e) => {
                     this.state.selectedPeriodId = e.target.value;
                     this.loadData();
                 }
             });
-            periods.forEach(p => {
-                const isActiveText = p.is_active ? ' (Активен)' : '';
-                select.appendChild(el('option', { value: p.id }, `${p.name}${isActiveText}`));
-            });
-            this.dom.periodSelector.appendChild(el('div', { class: 'flex items-center gap-2' },
-                el('span', { class: 'font-bold' }, 'Период: '), select
-            ));
 
-            if (periods.length > 0) {
-                this.state.selectedPeriodId = periods[0].id;
-                select.value = periods[0].id;
-                this.loadData();
+            if (!periods || !periods.length) {
+                this.dom.container.innerHTML = '<div style="text-align:center; padding:40px;">Нет доступных периодов.</div>';
+                return;
             }
+
+            periods.forEach(p => {
+                select.appendChild(el('option', { value: p.id }, `${p.name}${p.is_active ? ' (Активный)' : ''}`));
+            });
+            this.dom.periodSelector.appendChild(select);
+
+            // Выбираем самый свежий период (первый в списке) по умолчанию
+            this.state.selectedPeriodId = periods[0].id;
+            this.loadData();
         } catch (e) {
-            console.error(e);
-            this.dom.periodSelector.textContent = "Ошибка загрузки периодов";
+            this.dom.periodSelector.textContent = "Ошибка загрузки периодов.";
         }
     },
 
     async loadData() {
         if (this.state.controller) this.state.controller.abort();
         this.state.controller = new AbortController();
-
-        this.dom.container.innerHTML = `<div style="text-align:center; padding:40px; color:#666;"><div class="spinner mb-2"></div>⏳ Загрузка сводной таблицы...</div>`;
+        this.dom.container.innerHTML = `<div style="text-align:center; padding:40px; color:#666;">Загрузка...</div>`;
 
         try {
-            const periodParam = this.state.selectedPeriodId ? `?period_id=${this.state.selectedPeriodId}` : '';
-            const data = await api.get(`/admin/summary${periodParam}`, { signal: this.state.controller.signal });
+            const data = await api.get(`/admin/summary?period_id=${this.state.selectedPeriodId}`, { signal: this.state.controller.signal });
             this.renderData(data);
         } catch (e) {
             if (e.name === 'AbortError') return;
-
-            // БЕЗОПАСНЫЙ ВЫВОД ОШИБКИ (Защита от XSS)
-            this.dom.container.innerHTML = '';
-            const errorBox = el('div', {
-                style: { textAlign: 'center', color: '#e74c3c', padding: '20px', border: '1px solid #e74c3c', borderRadius: '8px', margin: '20px' }
-            },
-                el('strong', {}, 'Ошибка загрузки:'),
-                el('br', {}),
-                e.message
-            );
-            this.dom.container.appendChild(errorBox);
+            this.dom.container.innerHTML = `<div style="text-align:center; padding:20px; color:red;">Ошибка: ${e.message}</div>`;
         }
     },
 
     renderData(data) {
         this.dom.container.innerHTML = '';
-        if (!data || Object.keys(data).length === 0) {
-            this.dom.container.innerHTML = '<div style="text-align:center; padding:40px; color:#888;">Нет данных для отображения за выбранный период</div>';
+        if (!Object.keys(data).length) {
+            this.dom.container.innerHTML = '<div style="text-align:center; padding:40px;">Нет данных за этот период.</div>';
             return;
         }
 
         const fragment = document.createDocumentFragment();
-        const sortedDorms = Object.keys(data).sort();
-
-        for (const dormName of sortedDorms) {
+        Object.keys(data).sort().forEach(dormName => {
             const records = data[dormName];
-            const card = el('div', { class: 'bg-white shadow rounded-lg mb-6 overflow-hidden' });
-            card.appendChild(el('div', { class: 'bg-gray-100 px-4 py-3 border-b' },
-                el('h3', { class: 'font-bold text-lg text-gray-700' }, `🏠 ${dormName}`)
-            ));
+            fragment.appendChild(el('h3', { style: { margin: '20px 0 10px 0', borderBottom: '1px solid #ccc', paddingBottom: '5px' } }, `🏢 ${dormName}`));
 
-            const tableContainer = el('div', { class: 'overflow-x-auto' });
-            const table = el('table', { class: 'min-w-full text-sm' });
-
-            table.appendChild(el('thead', { class: 'bg-gray-50' }, el('tr', {},
-                el('th', { class: 'px-3 py-2 text-left' }, 'Жилец'),
-                el('th', { class: 'px-3 py-2 text-right' }, 'ГВС'),
-                el('th', { class: 'px-3 py-2 text-right' }, 'ХВС'),
-                el('th', { class: 'px-3 py-2 text-right' }, 'Свет'),
-                el('th', { class: 'px-3 py-2 text-right' }, 'Содерж.'),
-                el('th', { class: 'px-3 py-2 text-right' }, 'Наем'),
-                el('th', { class: 'px-3 py-2 text-right font-bold' }, 'Счет 209'),
-                el('th', { class: 'px-3 py-2 text-right font-bold' }, 'Счет 205'),
-                el('th', { class: 'px-3 py-2 text-right font-bold text-red-600' }, 'ИТОГО'),
-                el('th', { class: 'px-3 py-2 text-center' }, 'Действия')
-            )));
-
-            const tbody = el('tbody', { class: 'divide-y divide-gray-200' });
-            const totals = { hot: 0, cold: 0, el: 0, main: 0, rent: 0, sum_209: 0, sum_205: 0, sum_total: 0 };
+            const table = el('table');
+            table.innerHTML = `
+                <thead><tr><th>Жилец</th><th class="text-right">Счет 209 (Комм.)</th><th class="text-right">Счет 205 (Найм)</th><th class="text-right">ИТОГО</th><th class="text-center">Действия</th></tr></thead>
+            `;
+            const tbody = el('tbody');
+            const totals = { total_209: 0, total_205: 0, total_cost: 0 };
 
             records.forEach(r => {
-                totals.hot += Number(r.hot || 0);
-                totals.cold += Number(r.cold || 0);
-                totals.el += Number(r.electric || 0);
-                totals.main += Number(r.maintenance || 0);
-                totals.rent += Number(r.rent || 0);
-                totals.sum_209 += Number(r.total_209 || 0);
-                totals.sum_205 += Number(r.total_205 || 0);
-                totals.sum_total += Number(r.total_cost || 0);
-
+                Object.keys(totals).forEach(k => totals[k] += Number(r[k] || 0));
                 tbody.appendChild(el('tr', { class: 'hover:bg-gray-50' },
-                    el('td', { class: 'px-3 py-2' },
-                        el('div', { class: 'font-medium' }, r.username),
-                        el('div', { class: 'text-xs text-gray-500' }, `${r.area}м² / ${r.residents} чел`)
+                    el('td', {},
+                        el('div', { class: 'font-bold' }, r.username),
+                        el('div', { style: { fontSize: '11px', color: '#888' } }, `${r.area}м² / ${r.residents} чел.`)
                     ),
-                    el('td', { class: 'px-3 py-2 text-right' }, Number(r.hot).toFixed(2)),
-                    el('td', { class: 'px-3 py-2 text-right' }, Number(r.cold).toFixed(2)),
-                    el('td', { class: 'px-3 py-2 text-right' }, Number(r.electric).toFixed(2)),
-                    el('td', { class: 'px-3 py-2 text-right' }, Number(r.maintenance).toFixed(2)),
-                    el('td', { class: 'px-3 py-2 text-right' }, Number(r.rent).toFixed(2)),
-                    el('td', { class: 'px-3 py-2 text-right font-bold' }, Number(r.total_209).toFixed(2)),
-                    el('td', { class: 'px-3 py-2 text-right font-bold' }, Number(r.total_205).toFixed(2)),
-                    el('td', { class: 'px-3 py-2 text-right font-bold text-red-600' }, Number(r.total_cost).toFixed(2)),
-                    el('td', { class: 'px-3 py-2 text-center' },
+                    el('td', { class: 'text-right' }, Number(r.total_209).toFixed(2)),
+                    el('td', { class: 'text-right' }, Number(r.total_205).toFixed(2)),
+                    el('td', { class: 'text-right font-bold', style: { color: '#059669' } }, Number(r.total_cost).toFixed(2)),
+                    el('td', { class: 'text-center' },
                         el('button', {
-                            class: 'text-blue-600 hover:text-blue-900',
-                            title: 'Скачать квитанцию',
+                            class: 'action-btn secondary-btn', style: { padding: '2px 8px', fontSize: '12px' },
                             onclick: () => this.downloadReceipt(r.reading_id)
-                        }, '📄')
+                        }, 'PDF')
                     )
                 ));
             });
 
-            tbody.appendChild(el('tr', { class: 'bg-blue-50 font-bold' },
-                el('td', { class: 'px-3 py-2 text-right' }, 'ИТОГО:'),
-                el('td', { class: 'px-3 py-2 text-right' }, totals.hot.toFixed(2)),
-                el('td', { class: 'px-3 py-2 text-right' }, totals.cold.toFixed(2)),
-                el('td', { class: 'px-3 py-2 text-right' }, totals.el.toFixed(2)),
-                el('td', { class: 'px-3 py-2 text-right' }, totals.main.toFixed(2)),
-                el('td', { class: 'px-3 py-2 text-right' }, totals.rent.toFixed(2)),
-                el('td', { class: 'px-3 py-2 text-right' }, totals.sum_209.toFixed(2)),
-                el('td', { class: 'px-3 py-2 text-right' }, totals.sum_205.toFixed(2)),
-                el('td', { class: 'px-3 py-2 text-right text-red-600' }, totals.sum_total.toFixed(2)),
-                el('td', {}, '')
+            tbody.appendChild(el('tr', { style: { background: '#f8f8f8', fontWeight: 'bold' } },
+                el('td', { class: 'text-right' }, 'ИТОГО по объекту:'),
+                el('td', { class: 'text-right' }, totals.total_209.toFixed(2)),
+                el('td', { class: 'text-right' }, totals.total_205.toFixed(2)),
+                el('td', { class: 'text-right', style: { color: '#059669' } }, totals.total_cost.toFixed(2)),
+                el('td')
             ));
 
             table.appendChild(tbody);
-            tableContainer.appendChild(table);
-            card.appendChild(tableContainer);
-            fragment.appendChild(card);
-        }
-
+            fragment.appendChild(table);
+        });
         this.dom.container.appendChild(fragment);
     },
 
     async downloadReceipt(id) {
-        toast('Генерация квитанции...', 'info');
+        toast('Подготовка PDF...', 'info');
         try {
-            const res = await api.post(`/admin/receipts/${id}/generate`, {});
-            const result = await this.pollTask(res.task_id);
-            if (result.download_url) {
-                // ❗ ИСПРАВЛЕНИЕ: Открываем ссылку в новой вкладке, чтобы браузер сам скачал PDF
-                window.open(result.download_url, '_blank');
-                toast('Файл открыт в новой вкладке', 'success');
+            const res = await api.get(`/admin/receipts/${id}`);
+            if (res.url) {
+                window.open(res.url, '_blank');
             } else {
-                throw new Error('Ссылка на файл не получена');
+                throw new Error('Сервер не вернул ссылку на файл.');
             }
         } catch (e) {
             toast('Ошибка скачивания: ' + e.message, 'error');
@@ -212,12 +153,12 @@ export const SummaryModule = {
     },
 
     async downloadExcel() {
-        if (!this.state.selectedPeriodId) return toast('Выберите период', 'warning');
-        setLoading(this.dom.btnExcel, true, 'Скачивание...');
+        if (!this.state.selectedPeriodId) return toast('Сначала выберите период!', 'warning');
+        setLoading(this.dom.btnExcel, true, 'Формирование...');
         try {
-            const url = `/api/admin/export_report?period_id=${this.state.selectedPeriodId}`;
-            await api.download(url.replace('/api', ''), `report_${this.state.selectedPeriodId}.xlsx`);
-            toast('Отчет скачан', 'success');
+            // Исправлено: передаем URL без /api
+            const url = `/admin/export_report?period_id=${this.state.selectedPeriodId}`;
+            await api.download(url, `Svodnaya_vedomost_${this.state.selectedPeriodId}.xlsx`);
         } catch (e) {
             toast('Ошибка скачивания Excel: ' + e.message, 'error');
         } finally {
@@ -226,48 +167,59 @@ export const SummaryModule = {
     },
 
     async downloadZip() {
-        if (!this.state.selectedPeriodId) return toast('Выберите период', 'warning');
-        setLoading(this.dom.btnZip, true, 'Формирование...');
+        if (!this.state.selectedPeriodId) return toast('Сначала выберите период!', 'warning');
+        setLoading(this.dom.btnZip, true, 'Запуск задачи...');
         try {
-            toast('Архив формируется. Это может занять до минуты...', 'info');
-            const res = await api.post(`/admin/reports/bulk-zip?period_id=${this.state.selectedPeriodId}`, {});
-            const result = await this.pollTask(res.task_id);
-            if (result.download_url) {
-                 // Для ZIP тоже надежнее использовать window.open
-                window.open(result.download_url, '_blank');
-                toast('Архив скачивается', 'success');
-            }
+            toast('Архив формируется на сервере. Это может занять до минуты...', 'info');
+            const res = await api.post(`/admin/reports/bulk-zip?period_id=${this.state.selectedPeriodId}`);
+            await this.pollTask(res.task_id, this.dom.btnZip);
         } catch (e) {
-            toast('Ошибка: ' + e.message, 'error');
-        } finally {
+            toast('Ошибка запуска: ' + e.message, 'error');
             setLoading(this.dom.btnZip, false);
         }
     },
 
-    async pollTask(taskId) {
-        let attempts = 0;
-        const maxAttempts = 150; // 5 минут (150 * 2 сек)
+    async pollTask(taskId, button) {
+        if (this.state.pollTimer) clearInterval(this.state.pollTimer);
+        const originalText = button.textContent;
 
-        const check = async () => {
-            attempts++;
-            if (attempts > maxAttempts) {
-                throw new Error('Время ожидания генерации файла истекло (5 минут)');
-            }
+        setLoading(button, true, 'Обработка...');
 
-            const data = await api.get(`/admin/tasks/${taskId}`);
+        return new Promise((resolve, reject) => {
+            let attempts = 0;
+            const maxAttempts = 150; // 5 минут
 
-            if (data.status === 'done' || data.status === 'ok' || data.state === 'SUCCESS') {
-                return data;
-            }
-            if (data.state === 'FAILURE') {
-                throw new Error(data.error || 'Ошибка выполнения задачи на сервере');
-            }
+            this.state.pollTimer = setInterval(async () => {
+                attempts++;
+                if (attempts > maxAttempts) {
+                    clearInterval(this.state.pollTimer);
+                    setLoading(button, false, originalText);
+                    return reject(new Error('Время ожидания истекло.'));
+                }
 
-            // Если все еще обрабатывается, ждем 2 секунды
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            return check();
-        };
-
-        return check();
+                try {
+                    const data = await api.get(`/admin/tasks/${taskId}`);
+                    if (data.status === 'done' || data.state === 'SUCCESS') {
+                        clearInterval(this.state.pollTimer);
+                        setLoading(button, false, originalText);
+                        if(data.download_url) {
+                            window.open(data.download_url, '_blank');
+                            toast('Архив готов и скачивается!', 'success');
+                            resolve(data);
+                        } else {
+                            reject(new Error("Сервер не вернул ссылку."));
+                        }
+                    } else if (data.state === 'FAILURE') {
+                        clearInterval(this.state.pollTimer);
+                        setLoading(button, false, originalText);
+                        reject(new Error(data.error || 'Ошибка на сервере.'));
+                    }
+                } catch (e) {
+                    clearInterval(this.state.pollTimer);
+                    setLoading(button, false, originalText);
+                    reject(e);
+                }
+            }, 2000); // Опрос каждые 2 секунды
+        });
     }
 };

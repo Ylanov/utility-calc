@@ -13,7 +13,6 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy import func
 
 from app.core.database import get_db
-# ИМПОРТ: Добавляем модель Room
 from app.modules.utility.models import User, MeterReading, Tariff, BillingPeriod, Adjustment, Room
 from app.modules.utility.schemas import ReadingSchema, ReadingStateResponse
 from app.core.dependencies import get_current_user
@@ -26,7 +25,7 @@ router = APIRouter(tags=["Client Readings"])
 
 
 # =========================
-# SERVICE LAYER (Адаптирован под Room)
+# SERVICE LAYER
 # =========================
 class ReadingService:
 
@@ -58,7 +57,7 @@ class ReadingService:
         # В calculate_utilities передаем и user, и room, чтобы у сервиса были все данные
         return calculate_utilities(
             user=user,
-            room=room, # Передаем объект комнаты
+            room=room,
             tariff=tariff,
             volume_hot=d_hot,
             volume_cold=d_cold,
@@ -68,7 +67,7 @@ class ReadingService:
 
 
 # =========================
-# STATE (Адаптирован под Room)
+# STATE
 # =========================
 @router.get("/api/readings/state", response_model=ReadingStateResponse)
 async def get_reading_state(
@@ -85,15 +84,15 @@ async def get_reading_state(
 
     period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))).scalars().first()
 
-    # ИЗМЕНЕНИЕ: Ищем историю показаний для КОМНАТЫ, а не для пользователя
+    # Ищем историю показаний для КОМНАТЫ (лимит увеличен для обхода множества черновиков)
     readings = (await db.execute(
         select(MeterReading)
         .where(MeterReading.room_id == user.room_id)
         .order_by(MeterReading.created_at.desc())
-        .limit(3)
+        .limit(10)
     )).scalars().all()
 
-    # 🔥 ИСПРАВЛЕНИЕ: Ищем показание за ТЕКУЩИЙ активный период ДЛЯ КОМНАТЫ (неважно, кто из соседей подал)
+    # Ищем показание за ТЕКУЩИЙ активный период ДЛЯ КОМНАТЫ (черновик)
     current_reading = next((r for r in readings if period and r.period_id == period.id), None)
 
     # Ищем последнее утвержденное показание из ПРОШЛЫХ периодов ДЛЯ КОМНАТЫ
@@ -134,7 +133,7 @@ async def get_reading_state(
 
 
 # =========================
-# CALCULATE (Адаптирован под Room)
+# CALCULATE
 # =========================
 @router.post("/api/calculate")
 async def save_reading(
@@ -170,12 +169,12 @@ async def save_reading(
         if not tariff:
             raise HTTPException(500, "Тариф не найден")
 
-    # 2. ИЗМЕНЕНИЕ: Ищем историю показаний для КОМНАТЫ
+    # 2. Ищем историю показаний для КОМНАТЫ
     history_task = db.execute(
         select(MeterReading)
         .where(MeterReading.room_id == user.room_id)
         .order_by(MeterReading.created_at.desc())
-        .limit(6)
+        .limit(12)
     )
     # Корректировки остаются привязанными к плательщику (user.id)
     adj_task = db.execute(
@@ -189,10 +188,10 @@ async def save_reading(
     readings = history_res.scalars().all()
     adj_map = {a[0]: (a[1] or Decimal("0.00")) for a in adj_res.all()}
 
-    # 🔥 ИСПРАВЛЕНИЕ: Ищем черновик КОМНАТЫ в текущем периоде
+    # Ищем черновик КОМНАТЫ в текущем периоде
     draft = next((r for r in readings if r.period_id == period.id), None)
 
-    # 🔥 ЗАЩИТА: Если черновик есть и его создал сосед, блокируем перезапись
+    # ЗАЩИТА: Если черновик есть и его создал сосед, блокируем перезапись
     if draft and draft.user_id != user.id:
         raise HTTPException(status_code=400, detail="Показания для вашей комнаты уже переданы другим жильцом.")
 
@@ -215,7 +214,7 @@ async def save_reading(
     p_cold = prev_latest.cold_water if prev_latest else zero
     p_elect = prev_latest.electricity if prev_latest else zero
 
-    # 3. ИЗМЕНЕНИЕ: Передаем в расчет и user, и room
+    # 3. Расчет стоимостей
     costs = ReadingService.calculate_costs(user, room, tariff, hot, cold, elect, p_hot, p_cold, p_elect)
 
     # 4. Сборка долгов и итогов
@@ -261,7 +260,7 @@ async def save_reading(
 
         new_draft = MeterReading(
             user_id=user.id,
-            room_id=user.room_id, # <--- ОБЯЗАТЕЛЬНОЕ ПОЛЕ
+            room_id=user.room_id,
             period_id=period.id,
             hot_water=hot, cold_water=cold, electricity=elect,
             debt_209=Decimal("0.00"), overpayment_209=Decimal("0.00"),
@@ -303,7 +302,7 @@ async def get_client_history(current_user: User = Depends(get_current_user), db:
 
 
 # =========================
-# RECEIPT (Адаптирован под Room)
+# RECEIPT
 # =========================
 @router.get("/api/client/receipts/{reading_id}")
 async def download_client_receipt(
@@ -311,10 +310,14 @@ async def download_client_receipt(
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
 ):
-    # 1. Получаем показание со связями User и Period
+    # 1. Получаем показание с привязанными User, Room и Period (Добавлен selectinload для Room!)
     reading = (await db.execute(
         select(MeterReading)
-        .options(selectinload(MeterReading.user), selectinload(MeterReading.period))
+        .options(
+            selectinload(MeterReading.user),
+            selectinload(MeterReading.period),
+            selectinload(MeterReading.room) # <--- ИСПРАВЛЕНИЕ ЗДЕСЬ
+        )
         .where(MeterReading.id == reading_id)
     )).scalars().first()
 
@@ -329,11 +332,11 @@ async def download_client_receipt(
     tariff = (await db.execute(select(Tariff).where(Tariff.is_active).order_by(Tariff.valid_from.desc()))).scalars().first()
     if not tariff: raise HTTPException(500, "Тариф не найден")
 
-    # 4. ИЗМЕНЕНИЕ: Ищем предыдущее показание для КОМНАТЫ
+    # 4. Ищем предыдущее показание для КОМНАТЫ
     prev = (await db.execute(
         select(MeterReading)
         .where(
-            MeterReading.room_id == reading.room_id, # <--- Ключевое изменение
+            MeterReading.room_id == reading.room_id,
             MeterReading.is_approved,
             MeterReading.created_at < reading.created_at
         )
@@ -349,8 +352,14 @@ async def download_client_receipt(
     # 6. Генерация PDF
     pdf_path = await asyncio.to_thread(
         generate_receipt_pdf,
-        user=reading.user, reading=reading, period=reading.period, tariff=tariff,
-        prev_reading=prev, adjustments=adjustments, output_dir="/tmp"
+        user=reading.user,
+        room=reading.room, # <--- ИСПРАВЛЕНИЕ: Передаем room
+        reading=reading,
+        period=reading.period,
+        tariff=tariff,
+        prev_reading=prev,
+        adjustments=adjustments,
+        output_dir="/tmp"
     )
 
     # 7. Загрузка в S3

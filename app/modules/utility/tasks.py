@@ -1,3 +1,4 @@
+# app/modules/utility/tasks.py
 import os
 import zipfile
 import logging
@@ -16,8 +17,7 @@ from redis import Redis
 from app.worker import celery
 from app.core.database import SessionLocalSync
 from app.core.config import settings
-# ИЗМЕНЕНИЕ: Добавляем импорт Room
-from app.modules.utility.models import MeterReading, Tariff, BillingPeriod, Adjustment, SystemSetting, User
+from app.modules.utility.models import MeterReading, Tariff, BillingPeriod, Adjustment, SystemSetting, User, Room
 from app.modules.utility.services.pdf_generator import generate_receipt_pdf
 from app.modules.utility.services.debt_import import sync_import_debts_process
 from app.modules.utility.services.s3_client import s3_service
@@ -41,7 +41,6 @@ def generate_receipt_task(reading_id: int) -> dict:
     logger.info(f"[PDF] Start generation reading_id={reading_id}")
     db = get_sync_db()
     try:
-        # ИЗМЕНЕНИЕ: Загружаем одним запросом показание, жильца, его комнату и период
         reading = (
             db.query(MeterReading)
             .options(
@@ -58,7 +57,6 @@ def generate_receipt_task(reading_id: int) -> dict:
         room = user.room
         period = reading.period
 
-        # --- Логика тарифов остается без изменений ---
         user_tariff_id = getattr(user, 'tariff_id', None)
         tariff = None
         if user_tariff_id:
@@ -68,7 +66,6 @@ def generate_receipt_task(reading_id: int) -> dict:
         if not tariff:
             raise ValueError("No active tariffs found in the system for receipt generation.")
 
-        # --- КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: Ищем предыдущее показание по room_id ---
         prev_reading = (
             db.query(MeterReading)
             .filter(
@@ -90,10 +87,9 @@ def generate_receipt_task(reading_id: int) -> dict:
         )
 
         temp_dir = "/tmp"
-        # ИЗМЕНЕНИЕ: Передаем объект room в генератор PDF
         final_path = generate_receipt_pdf(
             user=user,
-            room=room,  # <--- Передаем комнату
+            room=room,
             reading=reading,
             period=period,
             tariff=tariff,
@@ -112,7 +108,7 @@ def generate_receipt_task(reading_id: int) -> dict:
         else:
             raise RuntimeError("S3 Upload Failed")
 
-    except Exception:
+    except Exception as error:
         logger.exception("[PDF] Generation failed")
         raise
     finally:
@@ -168,11 +164,12 @@ def start_bulk_receipt_generation(period_id: int):
         if not period:
             return {"status": "error", "message": "Период не найден"}
 
-        reading_ids = [
-            r.id for r in db.query(MeterReading.id)
-            .filter(MeterReading.period_id == period_id, MeterReading.is_approved.is_(True))
-            .all()
-        ]
+        # ИСПРАВЛЕНИЕ: Безопасное извлечение ID из кортежа, который возвращает SQLAlchemy
+        reading_ids_tuples = db.query(MeterReading.id).filter(
+            MeterReading.period_id == period_id, 
+            MeterReading.is_approved.is_(True)
+        ).all()
+        reading_ids = [r[0] for r in reading_ids_tuples]
 
         if not reading_ids:
             return {"status": "error", "message": "Нет утвержденных показаний"}
@@ -288,7 +285,7 @@ def check_auto_period_task():
 
         if start_day <= current_day <= end_day:
             if not active:
-                month_names = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь",
+                month_names =["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь",
                                "Октябрь", "Ноябрь", "Декабрь"]
                 period_name = f"{month_names[today.month]} {today.year}"
                 exists = db.query(BillingPeriod).filter_by(name=period_name).first()
@@ -322,18 +319,16 @@ def detect_anomalies_task(reading_id: int):
     """Анализ аномалий для одного показания."""
     db = get_sync_db()
     try:
-        # ИЗМЕНЕНИЕ: Загружаем показание вместе с user и room
         reading = db.query(MeterReading).options(
             selectinload(MeterReading.user).selectinload(User.room)
         ).filter(MeterReading.id == reading_id).first()
 
-        if not reading or reading.is_approved or not reading.user or not reading.user.room:
+        if not reading or reading.is_approved or not reading.room_id:
             return
 
-        # --- КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: Ищем историю по room_id ---
         history = db.query(MeterReading).filter(
-            MeterReading.room_id == reading.user.room_id,
-            MeterReading.is_approved == True
+            MeterReading.room_id == reading.room_id,
+            MeterReading.is_approved.is_(True)
         ).order_by(MeterReading.created_at.desc()).limit(6).all()
 
         from app.modules.utility.services.anomaly_detector import check_reading_for_anomalies_v2

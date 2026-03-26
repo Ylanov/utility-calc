@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 
 <style>
-
 @page { size: A4; margin: 12mm; }
 body { font-family: "DejaVu Sans", sans-serif; font-size: 10pt; color: #222; }
 .header { text-align: center; border-bottom: 2px solid #333; padding-bottom: 10px; margin-bottom: 15px; }
@@ -30,7 +29,6 @@ td { text-align: right; }
 .qr-box img { width: 120px; height: 120px; }
 .qr-desc { font-size: 8pt; margin-top: 4px; color: #555; }
 .footer { margin-top: 12px; font-size: 8pt; color: #666; text-align: center; }
-
 </style>
 </head>
 
@@ -46,8 +44,10 @@ td { text-align: right; }
         <h3>Плательщик</h3>
         <div class="row"><span class="label">ФИО:</span><span>{{ user.username }}</span></div>
         <div class="row"><span class="label">Лицевой счет:</span><span>{{ user.id }}</span></div>
-        <div class="row"><span class="label">Адрес:</span><span>{{ user.dormitory }}</span></div>
-        <div class="row"><span class="label">Площадь:</span><span>{{ user.apartment_area }} м²</span></div>
+        <!-- ИСПРАВЛЕНИЕ: Берем адрес из объекта room -->
+        <div class="row"><span class="label">Адрес:</span><span>{{ room.dormitory_name }}, ком. {{ room.room_number }}</span></div>
+        <!-- ИСПРАВЛЕНИЕ: Берем площадь из объекта room -->
+        <div class="row"><span class="label">Площадь:</span><span>{{ room.apartment_area }} м²</span></div>
         <div class="row"><span class="label">Проживающих:</span><span>{{ user.residents_count }}</span></div>
     </div>
     <div class="info-box">
@@ -69,10 +69,11 @@ td { text-align: right; }
 </thead>
 <tbody>
 <tr>
-    <td class="col-left">Наем жилого помещения</td><td>м²</td><td>{{ user.apartment_area }}</td><td>{{ tariff.social_rent }}</td><td>{{ reading.cost_social_rent|round(2) }}</td>
+    <!-- ИСПРАВЛЕНИЕ площади во всех строках -->
+    <td class="col-left">Наем жилого помещения</td><td>м²</td><td>{{ room.apartment_area }}</td><td>{{ tariff.social_rent }}</td><td>{{ reading.cost_social_rent|round(2) }}</td>
 </tr>
 <tr>
-    <td class="col-left">Содержание и ремонт</td><td>м²</td><td>{{ user.apartment_area }}</td><td>{{ tariff.maintenance_repair }}</td><td>{{ reading.cost_maintenance|round(2) }}</td>
+    <td class="col-left">Содержание и ремонт</td><td>м²</td><td>{{ room.apartment_area }}</td><td>{{ tariff.maintenance_repair }}</td><td>{{ reading.cost_maintenance|round(2) }}</td>
 </tr>
 <tr>
     <td colspan="5" class="col-left" style="background:#f4f4f4;font-weight:bold;">Коммунальные услуги</td>
@@ -90,10 +91,10 @@ td { text-align: right; }
     <td class="col-left">Электроэнергия</td><td>кВт⋅ч</td><td>{{ vol_elect|round(2) }}</td><td>{{ tariff.electricity_rate }}</td><td>{{ reading.cost_electricity|round(2) }}</td>
 </tr>
 <tr>
-    <td class="col-left">Отопление + ОДН</td><td>м²</td><td>{{ user.apartment_area }}</td><td>{{ (tariff.heating + tariff.electricity_per_sqm)|round(4) }}</td><td>{{ (reading.cost_fixed_part or 0)|round(2) }}</td>
+    <td class="col-left">Отопление + ОДН</td><td>м²</td><td>{{ room.apartment_area }}</td><td>{{ (tariff.heating + tariff.electricity_per_sqm)|round(4) }}</td><td>{{ (reading.cost_fixed_part or 0)|round(2) }}</td>
 </tr>
 <tr>
-    <td class="col-left">Вывоз ТКО</td><td>м²</td><td>{{ user.apartment_area }}</td><td>{{ tariff.waste_disposal }}</td><td>{{ reading.cost_waste|round(2) }}</td>
+    <td class="col-left">Вывоз ТКО</td><td>м²</td><td>{{ room.apartment_area }}</td><td>{{ tariff.waste_disposal }}</td><td>{{ reading.cost_waste|round(2) }}</td>
 </tr>
 {% for adj in adjustments %}
 <tr style="background: #fffbef;">
@@ -105,7 +106,6 @@ td { text-align: right; }
 </table>
 
 <table class="summary">
-    <!-- --- ИСПРАВЛЕНИЕ: Используем новые переменные --- -->
     <tr>
         <td class="label">Начальный долг:</td><td class="value">{{ total_debt|round(2) }} руб.</td>
     </tr>

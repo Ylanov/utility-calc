@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Личный кабинет жильца</title>
     <link rel="stylesheet" href="style.css">
-    <!-- Иконки FontAwesome (убедитесь, что они разрешены, либо используйте эмодзи) -->
+    <!-- Иконки FontAwesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 
     <style>
@@ -116,36 +116,35 @@
         input[type=number] { -moz-appearance: textfield; }
     </style>
 </head>
-<body>
+<body class="client-body">
 
 <!-- Контейнер для уведомлений -->
 <div id="toast-container"></div>
 
-<div id="app-container" class="app-container" style="opacity: 0; transition: opacity 0.5s; max-width: 900px;">
+<div id="app-container" class="app-container" style="opacity: 0; transition: opacity 0.5s; max-width: 900px; margin: 0 auto; padding: 20px;">
 
     <!-- HEADER -->
-    <header class="app-header">
+    <header class="app-header" style="border-radius: 16px; margin-bottom: 20px; padding: 20px 30px;">
         <div class="header-brand">
-            <div class="brand-icon">🏠</div>
+            <div class="brand-icon" style="font-size: 28px;">🏠</div>
             <div>
-                <h1>Личный кабинет</h1>
-                <span class="header-subtitle" id="headerAddress">Загрузка адреса...</span>
+                <h1 style="margin: 0; font-size: 22px;">Личный кабинет</h1>
+                <span class="header-subtitle" id="headerAddress" style="color: #6b7280; font-size: 13px;">Загрузка адреса...</span>
             </div>
         </div>
 
         <div class="header-profile">
-            <!-- Кнопки перенесены в профиль, оставлен только выход -->
             <button id="clientLogoutBtn" class="logout-btn">
                 <span>Выйти</span>
-                <i class="fa-solid fa-arrow-right-from-bracket"></i>
+                <i class="fa-solid fa-arrow-right-from-bracket" style="margin-left: 5px;"></i>
             </button>
         </div>
     </header>
 
     <!-- НАВИГАЦИЯ (ВКЛАДКИ) -->
-    <div class="nav-tabs-container">
+    <div class="nav-tabs-container" style="margin-bottom: 25px;">
         <div class="tabs">
-            <button class="tab-btn active" data-tab="tab-home"><i class="fa-solid fa-droplet border-none"></i> Показания</button>
+            <button class="tab-btn active" data-tab="tab-home"><i class="fa-solid fa-droplet"></i> Показания</button>
             <button class="tab-btn" data-tab="tab-history"><i class="fa-solid fa-clock-rotate-left"></i> История</button>
             <button class="tab-btn" data-tab="tab-profile"><i class="fa-solid fa-user-gear"></i> Профиль</button>
         </div>
@@ -157,16 +156,16 @@
     <div id="tab-home" class="tab-content active">
 
         <!-- Инфо-баннер о сроках -->
-        <div id="submissionAlert" style="display:none; margin-bottom: 20px; padding: 15px; border-radius: 8px; align-items: center; gap: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
-            <div style="font-size: 24px;">📅</div>
+        <div id="submissionAlert" class="status-card" style="display:none; margin-bottom: 20px; padding: 15px; border-radius: 12px; align-items: center; gap: 15px; box-shadow: 0 2px 10px rgba(0,0,0,0.02);">
+            <div style="font-size: 28px;">📅</div>
             <div>
                 <h4 style="margin: 0; font-size: 16px; font-weight: 600;" id="subAlertTitle">Прием показаний</h4>
-                <p style="margin: 3px 0 0 0; font-size: 13px; color: #4b5563;" id="subAlertText">...</p>
+                <p style="margin: 4px 0 0 0; font-size: 13px; color: #4b5563;" id="subAlertText">...</p>
             </div>
         </div>
 
-        <!-- СТАТУС ПЕРИОДА -->
-        <div id="statusArea" style="margin-bottom: 20px;"></div>
+        <!-- СТАТУС ПЕРИОДА (Черновик / Утверждено) -->
+        <div id="statusArea" style="margin-bottom: 25px;"></div>
 
         <!-- ФОРМА ВВОДА ПОКАЗАНИЙ -->
         <fieldset id="meterFieldset" style="border: none; padding: 0; margin: 0;">
@@ -178,7 +177,7 @@
                             <div class="meter-icon" style="background: #fee2e2; color: #dc2626;">🔥</div>
                             <div>
                                 <h3>Горячая вода</h3>
-                                <div style="font-size: 11px; color: #6b7280; margin-top: 2px;">№ <span id="lblHwSerial">Не указан</span></div>
+                                <div style="font-size: 11px; color: #6b7280; margin-top: 2px;">№ <span id="lblHwSerial" style="font-family: monospace; color: #374151;">Не указан</span></div>
                             </div>
                         </div>
                         <div class="meter-prev">Предыдущее: <span id="prevHot">0.000</span> м³</div>
@@ -195,7 +194,7 @@
                             <div class="meter-icon" style="background: #dbeafe; color: #2563eb;">❄️</div>
                             <div>
                                 <h3>Холодная вода</h3>
-                                <div style="font-size: 11px; color: #6b7280; margin-top: 2px;">№ <span id="lblCwSerial">Не указан</span></div>
+                                <div style="font-size: 11px; color: #6b7280; margin-top: 2px;">№ <span id="lblCwSerial" style="font-family: monospace; color: #374151;">Не указан</span></div>
                             </div>
                         </div>
                         <div class="meter-prev">Предыдущее: <span id="prevCold">0.000</span> м³</div>
@@ -212,7 +211,7 @@
                             <div class="meter-icon" style="background: #fef3c7; color: #d97706;">⚡</div>
                             <div>
                                 <h3>Электричество</h3>
-                                <div style="font-size: 11px; color: #6b7280; margin-top: 2px;">№ <span id="lblElSerial">Не указан</span></div>
+                                <div style="font-size: 11px; color: #6b7280; margin-top: 2px;">№ <span id="lblElSerial" style="font-family: monospace; color: #374151;">Не указан</span></div>
                             </div>
                         </div>
                         <div class="meter-prev">Предыдущее: <span id="prevElect">0.000</span> кВт⋅ч</div>
@@ -225,9 +224,9 @@
                 </div>
 
                 <div style="text-align: center; margin-bottom: 30px;">
-                    <button id="submitBtn" type="submit" class="action-btn primary-btn" style="font-size: 16px; padding: 14px 40px; border-radius: 30px; box-shadow: 0 4px 15px rgba(59, 130, 246, 0.4);">
+                    <button id="submitBtn" type="submit" class="action-btn primary-btn" style="font-size: 16px; padding: 16px 40px; border-radius: 30px; box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);">
                         <span id="submitBtnText">Отправить показания</span>
-                        <div id="submitBtnSpinner" class="spinner hide" style="margin-left: 10px; display: inline-block;"></div>
+                        <div id="submitBtnSpinner" class="spinner hide" style="margin-left: 10px; display: inline-block; vertical-align: middle;"></div>
                     </button>
                 </div>
             </form>
@@ -235,21 +234,26 @@
 
         <!-- РЕЗУЛЬТАТЫ (Предварительный расчет) -->
         <div id="result" class="card hide">
-            <div class="card-header">
+            <div class="card-header" style="background: #f8fafc; border-bottom: 1px solid #e5e7eb;">
                 <h3>💰 Предварительный расчет</h3>
                 <span class="hint-text">Сумма к оплате в текущем месяце</span>
             </div>
-            <ul class="result-list">
-                <li><span>ГВС</span><span id="rHot" style="font-weight: 500;"></span></li>
-                <li><span>ХВС</span><span id="rCold" style="font-weight: 500;"></span></li>
-                <li><span>Водоотведение</span><span id="rSew" style="font-weight: 500;"></span></li>
-                <li><span>Электроэнергия</span><span id="rEl" style="font-weight: 500;"></span></li>
-                <li><span>Содержание и ремонт</span><span id="rMain" style="font-weight: 500;"></span></li>
-                <li><span>Соц. наем</span><span id="rRent" style="font-weight: 500;"></span></li>
-                <li><span>Вывоз ТКО</span><span id="rWaste" style="font-weight: 500;"></span></li>
-                <li><span>Отопление + ОДН</span><span id="rFix" style="font-weight: 500;"></span></li>
-                <li class="result-total"><span>ИТОГО К ОПЛАТЕ</span><span id="rTotal"></span></li>
-            </ul>
+            <div style="padding: 20px;">
+                <ul class="result-list">
+                    <li><span>ГВС</span><span id="rHot" style="font-weight: 500;"></span></li>
+                    <li><span>ХВС</span><span id="rCold" style="font-weight: 500;"></span></li>
+                    <li><span>Водоотведение</span><span id="rSew" style="font-weight: 500;"></span></li>
+                    <li><span>Электроэнергия</span><span id="rEl" style="font-weight: 500;"></span></li>
+                    <li><span>Содержание и ремонт</span><span id="rMain" style="font-weight: 500;"></span></li>
+                    <li><span>Соц. наем</span><span id="rRent" style="font-weight: 500;"></span></li>
+                    <li><span>Вывоз ТКО</span><span id="rWaste" style="font-weight: 500;"></span></li>
+                    <li><span>Отопление + ОДН</span><span id="rFix" style="font-weight: 500;"></span></li>
+                    <li class="result-total"><span>ИТОГО К ОПЛАТЕ</span><span id="rTotal"></span></li>
+                </ul>
+                <p class="hint-text" style="text-align: center; margin-top: 15px; font-size: 12px; color: #6b7280;">
+                    * Окончательная сумма формируется после проверки бухгалтерией. Сумма указана без учета возможных долгов прошлых периодов.
+                </p>
+            </div>
         </div>
     </div>
 
@@ -260,6 +264,7 @@
         <div class="card table-card">
             <div class="card-header">
                 <h3>📚 История начислений</h3>
+                <span class="hint-text">Здесь отображаются только утвержденные квитанции</span>
             </div>
             <div class="table-responsive">
                 <table>
@@ -274,7 +279,7 @@
                         </tr>
                     </thead>
                     <tbody id="historyBody">
-                        <tr><td colspan="6" class="text-center py-4">Загрузка...</td></tr>
+                        <tr><td colspan="6" class="text-center py-4" style="color: #6b7280;">Загрузка...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -287,9 +292,9 @@
     <div id="tab-profile" class="tab-content">
 
         <!-- Инфо о помещении -->
-        <div class="card">
+        <div class="card" style="margin-bottom: 20px;">
             <div class="card-header">
-                <h3>Информация о помещении</h3>
+                <h3>🏢 Информация о помещении</h3>
             </div>
             <div class="profile-grid">
                 <div class="profile-item"><span class="profile-label">Логин (Л/С)</span><span id="pUser" class="profile-value font-mono">...</span></div>
@@ -302,11 +307,11 @@
         <!-- Настройки безопасности -->
         <div class="grid-2-col">
             <!-- Смена пароля -->
-            <div class="card">
+            <div class="card" style="margin: 0;">
                 <div class="card-header">
                     <h3>🔑 Смена пароля</h3>
                 </div>
-                <form id="changePasswordForm" class="styled-form">
+                <form id="changePasswordForm" class="styled-form" style="padding: 15px;">
                     <div class="form-group mb-3">
                         <label>Текущий пароль</label>
                         <input type="password" id="cpOld" required>
@@ -319,23 +324,25 @@
                         <label>Повторите новый пароль</label>
                         <input type="password" id="cpNewConfirm" required minlength="6">
                     </div>
-                    <button type="submit" class="action-btn primary-btn full-width" id="btnChangePassword">Обновить пароль</button>
+                    <button type="submit" class="action-btn success-btn full-width" id="btnChangePassword">Обновить пароль</button>
                 </form>
             </div>
 
-            <!-- Дополнительная защита -->
-            <div class="card">
+            <!-- Дополнительная защита 2FA -->
+            <div class="card" style="margin: 0;">
                 <div class="card-header">
                     <h3>🛡 Дополнительная защита</h3>
                 </div>
-                <p style="color: var(--text-secondary); font-size: 13px; margin-bottom: 20px;">
-                    Подключите двухфакторную аутентификацию (2FA) с помощью приложений Яндекс.Ключ или Google Authenticator для надежной защиты ваших данных.
-                </p>
-                <div style="text-align: center; padding: 20px; background: #f9fafb; border-radius: 8px; border: 1px dashed #d1d5db;">
-                    <i class="fa-solid fa-shield-halved text-4xl" style="color: #9ca3af; margin-bottom: 15px; display: block;"></i>
-                    <button id="btnOpenTotp" class="action-btn" style="background: #374151; color: white; width: 100%;">
-                        Настроить 2FA
-                    </button>
+                <div style="padding: 15px;">
+                    <p style="color: var(--text-secondary); font-size: 13px; margin-bottom: 20px; line-height: 1.5;">
+                        Подключите двухфакторную аутентификацию (2FA) с помощью приложений <b>Яндекс.Ключ</b> или <b>Google Authenticator</b> для максимальной защиты ваших личных данных.
+                    </p>
+                    <div style="text-align: center; padding: 25px 20px; background: #f9fafb; border-radius: 8px; border: 1px dashed #d1d5db;">
+                        <i class="fa-solid fa-shield-halved text-4xl" style="color: #9ca3af; font-size: 40px; margin-bottom: 15px; display: block;"></i>
+                        <button id="btnOpenTotp" class="action-btn" style="background: #374151; color: white; width: 100%; padding: 12px; font-size: 15px;">
+                            Настроить 2FA
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -358,11 +365,11 @@
                 Отсканируйте QR-код в приложении <b>Яндекс.Ключ</b> или <b>Google Authenticator</b>:
             </p>
             <img id="totpQrImage" src="" alt="QR Code" class="hide" style="width: 200px; height: 200px; margin: 0 auto; border: 1px solid var(--border-color); border-radius: 8px;">
-            <p style="font-size: 12px; color: var(--text-secondary); margin-top: 10px;">
-                Или введите ключ вручную:<br> <strong id="totpSecretText" style="color: var(--text-main); letter-spacing: 1px; font-size: 14px;"></strong>
+            <p style="font-size: 12px; color: var(--text-secondary); margin-top: 15px;">
+                Или введите ключ вручную:<br> <strong id="totpSecretText" style="color: var(--text-main); letter-spacing: 1px; font-size: 14px; background: #f3f4f6; padding: 4px 8px; border-radius: 4px;"></strong>
             </p>
             <div class="form-group" style="margin-top: 20px; text-align: left;">
-                <label style="text-align: center; display: block;">Код подтверждения:</label>
+                <label style="text-align: center; display: block; font-weight: 600; color: #374151;">Код подтверждения:</label>
                 <input type="text" id="totpCodeInput" placeholder="123456" maxlength="6" style="font-size: 24px; text-align: center; letter-spacing: 8px; font-weight: bold;">
             </div>
         </div>
@@ -373,11 +380,11 @@
 </div>
 
 <!-- 2. МОДАЛКА: Первичная настройка (ОБЯЗАТЕЛЬНАЯ) -->
-<div id="firstSetupModal" class="modal-overlay" style="z-index: 10000; background: rgba(17, 24, 39, 0.8); backdrop-filter: blur(8px);">
+<div id="firstSetupModal" class="modal-overlay" style="z-index: 10000; background: rgba(17, 24, 39, 0.85); backdrop-filter: blur(8px);">
     <div class="modal-window" style="width: 450px;">
         <div class="modal-header" style="background: var(--primary-color); color: white; justify-content: center;">
             <h3 style="font-size: 18px;">Добро пожаловать в ЖКХ Лидер! 🎉</h3>
-            <!-- Нет кнопки закрытия! -->
+            <!-- Нет кнопки закрытия, жилец обязан пройти этот шаг -->
         </div>
         <div class="modal-form">
             <p style="font-size: 14px; color: var(--text-main); margin-bottom: 15px; text-align: center;">
@@ -385,35 +392,36 @@
             </p>
 
             <div style="background: #eff6ff; padding: 15px; border-radius: 8px; border: 1px solid #bfdbfe; margin-bottom: 20px; text-align: center;">
-                <span style="font-size: 12px; color: var(--text-secondary); text-transform: uppercase;">Ваш текущий логин:</span><br>
-                <strong id="fsCurrentLogin" style="font-size: 20px; font-family: monospace; color: var(--primary-color);">...</strong>
+                <span style="font-size: 12px; color: var(--text-secondary); text-transform: uppercase; font-weight: 600;">Ваш текущий логин:</span><br>
+                <strong id="fsCurrentLogin" style="font-size: 22px; font-family: monospace; color: var(--primary-color);">...</strong>
             </div>
 
             <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 20px; text-align: center;">
                 Вы можете оставить этот логин (и тогда войти по нему в следующий раз), либо придумать свой собственный удобный логин и задать новый надежный пароль.
             </p>
 
-            <form id="firstSetupForm" class="styled-form hide">
-                <div class="form-group mb-3">
-                    <label>Новый логин (необязательно)</label>
-                    <input type="text" id="fsNewLogin" placeholder="Например: ivanov_ivan">
-                </div>
-                <div class="form-group mb-3">
-                    <label>Новый пароль</label>
-                    <input type="password" id="fsNewPassword" placeholder="Минимум 6 символов" minlength="6" required>
-                </div>
-                <button type="submit" class="action-btn success-btn full-width mt-2" id="btnFsSave">Сохранить новые данные</button>
-            </form>
-
             <div id="fsActionButtons" style="display: flex; flex-direction: column; gap: 10px;">
-                <button type="button" class="action-btn primary-btn" id="btnFsShowForm">Изменить логин и пароль</button>
-                <button type="button" class="action-btn secondary-btn" id="btnFsSkip" style="background: transparent; color: var(--text-secondary); border: 1px solid var(--border-color);">Оставить как есть и продолжить</button>
+                <button type="button" class="action-btn primary-btn" id="btnFsShowForm" style="padding: 12px;">Изменить логин и пароль</button>
+                <button type="button" class="action-btn secondary-btn" id="btnFsSkip" style="background: transparent; color: var(--text-secondary); border: 1px solid var(--border-color); padding: 12px;">Оставить как есть и продолжить</button>
             </div>
 
+            <!-- Форма изначально скрыта, появляется по нажатию btnFsShowForm -->
+            <form id="firstSetupForm" class="styled-form hide" style="margin-top: 15px; border-top: 1px solid #eee; padding-top: 15px;">
+                <div class="form-group mb-3">
+                    <label style="font-weight: 600;">Новый логин (необязательно)</label>
+                    <input type="text" id="fsNewLogin" placeholder="Например: ivanov_ivan" autocomplete="off">
+                </div>
+                <div class="form-group mb-3">
+                    <label style="font-weight: 600;">Новый пароль (обязательно)</label>
+                    <input type="password" id="fsNewPassword" placeholder="Минимум 6 символов" minlength="6" required autocomplete="new-password">
+                </div>
+                <button type="submit" class="action-btn success-btn full-width mt-2" id="btnFsSave" style="padding: 12px;">Сохранить и войти</button>
+            </form>
         </div>
     </div>
 </div>
 
+<!-- Подключение основного скрипта (модуль) -->
 <script type="module" src="js/client.js"></script>
 </body>
 </html>
