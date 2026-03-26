@@ -11,5 +11,4 @@ node_modules
 backups
 dist
 build
-*.json
-firebase-key.json
+project-7cb77-firebase-adminsdk-fbsvc-1fe4f000ec.json

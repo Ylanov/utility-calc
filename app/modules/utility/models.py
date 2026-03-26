@@ -69,7 +69,7 @@ class User(Base):
     room_id = Column(Integer, ForeignKey("rooms.id"), nullable=True)
     room = relationship("Room", backref="users")
 
-    # 🔑 НОВОЕ: Связь с тарифным профилем
+    # 🔑 СВЯЗЬ С ТАРИФОМ (которой не хватало)
     tariff_id = Column(Integer, ForeignKey("tariffs.id"), nullable=True)
     tariff = relationship("Tariff")
 
