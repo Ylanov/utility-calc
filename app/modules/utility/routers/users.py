@@ -40,8 +40,21 @@ class ChangeCredentials(BaseModel):
 # ЛИЧНЫЙ ПРОФИЛЬ
 # =================================================================
 @router.get("/me", response_model=UserResponse)
-async def get_me(current_user: User = Depends(get_current_user)):
-    return current_user
+async def get_me(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    result = await db.execute(
+        select(User)
+        .options(
+            selectinload(User.room),      # 🔥 обязательно
+            selectinload(User.tariff)     # 🔥 обязательно
+        )
+        .where(User.id == current_user.id)
+    )
+
+    user = result.scalars().first()
+    return user
 
 
 @router.post("/me/setup")
