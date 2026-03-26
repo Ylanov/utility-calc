@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from celery.result import AsyncResult
 from openpyxl import Workbook
 from decimal import Decimal
+from urllib.parse import quote  # ДОБАВЛЕНО ДЛЯ РЕШЕНИЯ ОШИБКИ 500
 
 from app.core.database import get_db
 from app.modules.utility.models import User, MeterReading, Tariff, BillingPeriod, Adjustment, Room
@@ -106,7 +107,6 @@ async def export_report(
     period = await db.get(BillingPeriod, target_period_id)
     if not period: raise HTTPException(404, "Выбранный период не найден")
 
-    # ИСПРАВЛЕННЫЙ ЗАПРОС, который не падает
     statement = (
         select(User, MeterReading, Room)
         .join(MeterReading, User.id == MeterReading.user_id)
@@ -148,12 +148,17 @@ async def export_report(
 
     worksheet.append([""] * 12 + ["ИТОГО:", total_209, total_205, total_sum])
     filename = f"Report_{period.name.replace(' ', '_')}.xlsx"
+
+    # ИСПРАВЛЕНИЕ: Кодируем имя файла для избежания ошибки 500 (UnicodeEncodeError)
+    encoded_filename = quote(filename)
+
     output = io.BytesIO()
     workbook.save(output)
     output.seek(0)
 
     return StreamingResponse(
-        output, headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+        output,
+        headers={'Content-Disposition': f"attachment; filename*=utf-8''{encoded_filename}"},
         media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
 

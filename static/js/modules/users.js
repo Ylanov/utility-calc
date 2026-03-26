@@ -8,7 +8,7 @@ export const UsersModule = {
     isInitialized: false,
     tariffs: [],
     dormsCache:[], // Кэш названий общежитий
-    roomsCache: {}, // Кэш комнат по названию общежития { "Общежитие 1": [room1, room2] }
+    roomsCache: {}, // Кэш комнат по названию общежития { "Общежитие 1":[room1, room2] }
 
     async init() {
         this.cacheDOM();
@@ -33,6 +33,7 @@ export const UsersModule = {
             importInput: document.getElementById('importUsersFile'),
             btnImport: document.getElementById('btnImportUsers'),
             btnRefresh: document.getElementById('btnRefreshUsers'),
+            btnDownloadTemplate: document.getElementById('btnDownloadTemplate'),
             newTariffSelect: document.getElementById('newTariffId'),
 
             // Новые селекты и блоки информации (Создание жильца)
@@ -100,6 +101,14 @@ export const UsersModule = {
             this.otc.form.addEventListener('submit', (e) => this.handleOneTimeSubmit(e));
             this.otc.btnClose.addEventListener('click', (e) => { e.preventDefault(); this.otc.modal.classList.remove('open'); });
             this.otc.btnCancel.addEventListener('click', (e) => { e.preventDefault(); this.otc.modal.classList.remove('open'); });
+        }
+
+        // Обработчик скачивания шаблона Excel
+        if (this.dom.btnDownloadTemplate) {
+            this.dom.btnDownloadTemplate.addEventListener('click', (e) => {
+                e.preventDefault();
+                api.download('/users/export/template', 'Import_Template.xlsx');
+            });
         }
 
         // ====================================================
@@ -290,6 +299,7 @@ export const UsersModule = {
     },
 
     async handleAdd(event) {
+        event.preventDefault(); // Защита от перезагрузки страницы при отправке формы
         const button = this.dom.addForm.querySelector('button');
         const tariffIdVal = this.dom.newTariffSelect ? this.dom.newTariffSelect.value : null;
         const roomIdVal = this.dom.newRoomSelect ? this.dom.newRoomSelect.value : null;
@@ -370,8 +380,10 @@ export const UsersModule = {
 
         const content = el('div', { class: 'modal-form' },
             el('ul', { style: { marginBottom: '15px', paddingLeft: '20px', fontSize: '15px', color: '#374151' } },
-                el('li', { style: { marginBottom: '5px' } }, `Добавлено новых жильцов: `, el('strong', { style: { color: '#059669'} }, String(result.added))),
-                el('li', {}, `Обновлено существующих: `, el('strong', { style: { color: '#2563eb'} }, String(result.updated)))
+                el('li', { style: { marginBottom: '5px' } }, `Добавлено новых жильцов: `, el('strong', { style: { color: '#059669'} }, String(result.added_users))),
+                el('li', {}, `Обновлено существующих: `, el('strong', { style: { color: '#2563eb'} }, String(result.updated_users))),
+                el('li', { style: { marginTop: '5px' } }, `Добавлено комнат: `, el('strong', { style: { color: '#059669'} }, String(result.added_rooms))),
+                el('li', {}, `Обновлено комнат: `, el('strong', { style: { color: '#2563eb'} }, String(result.updated_rooms)))
             )
         );
 
@@ -468,6 +480,7 @@ export const UsersModule = {
     },
 
     async handleEditSubmit(event) {
+        event.preventDefault(); // Защита от перезагрузки
         const button = this.modal.form.querySelector('.confirm-btn');
         const id = this.modal.inputs.id.value;
         const tariffIdVal = this.modal.inputs.tariff ? this.modal.inputs.tariff.value : null;

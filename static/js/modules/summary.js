@@ -156,7 +156,6 @@ export const SummaryModule = {
         if (!this.state.selectedPeriodId) return toast('Сначала выберите период!', 'warning');
         setLoading(this.dom.btnExcel, true, 'Формирование...');
         try {
-            // Исправлено: передаем URL без /api
             const url = `/admin/export_report?period_id=${this.state.selectedPeriodId}`;
             await api.download(url, `Svodnaya_vedomost_${this.state.selectedPeriodId}.xlsx`);
         } catch (e) {
@@ -199,27 +198,33 @@ export const SummaryModule = {
 
                 try {
                     const data = await api.get(`/admin/tasks/${taskId}`);
+
                     if (data.status === 'done' || data.state === 'SUCCESS') {
                         clearInterval(this.state.pollTimer);
                         setLoading(button, false, originalText);
-                        if(data.download_url) {
+
+                        // ИСПРАВЛЕНИЕ ЛОГИКИ ПРОВЕРКИ
+                        if (data.download_url) {
                             window.open(data.download_url, '_blank');
                             toast('Архив готов и скачивается!', 'success');
                             resolve(data);
+                        } else if (data.result && data.result.status === 'error') {
+                            // Если Celery вернул логическую ошибку внутри результата (например, "Нет файлов")
+                            reject(new Error(data.result.message || 'Ошибка сборки архива на сервере.'));
                         } else {
-                            reject(new Error("Сервер не вернул ссылку."));
+                            reject(new Error('Сервер завершил задачу, но не вернул ссылку (возможно, нет утвержденных квитанций).'));
                         }
                     } else if (data.state === 'FAILURE') {
                         clearInterval(this.state.pollTimer);
                         setLoading(button, false, originalText);
-                        reject(new Error(data.error || 'Ошибка на сервере.'));
+                        reject(new Error(data.error || 'Критическая ошибка на сервере.'));
                     }
                 } catch (e) {
                     clearInterval(this.state.pollTimer);
                     setLoading(button, false, originalText);
                     reject(e);
                 }
-            }, 2000); // Опрос каждые 2 секунды
+            }, 2000);
         });
     }
 };
