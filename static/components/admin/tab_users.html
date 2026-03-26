@@ -28,15 +28,11 @@
                     </div>
                     <div class="form-group">
                         <label>Тарифный профиль</label>
-                        <select id="newTariffId" class="tariff-select">
-                            <!-- Заполняется через JS (users.js) -->
-                        </select>
+                        <select id="newTariffId" class="tariff-select"></select>
                     </div>
                 </div>
 
-                <!-- ========================================================= -->
-                <!-- НОВЫЙ БЛОК: Выбор помещения из Жилфонда                   -->
-                <!-- ========================================================= -->
+                <!-- БЛОК: Выбор помещения из Жилфонда -->
                 <div class="form-row" style="background: #f9fafb; padding: 10px; border-radius: 8px; border: 1px solid #e5e7eb; margin-top: 10px;">
                     <div class="form-group">
                         <label>Общежитие</label>
@@ -52,13 +48,12 @@
                     </div>
                 </div>
 
-                <!-- Блок с информацией о выбранной комнате (площадь, счетчики) -->
+                <!-- Блок с информацией о выбранной комнате -->
                 <div id="newRoomInfo" style="display: none; background: #ecfdf5; padding: 10px; border-radius: 8px; border: 1px solid #a7f3d0; margin-top: 10px; font-size: 12px;">
                     <strong style="color: #065f46; display: block; margin-bottom: 5px;">Параметры комнаты:</strong>
                     Площадь: <b id="infoArea">0</b> м² | Всего мест: <b id="infoCap">0</b><br>
                     Счетчики: ГВС (<span id="infoHw" style="color: #dc2626; font-family: monospace;">-</span>), ХВС (<span id="infoCw" style="color: #2563eb; font-family: monospace;">-</span>), Электр. (<span id="infoEl" style="color: #d97706; font-family: monospace;">-</span>)
                 </div>
-                <!-- ========================================================= -->
 
                 <div class="form-row" style="margin-top: 15px;">
                     <div class="form-group">
@@ -77,17 +72,21 @@
 
         <!-- Колонка 2: Импорт -->
         <div class="card import-wrapper">
-            <div class="card-header">
-                <h3>📂 Импорт (Excel)</h3>
+            <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                <h3 style="margin: 0;">📂 Импорт (Excel)</h3>
+                <button id="btnDownloadTemplate" class="action-btn secondary-btn" style="padding: 4px 8px; font-size: 12px; background: #e0f2fe; color: #1e40af; border: 1px solid #bfdbfe;">
+                    📥 Скачать шаблон
+                </button>
             </div>
             <div class="import-area">
-                <div class="import-icon">📊</div>
-                <p class="hint-text" style="max-width: 300px; margin-bottom: 25px; text-align: center;">
-                    Загрузите файл <b>.xlsx</b> со списком жильцов для массового добавления или обновления.
+                <div class="import-icon" style="margin-bottom: 10px;">📊</div>
+                <p class="hint-text" style="max-width: 350px; margin-bottom: 25px; text-align: center; font-size: 13px;">
+                    Универсальная загрузка файла <b>.xlsx</b>.<br>
+                    Вы можете массово создавать комнаты, обновлять счетчики и заселять туда жильцов.
                 </p>
                 <div class="file-upload-group">
-                    <input type="file" id="importUsersFile" accept=".xlsx" class="custom-file-input">
-                    <button id="btnImportUsers" class="action-btn primary-btn">Загрузить</button>
+                    <input type="file" id="importUsersFile" accept=".xlsx, .xls" class="custom-file-input">
+                    <button id="btnImportUsers" class="action-btn primary-btn">Загрузить в базу</button>
                 </div>
             </div>
         </div>
@@ -166,9 +165,7 @@
                         </div>
                     </div>
 
-                    <!-- ========================================================= -->
-                    <!-- БЛОК: Редактирование привязки к комнате                   -->
-                    <!-- ========================================================= -->
+                    <!-- БЛОК: Редактирование привязки к комнате -->
                     <div class="form-grid-2" style="background: #f9fafb; padding: 10px; border-radius: 8px; border: 1px solid #e5e7eb; margin-top: 15px;">
                         <div class="form-group">
                             <label>Общежитие</label>
@@ -188,7 +185,6 @@
                         Площадь: <b id="editInfoArea">0</b> м² | Мест: <b id="editInfoCap">0</b><br>
                         Счетчики: ГВС (<span id="editInfoHw" style="color: #dc2626; font-family: monospace;">-</span>), ХВС (<span id="editInfoCw" style="color: #2563eb; font-family: monospace;">-</span>), Электр. (<span id="editInfoEl" style="color: #d97706; font-family: monospace;">-</span>)
                     </div>
-                    <!-- ========================================================= -->
 
                     <div class="form-grid-2" style="margin-top: 15px;">
                         <div class="form-group">
