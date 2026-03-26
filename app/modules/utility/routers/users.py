@@ -18,6 +18,8 @@ from app.core.dependencies import get_current_user, RoleChecker
 from app.core.auth import get_password_hash, verify_password
 from app.modules.utility.services.excel_service import import_users_from_excel
 from app.modules.utility.services.user_service import delete_user_service
+from app.modules.utility.schemas import DeviceTokenCreate
+from app.modules.utility.models import DeviceToken
 
 router = APIRouter(prefix="/api/users", tags=["Users"])
 
@@ -259,3 +261,30 @@ async def download_import_template():
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=Import_Template.xlsx"}
     )
+
+@router.post("/device-token", summary="Регистрация устройства для Пушей")
+async def register_device_token(
+    data: DeviceTokenCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    # Проверяем, есть ли уже такой токен в нашей PostgreSQL
+    result = await db.execute(select(DeviceToken).where(DeviceToken.token == data.token))
+    existing_token = result.scalars().first()
+
+    if existing_token:
+        # Если токен есть, но принадлежит другому юзеру (например, муж вышел, жена зашла с того же телефона)
+        if existing_token.user_id != current_user.id:
+            existing_token.user_id = current_user.id
+            await db.commit()
+    else:
+        # Если токена нет, сохраняем его в нашу базу
+        new_token = DeviceToken(
+            user_id=current_user.id,
+            token=data.token,
+            device_type=data.device_type
+        )
+        db.add(new_token)
+        await db.commit()
+
+    return {"status": "success", "message": "Токен устройства успешно сохранен"}

@@ -9,6 +9,7 @@ from sqlalchemy.orm import selectinload
 from app.modules.utility.models import User, MeterReading, Tariff, BillingPeriod, Adjustment, Room
 from app.modules.utility.schemas import ApproveRequest
 from app.modules.utility.services.calculations import calculate_utilities, D
+from app.modules.utility.services.notification_service import send_push_to_user
 
 ZERO = Decimal("0.00")
 
@@ -170,4 +171,15 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
     db.add(room)
 
     await db.commit()
-    return {"status": "approved", "new_total": total_209 + total_205}
+
+    # ---> ОТПРАВЛЯЕМ ПУШ КОНКРЕТНОМУ ЖИЛЬЦУ <---
+    final_sum = total_209 + total_205
+    import asyncio
+    asyncio.create_task(send_push_to_user(
+        db,
+        user_id=user.id,
+        title="✅ Квитанция проверена",
+        body=f"Бухгалтерия утвердила ваши показания. Итого к оплате: {final_sum} руб."
+    ))
+
+    return {"status": "approved", "new_total": final_sum}

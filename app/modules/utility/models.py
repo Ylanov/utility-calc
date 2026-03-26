@@ -230,3 +230,24 @@ class SystemSetting(Base):
     key = Column(String, primary_key=True, index=True)
     value = Column(String, nullable=False)
     description = Column(String, nullable=True)
+
+
+# ======================================================
+# DEVICE TOKENS (Для Push-уведомлений)
+# ======================================================
+class DeviceToken(Base):
+    __tablename__ = "device_tokens"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+
+    # Сам ключ устройства (FCM Token)
+    token = Column(String, unique=True, nullable=False, index=True)
+
+    # Платформа (android, ios, web)
+    device_type = Column(String, nullable=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Привязка к пользователю
+    user = relationship("User", backref="device_tokens")

@@ -275,3 +275,10 @@ class OneTimeChargeSchema(BaseModel):
     cold_water: DecimalVolume
     electricity: DecimalVolume
     is_moving_out: bool = False
+
+# ======================================================
+# PUSH NOTIFICATIONS
+# ======================================================
+class DeviceTokenCreate(BaseModel):
+    token: str
+    device_type: str = "android"  # android или ios

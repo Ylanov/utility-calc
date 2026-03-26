@@ -12,6 +12,7 @@ from app.modules.utility.schemas import PeriodCreate, PeriodResponse
 from app.core.dependencies import get_current_user
 from app.modules.utility.services.billing import open_new_period
 from app.modules.utility.tasks import close_period_task
+from app.modules.utility.services.notification_service import send_push_to_all
 
 router = APIRouter(tags=["Admin Periods"])
 
@@ -46,9 +47,15 @@ async def api_open_period(
     try:
         new_period = await open_new_period(db=db, new_name=data.name)
         await db.commit()
-
-        # Появился новый активный период, сбрасываем кэш
         await FastAPICache.clear(namespace="periods")
+
+        # ---> ОТПРАВЛЯЕМ МАССОВЫЙ ПУШ ВСЕМ ЖИЛЬЦАМ <---
+        import asyncio
+        asyncio.create_task(send_push_to_all(
+            db,
+            title="📢 Открыт прием показаний!",
+            body=f"Начался расчетный период: {new_period.name}. Пожалуйста, передайте показания счетчиков в приложении."
+        ))
 
         return {"status": "opened", "period": new_period.name}
     except ValueError as e:
