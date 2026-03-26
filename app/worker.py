@@ -36,7 +36,7 @@ celery.conf.update(
     task_serializer="json",
     accept_content=["json"],
     result_serializer="json",
-    timezone="UTC",
+    timezone="Europe/Moscow",
     enable_utc=True,
 
     worker_concurrency=settings.CELERY_WORKER_CONCURRENCY,

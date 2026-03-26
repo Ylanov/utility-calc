@@ -302,6 +302,7 @@ services:
       - .env
     environment:
       APP_MODE: "all"
+      TZ: "Europe/Moscow"
     command: celery -A app.worker beat --loglevel=info
     depends_on:
       redis:
