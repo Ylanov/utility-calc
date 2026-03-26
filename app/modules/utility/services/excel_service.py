@@ -1,3 +1,4 @@
+# app/modules/utility/services/excel_service.py
 import io
 import asyncio
 from typing import Dict, List, Tuple
@@ -7,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
-from app.modules.utility.models import User, MeterReading, BillingPeriod, Room
+# ДОБАВЛЕН ИМПОРТ Tariff
+from app.modules.utility.models import User, MeterReading, BillingPeriod, Room, Tariff
 from app.core.auth import get_password_hash
 from app.modules.utility.services.debt_import import normalize_name
 
@@ -19,7 +21,7 @@ def _load_workbook_sync(file_content: bytes):
 
 
 # ======================================================
-# ИНТЕЛЛЕКТУАЛЬНЫЙ ИМПОРТ: ЖИЛФОНД + ЖИЛЬЦЫ
+# ИНТЕЛЛЕКТУАЛЬНЫЙ ИМПОРТ: ЖИЛФОНД + ЖИЛЬЦЫ + ТАРИФЫ
 # ======================================================
 async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict:
     try:
@@ -34,6 +36,10 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
         rooms_result = await db.execute(select(Room))
         existing_rooms: Dict[str, Room] = {f"{r.dormitory_name}_{r.room_number}": r for r in
                                            rooms_result.scalars().all()}
+
+        # Загружаем существующие тарифные профили
+        tariffs_result = await db.execute(select(Tariff).where(Tariff.is_active.is_(True)))
+        existing_tariffs: Dict[str, int] = {t.name.strip().lower(): t.id for t in tariffs_result.scalars().all()}
 
         added_users = 0
         updated_users = 0
@@ -55,6 +61,7 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
                 # Колонки Excel:
                 # 0: Логин, 1: Пароль, 2: Общежитие, 3: № Комнаты, 4: Площадь, 5: Мест в комнате
                 # 6: Жильцов (платит за), 7: № ГВС, 8: № ХВС, 9: № Электр., 10: Место работы
+                # 11: Тарифный профиль
 
                 username = str(row[0]).strip() if row[0] else None
                 password = str(row[1]).strip() if len(row) > 1 and row[1] else username
@@ -81,6 +88,18 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
                 cw_serial = str(row[8]).strip() if len(row) > 8 and row[8] else None
                 el_serial = str(row[9]).strip() if len(row) > 9 and row[9] else None
                 workplace = str(row[10]).strip() if len(row) > 10 and row[10] else None
+
+                # Читаем тарифный профиль
+                tariff_name_raw = str(row[11]).strip() if len(row) > 11 and row[11] else None
+                tariff_id = None
+
+                if tariff_name_raw:
+                    norm_tariff = tariff_name_raw.lower()
+                    if norm_tariff in existing_tariffs:
+                        tariff_id = existing_tariffs[norm_tariff]
+                    else:
+                        errors.append(
+                            f"Строка {row_index}: Тариф '{tariff_name_raw}' не найден. Применен тариф по умолчанию.")
 
                 # ======================================================
                 # 1. ОБРАБАТЫВАЕМ КОМНАТУ (ЖИЛФОНД)
@@ -129,6 +148,8 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
                         user.workplace = workplace
                         user.residents_count = residents_count
                         user.room_id = room.id
+                        if tariff_id is not None:
+                            user.tariff_id = tariff_id
                         if password and password != username:  # Если пароль был явно передан
                             user.hashed_password = hashed_password
                         updated_users += 1
@@ -141,6 +162,7 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
                             workplace=workplace,
                             residents_count=residents_count,
                             room_id=room.id,
+                            tariff_id=tariff_id,
                             is_deleted=False
                         )
                         db.add(new_user)
