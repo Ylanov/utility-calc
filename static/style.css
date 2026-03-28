@@ -575,3 +575,74 @@ input:focus, select:focus, textarea:focus {
 
 /* Чекбоксы в таблицах */
 .row-checkbox { width: 18px; height: 18px; cursor: pointer; accent-color: var(--primary-color); }
+
+/* =========================================
+   ИСПРАВЛЕНИЯ ЛЕЙАУТА (Сетки и Тулбары)
+   ========================================= */
+
+/* 1. Панель поиска и фильтров (Жильцы, Жилфонд) - всё в одну строку */
+.toolbar-controls {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    flex-wrap: nowrap; /* Запрещаем перенос на новую строку на ПК */
+    margin-bottom: 16px;
+}
+.toolbar-controls input[type="text"] {
+    width: auto;
+    flex: 1; /* Поиск займет свободное место, но не вытеснит кнопки */
+    min-width: 250px;
+    max-width: 400px;
+}
+.toolbar-controls select {
+    width: auto;
+    min-width: 120px;
+}
+
+/* 2. Умная сетка для Тарифов (само адаптируется: 3-4 в ряд) */
+.grid-auto-fit {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+    align-items: end; /* Выравнивание по нижнему краю инпутов */
+}
+
+/* 3. Сетка на 3 колонки (для ГВС, ХВС, Свет в модалке выселения) */
+.grid-3-col {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+}
+
+/* 4. Радио-кнопки для "Долги 1С" в одну строку */
+.radio-group {
+    display: flex;
+    gap: 24px;
+    align-items: center;
+    margin-top: 8px;
+    margin-bottom: 16px;
+}
+.radio-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-weight: 500;
+    color: var(--text-main);
+}
+.radio-label input[type="radio"] {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    accent-color: var(--primary-color);
+    cursor: pointer;
+    box-shadow: none;
+}
+
+/* Адаптация для телефонов: на мобильных всё равно делаем столбиком */
+@media (max-width: 768px) {
+    .toolbar-controls { flex-wrap: wrap; }
+    .toolbar-controls input[type="text"], .toolbar-controls select { width: 100%; max-width: 100%; }
+    .grid-3-col { grid-template-columns: 1fr; }
+    .radio-group { flex-direction: column; align-items: flex-start; gap: 12px; }
+}

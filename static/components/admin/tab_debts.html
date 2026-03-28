@@ -1,72 +1,86 @@
+<!-- static/components/admin/tab_debts.html -->
 <div id="debts" class="tab-content">
     <div class="grid-2-col">
         <!-- Колонка 1: Импорт -->
-        <div class="card" style="border-left:5px solid #8e44ad">
-            <div class="card-header" style="border-bottom: none; padding-bottom: 0; margin-bottom: 10px;">
-                <h3>📂 Импорт из 1С (Excel)</h3>
+        <div class="card" style="border-left: 4px solid #8b5cf6;">
+            <div class="card-header" style="border-bottom: none; padding-bottom: 0; margin-bottom: 16px;">
+                <h3><i class="fa-solid fa-file-excel" style="color: #8b5cf6; margin-right: 8px;"></i> Импорт из 1С (Excel)</h3>
             </div>
-            <p style="color:#666;font-size:14px;margin-bottom:15px">Загрузите файл "Оборотно-сальдовая ведомость" (.xlsx).<br>Система обновит сальдо для выбранного счета.</p>
-            <div class="upload-area">
-                <div class="account-selector">
-                    <span style="font-weight:bold">1. Выберите счет:</span>
-                    <label class="radio-label"><input type="radio" name="accountType" value="209" checked> <span style="color:#27ae60">209 (Коммуналка)</span></label>
-                    <label class="radio-label"><input type="radio" name="accountType" value="205"> <span style="color:#e67e22">205 (Найм)</span></label>
+            <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 16px;">Загрузите файл "Оборотно-сальдовая ведомость" (.xlsx).<br>Система обновит сальдо для выбранного счета.</p>
+
+            <div class="upload-area" style="margin-top: 0; padding: 24px;">
+                <label style="font-weight: 500; color: var(--text-main); margin-bottom: 8px; display: block; align-self: flex-start;">1. Выберите счет:</label>
+
+                <!-- НОВЫЙ КЛАСС ДЛЯ РАДИО-КНОПОК В ОДНУ СТРОКУ -->
+                <div class="radio-group" style="align-self: flex-start; margin-bottom: 24px;">
+                    <label class="radio-label">
+                        <input type="radio" name="accountType" value="209" checked>
+                        <span style="color: var(--primary-color);">209 (Коммуналка)</span>
+                    </label>
+                    <label class="radio-label">
+                        <input type="radio" name="accountType" value="205">
+                        <span style="color: var(--warning-color);">205 (Найм)</span>
+                    </label>
                 </div>
-                <div class="upload-row">
-                    <span style="font-weight:bold;min-width:120px">2. Файл:</span>
-                    <input type="file" id="debtFile1C" accept=".xlsx,.xls" style="flex:1;padding:5px;border:1px solid #ddd;border-radius:4px">
-                    <button id="btnUploadDebts" class="action-btn" style="background:#8e44ad">⬆ Загрузить</button>
+
+                <label style="font-weight: 500; color: var(--text-main); margin-bottom: 8px; display: block; align-self: flex-start;">2. Выберите файл:</label>
+                <div class="compact-upload" style="width: 100%;">
+                    <input type="file" id="debtFile1C" accept=".xlsx,.xls" style="flex: 1;">
+                    <button id="btnUploadDebts" class="action-btn primary-btn" style="background: #8b5cf6; border-color: #8b5cf6;"><i class="fa-solid fa-upload"></i> Загрузить</button>
                 </div>
             </div>
-            <div id="uploadResult" class="upload-result-box"></div>
+            <div id="uploadResult" class="upload-result-box mt-20 hide"></div>
         </div>
 
         <!-- Колонка 2: Справка -->
         <div class="card">
             <div class="card-header">
-                <h3>ℹ️ Справка по импорту</h3>
+                <h3><i class="fa-solid fa-circle-info" style="color: var(--primary-color); margin-right: 8px;"></i> Справка по импорту</h3>
             </div>
-            <ul style="color:#555;font-size:13px;padding-left:20px; margin-top: 10px;">
-                <li style="margin-bottom: 5px;">Файл должен содержать ФИО, Дебет (Долг) и Кредит (Переплата).</li>
-                <li style="margin-bottom: 5px;">Импорт производится только для активного месяца.</li>
+            <ul style="color: var(--text-secondary); font-size: 14px; padding-left: 20px; line-height: 1.6; margin-top: 8px;">
+                <li style="margin-bottom: 8px;">Файл должен содержать ФИО, Дебет (Долг) и Кредит (Переплата).</li>
+                <li style="margin-bottom: 8px;">Импорт производится только для активного месяца.</li>
                 <li>Система автоматически найдет пользователей по ФИО (допускаются небольшие расхождения).</li>
             </ul>
         </div>
     </div>
 
     <!-- Таблица -->
-    <div class="card table-card mt-20">
+    <div class="card mt-20" style="margin-bottom: 0;">
         <div class="card-header">
             <h3>Список жильцов и долгов</h3>
-            <div style="display:flex;gap:10px;align-items:center">
+            <!-- ПАНЕЛЬ ПОИСКА В ОДНУ СТРОКУ -->
+            <div class="toolbar-controls">
                 <input type="text" id="debtsSearchInput" placeholder="Поиск по ФИО...">
-                <button id="btnRefreshDebts" class="icon-btn refresh" title="Обновить">↻</button>
+                <button id="btnRefreshDebts" class="icon-btn" title="Обновить"><i class="fa-solid fa-rotate-right"></i></button>
             </div>
         </div>
         <div class="table-responsive">
             <table class="sticky-header-table">
                 <thead>
                     <tr>
-                        <th style="width:50px">ID</th>
+                        <th style="width: 60px;">ID</th>
                         <th>ФИО (Логин)</th>
                         <th>Общ.</th>
-                        <th style="color:#c0392b;border-left:2px solid #e5e7eb">Долг 209</th>
-                        <th style="color:#27ae60">Перепл. 209</th>
-                        <th style="color:#d35400;border-left:2px solid #e5e7eb">Долг 205</th>
-                        <th style="color:#27ae60">Перепл. 205</th>
+                        <th style="color: var(--danger-color); border-left: 1px solid var(--border-color);">Долг 209</th>
+                        <th style="color: var(--success-color);">Перепл. 209</th>
+                        <th style="color: #d97706; border-left: 1px solid var(--border-color);">Долг 205</th>
+                        <th style="color: var(--success-color);">Перепл. 205</th>
                         <th>Итог тек.</th>
-                        <th style="text-align:right">Действия</th>
+                        <th class="text-right">Действия</th>
                     </tr>
                 </thead>
                 <tbody id="debtsTableBody">
-                    <tr><td colspan="9" style="text-align:center;padding:20px;color:#888">Загрузка данных...</td></tr>
+                    <tr><td colspan="9" class="text-center" style="padding: 40px; color: var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка данных...</td></tr>
                 </tbody>
             </table>
         </div>
-        <div class="pagination-footer" style="padding: 15px; border-top: 1px solid #eee; display: flex; justify-content: center; align-items: center; gap: 15px;">
-            <button id="btnPrevDebts" class="page-btn" disabled>← Назад</button>
-            <span id="debtsPageInfo" style="font-weight: 500; color: #555;">Страница 1</span>
-            <button id="btnNextDebts" class="page-btn">Вперед →</button>
+        <div class="modal-footer" style="background: transparent; border: none; padding: 16px 0 0 0;">
+            <div class="pagination">
+                <button id="btnPrevDebts" class="page-btn" disabled><i class="fa-solid fa-chevron-left"></i> Назад</button>
+                <span id="debtsPageInfo" style="font-size: 13px; font-weight: 500; color: var(--text-secondary);">Стр. 1</span>
+                <button id="btnNextDebts" class="page-btn">Вперед <i class="fa-solid fa-chevron-right"></i></button>
+            </div>
         </div>
     </div>
 </div>

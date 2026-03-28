@@ -1,96 +1,100 @@
+<!-- static/components/admin/tab_tariffs.html -->
 <div id="tariffs" class="tab-content">
 
-    <!-- ========================================= -->
-    <!-- НОВЫЙ БЛОК: НАСТРОЙКА ГРАФИКА             -->
-    <!-- ========================================= -->
-    <div class="card" style="border-left: 5px solid #3b82f6; margin-bottom: 20px;">
-        <div class="card-header">
-            <h3>📅 График подачи показаний</h3>
+    <!-- НАСТРОЙКА ГРАФИКА В ОДНУ СТРОКУ -->
+    <div class="card" style="border-left: 4px solid var(--primary-color);">
+        <div class="card-header" style="margin-bottom: 16px; padding-bottom: 12px;">
+            <h3><i class="fa-regular fa-calendar-days" style="color: var(--primary-color); margin-right: 8px;"></i> График подачи показаний</h3>
         </div>
-        <div style="display: flex; gap: 20px; align-items: flex-end; flex-wrap: wrap;">
-            <div class="form-group">
-                <label>День начала (включительно)</label>
-                <input type="number" id="setStartDay" min="1" max="28" style="width: 150px;" placeholder="Например: 20">
+
+        <div class="toolbar-controls styled-form" style="margin-bottom: 0;">
+            <div class="form-group" style="flex: 0 1 auto; margin: 0;">
+                <label>День начала (вкл.)</label>
+                <input type="number" id="setStartDay" min="1" max="28" style="width: 160px;" placeholder="Например: 20">
             </div>
-            <div class="form-group">
-                <label>День окончания (включительно)</label>
-                <input type="number" id="setEndDay" min="1" max="28" style="width: 150px;" placeholder="Например: 25">
+            <div class="form-group" style="flex: 0 1 auto; margin: 0;">
+                <label>День окончания (вкл.)</label>
+                <input type="number" id="setEndDay" min="1" max="28" style="width: 160px;" placeholder="Например: 25">
             </div>
-            <button id="btnSaveSchedule" class="action-btn primary-btn">Сохранить график</button>
+            <button id="btnSaveSchedule" class="action-btn primary-btn" style="align-self: flex-end; height: 44px;"><i class="fa-solid fa-floppy-disk"></i> Сохранить график</button>
         </div>
-        <p class="hint-text" style="margin-top: 10px;">
-            * Система будет <b>автоматически</b> открывать период в день начала и закрывать его на следующий день после окончания. Числа от 1 до 28.
+        <p class="hint-text" style="margin-top: 12px;">
+            * Система будет <b>автоматически</b> открывать период в день начала и закрывать его на следующий день после окончания.
         </p>
     </div>
 
-    <!-- ========================================= -->
-    <!-- СТАРЫЙ БЛОК: НАСТРОЙКА ТАРИФОВ            -->
-    <!-- ========================================= -->
+    <!-- НАСТРОЙКА ТАРИФОВ -->
     <div class="card">
-        <div class="card-header" style="flex-direction: column; align-items: flex-start; gap: 15px;">
-            <div style="display: flex; justify-content: space-between; width: 100%; align-items: center; flex-wrap: wrap; gap: 10px;">
+        <div class="card-header" style="flex-direction: column; align-items: flex-start; gap: 16px;">
+            <div style="display: flex; justify-content: space-between; width: 100%; align-items: center; flex-wrap: wrap; gap: 12px;">
                 <div>
-                    <h3>🛠 Настройка профилей тарификации</h3>
-                    <span class="hint-text">Создавайте разные тарифы для разных общежитий или организаций</span>
+                    <h3><i class="fa-solid fa-sliders" style="color: var(--text-secondary); margin-right: 8px;"></i> Настройка профилей тарификации</h3>
+                    <span class="hint-text">Создавайте разные тарифы для разных общежитий</span>
                 </div>
-                <button id="btnCreateNewTariff" class="action-btn primary-btn">➕ Создать профиль</button>
+                <button id="btnCreateNewTariff" class="action-btn primary-btn"><i class="fa-solid fa-plus"></i> Создать профиль</button>
             </div>
 
-            <!-- Выбор тарифа для редактирования -->
-            <div style="display: flex; gap: 10px; align-items: center; background: #eff6ff; padding: 10px 15px; border-radius: 8px; width: 100%; flex-wrap: wrap;">
-                <label style="font-weight: 600; color: #1e40af;">Редактировать тариф:</label>
-                <select id="tariffSelector" style="width: 300px; padding: 8px;"></select>
-                <button id="btnDeleteTariff" class="action-btn danger-btn" style="padding: 8px 12px; display: none;">Удалить</button>
+            <!-- Тулбар выбора тарифа -->
+            <div class="toolbar-controls" style="background: var(--primary-bg); padding: 12px 16px; border-radius: var(--radius-sm); width: 100%; margin-bottom: 0;">
+                <label style="font-weight: 500; color: var(--primary-hover); margin-right: 8px;">Редактировать тариф:</label>
+                <select id="tariffSelector" style="width: 300px;"></select>
+                <button id="btnDeleteTariff" class="action-btn danger-btn" style="display: none;"><i class="fa-regular fa-trash-can"></i> Удалить профиль</button>
             </div>
         </div>
 
-        <form id="tariffsForm" class="tariffs-grid">
+        <form id="tariffsForm" class="styled-form">
             <input type="hidden" id="t_id">
 
-            <div class="tariff-item highlight" style="grid-column: 1 / -1;">
+            <!-- Название на всю ширину -->
+            <div class="form-group" style="margin-bottom: 24px;">
                 <label>Название профиля (например: ЦСООР Лидер)</label>
-                <input type="text" id="t_name" required>
+                <input type="text" id="t_name" required style="font-size: 16px; font-weight: 500;">
             </div>
 
-            <div class="tariff-item">
-                <label>Содержание и ремонт (м²)</label>
-                <input type="number" step="0.01" id="t_main" required>
-            </div>
-            <div class="tariff-item">
-                <label>Наем жилья (м²)</label>
-                <input type="number" step="0.01" id="t_rent" required>
-            </div>
-            <div class="tariff-item">
-                <label>ТКО / Мусор (чел)</label>
-                <input type="number" step="0.01" id="t_waste" required>
-            </div>
-            <div class="tariff-item">
-                <label>Отопление (м²)</label>
-                <input type="number" step="0.01" id="t_heat" required>
-            </div>
-            <div class="tariff-item highlight">
-                <label>🔥 Подогрев ГВС (м³)</label>
-                <input type="number" step="0.01" id="t_w_heat" required>
-            </div>
-            <div class="tariff-item highlight">
-                <label>💧 Подача воды (м³)</label>
-                <input type="number" step="0.01" id="t_w_sup" required>
-            </div>
-            <div class="tariff-item highlight">
-                <label>🚽 Водоотведение (м³)</label>
-                <input type="number" step="0.01" id="t_sew" required>
-            </div>
-            <div class="tariff-item highlight">
-                <label>⚡ Эл. Энергия (кВт)</label>
-                <input type="number" step="0.01" id="t_el_rate" required>
-            </div>
-            <div class="tariff-item">
-                <label>Эл. энергия ОДН (м²)</label>
-                <input type="number" step="0.01" id="t_el_sqm" required>
+            <h4 style="margin-bottom: 16px; font-size: 15px; color: var(--text-main); border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">Стоимость ресурсов и услуг (₽)</h4>
+
+            <!-- СЕТКА ТАРИФОВ В НЕСКОЛЬКО КОЛОНОК -->
+            <div class="grid-auto-fit">
+                <div class="form-group" style="margin: 0;">
+                    <label>Содержание и ремонт (м²)</label>
+                    <input type="number" step="0.01" id="t_main" required>
+                </div>
+                <div class="form-group" style="margin: 0;">
+                    <label>Наем жилья (м²)</label>
+                    <input type="number" step="0.01" id="t_rent" required>
+                </div>
+                <div class="form-group" style="margin: 0;">
+                    <label>ТКО / Мусор (чел)</label>
+                    <input type="number" step="0.01" id="t_waste" required>
+                </div>
+                <div class="form-group" style="margin: 0;">
+                    <label>Отопление (м²)</label>
+                    <input type="number" step="0.01" id="t_heat" required>
+                </div>
+                <div class="form-group" style="margin: 0;">
+                    <label style="color: var(--danger-color);"><i class="fa-solid fa-fire"></i> Подогрев ГВС (м³)</label>
+                    <input type="number" step="0.01" id="t_w_heat" required>
+                </div>
+                <div class="form-group" style="margin: 0;">
+                    <label style="color: var(--primary-color);"><i class="fa-solid fa-droplet"></i> Подача воды (м³)</label>
+                    <input type="number" step="0.01" id="t_w_sup" required>
+                </div>
+                <div class="form-group" style="margin: 0;">
+                    <label style="color: var(--text-secondary);"><i class="fa-solid fa-sink"></i> Водоотведение (м³)</label>
+                    <input type="number" step="0.01" id="t_sew" required>
+                </div>
+                <div class="form-group" style="margin: 0;">
+                    <label style="color: #d97706;"><i class="fa-solid fa-bolt"></i> Эл. Энергия (кВт)</label>
+                    <input type="number" step="0.01" id="t_el_rate" required>
+                </div>
+                <div class="form-group" style="margin: 0;">
+                    <label>Эл. энергия ОДН (м²)</label>
+                    <input type="number" step="0.01" id="t_el_sqm" required>
+                </div>
             </div>
 
-            <div class="tariff-actions">
-                <button type="submit" class="action-btn success-btn large-btn">Сохранить изменения профиля</button>
+            <div style="margin-top: 32px; text-align: right;">
+                <button type="submit" class="action-btn success-btn" style="padding: 12px 24px; font-size: 15px;"><i class="fa-solid fa-check"></i> Сохранить изменения тарифа</button>
             </div>
         </form>
     </div>

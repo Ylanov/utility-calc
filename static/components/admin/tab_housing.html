@@ -1,64 +1,68 @@
 <!-- static/components/admin/tab_housing.html -->
 <div id="housing" class="tab-content">
-    <div class="grid-2-col" style="grid-template-columns: 300px 1fr;">
+    <div class="grid-2-col" style="grid-template-columns: 320px 1fr;">
         <!-- Левая колонка: Фильтр по общежитиям -->
         <div class="card" style="align-self: start;">
             <div class="card-header">
-                <h3>🏢 Общежития</h3>
+                <h3><i class="fa-solid fa-building" style="color: var(--primary-color); margin-right: 8px;"></i> Общежития</h3>
             </div>
-            <div style="padding: 10px 0;">
-                <label style="font-size: 13px; color: #666; margin-bottom: 5px; display: block;">Фильтр по зданию:</label>
-                <select id="dormFilterSelect" style="width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 4px;">
+            <div class="form-group" style="margin-bottom: 24px;">
+                <label>Фильтр по зданию:</label>
+                <select id="dormFilterSelect">
                     <option value="">Все объекты</option>
                     <!-- Заполняется из API -->
                 </select>
             </div>
-            <hr style="border: 0; border-top: 1px solid #eee; margin: 15px 0;">
-            <button id="btnOpenAddRoom" class="action-btn primary-btn full-width">➕ Добавить помещение</button>
+            <button id="btnOpenAddRoom" class="action-btn primary-btn full-width mb-3"><i class="fa-solid fa-plus"></i> Добавить помещение</button>
 
-            <!-- НОВАЯ КНОПКА АНАЛИЗАТОРА -->
-            <button id="btnAnalyzeHousing" class="action-btn warning-btn full-width" style="margin-top: 10px; background: #f59e0b; color: white;">
-                🕵️ Анализ жилфонда
+            <!-- КНОПКА АНАЛИЗАТОРА -->
+            <button id="btnAnalyzeHousing" class="action-btn warning-btn full-width" style="margin-top: 12px;">
+                <i class="fa-solid fa-magnifying-glass-chart"></i> Анализ жилфонда
             </button>
-            <p style="font-size: 11px; color: #888; text-align: center; margin-top: 5px;">Поиск дублей, пустых комнат и раздельных счетов</p>
+            <p style="font-size: 12px; color: var(--text-secondary); text-align: center; margin-top: 12px;">Поиск дублей, пустых комнат и раздельных счетов</p>
         </div>
 
         <!-- Правая колонка: Таблица помещений -->
-        <div class="card table-card" style="margin: 0;">
+        <div class="card" style="margin: 0;">
             <div class="card-header">
                 <h3>Список помещений</h3>
-                <div class="toolbar-controls" style="display: flex; gap: 10px; align-items: center;">
-                    <select id="roomsLimitSelect" style="width: auto; padding: 6px;">
-                        <option value="25">25</option>
-                        <option value="50" selected>50</option>
-                        <option value="100">100</option>
+                <!-- НОВЫЙ ТУЛБАР В СТРОКУ -->
+                <div class="toolbar-controls">
+                    <select id="roomsLimitSelect">
+                        <option value="25">25 строк</option>
+                        <option value="50" selected>50 строк</option>
+                        <option value="100">100 строк</option>
                     </select>
-                    <input type="text" id="roomsSearchInput" placeholder="Поиск (№ комн., № счетчика)..." style="min-width: 250px; padding: 6px;">
-                    <button id="btnRefreshRooms" class="icon-btn refresh" title="Обновить">↻</button>
+                    <input type="text" id="roomsSearchInput" placeholder="Поиск (№ комн., № счетчика)...">
+                    <button id="btnRefreshRooms" class="icon-btn" title="Обновить"><i class="fa-solid fa-rotate-right"></i></button>
                 </div>
             </div>
             <div class="table-responsive">
                 <table class="sticky-header-table">
                     <thead>
                         <tr>
-                            <th>ID</th>
-                            <th>Общежитие</th>
-                            <th>Комната</th>
-                            <th>Площадь</th>
+                            <th data-sort="id" class="sortable">ID</th>
+                            <th data-sort="dormitory_name" class="sortable">Общежитие</th>
+                            <th data-sort="room_number" class="sortable">Комната</th>
+                            <th data-sort="apartment_area" class="sortable">Площадь</th>
                             <th>Мест</th>
-                            <th style="color: #dc2626;">№ ГВС</th>
-                            <th style="color: #2563eb;">№ ХВС</th>
-                            <th style="color: #d97706;">№ Электр.</th>
+                            <th style="color: var(--danger-color);">№ ГВС</th>
+                            <th style="color: var(--primary-color);">№ ХВС</th>
+                            <th style="color: var(--warning-color);">№ Электр.</th>
                             <th class="text-center">Действия</th>
                         </tr>
                     </thead>
-                    <tbody id="roomsTableBody"></tbody>
+                    <tbody id="roomsTableBody">
+                        <tr><td colspan="9" class="text-center" style="padding: 40px; color: var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка данных...</td></tr>
+                    </tbody>
                 </table>
             </div>
-            <div class="pagination-footer" style="padding: 15px; border-top: 1px solid #eee; display: flex; justify-content: center; align-items: center; gap: 15px;">
-                <button id="btnPrevRooms" class="page-btn">← Назад</button>
-                <span id="roomsPageInfo" style="font-weight: 500; color: #555;">Стр. 1</span>
-                <button id="btnNextRooms" class="page-btn">Вперед →</button>
+            <div class="modal-footer" style="background: transparent; border: none; padding: 16px 0 0 0;">
+                <div class="pagination">
+                    <button id="btnPrevRooms" class="page-btn"><i class="fa-solid fa-chevron-left"></i> Назад</button>
+                    <span id="roomsPageInfo" style="font-size: 13px; font-weight: 500; color: var(--text-secondary);">Стр. 1</span>
+                    <button id="btnNextRooms" class="page-btn">Вперед <i class="fa-solid fa-chevron-right"></i></button>
+                </div>
             </div>
         </div>
     </div>
@@ -70,11 +74,11 @@
                 <h3 id="roomModalTitle">Добавить помещение</h3>
                 <button class="close-btn close-icon">&times;</button>
             </div>
-            <form id="roomForm">
+            <form id="roomForm" class="styled-form">
                 <div class="modal-form">
                     <input type="hidden" id="roomEditId">
 
-                    <div class="form-grid-2 mb-3">
+                    <div class="form-grid-2" style="margin-bottom: 16px;">
                         <div class="form-group">
                             <label>Название Общежития</label>
                             <input type="text" id="roomDormitory" required list="dormList" placeholder="Например: Общежитие №1">
@@ -86,7 +90,7 @@
                         </div>
                     </div>
 
-                    <div class="form-grid-2 mb-3">
+                    <div class="form-grid-2" style="margin-bottom: 24px;">
                         <div class="form-group">
                             <label>Площадь (м²)</label>
                             <input type="number" step="0.1" id="roomArea" required min="0" placeholder="0.0">
@@ -97,18 +101,18 @@
                         </div>
                     </div>
 
-                    <h4 style="margin-top: 20px; margin-bottom: 10px; font-size: 14px; border-bottom: 1px solid #eee; padding-bottom: 5px;">Серийные номера счетчиков (Опционально)</h4>
-                    <div class="form-grid-3" style="background: #f9fafb; padding: 15px; border-radius: 8px;">
-                        <div class="form-group">
-                            <label style="color: #dc2626;">🔥 № ГВС</label>
+                    <h4 style="margin-bottom: 12px; font-size: 14px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">Серийные номера счетчиков (Опционально)</h4>
+                    <div class="grid-3-col" style="background: var(--bg-page); padding: 16px; border-radius: var(--radius-sm);">
+                        <div class="form-group" style="margin: 0;">
+                            <label style="color: var(--danger-color);"><i class="fa-solid fa-fire"></i> № ГВС</label>
                             <input type="text" id="roomHwSerial">
                         </div>
-                        <div class="form-group">
-                            <label style="color: #2563eb;">💧 № ХВС</label>
+                        <div class="form-group" style="margin: 0;">
+                            <label style="color: var(--primary-color);"><i class="fa-solid fa-snowflake"></i> № ХВС</label>
                             <input type="text" id="roomCwSerial">
                         </div>
-                        <div class="form-group">
-                            <label style="color: #d97706;">⚡ № Электр.</label>
+                        <div class="form-group" style="margin: 0;">
+                            <label style="color: #d97706;"><i class="fa-solid fa-bolt"></i> № Электр.</label>
                             <input type="text" id="roomElSerial">
                         </div>
                     </div>
@@ -121,16 +125,16 @@
         </div>
     </div>
 
-    <!-- НОВАЯ МОДАЛКА: АНАЛИЗАТОР ЖИЛФОНДА -->
+    <!-- АНАЛИЗАТОР ЖИЛФОНДА -->
     <div id="analyzerModal" class="modal-overlay">
-        <div class="modal-window" style="width: 800px; max-height: 90vh; display: flex; flex-direction: column;">
-            <div class="modal-header" style="background: #fef3c7; border-bottom: 1px solid #fde68a;">
-                <h3 style="color: #b45309; margin: 0; display: flex; align-items: center; gap: 10px;">
-                    <span style="font-size: 24px;">🕵️</span> Анализатор аномалий Жилфонда
+        <div class="modal-window" style="width: 800px;">
+            <div class="modal-header" style="background: var(--warning-bg); border-bottom: 1px solid #fde68a;">
+                <h3 style="color: #b45309; display: flex; align-items: center; gap: 10px;">
+                    <i class="fa-solid fa-magnifying-glass-chart"></i> Анализатор аномалий Жилфонда
                 </h3>
                 <button class="close-btn close-icon">&times;</button>
             </div>
-            <div class="modal-form" style="overflow-y: auto; padding: 20px; background: #f9fafb; flex: 1;">
+            <div class="modal-form" style="background: var(--bg-page); padding-top: 24px;">
                 <div id="analyzerResults"></div>
             </div>
             <div class="modal-footer">
@@ -138,42 +142,43 @@
             </div>
         </div>
     </div>
+
     <!-- Модалка: Замена счетчика -->
     <div id="replaceMeterModal" class="modal-overlay">
         <div class="modal-window" style="width: 500px;">
-            <div class="modal-header" style="background: #f0fdf4; border-bottom: 1px solid #bbf7d0;">
-                <h3 style="color: #166534;">🔄 Замена счетчика</h3>
+            <div class="modal-header" style="background: var(--success-bg); border-bottom: 1px solid #bbf7d0;">
+                <h3 style="color: #166534;"><i class="fa-solid fa-arrows-rotate"></i> Замена счетчика</h3>
                 <button class="close-btn close-icon" id="btnCloseMeter">&times;</button>
             </div>
-            <form id="replaceMeterForm">
-                <div class="modal-form">
+            <form id="replaceMeterForm" class="styled-form">
+                <div class="modal-form" style="padding-top: 16px;">
                     <input type="hidden" id="meterRoomId">
-                    <p style="font-size: 14px; margin-bottom: 15px;">Помещение: <b id="meterRoomName" style="color: var(--primary-color);">...</b></p>
+                    <p style="font-size: 14px; margin-bottom: 20px;">Помещение: <b id="meterRoomName" style="color: var(--primary-color);">...</b></p>
 
                     <div class="form-group mb-3">
                         <label>Какой счетчик меняем?</label>
-                        <select id="meterType" required style="font-weight: bold;">
+                        <select id="meterType" required style="font-weight: 500;">
                             <option value="hot">🔥 Горячая вода (ГВС)</option>
                             <option value="cold">💧 Холодная вода (ХВС)</option>
                             <option value="elect">⚡ Электричество</option>
                         </select>
                     </div>
 
-                    <div class="form-group mb-3">
+                    <div class="form-group" style="margin-bottom: 24px;">
                         <label>Новый серийный номер счетчика</label>
                         <input type="text" id="meterNewSerial" required placeholder="Например: 12345678">
                     </div>
 
                     <div class="form-grid-2">
                         <div class="form-group">
-                            <label style="color: #b91c1c;">Снимаем старый (Финал)</label>
+                            <label style="color: var(--danger-color);">Снимаем старый (Финал)</label>
                             <input type="number" step="0.001" id="meterFinalOld" required placeholder="Показание">
-                            <span style="font-size:11px; color:#6b7280;">По нему рассчитается остаток долга</span>
+                            <span style="font-size:11px; color:var(--text-secondary);">По нему рассчитается остаток долга</span>
                         </div>
                         <div class="form-group">
-                            <label style="color: #047857;">Ставим новый (Старт)</label>
+                            <label style="color: var(--success-color);">Ставим новый (Старт)</label>
                             <input type="number" step="0.001" id="meterInitialNew" required value="0">
-                            <span style="font-size:11px; color:#6b7280;">Обычно начинается с 0</span>
+                            <span style="font-size:11px; color:var(--text-secondary);">Обычно начинается с 0</span>
                         </div>
                     </div>
                 </div>

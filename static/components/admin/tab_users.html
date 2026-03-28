@@ -2,14 +2,14 @@
 <div id="users" class="tab-content">
     <div class="grid-2-col">
         <!-- Колонка 1: Добавление жильца -->
-        <div class="card">
+        <div class="card" style="margin-bottom: 0;">
             <div class="card-header">
-                <h3>➕ Новый жилец</h3>
+                <h3><i class="fa-solid fa-user-plus" style="color: var(--primary-color); margin-right: 8px;"></i> Новый жилец</h3>
             </div>
             <form id="addUserForm" class="styled-form">
-                <div class="form-row">
+                <div class="form-grid-2 mb-3">
                     <div class="form-group">
-                        <label>Логин</label>
+                        <label>Логин (Л/С)</label>
                         <input type="text" id="newUsername" required>
                     </div>
                     <div class="form-group">
@@ -17,7 +17,7 @@
                         <input type="password" id="newPassword" required>
                     </div>
                 </div>
-                <div class="form-row">
+                <div class="form-grid-2 mb-3">
                     <div class="form-group">
                         <label>Роль</label>
                         <select id="newRole">
@@ -33,30 +33,25 @@
                     </div>
                 </div>
 
-                <!-- БЛОК: Выбор помещения из Жилфонда -->
-                <div class="form-row" style="background: #f9fafb; padding: 10px; border-radius: 8px; border: 1px solid #e5e7eb; margin-top: 10px;">
-                    <div class="form-group">
+                <!-- Выбор помещения -->
+                <div class="form-grid-2" style="background: var(--bg-page); padding: 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 16px;">
+                    <div class="form-group" style="margin: 0;">
                         <label>Общежитие</label>
-                        <select id="newDormSelect">
-                            <option value="">Загрузка...</option>
-                        </select>
+                        <select id="newDormSelect"><option value="">Загрузка...</option></select>
                     </div>
-                    <div class="form-group">
+                    <div class="form-group" style="margin: 0;">
                         <label>Комната</label>
-                        <select id="newRoomSelect" disabled>
-                            <option value="">Сначала выберите общежитие</option>
-                        </select>
+                        <select id="newRoomSelect" disabled><option value="">Сначала выберите общежитие</option></select>
                     </div>
                 </div>
 
-                <!-- Блок с информацией о выбранной комнате -->
-                <div id="newRoomInfo" style="display: none; background: #ecfdf5; padding: 10px; border-radius: 8px; border: 1px solid #a7f3d0; margin-top: 10px; font-size: 12px;">
-                    <strong style="color: #065f46; display: block; margin-bottom: 5px;">Параметры комнаты:</strong>
+                <div id="newRoomInfo" style="display: none; background: var(--success-bg); padding: 12px 16px; border-radius: var(--radius-sm); border: 1px solid #cce8d6; margin-bottom: 16px; font-size: 13px;">
+                    <strong style="color: var(--success-color); display: block; margin-bottom: 4px;">Параметры комнаты:</strong>
                     Площадь: <b id="infoArea">0</b> м² | Всего мест: <b id="infoCap">0</b><br>
-                    Счетчики: ГВС (<span id="infoHw" style="color: #dc2626; font-family: monospace;">-</span>), ХВС (<span id="infoCw" style="color: #2563eb; font-family: monospace;">-</span>), Электр. (<span id="infoEl" style="color: #d97706; font-family: monospace;">-</span>)
+                    Счетчики: ГВС (<span id="infoHw" style="color: var(--danger-color); font-family: monospace;">-</span>), ХВС (<span id="infoCw" style="color: var(--primary-color); font-family: monospace;">-</span>), Электр. (<span id="infoEl" style="color: #d97706; font-family: monospace;">-</span>)
                 </div>
 
-                <div class="form-row" style="margin-top: 15px;">
+                <div class="form-grid-2" style="margin-bottom: 24px;">
                     <div class="form-group">
                         <label>Сколько человек платит с этого Л/С</label>
                         <input type="number" id="residentsCount" value="1" min="1">
@@ -67,26 +62,24 @@
                     </div>
                 </div>
 
-                <button type="submit" class="action-btn primary-btn full-width" style="margin-top: 15px;">Зарегистрировать</button>
+                <button type="submit" class="action-btn primary-btn full-width">Зарегистрировать</button>
             </form>
         </div>
 
         <!-- Колонка 2: Импорт -->
-        <div class="card import-wrapper">
+        <div class="card import-wrapper" style="margin-bottom: 0;">
             <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
-                <h3 style="margin: 0;">📂 Импорт (Excel)</h3>
-                <button id="btnDownloadTemplate" class="action-btn secondary-btn" style="padding: 4px 8px; font-size: 12px; background: #e0f2fe; color: #1e40af; border: 1px solid #bfdbfe;">
-                    📥 Скачать шаблон
-                </button>
+                <h3 style="margin: 0;"><i class="fa-solid fa-file-excel" style="color: var(--success-color); margin-right: 8px;"></i> Импорт (Excel)</h3>
+                <button id="btnDownloadTemplate" class="action-btn secondary-btn" style="padding: 6px 12px; font-size: 12px;"><i class="fa-solid fa-download"></i> Скачать шаблон</button>
             </div>
             <div class="import-area">
-                <div class="import-icon" style="margin-bottom: 10px;">📊</div>
-                <p class="hint-text" style="max-width: 350px; margin-bottom: 25px; text-align: center; font-size: 13px;">
+                <div class="import-icon"><i class="fa-solid fa-users-viewfinder"></i></div>
+                <p class="hint-text" style="max-width: 350px; margin-bottom: 24px; text-align: center;">
                     Универсальная загрузка файла <b>.xlsx</b>.<br>
                     Вы можете массово создавать комнаты, обновлять счетчики и заселять туда жильцов.
                 </p>
-                <div class="file-upload-group">
-                    <input type="file" id="importUsersFile" accept=".xlsx, .xls" class="custom-file-input">
+                <div class="compact-upload" style="width: 100%; max-width: 380px;">
+                    <input type="file" id="importUsersFile" accept=".xlsx, .xls" style="flex: 1;">
                     <button id="btnImportUsers" class="action-btn primary-btn">Загрузить в базу</button>
                 </div>
             </div>
@@ -94,17 +87,18 @@
     </div>
 
     <!-- Таблица -->
-    <div class="card table-card mt-20">
+    <div class="card mt-20" style="margin-bottom: 0;">
         <div class="card-header">
             <h3>Список пользователей</h3>
-            <div class="toolbar-controls" style="display: flex; gap: 10px; align-items: center;">
-                <select id="usersLimitSelect" style="width: auto; padding: 6px;">
+            <!-- ТУЛБАР В ОДНУ СТРОКУ -->
+            <div class="toolbar-controls">
+                <select id="usersLimitSelect">
                     <option value="25">25 строк</option>
                     <option value="50" selected>50 строк</option>
                     <option value="100">100 строк</option>
                 </select>
-                <input type="text" id="usersSearchInput" placeholder="Поиск по логину/комнате..." style="min-width: 200px; padding: 6px;">
-                <button id="btnRefreshUsers" class="icon-btn refresh" title="Обновить">↻</button>
+                <input type="text" id="usersSearchInput" placeholder="Поиск по логину/комнате...">
+                <button id="btnRefreshUsers" class="icon-btn" title="Обновить"><i class="fa-solid fa-rotate-right"></i></button>
             </div>
         </div>
         <div class="table-responsive">
@@ -121,13 +115,17 @@
                         <th class="text-center">Действия</th>
                     </tr>
                 </thead>
-                <tbody id="usersTableBody"></tbody>
+                <tbody id="usersTableBody">
+                    <tr><td colspan="8" class="text-center" style="padding: 40px; color: var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка данных...</td></tr>
+                </tbody>
             </table>
         </div>
-        <div class="pagination-footer" style="padding: 15px; border-top: 1px solid #eee; display: flex; justify-content: center; align-items: center; gap: 15px;">
-            <button id="btnPrevUsers" class="page-btn">← Назад</button>
-            <span id="usersPageInfo" style="font-weight: 500; color: #555;">Стр. 1</span>
-            <button id="btnNextUsers" class="page-btn">Вперед →</button>
+        <div class="modal-footer" style="background: transparent; border: none; padding: 16px 0 0 0;">
+            <div class="pagination">
+                <button id="btnPrevUsers" class="page-btn"><i class="fa-solid fa-chevron-left"></i> Назад</button>
+                <span id="usersPageInfo" style="font-size: 13px; font-weight: 500; color: var(--text-secondary);">Стр. 1</span>
+                <button id="btnNextUsers" class="page-btn">Вперед <i class="fa-solid fa-chevron-right"></i></button>
+            </div>
         </div>
     </div>
 
@@ -138,19 +136,21 @@
                 <h3>Редактирование жильца</h3>
                 <button class="close-btn close-icon">&times;</button>
             </div>
-            <form id="editUserForm">
-                <div class="modal-form">
+            <form id="editUserForm" class="styled-form">
+                <div class="modal-form" style="padding-top: 16px;">
                     <input type="hidden" id="editUserId">
 
-                    <div class="form-grid-2">
+                    <div class="form-grid-2 mb-3">
                         <div class="form-group">
                             <label>Логин</label>
                             <input type="text" id="editUsername" required>
                         </div>
                         <div class="form-group">
-                            <label>Пароль (оставить пустым, чтобы не менять)</label>
-                            <input type="text" id="editPassword" placeholder="Новый пароль">
+                            <label>Пароль (пусто = не менять)</label>
+                            <input type="password" id="editPassword" placeholder="Новый пароль" autocomplete="new-password">
                         </div>
+                    </div>
+                    <div class="form-grid-2" style="margin-bottom: 24px;">
                         <div class="form-group">
                             <label>Роль</label>
                             <select id="editRole">
@@ -166,28 +166,24 @@
                         </div>
                     </div>
 
-                    <!-- БЛОК: Редактирование привязки к комнате -->
-                    <div class="form-grid-2" style="background: #f9fafb; padding: 10px; border-radius: 8px; border: 1px solid #e5e7eb; margin-top: 15px;">
-                        <div class="form-group">
+                    <h4 style="margin-bottom: 12px; font-size: 14px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">Привязка к помещению</h4>
+                    <div class="form-grid-2" style="background: var(--bg-page); padding: 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 16px;">
+                        <div class="form-group" style="margin: 0;">
                             <label>Общежитие</label>
-                            <select id="editDormSelect">
-                                <option value="">Не привязан</option>
-                            </select>
+                            <select id="editDormSelect"><option value="">Не привязан</option></select>
                         </div>
-                        <div class="form-group">
+                        <div class="form-group" style="margin: 0;">
                             <label>Комната</label>
-                            <select id="editRoomSelect" disabled>
-                                <option value="">Сначала выберите общежитие</option>
-                            </select>
+                            <select id="editRoomSelect" disabled><option value="">Сначала выберите общежитие</option></select>
                         </div>
                     </div>
 
-                    <div id="editRoomInfo" style="display: none; background: #ecfdf5; padding: 10px; border-radius: 8px; border: 1px solid #a7f3d0; margin-top: 10px; font-size: 12px;">
+                    <div id="editRoomInfo" style="display: none; background: var(--success-bg); padding: 12px 16px; border-radius: var(--radius-sm); border: 1px solid #cce8d6; margin-bottom: 16px; font-size: 13px;">
                         Площадь: <b id="editInfoArea">0</b> м² | Мест: <b id="editInfoCap">0</b><br>
-                        Счетчики: ГВС (<span id="editInfoHw" style="color: #dc2626; font-family: monospace;">-</span>), ХВС (<span id="editInfoCw" style="color: #2563eb; font-family: monospace;">-</span>), Электр. (<span id="editInfoEl" style="color: #d97706; font-family: monospace;">-</span>)
+                        Счетчики: ГВС (<span id="editInfoHw" style="color: var(--danger-color); font-family: monospace;">-</span>), ХВС (<span id="editInfoCw" style="color: var(--primary-color); font-family: monospace;">-</span>), Электр. (<span id="editInfoEl" style="color: #d97706; font-family: monospace;">-</span>)
                     </div>
 
-                    <div class="form-grid-2" style="margin-top: 15px;">
+                    <div class="form-grid-2">
                         <div class="form-group">
                             <label>Жильцов (платит за)</label>
                             <input type="number" id="editResidentsCount" min="1">
@@ -197,7 +193,6 @@
                             <input type="text" id="editWorkplace">
                         </div>
                     </div>
-
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="action-btn secondary-btn close-btn">Отмена</button>
@@ -207,77 +202,73 @@
         </div>
     </div>
 
-    <!-- Модалка: Выселение / Переезд (Единое окно) -->
+    <!-- Модалка: Выселение / Переезд -->
     <div id="relocateModal" class="modal-overlay">
         <div class="modal-window" style="width: 600px;">
-            <div class="modal-header" style="background: #eff6ff; border-bottom: 1px solid #bfdbfe;">
-                <h3 style="color: #1e40af; margin: 0; display: flex; align-items: center; gap: 8px;">
-                    🚚 Оформление выезда / переезда
-                </h3>
+            <div class="modal-header" style="background: var(--primary-bg); border-bottom: 1px solid #c7d2fe;">
+                <h3 style="color: var(--primary-hover);"><i class="fa-solid fa-truck-moving"></i> Оформление выезда / переезда</h3>
                 <button class="close-btn close-icon" id="btnCloseRelocate">&times;</button>
             </div>
-            <form id="relocateForm">
-                <div class="modal-form">
-
+            <form id="relocateForm" class="styled-form">
+                <div class="modal-form" style="padding-top: 16px;">
                     <input type="hidden" id="relUserId">
 
-                    <!-- ИНФО О ЖИЛЬЦЕ -->
-                    <div style="background: #f9fafb; padding: 15px; border-radius: 8px; border: 1px solid #e5e7eb; margin-bottom: 15px;">
-                        <strong style="display:block; margin-bottom:5px; font-size: 14px;">Жилец: <span id="relUserName" style="color:var(--primary-color);">...</span></strong>
-                        <span style="font-size: 13px; color: #6b7280;">Текущий адрес: <b id="relCurrentAddress">...</b></span>
+                    <div style="background: var(--bg-page); padding: 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 24px;">
+                        <strong style="display:block; margin-bottom:4px; font-size: 14px;">Жилец: <span id="relUserName" style="color: var(--primary-color);">...</span></strong>
+                        <span style="font-size: 13px; color: var(--text-secondary);">Текущий адрес: <b id="relCurrentAddress" style="color: var(--text-main);">...</b></span>
                     </div>
 
-                    <!-- ВЫБОР ДЕЙСТВИЯ -->
-                    <div style="margin-bottom: 20px; padding: 15px; border: 1px solid #d1d5db; border-radius: 8px;">
-                        <h4 style="margin: 0 0 12px 0; font-size: 14px; color: #374151;">Что делаем с жильцом?</h4>
-                        <div style="display: flex; gap: 20px;">
-                            <label style="cursor: pointer; display: flex; align-items: center; gap: 8px;">
-                                <input type="radio" name="relAction" value="evict" checked style="width: 18px; height: 18px; cursor: pointer;">
-                                <span style="color: #b91c1c; font-weight: 500;">🚪 Выселить окончательно</span>
+                    <div style="margin-bottom: 24px;">
+                        <label style="font-weight: 500; display: block; margin-bottom: 12px; color: var(--text-main);">Что делаем с жильцом?</label>
+                        <!-- РАДИО КНОПКИ В СТРОКУ -->
+                        <div class="radio-group" style="margin: 0;">
+                            <label class="radio-label">
+                                <input type="radio" name="relAction" value="evict" checked>
+                                <span style="color: var(--danger-color);"><i class="fa-solid fa-door-open"></i> Выселить окончательно</span>
                             </label>
-                            <label style="cursor: pointer; display: flex; align-items: center; gap: 8px;">
-                                <input type="radio" name="relAction" value="move" style="width: 18px; height: 18px; cursor: pointer;">
-                                <span style="color: #047857; font-weight: 500;">📦 Переселить в другую комнату</span>
+                            <label class="radio-label">
+                                <input type="radio" name="relAction" value="move">
+                                <span style="color: var(--success-color);"><i class="fa-solid fa-box"></i> Переселить</span>
                             </label>
                         </div>
                     </div>
 
-                    <!-- БЛОК 1: РАСЧЕТ ДОЛГА ПО СТАРОЙ КОМНАТЕ -->
-                    <h4 style="font-size: 14px; margin-bottom: 10px; color: #92400e;">Шаг 1. Финальный расчет за текущую комнату</h4>
-                    <div style="background: #fffbeb; padding: 15px; border-left: 4px solid #f59e0b; border-radius: 4px; margin-bottom: 15px;">
-                        <div class="form-grid-2" style="margin-bottom: 15px;">
-                            <div class="form-group">
+                    <h4 style="font-size: 14px; margin-bottom: 12px; color: #92400e;">Шаг 1. Финальный расчет за текущую комнату</h4>
+                    <div style="background: var(--warning-bg); padding: 16px; border-left: 4px solid var(--warning-color); border-radius: 4px; margin-bottom: 24px;">
+                        <div class="form-grid-2" style="margin-bottom: 16px;">
+                            <div class="form-group" style="margin: 0;">
                                 <label>Дней в этом месяце</label>
                                 <input type="number" id="relTotalDays" required min="28" max="31">
                             </div>
-                            <div class="form-group">
-                                <label style="color: #d97706; font-weight:bold;">Прожито дней в старой ком.</label>
+                            <div class="form-group" style="margin: 0;">
+                                <label style="color: #92400e;">Прожито дней</label>
                                 <input type="number" id="relDaysLived" required min="1" max="31">
                             </div>
                         </div>
-                        <label style="font-size: 13px; font-weight: bold; margin-bottom: 5px; display: block; color: #374151;">Финальные показания счетчиков:</label>
-                        <div class="form-grid-3">
-                            <div class="form-group">
-                                <input type="number" step="0.001" id="relHot" required placeholder="ГВС">
+
+                        <label style="font-size: 13px; font-weight: 500; margin-bottom: 8px; display: block; color: var(--text-secondary);">Финальные показания счетчиков:</label>
+                        <!-- 3 КОЛОНКИ ДЛЯ ПОКАЗАНИЙ -->
+                        <div class="grid-3-col">
+                            <div class="form-group" style="margin: 0;">
+                                <input type="number" step="0.001" id="relHot" required placeholder="🔥 ГВС">
                             </div>
-                            <div class="form-group">
-                                <input type="number" step="0.001" id="relCold" required placeholder="ХВС">
+                            <div class="form-group" style="margin: 0;">
+                                <input type="number" step="0.001" id="relCold" required placeholder="❄️ ХВС">
                             </div>
-                            <div class="form-group">
-                                <input type="number" step="0.001" id="relElect" required placeholder="Свет">
+                            <div class="form-group" style="margin: 0;">
+                                <input type="number" step="0.001" id="relElect" required placeholder="⚡ Свет">
                             </div>
                         </div>
                     </div>
 
-                    <!-- БЛОК 2: КУДА ПЕРЕСЕЛЯЕМ (Скрыт по умолчанию) -->
-                    <div id="relDestinationBlock" style="display: none; background: #ecfdf5; padding: 15px; border-left: 4px solid #10b981; border-radius: 4px;">
-                        <h4 style="font-size: 14px; margin: 0 0 10px 0; color: #065f46;">Шаг 2. Куда переезжает?</h4>
+                    <div id="relDestinationBlock" style="display: none; background: var(--success-bg); padding: 16px; border-left: 4px solid var(--success-color); border-radius: 4px;">
+                        <h4 style="font-size: 14px; margin: 0 0 12px 0; color: #065f46;">Шаг 2. Куда переезжает?</h4>
                         <div class="form-grid-2">
-                            <div class="form-group">
+                            <div class="form-group" style="margin: 0;">
                                 <label>Общежитие</label>
                                 <select id="relDormSelect"><option value="">Загрузка...</option></select>
                             </div>
-                            <div class="form-group">
+                            <div class="form-group" style="margin: 0;">
                                 <label>Комната</label>
                                 <select id="relRoomSelect" disabled><option value="">Сначала выберите здание</option></select>
                             </div>
@@ -292,5 +283,4 @@
             </form>
         </div>
     </div>
-
 </div>
