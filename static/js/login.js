@@ -17,6 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const resetForm = document.getElementById('resetForm');
     const resetSuccess = document.getElementById('resetSuccess');
     const btnCancelReset = document.getElementById('btnCancelReset');
+    const btnCloseIconReset = document.getElementById('btnCloseIconReset');
     const btnSubmitReset = document.getElementById('btnSubmitReset');
     const btnCloseSuccess = document.getElementById('btnCloseSuccess');
     const tempPasswordDisplay = document.getElementById('tempPasswordDisplay');
@@ -83,11 +84,15 @@ document.addEventListener('DOMContentLoaded', () => {
     // ЛОГИКА СБРОСА ПАРОЛЯ
     // ==========================================
 
+    const closeResetModal = () => {
+        resetModal.classList.remove('open');
+    };
+
     // 1. Открыть модалку
     btnForgotPass.addEventListener('click', (e) => {
         e.preventDefault();
-        resetForm.style.display = 'block';
-        resetSuccess.style.display = 'none';
+        resetForm.classList.remove('hide');
+        resetSuccess.classList.add('hide');
         resetForm.reset();
 
         // Автоматически подставляем логин, если пользователь уже начал его вводить
@@ -96,10 +101,9 @@ document.addEventListener('DOMContentLoaded', () => {
         resetModal.classList.add('open');
     });
 
-    // 2. Закрыть модалку (Отмена)
-    btnCancelReset.addEventListener('click', () => {
-        resetModal.classList.remove('open');
-    });
+    // 2. Закрыть модалку (Отмена и Крестик)
+    btnCancelReset.addEventListener('click', closeResetModal);
+    btnCloseIconReset.addEventListener('click', closeResetModal);
 
     // 3. Отправка запроса на сброс
     resetForm.addEventListener('submit', async (e) => {
@@ -111,27 +115,27 @@ document.addEventListener('DOMContentLoaded', () => {
         setLoading(btnSubmitReset, true, 'Проверка...');
 
         try {
-            // Здесь запрос идет через api.js, так как путь /api/auth/reset-password
+            // Запрос через api.js
             const result = await api.post('/auth/reset-password', {
                 username: resetUsername,
                 apartment_area: resetArea
             });
 
             // Скрываем форму, показываем блок с новым паролем
-            resetForm.style.display = 'none';
-            resetSuccess.style.display = 'block';
+            resetForm.classList.add('hide');
+            resetSuccess.classList.remove('hide');
             tempPasswordDisplay.textContent = result.temp_password;
 
         } catch (error) {
             toast(error.message, 'error');
         } finally {
-            setLoading(btnSubmitReset, false, 'Сбросить пароль');
+            setLoading(btnSubmitReset, false, 'Сбросить');
         }
     });
 
     // 4. Закрытие модалки после успеха и подстановка данных для входа
     btnCloseSuccess.addEventListener('click', () => {
-        resetModal.classList.remove('open');
+        closeResetModal();
 
         // Автоматически вставляем сгенерированные данные в форму логина
         usernameInput.value = document.getElementById('resetUsername').value.trim();
@@ -141,8 +145,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // 5. Закрытие по клику вне модального окна
     resetModal.addEventListener('mousedown', (e) => {
-        if (e.target === resetModal && resetForm.style.display === 'block') {
-            resetModal.classList.remove('open');
+        if (e.target === resetModal && !resetForm.classList.contains('hide')) {
+            closeResetModal();
         }
     });
 });

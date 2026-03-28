@@ -3,7 +3,22 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#1a73e8">
     <title>Панель Администратора ЖКХ</title>
+
+    <!-- 1. Быстрая загрузка шрифтов (без блокировки рендера) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Иконки FontAwesome (для красивых кнопок) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <!-- 2. Предзагрузка главных JS модулей -->
+    <link rel="modulepreload" href="js/app.js">
+    <link rel="modulepreload" href="js/core/api.js">
+    <link rel="modulepreload" href="js/core/dom.js">
+
     <!-- Подключаем стили -->
     <link rel="stylesheet" href="style.css">
 </head>
@@ -15,7 +30,7 @@
         <!-- HEADER -->
         <header class="app-header">
             <div class="header-brand">
-                <div class="brand-icon">🏢</div>
+                <div class="brand-icon"><i class="fa-solid fa-building-user"></i></div>
                 <div>
                     <h1>Администрирование ЖКХ</h1>
                     <span class="header-subtitle">Система управления ресурсами</span>
@@ -27,12 +42,11 @@
                     <span id="adminName">Загрузка...</span>
                     <span class="role-badge admin">Администратор</span>
                 </div>
-                <button id="btnOpenAdminProfile" class="action-btn secondary-btn" style="margin-right: 10px; background: #374151; color: white;">
-                    ⚙️ Профиль
+                <button id="btnOpenAdminProfile" class="action-btn secondary-btn">
+                    <i class="fa-solid fa-gear"></i> Профиль
                 </button>
                 <button class="logout-btn">
-                    <span>Выйти</span>
-                    <span style="font-size: 1.2em;">&rarr;</span>
+                    <i class="fa-solid fa-arrow-right-from-bracket"></i> Выйти
                 </button>
             </div>
         </header>
@@ -40,36 +54,155 @@
         <!-- NAV TABS -->
         <div class="nav-tabs-container">
             <div class="tabs">
-                <button class="tab-btn active" data-tab="readings">📊 Сверка показаний</button>
-                <button class="tab-btn" data-tab="manual">✍️ Ручной ввод</button>
-                <button class="tab-btn" data-tab="debts">📉 Долги 1С</button>
-                <button class="tab-btn" data-tab="housing">🏢 Жилфонд</button>
-                <button class="tab-btn" data-tab="users">👥 Жильцы</button>
-                <button class="tab-btn" data-tab="tariffs">⚙️ Тарифы</button>
-                <button class="tab-btn" data-tab="accountant">📑 Сводка</button>
+                <button class="tab-btn active" data-tab="readings"><i class="fa-solid fa-chart-line"></i> Сверка показаний</button>
+                <button class="tab-btn" data-tab="manual"><i class="fa-solid fa-pen-to-square"></i> Ручной ввод</button>
+                <button class="tab-btn" data-tab="debts"><i class="fa-solid fa-file-invoice-dollar"></i> Долги 1С</button>
+                <button class="tab-btn" data-tab="housing"><i class="fa-solid fa-city"></i> Жилфонд</button>
+                <button class="tab-btn" data-tab="users"><i class="fa-solid fa-users"></i> Жильцы</button>
+                <button class="tab-btn" data-tab="tariffs"><i class="fa-solid fa-tags"></i> Тарифы</button>
+                <button class="tab-btn" data-tab="accountant"><i class="fa-solid fa-file-pdf"></i> Сводка</button>
             </div>
         </div>
 
-        <!-- CONTENT AREA (Сюда будут динамически загружаться вкладки) -->
+        <!-- CONTENT AREA -->
         <main class="content-area" id="content-area">
-            <!-- Контент подгружается через JS -->
+
+            <!-- 3. ВСТРОЕННАЯ ПЕРВАЯ ВКЛАДКА (Устраняем Network Waterfall) -->
+            <div id="readings" class="tab-content active">
+                <!-- Статусы периода -->
+                <div class="status-card">
+                    <div id="periodActiveState" class="period-state open" style="display: none;">
+                        <div style="display: flex; align-items: center; gap: 15px;">
+                            <span class="state-icon">✅</span>
+                            <div class="state-info">
+                                <h2>Прием показаний открыт</h2>
+                                <p>Текущий период: <strong id="activePeriodLabel">...</strong></p>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="periodClosedState" class="period-state closed" style="display: flex;">
+                        <div style="display: flex; align-items: center; gap: 15px;">
+                            <span class="state-icon">🔒</span>
+                            <div class="state-info">
+                                <h2>Прием показаний закрыт</h2>
+                                <p>Ожидание открытия нового периода бухгалтерией</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Управление и таблица -->
+                <div class="card" style="margin-bottom: 0;">
+                    <div class="card-header">
+                        <h3>Реестр показаний</h3>
+                        <div class="header-controls">
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 500; font-size: 13px; color: var(--text-secondary);">
+                                <input type="checkbox" id="filterAnomalies" style="width: 16px; height: 16px; margin: 0; box-shadow: none;">
+                                Только аномалии
+                            </label>
+                            <div class="compact-upload">
+                                <input type="file" id="importReadingsFile" accept=".xlsx, .xls">
+                                <button id="btnImportReadings" class="action-btn secondary-btn" style="height: 30px; font-size: 12px; padding: 0 10px;">📥 Загрузить Excel</button>
+                            </div>
+                            <button id="btnBulkApprove" class="action-btn success-btn"><i class="fa-solid fa-check-double"></i> Утвердить все</button>
+                            <button id="btnRefreshReadings" class="icon-btn" title="Обновить таблицу"><i class="fa-solid fa-rotate-right"></i></button>
+                        </div>
+                    </div>
+
+                    <div class="table-responsive">
+                        <table class="sticky-header-table">
+                            <thead>
+                                <tr>
+                                    <th>Жилец / Объект</th>
+                                    <th>Статус / Риск</th>
+                                    <th class="text-right">ГВС (м³)</th>
+                                    <th class="text-right">ХВС (м³)</th>
+                                    <th class="text-right">Свет (кВт)</th>
+                                    <th class="text-right">Сумма (₽)</th>
+                                    <th class="text-center">Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody id="readingsTableBody">
+                                <tr><td colspan="7" class="text-center" style="padding: 40px;"><i class="fa-solid fa-spinner fa-spin text-primary"></i> Загрузка данных...</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="modal-footer" style="background: transparent; border: none; padding: 16px 0 0 0;">
+                        <div class="pagination">
+                            <button id="btnPrev" class="page-btn"><i class="fa-solid fa-chevron-left"></i> Назад</button>
+                            <span id="pageIndicator" style="font-size: 13px; font-weight: 500; color: var(--text-secondary);">Стр. 1</span>
+                            <button id="btnNext" class="page-btn">Вперед <i class="fa-solid fa-chevron-right"></i></button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- Конец встроенной вкладки -->
+
         </main>
     </div>
 
     <!-- ============================================================== -->
-    <!-- ГЛОБАЛЬНЫЕ МОДАЛЬНЫЕ ОКНА                                      -->
+    <!-- ГЛОБАЛЬНЫЕ И ВСТРОЕННЫЕ МОДАЛЬНЫЕ ОКНА                         -->
     <!-- ============================================================== -->
+
+    <!-- Модалка: Ручное утверждение показаний (из readings) -->
+    <div id="approveModal" class="modal-overlay">
+        <div class="modal-window">
+            <div class="modal-header">
+                <h3>Утверждение показаний</h3>
+                <button id="btnModalClose" class="close-icon">&times;</button>
+            </div>
+            <div class="modal-form">
+                <input type="hidden" id="modal_reading_id">
+
+                <div style="background: var(--primary-bg); border-left: 4px solid var(--primary-color); padding: 16px; border-radius: 8px; margin-bottom: 24px;">
+                    <div style="font-size: 13px; color: var(--text-secondary); margin-bottom: 8px;">Жилец:</div>
+                    <strong id="m_username" style="font-size: 16px; color: var(--primary-color); display: block; margin-bottom: 12px;">...</strong>
+
+                    <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; font-weight: 600; font-size: 14px;">
+                        <div>🔥 ГВС: <span id="m_hot_usage">0</span></div>
+                        <div>❄️ ХВС: <span id="m_cold_usage">0</span></div>
+                        <div>⚡ Свет: <span id="m_elect_usage">0</span></div>
+                    </div>
+                </div>
+
+                <h4 style="margin-bottom: 16px; color: var(--text-main); font-size: 15px;">Финансовые корректировки (₽)</h4>
+                <div class="grid-2-col" style="gap: 16px;">
+                    <div class="form-group" style="margin: 0;">
+                        <label>ГВС (Сумма)</label>
+                        <input type="number" id="m_corr_hot" step="0.01" value="0">
+                    </div>
+                    <div class="form-group" style="margin: 0;">
+                        <label>ХВС (Сумма)</label>
+                        <input type="number" id="m_corr_cold" step="0.01" value="0">
+                    </div>
+                    <div class="form-group" style="margin: 0;">
+                        <label>Свет (Сумма)</label>
+                        <input type="number" id="m_corr_elect" step="0.01" value="0">
+                    </div>
+                    <div class="form-group" style="margin: 0;">
+                        <label>Водоотведение (Сумма)</label>
+                        <input type="number" id="m_corr_sewage" step="0.01" value="0">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="btnModalSubmit" class="action-btn primary-btn full-width">Утвердить и рассчитать</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Модалка: Профиль Администратора -->
     <div id="adminProfileModal" class="modal-overlay">
-        <div class="modal-window" style="width: 500px;">
+        <div class="modal-window">
             <div class="modal-header">
                 <h3>Настройки профиля</h3>
                 <button class="close-icon" onclick="document.getElementById('adminProfileModal').classList.remove('open')">&times;</button>
             </div>
-            <div class="modal-form" style="padding: 20px;">
-                <div style="background: #f9fafb; padding: 15px; border-radius: 8px; border: 1px solid var(--border-color); margin-bottom: 20px;">
-                    <h4 style="margin-top: 0; margin-bottom: 15px; font-size: 15px; border-bottom: 1px solid #e5e7eb; padding-bottom: 5px;">Изменить учетные данные</h4>
+            <div class="modal-form">
+                <div style="background: var(--bg-page); padding: 20px; border-radius: var(--radius-md); border: 1px solid var(--border-color); margin-bottom: 24px;">
+                    <h4 style="margin-top: 0; margin-bottom: 16px; font-size: 15px;">Изменить учетные данные</h4>
                     <form id="adminChangeCredsForm" class="styled-form">
                         <div class="form-group mb-3">
                             <label>Новый логин (оставьте пустым, если не меняете)</label>
@@ -79,7 +212,7 @@
                             <label>Текущий пароль (обязательно для сохранения)</label>
                             <input type="password" id="adminOldPass" autocomplete="current-password" required>
                         </div>
-                        <div class="form-group mb-3">
+                        <div class="form-group mb-3" style="margin-bottom: 20px;">
                             <label>Новый пароль</label>
                             <input type="password" id="adminNewPass" autocomplete="new-password" placeholder="Минимум 6 символов" minlength="6">
                         </div>
@@ -87,34 +220,34 @@
                     </form>
                 </div>
 
-                <div style="background: #f9fafb; padding: 15px; text-align: center; border-radius: 8px; border: 1px dashed #d1d5db;">
-                    <h4 style="margin-top: 0; margin-bottom: 10px; font-size: 15px;">Двухфакторная защита (2FA)</h4>
-                    <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 15px;">Дополнительный уровень безопасности для защиты системы от взлома.</p>
-                    <button id="btnOpenTotp" class="action-btn" style="background: #4b5563; color: white; width: 100%;">Настроить 2FA</button>
+                <div style="background: var(--bg-page); padding: 20px; text-align: center; border-radius: var(--radius-md); border: 1px dashed var(--border-color);">
+                    <h4 style="margin-top: 0; margin-bottom: 8px; font-size: 15px;">Двухфакторная защита (2FA)</h4>
+                    <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 16px;">Дополнительный уровень безопасности для защиты системы от взлома.</p>
+                    <button id="btnOpenTotp" class="action-btn secondary-btn full-width"><i class="fa-solid fa-shield-halved"></i> Настроить 2FA</button>
                 </div>
             </div>
         </div>
     </div>
 
     <!-- Модалка: ПЕРВИЧНАЯ НАСТРОЙКА (Обязательная для админа) -->
-    <div id="firstSetupModal" class="modal-overlay" style="z-index: 10000; background: rgba(17, 24, 39, 0.85); backdrop-filter: blur(8px);">
-        <div class="modal-window" style="width: 450px;">
-            <div class="modal-header" style="background: var(--danger-color); color: white; justify-content: center;">
-                <h3 style="font-size: 18px;">⚠️ Требуется защита аккаунта!</h3>
+    <div id="firstSetupModal" class="modal-overlay" style="z-index: 10000;">
+        <div class="modal-window">
+            <div class="modal-header" style="background: var(--danger-bg); border-bottom: none; justify-content: center; padding-bottom: 0;">
+                <h3 style="font-size: 18px; color: var(--danger-color);"><i class="fa-solid fa-triangle-exclamation"></i> Требуется защита аккаунта!</h3>
             </div>
-            <div class="modal-form">
-                <p style="font-size: 14px; color: var(--text-main); margin-bottom: 15px; text-align: center;">
+            <div class="modal-form" style="padding-top: 16px;">
+                <p style="font-size: 14px; color: var(--text-main); margin-bottom: 20px; text-align: center; line-height: 1.5;">
                     Вы используете стандартные учетные данные администратора. В целях безопасности системы необходимо немедленно задать новый пароль.
                 </p>
                 <form id="firstSetupForm" class="styled-form">
-                    <div class="form-group mb-3" style="display: none;">
+                    <div class="form-group" style="display: none;">
                         <input type="text" id="fsNewLogin" autocomplete="username">
                     </div>
-                    <div class="form-group mb-3">
+                    <div class="form-group">
                         <label>Придумайте новый надежный пароль</label>
                         <input type="password" id="fsNewPassword" autocomplete="new-password" placeholder="Минимум 6 символов" minlength="6" required>
                     </div>
-                    <button type="submit" class="action-btn success-btn full-width mt-2" id="btnFsSave">Сохранить и войти</button>
+                    <button type="submit" class="action-btn success-btn full-width" id="btnFsSave" style="margin-top: 24px;">Сохранить и войти</button>
                 </form>
             </div>
         </div>
@@ -128,20 +261,20 @@
                 <button id="btnTotpClose" class="close-icon">&times;</button>
             </div>
             <div class="modal-form">
-                <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 15px;">
+                <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 16px;">
                     Отсканируйте QR-код в приложении <b>Яндекс.Ключ</b> или <b>Google Authenticator</b>:
                 </p>
-                <img id="totpQrImage" src="" alt="QR Code" style="width: 200px; height: 200px; margin: 0 auto; display: none; border: 1px solid var(--border-color); border-radius: 8px;">
-                <p style="font-size: 12px; color: var(--text-secondary); margin-top: 10px;">
-                    Или введите ключ вручную:<br> <strong id="totpSecretText" style="color: var(--text-main); letter-spacing: 1px; font-size: 14px;"></strong>
+                <img id="totpQrImage" src="" alt="QR Code" style="width: 200px; height: 200px; margin: 0 auto; display: none; border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 8px;">
+                <p style="font-size: 12px; color: var(--text-secondary); margin-top: 16px;">
+                    Или введите ключ вручную:<br> <strong id="totpSecretText" style="color: var(--text-main); letter-spacing: 1px; font-size: 15px; background: var(--bg-page); padding: 4px 8px; border-radius: 4px; display: inline-block; margin-top: 8px;"></strong>
                 </p>
-                <div class="form-group" style="margin-top: 20px; text-align: left;">
-                    <label>Введите код из приложения для подтверждения:</label>
-                    <input type="text" id="totpCodeInput" placeholder="123456" maxlength="6" style="font-size: 24px; text-align: center; letter-spacing: 8px; font-weight: bold;">
+                <div class="form-group" style="margin-top: 24px; text-align: left;">
+                    <label style="text-align: center; display: block; margin-bottom: 8px;">Введите код из приложения:</label>
+                    <input type="text" id="totpCodeInput" placeholder="123456" maxlength="6" style="font-size: 28px; text-align: center; letter-spacing: 12px; font-weight: bold; padding: 16px;">
                 </div>
             </div>
             <div class="modal-footer" style="justify-content: center;">
-                <button id="btnTotpActivate" class="action-btn success-btn full-width">Включить 2FA</button>
+                <button id="btnTotpActivate" class="action-btn primary-btn full-width">Включить 2FA</button>
             </div>
         </div>
     </div>

@@ -1,50 +1,54 @@
 // static/js/client.js
 import { Auth } from './core/auth.js';
 import { toast } from './core/dom.js';
-import { ClientDashboard } from './modules/client-dashboard.js';
-import { TotpSetup } from './core/totp.js';
 
 // --- 1. Глобальная проверка авторизации ---
 // Если токена в памяти нет, сразу перенаправляем на вход.
-// Используем replace, чтобы текущая страница не сохранялась в истории браузера.
 if (!Auth.isAuthenticated()) {
     window.location.replace('login.html');
 }
 
 // --- 2. Глобальный перехватчик ошибок (Error Boundary) ---
-// Ловит ошибки в Promise (fetch, async/await)
 window.addEventListener('unhandledrejection', (event) => {
     console.error('Unhandled Rejection:', event.reason);
 
-    // Игнорируем ошибки отмены запросов (AbortController), это нормальное поведение
+    // Игнорируем ошибки отмены запросов (AbortController)
     if (event.reason && event.reason.name === 'AbortError') return;
 
     const msg = event.reason?.message || 'Неизвестная ошибка сервера';
     toast(`Системная ошибка: ${msg}`, 'error');
 });
 
-// Ловит обычные JS ошибки
 window.addEventListener('error', (event) => {
     console.error('Global Error:', event.error);
     toast(`Ошибка приложения: ${event.message}`, 'error');
 });
 
-// --- 3. Инициализация приложения ---
-document.addEventListener('DOMContentLoaded', () => {
-    console.log('Client App initialized');
+// --- 3. Инициализация приложения (Lazy Load) ---
+document.addEventListener('DOMContentLoaded', async () => {
+    console.log('Client App initialized (SPA Lazy Mode)');
 
     setupGlobalEvents();
 
-    // Запускаем основной модуль личного кабинета (вкладки, графики, отправка показаний)
-    ClientDashboard.init();
+    try {
+        // Загружаем основные модули динамически, чтобы не блокировать рендер HTML
+        const { ClientDashboard } = await import('./modules/client-dashboard.js');
+        const { TotpSetup } = await import('./core/totp.js');
 
-    // Инициализируем логику 2FA (модальное окно и привязка)
-    TotpSetup.init();
+        // Запускаем основной модуль личного кабинета
+        ClientDashboard.init();
+
+        // Инициализируем логику 2FA
+        TotpSetup.init();
+
+    } catch (error) {
+        console.error('Ошибка загрузки модулей клиента:', error);
+        toast('Ошибка загрузки интерфейса. Проверьте подключение к интернету.', 'error');
+    }
 });
 
 // --- 4. Настройка глобальных событий ---
 function setupGlobalEvents() {
-    // Находим кнопку выхода по ID
     const logoutBtn = document.getElementById('clientLogoutBtn');
 
     if (logoutBtn) {

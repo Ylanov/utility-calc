@@ -1,4 +1,4 @@
-// static/js/core/table-controller.js (ФИНАЛЬНАЯ ВЕРСИЯ)
+// static/js/core/table-controller.js
 import { api } from './api.js';
 import { clear, el } from './dom.js';
 
@@ -16,8 +16,6 @@ export class TableController {
             next: document.getElementById(config.dom.nextBtn),
             info: document.getElementById(config.dom.pageInfo),
             loader: document.getElementById(config.dom.loadingEl),
-
-            // НОВОЕ: Чекбокс "Выбрать все" в шапке таблицы (если есть)
             selectAll: document.getElementById(config.dom.selectAllCheckbox)
         };
 
@@ -31,7 +29,7 @@ export class TableController {
             isLoading: false
         };
 
-        // НОВОЕ: Множество для хранения ID выбранных строк (сохраняется при смене страниц)
+        // Множество для хранения ID выбранных строк (сохраняется при смене страниц)
         this.selectedIds = new Set();
 
         this.abortController = null;
@@ -67,7 +65,7 @@ export class TableController {
         if (this.dom.next) this.dom.next.addEventListener('click', () => this.changePage(1));
 
         // Сортировка по заголовкам
-        const table = this.dom.tbody.closest('table');
+        const table = this.dom.tbody?.closest('table');
         if (table) {
             table.querySelector('thead')?.addEventListener('click', (e) => {
                 const th = e.target.closest('th[data-sort]');
@@ -86,20 +84,22 @@ export class TableController {
             });
         }
 
-        // НОВОЕ: Делегирование событий для чекбоксов строк
-        this.dom.tbody.addEventListener('change', (e) => {
-            if (e.target.classList.contains('row-checkbox')) {
-                const id = e.target.value;
-                if (e.target.checked) {
-                    this.selectedIds.add(id);
-                } else {
-                    this.selectedIds.delete(id);
+        // Делегирование событий для чекбоксов строк
+        if (this.dom.tbody) {
+            this.dom.tbody.addEventListener('change', (e) => {
+                if (e.target.classList.contains('row-checkbox')) {
+                    const id = e.target.value;
+                    if (e.target.checked) {
+                        this.selectedIds.add(id);
+                    } else {
+                        this.selectedIds.delete(id);
+                    }
+                    this.updateSelectAllCheckboxState();
                 }
-                this.updateSelectAllCheckboxState();
-            }
-        });
+            });
+        }
 
-        // НОВОЕ: Обработка главного чекбокса "Выбрать все" на текущей странице
+        // Обработка главного чекбокса "Выбрать все" на текущей странице
         if (this.dom.selectAll) {
             this.dom.selectAll.addEventListener('change', (e) => {
                 const isChecked = e.target.checked;
@@ -157,11 +157,14 @@ export class TableController {
         } catch (e) {
             if (e.name === 'AbortError') return;
 
-            // БЕЗОПАСНЫЙ ВЫВОД ОШИБКИ
-            this.dom.tbody.innerHTML = '';
+            // БЕЗОПАСНЫЙ ВЫВОД ОШИБКИ С НОВЫМ ДИЗАЙНОМ
+            clear(this.dom.tbody.id);
             this.dom.tbody.appendChild(
                 el('tr', {},
-                    el('td', { colspan: '100', class: 'text-center text-red-600 py-4' }, `Ошибка: ${e.message}`)
+                    el('td', {
+                        colspan: '100',
+                        style: { textAlign: 'center', color: 'var(--danger-color)', padding: '24px', fontWeight: '500' }
+                    }, `Ошибка загрузки: ${e.message}`)
                 )
             );
         } finally {
@@ -175,8 +178,14 @@ export class TableController {
         clear(this.dom.tbody.id);
 
         if (!items || items.length === 0) {
+            // ПУСТОЕ СОСТОЯНИЕ В НОВОМ ДИЗАЙНЕ
             this.dom.tbody.appendChild(
-                el('tr', {}, el('td', { colspan: '100', class: 'text-center py-4 text-gray-500' }, 'Нет данных'))
+                el('tr', {},
+                    el('td', {
+                        colspan: '100',
+                        style: { textAlign: 'center', padding: '32px', color: 'var(--text-secondary)' }
+                    }, 'Нет данных для отображения')
+                )
             );
             this.updateSelectAllCheckboxState();
             return;
@@ -186,7 +195,7 @@ export class TableController {
         items.forEach(item => {
             const row = this.renderRow(item);
 
-            // НОВОЕ: Восстанавливаем галочки чекбоксов при перелистывании страниц
+            // Восстанавливаем галочки чекбоксов при перелистывании страниц
             const checkbox = row.querySelector('.row-checkbox');
             if (checkbox && this.selectedIds.has(checkbox.value)) {
                 checkbox.checked = true;
@@ -233,14 +242,17 @@ export class TableController {
 
     setLoading(isLoading) {
         this.state.isLoading = isLoading;
-        this.dom.tbody.style.opacity = isLoading ? '0.5' : '1';
+        if (this.dom.tbody) {
+            this.dom.tbody.style.opacity = isLoading ? '0.6' : '1';
+            // Блокируем клики по таблице во время загрузки (чтобы не спамили чекбоксы или кнопки)
+            this.dom.tbody.style.pointerEvents = isLoading ? 'none' : 'auto';
+        }
     }
 
     refresh() {
         this.load();
     }
 
-    // НОВОЕ: Методы API для получения выбранных ID из других модулей (users.js, readings.js)
     getSelectedIds() {
         return Array.from(this.selectedIds);
     }

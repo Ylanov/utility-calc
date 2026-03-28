@@ -3,9 +3,16 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#1a73e8">
     <title>Единая Платформа Управления</title>
-    <link rel="stylesheet" href="style.css">
+
+    <!-- Быстрая загрузка шрифтов -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="style.css">
 </head>
 <body class="portal-body">
     <div class="portal-container">
@@ -13,10 +20,11 @@
             <h1>Единая Платформа</h1>
             <p>Выберите информационную систему для начала работы</p>
         </header>
+
         <div class="portal-grid">
             <!-- Кнопка 1: ЖКХ Лидер -->
             <a href="login.html" class="portal-card">
-                <div class="card-icon" style="color: #3b82f6;">
+                <div class="card-icon" style="color: var(--primary-color);">
                     <i class="fa-solid fa-building-user"></i>
                 </div>
                 <div class="card-title">ЖКХ Лидер</div>
@@ -25,27 +33,26 @@
 
             <!-- Кнопка 2: СТРОБ Арсенал -->
             <a href="arsenal_login.html" class="portal-card">
-                <div class="card-icon" style="color: #ef4444;">
+                <div class="card-icon" style="color: var(--danger-color);">
                     <i class="fa-solid fa-shield-halved"></i>
                 </div>
                 <div class="card-title">СТРОБ Арсенал</div>
                 <div class="card-desc">Автоматизированная система ведения номерного учета вооружения</div>
             </a>
 
-            <!-- Кнопка 3: СТРОБ ГСМ (НОВАЯ) -->
+            <!-- Кнопка 3: СТРОБ ГСМ -->
             <a href="gsm_login.html" class="portal-card">
-                <div class="card-icon" style="color: #f59e0b;"> <!-- Оранжевый цвет -->
+                <div class="card-icon" style="color: var(--warning-color);">
                     <i class="fa-solid fa-gas-pump"></i>
                 </div>
                 <div class="card-title">СТРОБ ГСМ</div>
                 <div class="card-desc">Учет горюче-смазочных материалов, талонов и путевых листов</div>
             </a>
         </div>
-        <footer class="portal-footer">
+
+        <footer class="portal-footer" style="margin-top: 80px; color: var(--text-secondary); font-size: 13px;">
             &copy; 2026 ФГКУ ЦСООР "Лидер". Все права защищены.
         </footer>
     </div>
-    <script type="module">
-    </script>
 </body>
 </html>

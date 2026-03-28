@@ -3,93 +3,93 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Вход в систему</title>
-    <!-- Подключаем стили -->
+    <meta name="theme-color" content="#1a73e8">
+    <title>Вход в систему | ЖКХ Лидер</title>
+
+    <!-- Быстрая загрузка шрифтов -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Иконки и стили -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="style.css">
-    <style>
-        /* Стили для модального окна сброса пароля */
-        .modal-overlay {
-            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.5); justify-content: center; align-items: center;
-            z-index: 1000; backdrop-filter: blur(4px);
-        }
-        .modal-overlay.open { display: flex; animation: fadeIn 0.2s ease-out; }
-        .modal-window {
-            background: white; padding: 30px; border-radius: 12px; width: 90%;
-            max-width: 420px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);
-        }
-        .temp-pass-box {
-            background: #ecfdf5; border: 1px solid #a7f3d0; padding: 20px;
-            text-align: center; border-radius: 8px; margin-top: 15px;
-        }
-        .temp-pass-text {
-            font-size: 32px; font-weight: bold; color: #047857; letter-spacing: 4px; margin: 10px 0;
-        }
-    </style>
+
+    <!-- Предзагрузка скрипта авторизации -->
+    <link rel="modulepreload" href="js/login.js">
 </head>
-<body style="display: flex; justify-content: center; align-items: center; min-height: 100vh; background: #f0f2f5; position: relative; margin: 0; font-family: 'Segoe UI', sans-serif;">
+<body class="portal-body" style="position: relative;">
 
     <!-- Кнопка Назад на портал -->
-    <a href="portal.html" style="position: absolute; top: 20px; left: 20px; color: #666; text-decoration: none; font-weight: 500; display: flex; align-items: center; gap: 5px; font-family: sans-serif;">
-        ← Назад к платформам
+    <a href="portal.html" style="position: absolute; top: 24px; left: 24px; color: var(--text-secondary); font-weight: 500; display: flex; align-items: center; gap: 8px; transition: color 0.2s;">
+        <i class="fa-solid fa-arrow-left"></i> Назад к платформам
     </a>
 
     <!-- Контейнер для тостов (уведомлений) -->
     <div id="toast-container"></div>
 
-    <form id="loginForm" style="background: white; padding: 48px; border-radius: 16px; box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25); width: 100%; max-width: 420px; margin: 0 20px;">
-        <h1 style="text-align: center; color: #111827; font-size: 28px; margin-bottom: 8px;">Вход в систему</h1>
-        <p style="text-align: center; color: #666; margin-bottom: 25px;">ЖКХ Лидер</p>
-
-        <div class="form-group" style="margin-bottom: 20px;">
-            <label for="username" style="font-weight: 600; font-size: 13px; color: #374151; display: block; margin-bottom: 5px;">Логин</label>
-            <input type="text" id="username" required autocomplete="username" placeholder="Ваш логин" style="width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px; box-sizing: border-box; font-size: 14px;">
+    <form id="loginForm" class="styled-form">
+        <div style="text-align: center; margin-bottom: 32px;">
+            <div style="font-size: 40px; color: var(--primary-color); margin-bottom: 16px;"><i class="fa-solid fa-building-user"></i></div>
+            <h1 style="margin: 0; font-size: 24px; color: var(--text-main);">Вход в систему</h1>
+            <p style="margin: 8px 0 0 0; color: var(--text-secondary); font-size: 14px;">ЖКХ Лидер</p>
         </div>
 
-        <div class="form-group" style="margin-bottom: 20px;">
-            <label for="password" style="font-weight: 600; font-size: 13px; color: #374151; display: block; margin-bottom: 5px;">Пароль</label>
-            <input type="password" id="password" required autocomplete="current-password" placeholder="Ваш пароль" style="width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px; box-sizing: border-box; font-size: 14px;">
+        <div class="form-group mb-3">
+            <label for="username">Логин</label>
+            <input type="text" id="username" required autocomplete="username" placeholder="Ваш логин">
         </div>
 
-        <button type="submit" id="btnLogin" class="action-btn primary-btn" style="width: 100%; margin-top: 10px; padding: 12px; font-size: 15px; border-radius: 8px;">Войти</button>
+        <div class="form-group" style="margin-bottom: 24px;">
+            <label for="password">Пароль</label>
+            <input type="password" id="password" required autocomplete="current-password" placeholder="Ваш пароль">
+        </div>
 
-        <!-- Ссылка на сброс пароля -->
-        <div style="text-align: center; margin-top: 20px;">
-            <a href="#" id="btnForgotPass" style="font-size: 13px; color: #3b82f6; text-decoration: none; font-weight: 500;">Забыли пароль?</a>
+        <button type="submit" id="btnLogin" class="action-btn primary-btn full-width" style="padding: 12px; font-size: 15px;">Войти</button>
+
+        <div style="text-align: center; margin-top: 24px;">
+            <a href="#" id="btnForgotPass" style="font-size: 13px; font-weight: 500;">Забыли пароль?</a>
         </div>
     </form>
 
     <!-- МОДАЛЬНОЕ ОКНО СБРОСА ПАРОЛЯ -->
     <div id="resetModal" class="modal-overlay">
-        <div class="modal-window">
-            <h3 style="margin-top: 0; color: #111827; font-size: 20px; text-align: center; margin-bottom: 15px;">Восстановление доступа</h3>
+        <div class="modal-window" style="width: 450px;">
+            <div class="modal-header">
+                <h3>Восстановление доступа</h3>
+                <button type="button" class="close-icon" id="btnCloseIconReset">&times;</button>
+            </div>
 
-            <form id="resetForm">
-                <p style="font-size: 13px; color: #4b5563; margin-bottom: 20px; text-align: center; line-height: 1.5;">Для подтверждения личности введите ваш Логин и <b>точную площадь</b> помещения (можно посмотреть в квитанции).</p>
+            <div class="modal-form" style="padding-top: 16px;">
+                <form id="resetForm" class="styled-form">
+                    <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 24px; line-height: 1.5;">
+                        Для подтверждения личности введите ваш Логин и <b>точную площадь</b> помещения (можно посмотреть в квитанции).
+                    </p>
 
-                <div class="form-group" style="margin-bottom: 15px;">
-                    <label for="resetUsername" style="font-size: 13px; font-weight: bold; color: #374151; display: block; margin-bottom: 5px;">Логин (Лицевой счет)</label>
-                    <input type="text" id="resetUsername" required style="width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px; box-sizing: border-box; font-size: 14px;">
-                </div>
-                <div class="form-group" style="margin-bottom: 24px;">
-                    <label for="resetArea" style="font-size: 13px; font-weight: bold; color: #374151; display: block; margin-bottom: 5px;">Площадь (м²)</label>
-                    <input type="number" step="0.1" id="resetArea" required placeholder="Например: 42.5" style="width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px; box-sizing: border-box; font-size: 14px;">
-                </div>
+                    <div class="form-group mb-3">
+                        <label for="resetUsername">Логин (Лицевой счет)</label>
+                        <input type="text" id="resetUsername" required>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 24px;">
+                        <label for="resetArea">Площадь (м²)</label>
+                        <input type="number" step="0.1" id="resetArea" required placeholder="Например: 42.5">
+                    </div>
 
-                <div style="display: flex; gap: 12px;">
-                    <button type="button" id="btnCancelReset" class="action-btn secondary-btn" style="flex: 1; justify-content: center;">Отмена</button>
-                    <button type="submit" id="btnSubmitReset" class="action-btn primary-btn" style="flex: 1; justify-content: center;">Сбросить</button>
-                </div>
-            </form>
+                    <div style="display: flex; gap: 12px;">
+                        <button type="button" id="btnCancelReset" class="action-btn secondary-btn" style="flex: 1;">Отмена</button>
+                        <button type="submit" id="btnSubmitReset" class="action-btn primary-btn" style="flex: 1;">Сбросить</button>
+                    </div>
+                </form>
 
-            <!-- Блок успешного сброса -->
-            <div id="resetSuccess" style="display: none;">
-                <div class="temp-pass-box">
-                    <p style="margin: 0; font-size: 13px; color: #065f46;">Ваш временный пароль:</p>
-                    <div class="temp-pass-text" id="tempPasswordDisplay">123456</div>
-                    <p style="margin: 0; font-size: 12px; color: #065f46;">Запишите его. Система попросит сменить пароль при входе.</p>
+                <!-- Блок успешного сброса -->
+                <div id="resetSuccess" class="hide">
+                    <div style="background: var(--success-bg); border: 1px solid #cce8d6; padding: 24px; text-align: center; border-radius: var(--radius-sm); margin-bottom: 24px;">
+                        <p style="margin: 0 0 12px 0; font-size: 13px; color: var(--success-color); font-weight: 500;">Ваш временный пароль:</p>
+                        <div id="tempPasswordDisplay" style="font-size: 32px; font-weight: 700; color: #0d652d; letter-spacing: 4px; font-family: monospace;">123456</div>
+                        <p style="margin: 12px 0 0 0; font-size: 12px; color: var(--text-secondary);">Запишите его. Система попросит сменить пароль при входе.</p>
+                    </div>
+                    <button type="button" id="btnCloseSuccess" class="action-btn success-btn full-width" style="padding: 12px;">Перейти ко входу</button>
                 </div>
-                <button type="button" id="btnCloseSuccess" class="action-btn success-btn" style="width: 100%; margin-top: 20px; justify-content: center;">Перейти ко входу</button>
             </div>
         </div>
     </div>
