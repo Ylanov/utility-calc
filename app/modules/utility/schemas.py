@@ -283,13 +283,10 @@ class DeviceTokenCreate(BaseModel):
     token: str
     device_type: str = "android"  # android или ios
 
+
 # ======================================================
 # MOVE & METER REPLACEMENT SCHEMAS
 # ======================================================
-
-class MoveUserSchema(BaseModel):
-    new_room_id: int
-
 
 class RelocateUserSchema(BaseModel):
     # Данные для расчета по старой комнате
@@ -304,3 +301,10 @@ class RelocateUserSchema(BaseModel):
 
     # Новая комната (обязательна только если action == 'move')
     new_room_id: Optional[int] = None
+
+
+class ReplaceMeterSchema(BaseModel):
+    meter_type: str  # "hot", "cold", "elect"
+    final_old_value: DecimalVolume
+    initial_new_value: DecimalVolume
+    new_serial: str
