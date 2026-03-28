@@ -1,4 +1,5 @@
 # app/modules/utility/routers/rooms.py
+from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -6,12 +7,15 @@ from sqlalchemy import func, or_, desc, asc
 from typing import Optional, List
 
 from app.core.database import get_db
-from app.modules.utility.models import Room, User, MeterReading
-from app.modules.utility.schemas import RoomCreate, RoomUpdate, RoomResponse, PaginatedResponse
+from app.modules.utility.models import Room, User, MeterReading, BillingPeriod, Tariff
+from app.modules.utility.schemas import RoomCreate, RoomUpdate, RoomResponse, PaginatedResponse, ReplaceMeterSchema
 from app.core.dependencies import get_current_user, RoleChecker
+from app.modules.utility.services.calculations import calculate_utilities
 
 router = APIRouter(prefix="/api/rooms", tags=["Housing"])
 allow_management = RoleChecker(["accountant", "admin", "financier"])
+
+ZERO = Decimal("0.00")
 
 
 @router.get("/analyze", summary="Мощный анализатор Жилфонда", dependencies=[Depends(allow_management)])
@@ -211,3 +215,106 @@ async def delete_room(room_id: int, db: AsyncSession = Depends(get_db)):
     await db.delete(room)
     await db.commit()
     return None
+
+
+@router.post("/{room_id}/replace-meter", dependencies=[Depends(allow_management)])
+async def replace_meter(room_id: int, data: ReplaceMeterSchema, db: AsyncSession = Depends(get_db)):
+    """
+    Безопасная замена счетчика.
+    Рассчитывает долг по старому счетчику и устанавливает нулевую базу для нового.
+    """
+    room = await db.get(Room, room_id)
+    if not room:
+        raise HTTPException(status_code=404, detail="Комната не найдена")
+
+    # Ищем активный период
+    active_period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))).scalars().first()
+    if not active_period:
+        raise HTTPException(status_code=400, detail="Нет активного расчетного периода")
+
+    # Ищем черновики. Если есть черновик, просим сначала его утвердить или удалить
+    draft = (await db.execute(select(MeterReading).where(
+        MeterReading.room_id == room.id,
+        MeterReading.period_id == active_period.id,
+        MeterReading.is_approved == False
+    ))).scalars().first()
+    if draft:
+        raise HTTPException(status_code=400,
+                            detail="По этой комнате висит необработанный черновик показаний. Утвердите или удалите его перед заменой счетчика.")
+
+    # Ищем жильца для расчета (чтобы взять тариф и долю)
+    user = (await db.execute(
+        select(User).where(User.room_id == room.id, User.is_deleted == False).limit(1))).scalars().first()
+
+    # Ищем последние показания
+    prev_reading = (await db.execute(
+        select(MeterReading).where(MeterReading.room_id == room.id, MeterReading.is_approved == True)
+        .order_by(MeterReading.created_at.desc()).limit(1)
+    )).scalars().first()
+
+    p_hot = prev_reading.hot_water if prev_reading else ZERO
+    p_cold = prev_reading.cold_water if prev_reading else ZERO
+    p_elect = prev_reading.electricity if prev_reading else ZERO
+
+    # 1. Расчет дельты по закрываемому счетчику
+    d_hot, d_cold, d_elect = ZERO, ZERO, ZERO
+
+    if data.meter_type == "hot":
+        if data.final_old_value < p_hot: raise HTTPException(400, "Финальное показание меньше предыдущего!")
+        d_hot = data.final_old_value - p_hot
+        room.hw_meter_serial = data.new_serial
+        c_hot, c_cold, c_elect = data.final_old_value, p_cold, p_elect
+        n_hot, n_cold, n_elect = data.initial_new_value, p_cold, p_elect
+    elif data.meter_type == "cold":
+        if data.final_old_value < p_cold: raise HTTPException(400, "Финальное показание меньше предыдущего!")
+        d_cold = data.final_old_value - p_cold
+        room.cw_meter_serial = data.new_serial
+        c_hot, c_cold, c_elect = p_hot, data.final_old_value, p_elect
+        n_hot, n_cold, n_elect = p_hot, data.initial_new_value, p_elect
+    else:  # elect
+        if data.final_old_value < p_elect: raise HTTPException(400, "Финальное показание меньше предыдущего!")
+        d_elect = data.final_old_value - p_elect
+        room.el_meter_serial = data.new_serial
+        c_hot, c_cold, c_elect = p_hot, p_cold, data.final_old_value
+        n_hot, n_cold, n_elect = p_hot, p_cold, data.initial_new_value
+
+    # Если в комнате есть жилец, начисляем ему стоимость остатка старого счетчика
+    if user and (d_hot > 0 or d_cold > 0 or d_elect > 0):
+        t = (await db.execute(select(Tariff).where(Tariff.id == getattr(user, 'tariff_id', 1)))).scalars().first()
+
+        residents = Decimal(user.residents_count)
+        total_res = Decimal(room.total_room_residents) if room.total_room_residents > 0 else Decimal(1)
+        elect_share = (residents / total_res) * d_elect
+
+        costs = calculate_utilities(user, room, t, d_hot, d_cold, d_hot + d_cold, elect_share)
+
+        # Запись 1: Закрытие старого счетчика (с начислением суммы)
+        closing_reading = MeterReading(
+            user_id=user.id, room_id=room.id, period_id=active_period.id,
+            hot_water=c_hot, cold_water=c_cold, electricity=c_elect,
+            is_approved=True, anomaly_flags="METER_CLOSED", anomaly_score=0,
+            total_209=costs['total_cost'] - costs['cost_social_rent'],
+            total_205=costs['cost_social_rent'], total_cost=costs['total_cost']
+        )
+        for k, v in costs.items(): setattr(closing_reading, k, v)
+        db.add(closing_reading)
+        await db.flush()
+
+    # Запись 2: Базовый старт нового счетчика (сумма 0 руб)
+    # Это нужно чтобы следующий расчет считал от initial_new_value
+    base_reading = MeterReading(
+        user_id=user.id if user else None, room_id=room.id, period_id=active_period.id,
+        hot_water=n_hot, cold_water=n_cold, electricity=n_elect,
+        is_approved=True, anomaly_flags="METER_REPLACEMENT", anomaly_score=0,
+        total_209=ZERO, total_205=ZERO, total_cost=ZERO
+    )
+    db.add(base_reading)
+
+    # Обновляем кэш комнаты
+    room.last_hot_water = n_hot
+    room.last_cold_water = n_cold
+    room.last_electricity = n_elect
+    db.add(room)
+
+    await db.commit()
+    return {"status": "success"}

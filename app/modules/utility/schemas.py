@@ -282,3 +282,25 @@ class OneTimeChargeSchema(BaseModel):
 class DeviceTokenCreate(BaseModel):
     token: str
     device_type: str = "android"  # android или ios
+
+# ======================================================
+# MOVE & METER REPLACEMENT SCHEMAS
+# ======================================================
+
+class MoveUserSchema(BaseModel):
+    new_room_id: int
+
+
+class RelocateUserSchema(BaseModel):
+    # Данные для расчета по старой комнате
+    total_days_in_month: int
+    days_lived: int
+    hot_water: DecimalVolume
+    cold_water: DecimalVolume
+    electricity: DecimalVolume
+
+    # Действие: 'move' (переселить) или 'evict' (выселить)
+    action: str
+
+    # Новая комната (обязательна только если action == 'move')
+    new_room_id: Optional[int] = None

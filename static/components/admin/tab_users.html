@@ -1,3 +1,4 @@
+<!-- static/components/admin/tab_users.html -->
 <div id="users" class="tab-content">
     <div class="grid-2-col">
         <!-- Колонка 1: Добавление жильца -->
@@ -206,65 +207,87 @@
         </div>
     </div>
 
-    <!-- Модалка: Разовое начисление (Выселение/Переезд) -->
-    <div id="oneTimeChargeModal" class="modal-overlay">
-        <div class="modal-window" style="width: 500px;">
-            <div class="modal-header" style="background: #fef3c7;">
-                <h3 style="color: #92400e;">⏳ Разовое начисление (Выписка/Переезд)</h3>
-                <button class="close-btn close-icon" id="btnCloseOneTime">&times;</button>
+    <!-- Модалка: Выселение / Переезд (Единое окно) -->
+    <div id="relocateModal" class="modal-overlay">
+        <div class="modal-window" style="width: 600px;">
+            <div class="modal-header" style="background: #eff6ff; border-bottom: 1px solid #bfdbfe;">
+                <h3 style="color: #1e40af; margin: 0; display: flex; align-items: center; gap: 8px;">
+                    🚚 Оформление выезда / переезда
+                </h3>
+                <button class="close-btn close-icon" id="btnCloseRelocate">&times;</button>
             </div>
-            <form id="oneTimeChargeForm">
+            <form id="relocateForm">
                 <div class="modal-form">
-                    <p style="font-size: 13px; color: #555; margin-bottom: 15px;">
-                        Используется при выселении жильца или смене комнаты в середине месяца. Постоянные платежи (найм, содержание и т.д.) будут рассчитаны пропорционально прожитым дням.
-                    </p>
 
-                    <input type="hidden" id="otcUserId">
+                    <input type="hidden" id="relUserId">
 
+                    <!-- ИНФО О ЖИЛЬЦЕ -->
                     <div style="background: #f9fafb; padding: 15px; border-radius: 8px; border: 1px solid #e5e7eb; margin-bottom: 15px;">
-                        <strong style="display:block; margin-bottom:10px;">Жилец: <span id="otcUserName" style="color:var(--primary-color);">...</span></strong>
+                        <strong style="display:block; margin-bottom:5px; font-size: 14px;">Жилец: <span id="relUserName" style="color:var(--primary-color);">...</span></strong>
+                        <span style="font-size: 13px; color: #6b7280;">Текущий адрес: <b id="relCurrentAddress">...</b></span>
+                    </div>
 
-                        <div class="form-grid-2">
+                    <!-- ВЫБОР ДЕЙСТВИЯ -->
+                    <div style="margin-bottom: 20px; padding: 15px; border: 1px solid #d1d5db; border-radius: 8px;">
+                        <h4 style="margin: 0 0 12px 0; font-size: 14px; color: #374151;">Что делаем с жильцом?</h4>
+                        <div style="display: flex; gap: 20px;">
+                            <label style="cursor: pointer; display: flex; align-items: center; gap: 8px;">
+                                <input type="radio" name="relAction" value="evict" checked style="width: 18px; height: 18px; cursor: pointer;">
+                                <span style="color: #b91c1c; font-weight: 500;">🚪 Выселить окончательно</span>
+                            </label>
+                            <label style="cursor: pointer; display: flex; align-items: center; gap: 8px;">
+                                <input type="radio" name="relAction" value="move" style="width: 18px; height: 18px; cursor: pointer;">
+                                <span style="color: #047857; font-weight: 500;">📦 Переселить в другую комнату</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- БЛОК 1: РАСЧЕТ ДОЛГА ПО СТАРОЙ КОМНАТЕ -->
+                    <h4 style="font-size: 14px; margin-bottom: 10px; color: #92400e;">Шаг 1. Финальный расчет за текущую комнату</h4>
+                    <div style="background: #fffbeb; padding: 15px; border-left: 4px solid #f59e0b; border-radius: 4px; margin-bottom: 15px;">
+                        <div class="form-grid-2" style="margin-bottom: 15px;">
                             <div class="form-group">
                                 <label>Дней в этом месяце</label>
-                                <input type="number" id="otcTotalDays" required min="28" max="31">
+                                <input type="number" id="relTotalDays" required min="28" max="31">
                             </div>
                             <div class="form-group">
-                                <label style="color: #d97706; font-weight:bold;">Прожито дней</label>
-                                <input type="number" id="otcDaysLived" required min="1" max="31">
+                                <label style="color: #d97706; font-weight:bold;">Прожито дней в старой ком.</label>
+                                <input type="number" id="relDaysLived" required min="1" max="31">
+                            </div>
+                        </div>
+                        <label style="font-size: 13px; font-weight: bold; margin-bottom: 5px; display: block; color: #374151;">Финальные показания счетчиков:</label>
+                        <div class="form-grid-3">
+                            <div class="form-group">
+                                <input type="number" step="0.001" id="relHot" required placeholder="ГВС">
+                            </div>
+                            <div class="form-group">
+                                <input type="number" step="0.001" id="relCold" required placeholder="ХВС">
+                            </div>
+                            <div class="form-group">
+                                <input type="number" step="0.001" id="relElect" required placeholder="Свет">
                             </div>
                         </div>
                     </div>
 
-                    <h4 style="font-size: 14px; margin-bottom: 10px;">Финальные показания счетчиков:</h4>
-                    <div class="form-grid-3">
-                        <div class="form-group">
-                            <label>🔥 ГВС (м³)</label>
-                            <input type="number" step="0.001" id="otcHot" required>
-                        </div>
-                        <div class="form-group">
-                            <label>💧 ХВС (м³)</label>
-                            <input type="number" step="0.001" id="otcCold" required>
-                        </div>
-                        <div class="form-group">
-                            <label>⚡ Свет (кВт)</label>
-                            <input type="number" step="0.001" id="otcElect" required>
+                    <!-- БЛОК 2: КУДА ПЕРЕСЕЛЯЕМ (Скрыт по умолчанию) -->
+                    <div id="relDestinationBlock" style="display: none; background: #ecfdf5; padding: 15px; border-left: 4px solid #10b981; border-radius: 4px;">
+                        <h4 style="font-size: 14px; margin: 0 0 10px 0; color: #065f46;">Шаг 2. Куда переезжает?</h4>
+                        <div class="form-grid-2">
+                            <div class="form-group">
+                                <label>Общежитие</label>
+                                <select id="relDormSelect"><option value="">Загрузка...</option></select>
+                            </div>
+                            <div class="form-group">
+                                <label>Комната</label>
+                                <select id="relRoomSelect" disabled><option value="">Сначала выберите здание</option></select>
+                            </div>
                         </div>
                     </div>
 
-                    <div style="margin-top: 20px; padding: 15px; border-radius: 8px; border: 1px dashed #ef4444; background: #fef2f2;">
-                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; color: #b91c1c; font-weight: 600;">
-                            <input type="checkbox" id="otcIsMovingOut" style="width: 20px; height: 20px; cursor: pointer;">
-                            Жилец окончательно съезжает (Освободить логин и выселить)
-                        </label>
-                        <p style="font-size: 12px; margin: 5px 0 0 30px; color: #dc2626;">
-                            Если жилец просто переезжает в другую комнату, не ставьте эту галочку (просто измените номер комнаты в его профиле после расчета).
-                        </p>
-                    </div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="action-btn secondary-btn" id="btnCancelOneTime">Отмена</button>
-                    <button type="submit" class="action-btn warning-btn" id="btnSubmitOneTime">Сформировать квитанцию</button>
+                    <button type="button" class="action-btn secondary-btn" id="btnCancelRelocate">Отмена</button>
+                    <button type="submit" class="action-btn primary-btn" id="btnSubmitRelocate">Подтвердить операцию</button>
                 </div>
             </form>
         </div>

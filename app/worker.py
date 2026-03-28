@@ -83,7 +83,7 @@ celery.conf.update(
 
 celery.conf.beat_schedule = {
     "check-submission-period-daily": {
-        "task": "app.modules.utility.tasks.check_auto_period_task",
+        "task": "check_auto_period_task",  # <--- Оставляем только короткое имя!
         "schedule": crontab(minute=5, hour=0),
     },
 }

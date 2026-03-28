@@ -50,6 +50,21 @@ export const HousingModule = {
                 el: document.getElementById('roomElSerial')
             }
         };
+
+        // Элементы модалки замены счетчика
+        this.meter = {
+            modal: document.getElementById('replaceMeterModal'),
+            form: document.getElementById('replaceMeterForm'),
+            roomId: document.getElementById('meterRoomId'),
+            roomName: document.getElementById('meterRoomName'),
+            type: document.getElementById('meterType'),
+            newSerial: document.getElementById('meterNewSerial'),
+            finalOld: document.getElementById('meterFinalOld'),
+            initialNew: document.getElementById('meterInitialNew'),
+            btnClose: document.getElementById('btnCloseMeter'),
+            btnCancel: document.getElementById('btnCancelMeter'),
+            btnSubmit: document.getElementById('btnSubmitMeter')
+        };
     },
 
     bindEvents() {
@@ -84,6 +99,13 @@ export const HousingModule = {
             this.dom.btnAnalyzerClose.forEach(btn => btn.addEventListener('click', () => {
                 this.dom.analyzerModal.classList.remove('open');
             }));
+        }
+
+        // События замены счетчика
+        if (this.meter.form) {
+            this.meter.form.addEventListener('submit', (e) => this.handleMeterSubmit(e));
+            this.meter.btnClose.addEventListener('click', (e) => { e.preventDefault(); this.meter.modal.classList.remove('open'); });
+            this.meter.btnCancel.addEventListener('click', (e) => { e.preventDefault(); this.meter.modal.classList.remove('open'); });
         }
     },
 
@@ -207,6 +229,11 @@ export const HousingModule = {
                     el('td', { class: 'text-sm font-mono', style: {color: '#2563eb'} }, room.cw_meter_serial || '-'),
                     el('td', { class: 'text-sm font-mono', style: {color: '#d97706'} }, room.el_meter_serial || '-'),
                     el('td', { class: 'text-center' },
+                        // НОВАЯ КНОПКА ЗАМЕНЫ СЧЕТЧИКА
+                        el('button', {
+                            class: 'btn-icon', title: 'Замена счетчика', style: { marginRight: '5px', background: '#f0fdf4', color: '#166534', borderColor: '#bbf7d0' },
+                            onclick: () => this.openMeterModal(room)
+                        }, '🔄'),
                         el('button', {
                             class: 'btn-icon btn-edit', title: 'Редактировать', style: { marginRight: '5px' },
                             onclick: () => this.openModal(room)
@@ -295,6 +322,46 @@ export const HousingModule = {
             this.table.refresh();
         } catch (e) {
             toast(e.message, 'error');
+        }
+    },
+
+    // ==========================================
+    // ЛОГИКА ЗАМЕНЫ СЧЕТЧИКА
+    // ==========================================
+    openMeterModal(room) {
+        if (!this.meter.modal) return;
+        this.meter.form.reset();
+        this.meter.roomId.value = room.id;
+        this.meter.roomName.textContent = `${room.dormitory_name}, ком. ${room.room_number}`;
+        this.meter.initialNew.value = "0"; // Обычно новый счетчик начинается с нуля
+        this.meter.modal.classList.add('open');
+    },
+
+    async handleMeterSubmit(e) {
+        e.preventDefault();
+
+        const payload = {
+            meter_type: this.meter.type.value,
+            new_serial: this.meter.newSerial.value.trim(),
+            final_old_value: parseFloat(this.meter.finalOld.value.replace(',', '.')),
+            initial_new_value: parseFloat(this.meter.initialNew.value.replace(',', '.'))
+        };
+
+        if (!payload.new_serial) return toast('Укажите новый номер счетчика', 'error');
+        if (isNaN(payload.final_old_value)) return toast('Введите финальное показание', 'error');
+
+        if (!confirm('Вы уверены? Система рассчитает потребление по старому счетчику и установит новые базовые значения. Это действие нельзя отменить.')) return;
+
+        setLoading(this.meter.btnSubmit, true, 'Оформление...');
+        try {
+            await api.post(`/rooms/${this.meter.roomId.value}/replace-meter`, payload);
+            toast('Счетчик успешно заменен!', 'success');
+            this.meter.modal.classList.remove('open');
+            this.table.refresh();
+        } catch (err) {
+            toast(err.message, 'error');
+        } finally {
+            setLoading(this.meter.btnSubmit, false, 'Оформить замену');
         }
     }
 };

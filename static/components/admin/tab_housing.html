@@ -138,4 +138,50 @@
             </div>
         </div>
     </div>
+    <!-- Модалка: Замена счетчика -->
+    <div id="replaceMeterModal" class="modal-overlay">
+        <div class="modal-window" style="width: 500px;">
+            <div class="modal-header" style="background: #f0fdf4; border-bottom: 1px solid #bbf7d0;">
+                <h3 style="color: #166534;">🔄 Замена счетчика</h3>
+                <button class="close-btn close-icon" id="btnCloseMeter">&times;</button>
+            </div>
+            <form id="replaceMeterForm">
+                <div class="modal-form">
+                    <input type="hidden" id="meterRoomId">
+                    <p style="font-size: 14px; margin-bottom: 15px;">Помещение: <b id="meterRoomName" style="color: var(--primary-color);">...</b></p>
+
+                    <div class="form-group mb-3">
+                        <label>Какой счетчик меняем?</label>
+                        <select id="meterType" required style="font-weight: bold;">
+                            <option value="hot">🔥 Горячая вода (ГВС)</option>
+                            <option value="cold">💧 Холодная вода (ХВС)</option>
+                            <option value="elect">⚡ Электричество</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group mb-3">
+                        <label>Новый серийный номер счетчика</label>
+                        <input type="text" id="meterNewSerial" required placeholder="Например: 12345678">
+                    </div>
+
+                    <div class="form-grid-2">
+                        <div class="form-group">
+                            <label style="color: #b91c1c;">Снимаем старый (Финал)</label>
+                            <input type="number" step="0.001" id="meterFinalOld" required placeholder="Показание">
+                            <span style="font-size:11px; color:#6b7280;">По нему рассчитается остаток долга</span>
+                        </div>
+                        <div class="form-group">
+                            <label style="color: #047857;">Ставим новый (Старт)</label>
+                            <input type="number" step="0.001" id="meterInitialNew" required value="0">
+                            <span style="font-size:11px; color:#6b7280;">Обычно начинается с 0</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="action-btn secondary-btn" id="btnCancelMeter">Отмена</button>
+                    <button type="submit" class="action-btn success-btn" id="btnSubmitMeter">Оформить замену</button>
+                </div>
+            </form>
+        </div>
+    </div>
 </div>
