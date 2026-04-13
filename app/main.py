@@ -8,8 +8,8 @@ from typing import List
 import sentry_sdk
 import redis.asyncio as redis
 
-from fastapi import FastAPI, Request, APIRouter
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -19,10 +19,10 @@ from fastapi_cache import FastAPICache
 from fastapi_cache.backends.redis import RedisBackend
 
 from sqlalchemy.future import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from passlib.context import CryptContext
 
 from prometheus_fastapi_instrumentator import Instrumentator
-from fastapi.responses import JSONResponse
 
 # === CORE ===
 from app.core.config import settings
@@ -89,13 +89,6 @@ pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 APP_MODE = os.environ.get("APP_MODE", "all")
 
 # =====================================================================
-# API PREFIXES
-# =====================================================================
-API_PREFIX = "/api"
-ARSENAL_API_PREFIX = f"{API_PREFIX}/arsenal"
-GSM_API_PREFIX = f"{API_PREFIX}/gsm"
-
-# =====================================================================
 # SENTRY
 # =====================================================================
 if settings.SENTRY_DSN:
@@ -104,6 +97,44 @@ if settings.SENTRY_DSN:
         environment=settings.ENVIRONMENT,
         traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
     )
+
+
+# =====================================================================
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+# =====================================================================
+
+async def ensure_admin_exists_safe(session_local, model, label: str):
+    """
+    Создаёт администратора если его нет. Не падает при ошибке.
+
+    ИСПРАВЛЕНИЕ: предыдущая версия делала SELECT → INSERT.
+    При 4 воркерах Gunicorn все они одновременно стартуют, делают SELECT
+    (все видят что нет admin), затем все пытаются INSERT →
+    UniqueViolationError у 3 из 4 воркеров при каждом деплое.
+
+    Решение: INSERT ... ON CONFLICT DO NOTHING — атомарная операция на уровне БД,
+    безопасна при параллельном выполнении любого числа воркеров.
+    """
+    try:
+        async with session_local() as db:
+            hashed_pw = pwd_context.hash("admin")
+
+            stmt = (
+                pg_insert(model)
+                .values(
+                    username="admin",
+                    hashed_password=hashed_pw,
+                    role="admin",
+                )
+                .on_conflict_do_nothing(index_elements=["username"])
+            )
+
+            await db.execute(stmt)
+            await db.commit()
+            logger.info(f"{label}: admin user ensured (created or already existed)")
+
+    except Exception as e:
+        logger.error(f"{label}: Failed to ensure admin exists: {e}", exc_info=True)
 
 
 # =====================================================================
@@ -119,16 +150,9 @@ async def lifespan(app: FastAPI):
             encoding="utf-8",
             decode_responses=True,
         )
-
         await FastAPILimiter.init(redis_client)
-
-        FastAPICache.init(
-            RedisBackend(redis_client),
-            prefix="fastapi-cache",
-        )
-
+        FastAPICache.init(RedisBackend(redis_client), prefix="fastapi-cache")
         logger.info("Redis connected")
-
     except Exception as error:
         logger.error(f"Redis connection failed: {error}")
 
@@ -143,8 +167,6 @@ async def lifespan(app: FastAPI):
 
 # =====================================================================
 # FASTAPI INIT
-# ИСПРАВЛЕНИЕ: docs_url отключается в production — Swagger не должен
-# быть доступен всем в боевой среде.
 # =====================================================================
 IS_PRODUCTION = settings.ENVIRONMENT == "production"
 
@@ -159,12 +181,30 @@ app = FastAPI(
 
 Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
+
+# =====================================================================
+# HEALTHCHECK ENDPOINT
+#
+# ИСПРАВЛЕНИЕ: эндпоинт /health отсутствовал — FastAPI возвращал 404,
+# CI/CD pipeline и Docker healthcheck падали с кодом 000/404.
+#
+# ВАЖНО: регистрируется ДО подключения StaticFiles mount.
+# StaticFiles монтируется на "/" и перехватывает ВСЕ запросы которые
+# не совпали с роутами выше. Если /health зарегистрировать после mount —
+# StaticFiles поймает его первым и вернёт 404.
+# =====================================================================
+@app.get("/health", tags=["System"], include_in_schema=False)
+async def health_check():
+    """
+    Healthcheck для Docker, CI/CD и Nginx.
+    Всегда возвращает 200 если сервис поднят.
+    """
+    return {"status": "ok", "mode": APP_MODE}
+
+
 # =====================================================================
 # MIDDLEWARES
 # =====================================================================
-
-# ИСПРАВЛЕНИЕ: убран wildcard "*" — он полностью нейтрализует TrustedHostMiddleware.
-# Оставляем только реальные хосты проекта.
 app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=["asy-tk.ru", "www.asy-tk.ru", "localhost", "127.0.0.1"],
@@ -201,9 +241,6 @@ async def security_headers(request: Request, call_next):
     if IS_PRODUCTION:
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
 
-    # ИСПРАВЛЕНИЕ: добавлен Content-Security-Policy.
-    # Ограничивает загрузку ресурсов только с доверенных источников,
-    # что существенно снижает риск XSS-атак.
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline' cdnjs.cloudflare.com; "
@@ -227,31 +264,6 @@ async def no_cache_api_headers(request: Request, call_next):
         response.headers["Expires"] = "0"
 
     return response
-
-
-# =====================================================================
-# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
-# =====================================================================
-
-async def ensure_admin_exists_safe(session_local, model, label: str):
-    """Создаёт администратора если его нет. Не падает при ошибке."""
-    try:
-        async with session_local() as db:
-            result = await db.execute(select(model).where(model.role == "admin"))
-            admin = result.scalars().first()
-            if not admin:
-                admin = model(
-                    username="admin",
-                    hashed_password=pwd_context.hash("admin"),
-                    role="admin"
-                )
-                db.add(admin)
-                await db.commit()
-                logger.info(f"{label}: admin user created")
-            else:
-                logger.info(f"{label}: admin user already exists")
-    except Exception as e:
-        logger.error(f"{label}: Failed to ensure admin exists: {e}")
 
 
 # =====================================================================
@@ -287,5 +299,8 @@ app.include_router(gsm_reports.router)
 
 # =====================================================================
 # STATIC FILES
+# Монтируется ПОСЛЕДНИМ — перехватывает все запросы которые не
+# совпали с роутами FastAPI выше. /health должен быть зарегистрирован
+# до этой строки, иначе StaticFiles вернёт 404.
 # =====================================================================
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

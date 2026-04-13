@@ -324,9 +324,18 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
+      - "443:443"
     volumes:
-      - ./nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf
-      - ./static:/usr/share/nginx/html/static
+      # ИСПРАВЛЕНИЕ: монтируем все три конфиг-файла.
+      # Ранее отсутствовали common_proxy.conf и common_locations.conf →
+      # Nginx падал: open() "common_proxy.conf" failed (2: No such file)
+      - ./nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./nginx/conf.d/common_proxy.conf:/etc/nginx/conf.d/common_proxy.conf:ro
+      - ./nginx/conf.d/common_locations.conf:/etc/nginx/conf.d/common_locations.conf:ro
+      # SSL-сертификаты Let's Encrypt (генерируются certbot на VPS)
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+      # Статика и кеш
+      - ./static:/usr/share/nginx/html/static:ro
       - nginx_cache:/var/cache/nginx
     depends_on:
       - web_jkh
