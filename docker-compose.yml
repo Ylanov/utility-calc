@@ -330,8 +330,14 @@ services:
       # Ранее отсутствовали common_proxy.conf и common_locations.conf →
       # Nginx падал: open() "common_proxy.conf" failed (2: No such file)
       - ./nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./nginx/conf.d/common_proxy.conf:/etc/nginx/conf.d/common_proxy.conf:ro
-      - ./nginx/conf.d/common_locations.conf:/etc/nginx/conf.d/common_locations.conf:ro
+      # Монтируем в /snippets/ а НЕ в /conf.d/ — важно!
+      # Nginx автоматически загружает ВСЕ *.conf из /conf.d/ на уровне http {}.
+      # Файл common_locations.conf содержит location {} блоки — они допустимы
+      # только внутри server {}, на уровне http {} Nginx падает с ошибкой.
+      # /snippets/ — обычная папка, Nginx её не трогает автоматически,
+      # файлы оттуда подключаются только через явный include в default.conf.
+      - ./nginx/snippets/common_proxy.conf:/etc/nginx/snippets/common_proxy.conf:ro
+      - ./nginx/snippets/common_locations.conf:/etc/nginx/snippets/common_locations.conf:ro
       # SSL-сертификаты Let's Encrypt (генерируются certbot на VPS)
       - /etc/letsencrypt:/etc/letsencrypt:ro
       # Статика и кеш
