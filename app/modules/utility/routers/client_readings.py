@@ -79,8 +79,6 @@ async def get_reading_state(
     if not user or not user.room_id:
         raise HTTPException(status_code=400, detail="Вы не привязаны к помещению. Обратитесь к администратору.")
 
-    room = user.room
-
     period = (await db.execute(
         select(BillingPeriod).where(BillingPeriod.is_active)
     )).scalars().first()
