@@ -1,5 +1,9 @@
 services:
 
+  # ==========================================
+  # ===== DATABASE ============================
+  # ==========================================
+
   db:
     image: postgres:15
     container_name: utility_calc_db
@@ -27,6 +31,10 @@ services:
       - no-new-privileges:true
     networks:
       - utility_net
+
+  # ==========================================
+  # ===== PGBOUNCER ===========================
+  # ==========================================
 
   pgbouncer:
     image: edoburu/pgbouncer:latest
@@ -58,6 +66,10 @@ services:
     networks:
       - utility_net
 
+  # ==========================================
+  # ===== REDIS ===============================
+  # ==========================================
+
   redis:
     image: redis:7
     container_name: utility_calc_redis
@@ -82,6 +94,10 @@ services:
     networks:
       - utility_net
 
+  # ==========================================
+  # ===== MINIO (S3) ==========================
+  # ==========================================
+
   minio:
     image: minio/minio:latest
     container_name: utility_calc_minio
@@ -93,7 +109,7 @@ services:
     volumes:
       - minio_data:/data:rw
     healthcheck:
-      test: [ "CMD-SHELL", "bash -c '</dev/tcp/localhost/9000' || exit 1" ]
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9000' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -102,6 +118,10 @@ services:
       - no-new-privileges:true
     networks:
       - utility_net
+
+  # ==========================================
+  # ===== MIGRATIONS ==========================
+  # ==========================================
 
   migration_job:
     image: ghcr.io/ylanov/utility-calc:latest
@@ -126,8 +146,9 @@ services:
       set -e
       echo 'Waiting for DB...'
       sleep 5
-      echo 'Running migrations...'
+      echo 'Running JKH migrations...'
       alembic upgrade head
+      echo 'Running Arsenal migrations...'
       alembic -c alembic_arsenal.ini upgrade head
       echo 'Seeding initial data...'
       python -m app.core.initial_data
@@ -139,7 +160,7 @@ services:
       - utility_net
 
   # ==========================================
-  # ===== WEB SERVICES ========================
+  # ===== WEB — ЖКХ ===========================
   # ==========================================
 
   web_jkh:
@@ -168,7 +189,7 @@ services:
       minio:
         condition: service_healthy
     healthcheck:
-      test: [ "CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1" ]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -177,6 +198,10 @@ services:
       - no-new-privileges:true
     networks:
       - utility_net
+
+  # ==========================================
+  # ===== WEB — АРСЕНАЛ + ГСМ =================
+  # ==========================================
 
   web_arsenal_gsm:
     image: ghcr.io/ylanov/utility-calc:latest
@@ -202,7 +227,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: [ "CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1" ]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 5
@@ -315,7 +340,7 @@ services:
       - utility_net
 
   # ==========================================
-  # ===== NGINX ===============================
+  # ===== NGINX — ВНУТРЕННИЙ РОУТЕР ===========
   # ==========================================
 
   nginx:
@@ -324,23 +349,8 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
-      - "443:443"
     volumes:
-      # ИСПРАВЛЕНИЕ: монтируем все три конфиг-файла.
-      # Ранее отсутствовали common_proxy.conf и common_locations.conf →
-      # Nginx падал: open() "common_proxy.conf" failed (2: No such file)
       - ./nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf:ro
-      # Монтируем в /snippets/ а НЕ в /conf.d/ — важно!
-      # Nginx автоматически загружает ВСЕ *.conf из /conf.d/ на уровне http {}.
-      # Файл common_locations.conf содержит location {} блоки — они допустимы
-      # только внутри server {}, на уровне http {} Nginx падает с ошибкой.
-      # /snippets/ — обычная папка, Nginx её не трогает автоматически,
-      # файлы оттуда подключаются только через явный include в default.conf.
-      - ./nginx/snippets/common_proxy.conf:/etc/nginx/snippets/common_proxy.conf:ro
-      - ./nginx/snippets/common_locations.conf:/etc/nginx/snippets/common_locations.conf:ro
-      # SSL-сертификаты Let's Encrypt (генерируются certbot на VPS)
-      - /etc/letsencrypt:/etc/letsencrypt:ro
-      # Статика и кеш
       - ./static:/usr/share/nginx/html/static:ro
       - nginx_cache:/var/cache/nginx
     depends_on:

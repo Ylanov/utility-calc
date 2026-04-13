@@ -261,7 +261,7 @@ jobs:
       - name: Health check
         working-directory: /opt/utility_calc
         run: |
-          ATTEMPTS=30
+          ATTEMPTS=10
           SUCCESS=false
 
           for i in $(seq 1 $ATTEMPTS); do
