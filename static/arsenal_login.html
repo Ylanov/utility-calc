@@ -21,20 +21,22 @@ button:disabled{background:#6b7280;cursor:not-allowed}
 <body>
 <div class="login-box">
 <div class="logo-area">
-<h1>СТРОБ.Арсенал</h1>
-<p>Система номерного учета ВВСТ</p>
+    <h1>СТРОБ.Арсенал</h1>
+    <p>Система номерного учета ВВСТ</p>
 </div>
 <div id="errorMsg" class="error-msg"></div>
 <form id="arsenalLoginForm">
-<input type="text" id="username" placeholder="Имя пользователя" required autocomplete="username">
-<input type="password" id="password" placeholder="Пароль" required autocomplete="current-password">
-<button type="submit" id="loginBtn">Войти в систему</button>
+    <input type="text" id="username" placeholder="Имя пользователя" required autocomplete="username">
+    <input type="password" id="password" placeholder="Пароль" required autocomplete="current-password">
+    <button type="submit" id="loginBtn">Войти в систему</button>
 </form>
 <a href="portal.html" class="back-link">← Вернуться на портал</a>
 </div>
+
 <script>
 document.getElementById('arsenalLoginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
+
     const userInp = document.getElementById('username');
     const passInp = document.getElementById('password');
     const btn = document.getElementById('loginBtn');
@@ -52,17 +54,23 @@ document.getElementById('arsenalLoginForm').addEventListener('submit', async (e)
 
         const response = await fetch('/api/arsenal/login', {
             method: 'POST',
-            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
             body: formData
         });
 
         if (response.ok) {
             const data = await response.json();
-            // ИСПРАВЛЕНИЕ: Токен больше не сохраняется в JS, он автоматически в Cookie
-            localStorage.setItem('arsenal_role', data.role);
+
+            // ИСПРАВЛЕНИЕ: сохраняем токен в sessionStorage текущей вкладки.
+            // sessionStorage изолирован на вкладку — разные пользователи
+            // в разных вкладках не будут смешиваться.
+            sessionStorage.setItem('access_token', data.access_token);
+            sessionStorage.setItem('arsenal_role', data.role);
+            sessionStorage.setItem('arsenal_username', userInp.value);
+
             window.location.href = data.redirect_url || 'arsenal_dashboard.html';
         } else {
-            const errorData = await response.json();
+            const errorData = await response.json().catch(() => ({}));
             errDiv.innerText = errorData.detail || 'Неверные имя пользователя или пароль';
             errDiv.style.display = 'block';
             btn.disabled = false;

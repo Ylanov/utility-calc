@@ -1,5 +1,7 @@
+# app/modules/utility/schemas.py
+
 from pydantic import BaseModel, condecimal, Field
-from typing import Optional, List, Generic, TypeVar
+from typing import Optional, List, Generic, TypeVar, Literal
 from datetime import datetime
 from decimal import Decimal
 
@@ -26,7 +28,7 @@ class PaginatedResponse(BaseModel, Generic[M]):
 
 
 # ======================================================
-# ROOM SCHEMAS (НОВОЕ)
+# ROOM SCHEMAS
 # ======================================================
 
 class RoomCreate(BaseModel):
@@ -38,6 +40,7 @@ class RoomCreate(BaseModel):
     cw_meter_serial: Optional[str] = None
     el_meter_serial: Optional[str] = None
 
+
 class RoomUpdate(BaseModel):
     dormitory_name: Optional[str] = None
     room_number: Optional[str] = None
@@ -46,6 +49,7 @@ class RoomUpdate(BaseModel):
     hw_meter_serial: Optional[str] = None
     cw_meter_serial: Optional[str] = None
     el_meter_serial: Optional[str] = None
+
 
 class RoomResponse(BaseModel):
     id: int
@@ -60,16 +64,23 @@ class RoomResponse(BaseModel):
     class Config:
         from_attributes = True
 
+
 # ======================================================
-# USER SCHEMAS (ОБНОВЛЕНО)
+# USER SCHEMAS
 # ======================================================
 
+# ИСПРАВЛЕНИЕ: role теперь Literal — принимает только допустимые значения.
+# Это закрывает возможность создать пользователя с произвольной ролью через API.
+AllowedRole = Literal["user", "accountant", "financier", "admin"]
+
+
 class UserCreate(BaseModel):
-    username: str
-    password: str
-    role: str = "user"
+    username: str = Field(..., min_length=3, max_length=100)
+    # ИСПРАВЛЕНИЕ: минимальная длина пароля 8 символов на уровне бэкенда.
+    password: str = Field(..., min_length=8, max_length=128)
+    role: AllowedRole = "user"
     workplace: str = ""
-    residents_count: int = 1
+    residents_count: int = Field(1, ge=1, le=20)
     tariff_id: Optional[int] = None
     room_id: Optional[int] = None
     hw_meter_serial: Optional[str] = None
@@ -90,7 +101,6 @@ class UserResponse(BaseModel):
     is_2fa_enabled: bool = False
     is_initial_setup_done: bool = False
 
-    # 🔥 КЛЮЧЕВОЕ ИЗМЕНЕНИЕ
     room: Optional[RoomResponse] = None
 
     class Config:
@@ -98,11 +108,13 @@ class UserResponse(BaseModel):
 
 
 class UserUpdate(BaseModel):
-    username: Optional[str] = None
-    password: Optional[str] = None
-    role: Optional[str] = None
+    username: Optional[str] = Field(None, min_length=3, max_length=100)
+    # ИСПРАВЛЕНИЕ: минимальная длина нового пароля 8 символов.
+    password: Optional[str] = Field(None, min_length=8, max_length=128)
+    # ИСПРАВЛЕНИЕ: role принимает только допустимые значения.
+    role: Optional[AllowedRole] = None
     workplace: Optional[str] = None
-    residents_count: Optional[int] = None
+    residents_count: Optional[int] = Field(None, ge=1, le=20)
     tariff_id: Optional[int] = None
     room_id: Optional[int] = None
     hw_meter_serial: Optional[str] = None
@@ -191,9 +203,12 @@ class AdjustmentResponse(BaseModel):
 # ======================================================
 
 class ReadingSchema(BaseModel):
-    hot_water: DecimalVolume
-    cold_water: DecimalVolume
-    electricity: DecimalVolume
+    # ИСПРАВЛЕНИЕ: добавлены ограничения ge=0 и le=99999 для показаний.
+    # Отрицательные значения и фантастически большие числа теперь отклоняются
+    # на уровне валидации схемы — до попадания в бизнес-логику.
+    hot_water: Decimal = Field(..., ge=0, le=99999, decimal_places=3)
+    cold_water: Decimal = Field(..., ge=0, le=99999, decimal_places=3)
+    electricity: Decimal = Field(..., ge=0, le=999999, decimal_places=3)
 
 
 class ReadingStateResponse(BaseModel):
@@ -234,74 +249,60 @@ class ApproveRequest(BaseModel):
 
 
 # ======================================================
-# FINANCIER RESPONSE (ОБНОВЛЕНО)
+# ADMIN MANUAL READING SCHEMAS
+# ======================================================
+
+class AdminManualReadingSchema(BaseModel):
+    user_id: int
+    hot_water: Decimal = Field(..., ge=0, le=99999, decimal_places=3)
+    cold_water: Decimal = Field(..., ge=0, le=99999, decimal_places=3)
+    electricity: Decimal = Field(..., ge=0, le=999999, decimal_places=3)
+    is_moving_out: bool = False
+
+
+class OneTimeChargeSchema(BaseModel):
+    user_id: int
+    amount: DecimalAmount
+    description: str
+    account_type: str = "209"
+
+
+# ======================================================
+# DEVICE TOKEN SCHEMAS
+# ======================================================
+
+class DeviceTokenCreate(BaseModel):
+    token: str
+
+
+# ======================================================
+# RELOCATE USER SCHEMA
+# ======================================================
+
+class RelocateUserSchema(BaseModel):
+    new_room_id: Optional[int] = None
+    charge_amount: Optional[DecimalAmount] = None
+    charge_description: Optional[str] = None
+    charge_account_type: str = "209"
+    is_eviction: bool = False
+
+
+# ======================================================
+# DEBT RESPONSE
 # ======================================================
 
 class UserDebtResponse(BaseModel):
     id: int
     username: str
-
-    # 🔥 теперь через комнату
     room: Optional[RoomResponse] = None
-
-    debt_209: Decimal
-    overpayment_209: Decimal
-
-    debt_205: Decimal
-    overpayment_205: Decimal
-
-    current_total_cost: Decimal
+    debt_209: Optional[Decimal] = None
+    overpayment_209: Optional[Decimal] = None
+    debt_205: Optional[Decimal] = None
+    overpayment_205: Optional[Decimal] = None
+    total_cost: Optional[Decimal] = None
 
     class Config:
         from_attributes = True
-
-
-# ======================================================
-# ADMIN MANUAL ENTRY SCHEMAS
-# ======================================================
-
-class AdminManualReadingSchema(BaseModel):
-    user_id: int
-    hot_water: DecimalVolume
-    cold_water: DecimalVolume
-    electricity: DecimalVolume
-
-
-class OneTimeChargeSchema(BaseModel):
-    user_id: int
-    days_lived: int
-    total_days_in_month: int
-    hot_water: DecimalVolume
-    cold_water: DecimalVolume
-    electricity: DecimalVolume
-    is_moving_out: bool = False
-
-# ======================================================
-# PUSH NOTIFICATIONS
-# ======================================================
-class DeviceTokenCreate(BaseModel):
-    token: str
-    device_type: str = "android"  # android или ios
-
-
-# ======================================================
-# MOVE & METER REPLACEMENT SCHEMAS
-# ======================================================
-
-class RelocateUserSchema(BaseModel):
-    # Данные для расчета по старой комнате
-    total_days_in_month: int
-    days_lived: int
-    hot_water: DecimalVolume
-    cold_water: DecimalVolume
-    electricity: DecimalVolume
-
-    # Действие: 'move' (переселить) или 'evict' (выселить)
-    action: str
-
-    # Новая комната (обязательна только если action == 'move')
-    new_room_id: Optional[int] = None
-
 
 class ReplaceMeterSchema(BaseModel):
     meter_type: str  # "hot", "cold", "elect"

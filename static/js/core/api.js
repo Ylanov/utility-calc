@@ -11,8 +11,13 @@ class ApiClient {
     }
 
     async _request(endpoint, options = {}) {
+        // Берём токен текущей вкладки из sessionStorage
+        const token = Auth.getToken();
+
         const headers = {
             'Accept': 'application/json',
+            // Токен передаётся в заголовке Authorization — каждая вкладка имеет свой токен
+            ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
             ...options.headers
         };
 
@@ -22,7 +27,6 @@ class ApiClient {
             options.body = JSON.stringify(options.body);
         }
 
-        // ВАЖНО: 'include' указывает браузеру прикреплять HttpOnly куку
         const config = {
             ...options,
             headers,
@@ -111,8 +115,11 @@ class ApiClient {
      */
     async download(endpoint, defaultFilename = 'file') {
         try {
+            const token = Auth.getToken();
+
             const response = await fetch(`${this.baseUrl}${endpoint}`, {
                 method: 'GET',
+                headers: token ? { 'Authorization': `Bearer ${token}` } : {},
                 credentials: 'include'
             });
 

@@ -61,8 +61,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
             const data = await response.json();
 
-            // Если все ОК, сохраняем сессию
-            Auth.setSession(data.role, username);
+            // Сохраняем сессию — токен хранится в sessionStorage этой вкладки,
+            // что исключает смешивание сессий разных пользователей
+            Auth.setSession(data.role, username, data.access_token);
 
             // Перенаправляем в зависимости от роли
             if (['admin', 'accountant', 'financier'].includes(data.role)) {

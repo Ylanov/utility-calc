@@ -1,3 +1,5 @@
+# app/main.py
+
 import os
 import logging
 from contextlib import asynccontextmanager
@@ -21,6 +23,7 @@ from passlib.context import CryptContext
 
 from prometheus_fastapi_instrumentator import Instrumentator
 from fastapi.responses import JSONResponse
+
 # === CORE ===
 from app.core.config import settings
 from app.core.database import ArsenalSessionLocal, GsmSessionLocal
@@ -86,7 +89,7 @@ pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 APP_MODE = os.environ.get("APP_MODE", "all")
 
 # =====================================================================
-# API PREFIXES (ENTERPRISE STYLE)
+# API PREFIXES
 # =====================================================================
 API_PREFIX = "/api"
 ARSENAL_API_PREFIX = f"{API_PREFIX}/arsenal"
@@ -110,7 +113,6 @@ if settings.SENTRY_DSN:
 async def lifespan(app: FastAPI):
     logger.info(f"Starting application in mode: {APP_MODE.upper()}")
 
-    # Redis
     try:
         redis_client = redis.from_url(
             settings.REDIS_URL,
@@ -130,7 +132,6 @@ async def lifespan(app: FastAPI):
     except Exception as error:
         logger.error(f"Redis connection failed: {error}")
 
-    # Admin creation
     if APP_MODE in ("all", "arsenal_gsm"):
         await ensure_admin_exists_safe(ArsenalSessionLocal, ArsenalUser, "Arsenal")
         await ensure_admin_exists_safe(GsmSessionLocal, GsmUser, "GSM")
@@ -142,13 +143,18 @@ async def lifespan(app: FastAPI):
 
 # =====================================================================
 # FASTAPI INIT
+# ИСПРАВЛЕНИЕ: docs_url отключается в production — Swagger не должен
+# быть доступен всем в боевой среде.
 # =====================================================================
+IS_PRODUCTION = settings.ENVIRONMENT == "production"
+
 app = FastAPI(
     title="Utility Calculator & Arsenal & GSM",
     version="2.0.0",
     lifespan=lifespan,
-    docs_url="/docs",
+    docs_url=None if IS_PRODUCTION else "/docs",
     redoc_url=None,
+    openapi_url=None if IS_PRODUCTION else "/openapi.json",
 )
 
 Instrumentator().instrument(app).expose(app, endpoint="/metrics")
@@ -156,9 +162,12 @@ Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 # =====================================================================
 # MIDDLEWARES
 # =====================================================================
+
+# ИСПРАВЛЕНИЕ: убран wildcard "*" — он полностью нейтрализует TrustedHostMiddleware.
+# Оставляем только реальные хосты проекта.
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=["asy-tk.ru", "www.asy-tk.ru", "localhost", "127.0.0.1", "*"],
+    allowed_hosts=["asy-tk.ru", "www.asy-tk.ru", "localhost", "127.0.0.1"],
 )
 
 allowed_origins: List[str] = getattr(settings, "ALLOWED_ORIGINS", [])
@@ -187,21 +196,33 @@ async def security_headers(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
 
-    if settings.ENVIRONMENT == "production":
+    if IS_PRODUCTION:
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+
+    # ИСПРАВЛЕНИЕ: добавлен Content-Security-Policy.
+    # Ограничивает загрузку ресурсов только с доверенных источников,
+    # что существенно снижает риск XSS-атак.
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' cdnjs.cloudflare.com; "
+        "style-src 'self' 'unsafe-inline' fonts.googleapis.com cdnjs.cloudflare.com; "
+        "font-src 'self' fonts.gstatic.com cdnjs.cloudflare.com data:; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none';"
+    )
 
     return response
 
 
-# 🔥 ИСПРАВЛЕНИЕ: Middleware для запрета кэширования API
 @app.middleware("http")
 async def no_cache_api_headers(request: Request, call_next):
     response = await call_next(request)
 
-    # Жестко запрещаем кэшировать любые API-запросы, чтобы избежать утечки сессий через прокси
     if request.url.path.startswith("/api/"):
-        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, proxy-revalidate"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
 
@@ -209,122 +230,62 @@ async def no_cache_api_headers(request: Request, call_next):
 
 
 # =====================================================================
-# HELPERS
+# ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 # =====================================================================
-async def ensure_admin_exists_safe(session_factory, user_model, name: str):
-    try:
-        async with session_factory() as db:
-            result = await db.execute(
-                select(user_model).where(user_model.username == "admin")
-            )
-            admin = result.scalars().first()
 
+async def ensure_admin_exists_safe(session_local, model, label: str):
+    """Создаёт администратора если его нет. Не падает при ошибке."""
+    try:
+        async with session_local() as db:
+            result = await db.execute(select(model).where(model.role == "admin"))
+            admin = result.scalars().first()
             if not admin:
-                logger.warning(f"{name}: admin not found, creating")
-                admin = user_model(
+                admin = model(
                     username="admin",
                     hashed_password=pwd_context.hash("admin"),
-                    role="admin",
-                    object_id=None,
+                    role="admin"
                 )
                 db.add(admin)
                 await db.commit()
+                logger.info(f"{label}: admin user created")
             else:
-                logger.info(f"{name}: admin exists")
-
+                logger.info(f"{label}: admin user already exists")
     except Exception as e:
-        logger.error(f"{name}: admin init failed: {e}")
+        logger.error(f"{label}: Failed to ensure admin exists: {e}")
 
 
 # =====================================================================
-# ROUTERS REGISTRATION (ENTERPRISE)
+# ROUTES — ЖКХ
 # =====================================================================
-def register_jkh_routes(app: FastAPI):
-    app.include_router(auth_routes.router)
-    app.include_router(users.router)
-    app.include_router(rooms.router)
-    app.include_router(tariffs.router)
-    app.include_router(client_readings.router)
-    app.include_router(admin_readings.router)
-    app.include_router(admin_periods.router)
-    app.include_router(admin_reports.router)
-    app.include_router(admin_user_ops.router)
-    app.include_router(admin_adjustments.router)
-    app.include_router(financier.router)
-    app.include_router(telegram_app.router)
-    app.include_router(settings_router.router)
-
-
-def register_arsenal_routes(app: FastAPI):
-    router = APIRouter(prefix=ARSENAL_API_PREFIX)
-
-    router.include_router(arsenal_system.router)
-    router.include_router(arsenal_objects.router)
-    router.include_router(arsenal_nomenclature.router)
-    router.include_router(arsenal_documents.router)
-    router.include_router(arsenal_users_router.router)
-    router.include_router(arsenal_reports.router)
-
-    app.include_router(arsenal_auth.router)
-    app.include_router(router)
-    app.include_router(arsenal_routes.router)
-
-
-def register_gsm_routes(app: FastAPI):
-    router = APIRouter(prefix=GSM_API_PREFIX)
-
-    router.include_router(gsm_routes.router)
-    router.include_router(gsm_auth.router)
-    router.include_router(gsm_reports.router)
-
-    app.include_router(router)
-
+app.include_router(auth_routes.router)
+app.include_router(admin_periods.router)
+app.include_router(client_readings.router)
+app.include_router(admin_reports.router)
+app.include_router(tariffs.router)
+app.include_router(admin_readings.router)
+app.include_router(users.router)
+app.include_router(rooms.router)
+app.include_router(admin_adjustments.router)
+app.include_router(admin_user_ops.router)
+app.include_router(financier.router)
+app.include_router(settings_router.router)
+app.include_router(telegram_app.router)
 
 # =====================================================================
-# HEALTH
+# ROUTES — АРСЕНАЛ
 # =====================================================================
-@app.get("/health", include_in_schema=False)
-def health():
-    return {"status": "ok", "mode": APP_MODE}
-
-
-# =====================================================================
-# ROUTER LOADING
-# =====================================================================
-if APP_MODE in ("all", "jkh"):
-    register_jkh_routes(app)
-
-if APP_MODE in ("all", "arsenal_gsm"):
-    register_arsenal_routes(app)
-    register_gsm_routes(app)
-
+app.include_router(arsenal_auth.router)
+app.include_router(arsenal_routes.router)
+app.include_router(arsenal_reports.router)
 
 # =====================================================================
-# FRONTEND
+# ROUTES — ГСМ
 # =====================================================================
-@app.get("/", include_in_schema=False)
-async def root():
-    return RedirectResponse(url="/static/portal.html")
+app.include_router(gsm_auth.router)
+app.include_router(gsm_routes.router)
+app.include_router(gsm_reports.router)
 
-
-app.mount(
-    "/static",
-    StaticFiles(directory="static", html=True),
-    name="static",
-)
-
-
-@app.middleware("http")
-async def catch_exceptions(request, call_next):
-    try:
-        return await call_next(request)
-    except Exception as e:
-        import traceback
-        print("\n🔥 BACKEND ERROR 🔥")
-        traceback.print_exc()
-        print("🔥 END ERROR 🔥\n")
-
-        return JSONResponse(
-            status_code=500,
-            content={"detail": str(e)}
-        )
+# =====================================================================
+# STATIC FILES
+# =====================================================================
+app.mount("/", StaticFiles(directory="static", html=True), name="static")

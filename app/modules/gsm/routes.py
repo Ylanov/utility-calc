@@ -1,3 +1,6 @@
+# app/modules/gsm/routes.py
+
+import logging
 import secrets
 import string
 from passlib.context import CryptContext
@@ -7,11 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
 
-# Импорт подключения к БД (убедитесь, что get_gsm_db добавлено в database.py)
 from app.core.database import get_gsm_db
 from app.core.config import settings
 
-# Импорт моделей ГСМ
 from app.modules.gsm.models import (
     GsmAccountingObject,
     GsmNomenclature,
@@ -21,15 +22,15 @@ from app.modules.gsm.models import (
     GsmUser
 )
 
-# Импорт бизнес-логики ГСМ
 from app.modules.gsm.services import GsmService
 
-# Импорт схем ГСМ (которые мы написали в предыдущем шаге)
 from app.modules.gsm.schemas import (
     ObjCreate,
     NomenclatureCreate,
     DocCreate
 )
+
+logger = logging.getLogger(__name__)
 
 # ======================================================
 # НАСТРОЙКА ХЕШИРОВАНИЯ (Argon2)
@@ -45,24 +46,60 @@ router = APIRouter(prefix="/api/gsm", tags=["STROB GSM"])
 # ======================================================
 # АВТОРИЗАЦИЯ ТОЛЬКО ДЛЯ ГСМ (Изолированная)
 # ======================================================
+
+def _extract_token_from_request(request: Request) -> str | None:
+    """
+    Извлекает JWT-токен из запроса.
+    Порядок приоритета:
+    1. HTTP-заголовок Authorization: Bearer <token>  (основной способ после перехода на sessionStorage)
+    2. HttpOnly Cookie access_token                   (обратная совместимость)
+    """
+    # 1. Заголовок Authorization
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header.split(" ", 1)[1].strip()
+        if token:
+            return token
+
+    # 2. Cookie (обратная совместимость)
+    token = request.cookies.get("access_token")
+    if token:
+        if token.startswith("Bearer "):
+            return token.split(" ", 1)[1].strip()
+        return token
+
+    return None
+
+
 async def get_current_gsm_user(
         request: Request,
         db: AsyncSession = Depends(get_gsm_db)
-):
-    """Проверка токена и поиск пользователя именно в базе ГСМ"""
-    token = request.cookies.get("access_token")
+) -> GsmUser:
+    """
+    Проверяет токен и возвращает текущего пользователя ГСМ.
+    Читает токен из Authorization header (приоритет) или из cookie (fallback).
+    """
+    token = _extract_token_from_request(request)
+
     if not token:
         raise HTTPException(status_code=401, detail="Не авторизован")
 
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         username: str = payload.get("sub")
+        scope: str = payload.get("scope", "")
+
         if not username:
-            raise HTTPException(status_code=401, detail="Неверный токен")
-    except JWTError:
+            raise HTTPException(status_code=401, detail="Неверный токен: отсутствует sub")
+
+        # Проверяем scope — пользователь ЖКХ не должен попасть в ГСМ
+        if scope not in ("gsm_admin", "full"):
+            raise HTTPException(status_code=403, detail="Недостаточно прав для доступа к ГСМ")
+
+    except JWTError as e:
+        logger.warning(f"GSM JWT validation error: {e}")
         raise HTTPException(status_code=401, detail="Ошибка валидации токена")
 
-    # Ищем пользователя в базе ГСМ
     result = await db.execute(select(GsmUser).where(GsmUser.username == username))
     user = result.scalars().first()
 
@@ -105,28 +142,22 @@ async def create_object(
         select(GsmAccountingObject).where(GsmAccountingObject.name == data.name)
     )
     if existing.scalars().first():
-        raise HTTPException(
-            status_code=400,
-            detail="Объект с таким именем уже существует"
-        )
+        raise HTTPException(status_code=400, detail="Объект с таким именем уже существует")
 
-    # 1. Создаем объект
     obj = GsmAccountingObject(**data.dict())
     db.add(obj)
     await db.flush()
 
-    # 2. Генерируем учетные данные для начальника резервуара/склада
     new_username = f"storage_{obj.id}"
 
     alphabet = string.ascii_letters + string.digits
     new_password = ''.join(secrets.choice(alphabet) for _ in range(8))
     hashed_pw = pwd_context.hash(new_password)
 
-    # 3. Создаем пользователя ГСМ
     new_user = GsmUser(
         username=new_username,
         hashed_password=hashed_pw,
-        role="storage_head",  # Роль начальника склада ГСМ
+        role="storage_head",
         object_id=obj.id
     )
     db.add(new_user)
@@ -174,9 +205,7 @@ async def get_nomenclature(
         current_user: GsmUser = Depends(get_current_gsm_user)
 ):
     """Получить справочник марок ГСМ"""
-    result = await db.execute(
-        select(GsmNomenclature).order_by(GsmNomenclature.name)
-    )
+    result = await db.execute(select(GsmNomenclature).order_by(GsmNomenclature.name))
     return result.scalars().all()
 
 
@@ -194,12 +223,8 @@ async def create_nomenclature(
         select(GsmNomenclature).where(GsmNomenclature.name == data.name)
     )
     if existing.scalars().first():
-        raise HTTPException(
-            status_code=400,
-            detail="Марка ГСМ с таким наименованием уже существует"
-        )
+        raise HTTPException(status_code=400, detail="Марка ГСМ с таким наименованием уже существует")
 
-    # Транслируем is_numbered из JS в is_packaged для БД ГСМ
     new_item = GsmNomenclature(
         code=data.code,
         name=data.name,
@@ -234,7 +259,6 @@ async def get_documents(
         )
     )
 
-    # Начальник склада видит только накладные своего резервуара/склада
     if current_user.role == "storage_head":
         stmt = stmt.where(
             (GsmDocument.source_id == current_user.object_id) |
@@ -271,11 +295,11 @@ async def get_document_details(
         .options(
             selectinload(GsmDocument.source),
             selectinload(GsmDocument.target),
-            selectinload(GsmDocument.items)
-            .selectinload(GsmDocumentItem.nomenclature)
+            selectinload(GsmDocument.items).selectinload(GsmDocumentItem.nomenclature)
         )
     )
     doc = (await db.execute(stmt)).scalars().first()
+
     if not doc:
         raise HTTPException(status_code=404, detail="Документ не найден")
 
@@ -283,7 +307,6 @@ async def get_document_details(
         if doc.source_id != current_user.object_id and doc.target_id != current_user.object_id:
             raise HTTPException(status_code=403, detail="Этот документ не относится к вашему объекту.")
 
-    # Собираем JSON вручную, чтобы перевести batch_number в serial_number для JS
     response = {
         "id": doc.id,
         "doc_number": doc.doc_number,
@@ -300,7 +323,7 @@ async def get_document_details(
                 "name": item.nomenclature.name,
                 "code": item.nomenclature.code
             },
-            "serial_number": item.batch_number,  # Адаптация для фронтенда
+            "serial_number": item.batch_number,
             "quantity": item.quantity
         })
 
@@ -318,7 +341,6 @@ async def create_document(
         if data.operation_type in ["Отправка", "Перемещение", "Списание"]:
             if data.source_id != current_user.object_id:
                 raise HTTPException(status_code=403, detail="Вы можете списывать топливо только со своего объекта!")
-
         if data.operation_type in ["Первичный ввод", "Прием"]:
             if data.target_id != current_user.object_id:
                 raise HTTPException(status_code=403, detail="Вы можете принимать топливо только на свой объект!")
@@ -383,7 +405,7 @@ async def get_object_balance(
         balance.append({
             "nomenclature": fuel.nomenclature.name,
             "code": fuel.nomenclature.code,
-            "serial_number": fuel.batch_number,  # Адаптация для JS
+            "serial_number": fuel.batch_number,
             "quantity": fuel.quantity,
             "is_numbered": fuel.nomenclature.is_packaged
         })

@@ -1,3 +1,6 @@
+# app/modules/utility/routers/admin_user_ops.py
+
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import delete
@@ -5,6 +8,8 @@ from sqlalchemy import delete
 from app.core.database import get_db
 from app.modules.utility.models import User, MeterReading, Adjustment
 from app.core.dependencies import get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Admin User Ops"])
 
@@ -27,35 +32,38 @@ async def delete_user_with_cleanup(
         raise HTTPException(status_code=403, detail="Доступ запрещен")
 
     try:
-        # 1. Находим пользователя
         user = await db.get(User, user_id)
         if not user:
             raise HTTPException(status_code=404, detail="Пользователь не найден")
 
-        # 2. Защита от удаления главного администратора
-        if user.username == "admin":
+        if user.username == "admin" or (hasattr(user, 'username') and user.username.startswith("admin")):
             raise HTTPException(status_code=400, detail="Нельзя удалить главного администратора")
 
-        # 3. Удаляем финансовые корректировки (Adjustments)
-        # Важно удалить их первыми или вместе с показаниями, чтобы не нарушить целостность
+        # Удаляем финансовые корректировки
         await db.execute(delete(Adjustment).where(Adjustment.user_id == user_id))
 
-        # 4. Удаляем показания счетчиков (MeterReading)
+        # Удаляем показания счетчиков
         await db.execute(delete(MeterReading).where(MeterReading.user_id == user_id))
 
-        # 5. Удаляем самого пользователя
+        # Удаляем самого пользователя
         await db.delete(user)
 
-        # 6. Фиксируем изменения одной транзакцией
+        # Фиксируем всё одной транзакцией
         await db.commit()
 
         return {
             "status": "success",
-            "message": f"Пользователь {user.username} и все связанные данные (показания, корректировки) успешно удалены"
+            "message": f"Пользователь и все связанные данные успешно удалены"
         }
 
+    except HTTPException:
+        # HTTPException пробрасываем как есть — это штатные ошибки (404, 403, 400)
+        raise
     except Exception as e:
-        # В случае любой ошибки откатываем транзакцию целиком
         await db.rollback()
-        print(f"Critial error deleting user {user_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Ошибка удаления: {str(e)}")
+        # ИСПРАВЛЕНИЕ: логируем полную ошибку в лог, клиенту отдаём generic-сообщение
+        logger.error(f"Critical error deleting user {user_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Внутренняя ошибка при удалении пользователя. Обратитесь к администратору."
+        )

@@ -1,0 +1,72 @@
+# Dockerfile.local
+#
+# Упрощённый Dockerfile для ЛОКАЛЬНОЙ РАЗРАБОТКИ.
+# Отличия от production Dockerfile:
+#   - Нет PYTHONOPTIMIZE=1 (assert-ы работают, отладка проще)
+#   - Нет entrypoint.sh — команда передаётся из docker-compose.local.yml
+#   - Нет переключения на appuser — запускаем от root (удобнее для bind mount)
+#   - Добавлены dev-инструменты: pytest, debugpy, watchfiles
+#   - Нет multi-stage build — один слой для скорости пересборки
+
+FROM python:3.13-slim-bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+    # PYTHONOPTIMIZE намеренно НЕ установлен:
+    # в dev режиме хотим видеть assert-ошибки и полные traceback
+
+WORKDIR /app
+
+# Системные зависимости (те же что в production)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    libffi-dev \
+    libcairo2-dev \
+    libpango1.0-dev \
+    libgdk-pixbuf2.0-dev \
+    libpq5 \
+    libffi8 \
+    libcairo2 \
+    libpango-1.0-0 \
+    libpangoft2-1.0-0 \
+    libgdk-pixbuf-2.0-0 \
+    fonts-liberation \
+    fonts-dejavu-core \
+    fonts-freefont-ttf \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# uv для быстрой установки зависимостей
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
+
+# Устанавливаем основные зависимости
+COPY requirements.txt ./
+RUN uv pip install --system --no-cache -r requirements.txt
+
+# Устанавливаем dev-зависимости поверх
+RUN uv pip install --system --no-cache \
+    pytest \
+    pytest-asyncio \
+    pytest-cov \
+    debugpy \
+    watchfiles \
+    ruff \
+    httpx
+
+# Копируем исходники (в docker-compose.local.yml они перекроются volume mount,
+# но нужны чтобы образ был рабочим сам по себе)
+COPY app/ app/
+COPY templates/ templates/
+COPY static/ static/
+COPY alembic/ alembic/
+COPY alembic.ini .
+COPY alembic_arsenal/ alembic_arsenal/
+COPY alembic_arsenal.ini .
+
+# Порт FastAPI
+EXPOSE 8000
+
+# Команда по умолчанию — переопределяется в docker-compose.local.yml
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

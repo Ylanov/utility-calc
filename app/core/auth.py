@@ -1,3 +1,5 @@
+# app/core/auth.py
+
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -12,6 +14,7 @@ from app.core.database import get_db
 from app.modules.utility.models import User
 from cryptography.fernet import Fernet
 from app.core.config import settings
+
 # =====================================================
 # НАСТРОЙКИ ХЕШИРОВАНИЯ ПАРОЛЕЙ
 # =====================================================
@@ -19,48 +22,48 @@ from app.core.config import settings
 pwd_context = CryptContext(
     schemes=["argon2", "bcrypt"],
     deprecated="auto",
-    # Настройки для Argon2
-    argon2__memory_cost=65536,  # 64 MB (по умолчанию)
-    argon2__time_cost=2,        # кол-во итераций (по умолчанию)
-    argon2__parallelism=2,      # потоки (по умолчанию)
+    argon2__memory_cost=65536,
+    argon2__time_cost=2,
+    argon2__parallelism=2,
 )
 
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """
-    Проверка пароля
-    """
     return pwd_context.verify(plain_password, hashed_password)
 
 
 def get_password_hash(password: str) -> str:
-    """
-    Хеширование пароля
-    """
     return pwd_context.hash(password)
 
 
 # =====================================================
-# JWT / OAUTH2 С ПОДДЕРЖКОЙ HTTPONLY COOKIES
+# JWT / OAUTH2 С ПОДДЕРЖКОЙ HTTPONLY COOKIES И BEARER HEADER
 # =====================================================
 
 class OAuth2PasswordBearerWithCookie(OAuth2PasswordBearer):
     """
-    Кастомный класс для извлечения токена из HttpOnly Cookies.
+    Извлекает токен из запроса.
+    Порядок приоритета:
+    1. HTTP-заголовок Authorization: Bearer <token>  (основной способ после перехода на sessionStorage)
+    2. HttpOnly Cookie access_token                   (обратная совместимость / Swagger)
     """
 
-    async def __call__(self, request: Request) -> Optional:
-        # 1. Сначала ищем токен в защищенной куке
-        token = request.cookies.get("access_token")
+    async def __call__(self, request: Request) -> Optional[str]:
+        # 1. Заголовок Authorization (приоритет)
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
+            if token:
+                return token
 
+        # 2. HttpOnly Cookie (fallback)
+        token = request.cookies.get("access_token")
         if token:
-            # ЖЕЛЕЗОБЕТОННОЕ ИСПРАВЛЕНИЕ:
-            # Если токен начинается с "Bearer ", мы это обрезаем.
-            # Если нет - оставляем как есть.
             if token.startswith("Bearer "):
-                return token.split(" ")[1]  # Берем вторую часть после пробела
+                return token.split(" ", 1)[1].strip()
             return token
 
-        # 2. Если куки нет, проверяем заголовок (для Swagger)
+        # 3. Стандартный OAuth2 (для Swagger UI)
         return await super().__call__(request)
 
 
@@ -74,11 +77,7 @@ def create_access_token(data: dict) -> str:
         minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
     )
 
-    to_encode.update({
-        "exp": expire
-        # или:
-        # "exp": int(expire.timestamp())
-    })
+    to_encode.update({"exp": expire})
 
     encoded_jwt = jwt.encode(
         to_encode,
@@ -98,7 +97,11 @@ async def get_current_user(
         db: AsyncSession = Depends(get_db)
 ) -> User:
     """
-    Получение текущего авторизованного пользователя
+    Получение текущего авторизованного пользователя.
+    Проверяет:
+    - Валидность JWT токена
+    - Что пользователь существует в БД
+    - Что пользователь не удалён (is_deleted = False)
     """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -124,8 +127,13 @@ async def get_current_user(
     except JWTError:
         raise credentials_exception
 
+    # ИСПРАВЛЕНИЕ: фильтр is_deleted — удалённый пользователь не должен иметь доступ,
+    # даже если его JWT токен ещё не истёк.
     result = await db.execute(
-        select(User).where(User.username == username)
+        select(User).where(
+            User.username == username,
+            User.is_deleted.is_(False)
+        )
     )
 
     user = result.scalars().first()
@@ -136,7 +144,10 @@ async def get_current_user(
     return user
 
 
-# Инициализация объекта шифрования
+# =====================================================
+# ШИФРОВАНИЕ TOTP
+# =====================================================
+
 fernet = Fernet(settings.ENCRYPTION_KEY.encode())
 
 
@@ -147,12 +158,12 @@ def encrypt_totp_secret(secret: str) -> str:
 
 
 def decrypt_totp_secret(db_secret: str) -> str:
-    """Расшифровывает секрет. Если маркера 'enc:' нет - возвращает как есть (обратная совместимость)."""
+    """Расшифровывает секрет. Если маркера 'enc:' нет — возвращает как есть (обратная совместимость)."""
     if not db_secret:
         return None
 
     if db_secret.startswith("enc:"):
-        encrypted_data = db_secret[4:]  # Отрезаем "enc:"
+        encrypted_data = db_secret[4:]
         return fernet.decrypt(encrypted_data.encode()).decode()
 
-    return db_secret  # Возвращаем сырой секрет, если он был создан до внедрения шифрования
+    return db_secret

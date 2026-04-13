@@ -1,4 +1,6 @@
 # app/modules/utility/routers/admin_adjustments.py
+
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -11,6 +13,7 @@ from app.modules.utility.schemas import AdjustmentCreate, AdjustmentResponse
 from app.core.dependencies import get_current_user
 
 router = APIRouter(tags=["Admin Adjustments"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/api/admin/adjustments", response_model=AdjustmentResponse)
@@ -27,10 +30,17 @@ async def create_adjustment(
     if current_user.role not in allowed_roles:
         raise HTTPException(status_code=403, detail="Доступ запрещен")
 
-    # 1. Находим жильца, чтобы узнать его КОМНАТУ
+    # 1. Находим жильца
     target_user = await db.get(User, data.user_id)
-    if not target_user or not target_user.room_id:
-        raise HTTPException(status_code=400, detail="Жилец не найден или не привязан к комнате")
+
+    # ИСПРАВЛЕНИЕ: добавлена проверка is_deleted.
+    # Ранее корректировку можно было создать для мягко удалённого пользователя —
+    # он попал бы в отчёты как живой должник.
+    if not target_user or target_user.is_deleted:
+        raise HTTPException(status_code=404, detail="Жилец не найден или удалён из системы")
+
+    if not target_user.room_id:
+        raise HTTPException(status_code=400, detail="Жилец не привязан к комнате")
 
     # 2. Находим активный период
     res_period = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))
@@ -38,7 +48,7 @@ async def create_adjustment(
     if not active_period:
         raise HTTPException(status_code=400, detail="Нет активного периода для внесения корректировок")
 
-    # 3. Создаем запись корректировки (для истории)
+    # 3. Создаем запись корректировки
     adj = Adjustment(
         user_id=data.user_id,
         period_id=active_period.id,
@@ -48,26 +58,31 @@ async def create_adjustment(
     )
     db.add(adj)
 
-    # 4. Обновляем итоговые цифры в показаниях КОМНАТЫ
-    amount_209 = data.amount if data.account_type == "209" else Decimal("0.00")
-    amount_205 = data.amount if data.account_type == "205" else Decimal("0.00")
-
-    update_stmt = (
-        update(MeterReading)
-        .where(
-            MeterReading.room_id == target_user.room_id, # 🔥 ИСПРАВЛЕНИЕ: Ищем черновик по комнате
-            MeterReading.period_id == active_period.id
+    # 4. Обновляем черновик показания если он уже есть — пересчитываем итог
+    draft = (await db.execute(
+        select(MeterReading).where(
+            MeterReading.room_id == target_user.room_id,
+            MeterReading.period_id == active_period.id,
+            MeterReading.is_approved.is_(False)
         )
-        .values(
-            total_cost=MeterReading.total_cost + data.amount,
-            total_209=MeterReading.total_209 + amount_209,
-            total_205=MeterReading.total_205 + amount_205
-        )
-    )
+    )).scalars().first()
 
-    await db.execute(update_stmt)
+    if draft:
+        amount = Decimal(str(data.amount))
+        if data.account_type == "209":
+            draft.total_209 = (draft.total_209 or Decimal("0.00")) + amount
+        elif data.account_type == "205":
+            draft.total_205 = (draft.total_205 or Decimal("0.00")) + amount
+        draft.total_cost = (draft.total_209 or Decimal("0.00")) + (draft.total_205 or Decimal("0.00"))
+        db.add(draft)
+
     await db.commit()
     await db.refresh(adj)
+
+    logger.info(
+        f"Adjustment created: user_id={data.user_id}, amount={data.amount}, "
+        f"account={data.account_type}, by={current_user.username}"
+    )
 
     return adj
 
@@ -78,13 +93,35 @@ async def get_user_adjustments(
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
 ):
-    """Получает список всех корректировок пользователя в ТЕКУЩЕМ АКТИВНОМ периоде."""
-    allowed_roles =["accountant", "financier", "admin"]
+    """Список всех корректировок конкретного жильца."""
+    allowed_roles = ["accountant", "financier", "admin"]
     if current_user.role not in allowed_roles:
         raise HTTPException(status_code=403, detail="Доступ запрещен")
 
-    res_period = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))
-    active_period = res_period.scalars().first()
+    result = await db.execute(
+        select(Adjustment)
+        .where(Adjustment.user_id == user_id)
+        .order_by(Adjustment.created_at.desc())
+    )
+    return result.scalars().all()
 
-    if not active_period:
-        return
+
+@router.delete("/api/admin/adjustments/{adjustment_id}")
+async def delete_adjustment(
+        adjustment_id: int,
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db)
+):
+    """Удаление корректировки. Только для бухгалтера и админа."""
+    if current_user.role not in ("accountant", "admin"):
+        raise HTTPException(status_code=403, detail="Доступ запрещен")
+
+    adj = await db.get(Adjustment, adjustment_id)
+    if not adj:
+        raise HTTPException(status_code=404, detail="Корректировка не найдена")
+
+    await db.delete(adj)
+    await db.commit()
+
+    logger.info(f"Adjustment {adjustment_id} deleted by {current_user.username}")
+    return {"status": "deleted"}

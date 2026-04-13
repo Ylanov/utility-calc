@@ -2,20 +2,29 @@
 
 export const Auth = {
     /**
-     * Сохраняет базовые данные сессии в sessionStorage.
-     * Сам токен (access_token) хранится браузером в HttpOnly Cookie для безопасности!
+     * Сохраняет данные сессии в sessionStorage.
+     * sessionStorage изолирован на каждую вкладку браузера,
+     * поэтому разные пользователи в разных вкладках не пересекаются.
      */
-    setSession(role, username) {
+    setSession(role, username, token) {
         if (role) sessionStorage.setItem('role', role);
         if (username) sessionStorage.setItem('username', username);
+        if (token) sessionStorage.setItem('access_token', token);
     },
 
     /**
-     * Проверяем авторизацию (косвенно, по наличию роли в хранилище).
+     * Возвращает токен текущей вкладки.
+     */
+    getToken() {
+        return sessionStorage.getItem('access_token');
+    },
+
+    /**
+     * Проверяем авторизацию по наличию роли и токена в хранилище.
      * Истинная проверка происходит на бэкенде при каждом API запросе.
      */
     isAuthenticated() {
-        return !!sessionStorage.getItem('role');
+        return !!sessionStorage.getItem('role') && !!sessionStorage.getItem('access_token');
     },
 
     getRole() {
@@ -28,14 +37,15 @@ export const Auth = {
 
     /**
      * Полный выход из системы.
-     * Удаляет куку на сервере и чистит локальные хранилища.
+     * Удаляет куку на сервере и чистит sessionStorage текущей вкладки.
      */
     async logout() {
         console.log('Выполняется выход из системы...');
         try {
-            // ИСПРАВЛЕНИЕ: Убрано /auth/ из URL
+            const token = sessionStorage.getItem('access_token');
             await fetch('/api/logout', {
                 method: 'POST',
+                headers: token ? { 'Authorization': `Bearer ${token}` } : {},
                 credentials: 'include'
             });
         } catch (e) {

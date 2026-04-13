@@ -27,6 +27,15 @@
                         <option value="Списание">Списание (Расход)</option>
                     </select>
                 </div>
+
+                <!-- НОВЫЙ БЛОК: Отправитель (источник) -->
+                <div id="sourceSelectContainer">
+                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1.5">Отправитель (откуда)</label>
+                    <select id="newDocSource" class="w-full border border-slate-300 p-2.5 rounded-lg bg-white focus:border-blue-500 outline-none">
+                        <option value="">Загрузка...</option>
+                    </select>
+                </div>
+
                 <div id="targetSelectContainer">
                     <label class="block text-xs font-bold text-slate-500 uppercase mb-1.5">Получатель / Объект</label>
                     <select id="newDocTarget" class="w-full border border-slate-300 p-2.5 rounded-lg bg-white focus:border-blue-500 outline-none">
@@ -34,7 +43,7 @@
                     </select>
                 </div>
 
-                <!-- 🔥 НОВОЕ: Поле для загрузки скана в MinIO -->
+                <!-- Поле для загрузки скана в MinIO -->
                 <div class="col-span-2 bg-slate-50 border border-slate-200 p-3 rounded-lg flex items-center justify-between mt-2">
                     <div>
                         <span class="block text-xs font-bold text-slate-500 uppercase mb-1">Основание (Скан / Файл)</span>
@@ -194,7 +203,6 @@
             </span>
             <button class="modal-close-btn text-slate-400 hover:text-white text-2xl leading-none" onclick="document.getElementById('balanceModal').style.display='none'">&times;</button>
         </div>
-        <!-- ВАЖНО: Убрана жесткая высота, добавлена гибкость -->
         <div class="p-6 flex flex-col max-h-[65vh]">
             <div class="flex justify-end items-center mb-4 bg-slate-50 p-3 rounded-lg border border-slate-200 shrink-0">
                 <div class="text-sm font-bold text-slate-500 uppercase mr-3">Итого сумма по складу:</div>
@@ -217,7 +225,6 @@
                 </table>
             </div>
         </div>
-        <!-- ВАЖНО: Жестко зафиксированный блок пагинации ВНИЗУ модального окна -->
         <div id="balancePagination" class="px-6 py-3 border-t border-slate-200 bg-slate-50 flex justify-between items-center shrink-0"></div>
     </div>
 </div>
@@ -230,14 +237,11 @@
             <button class="modal-close-btn text-slate-400 hover:text-white text-2xl leading-none" onclick="document.getElementById('viewDocModal').style.display='none'">&times;</button>
         </div>
         <div class="p-6">
-            <!-- Шапка документа -->
             <div class="flex justify-between items-start mb-6 pb-6 border-b border-slate-200">
                 <div>
                     <div class="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Номер документа</div>
                     <div class="font-black text-2xl text-blue-900 font-mono tracking-tight" id="viewDocNumber">---</div>
                 </div>
-
-                <!-- 🔥 НОВОЕ: Контейнер для кнопки скачивания файла -->
                 <div class="text-right flex flex-col items-end gap-2">
                     <div>
                         <div class="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">Дата операции</div>
@@ -245,9 +249,7 @@
                     </div>
                     <div id="viewDocFileContainer"></div>
                 </div>
-
             </div>
-            <!-- Инфо-блок -->
             <div class="grid grid-cols-2 gap-y-4 gap-x-8 mb-6 bg-slate-50 p-4 rounded-lg border border-slate-200 text-sm">
                 <div class="flex flex-col">
                     <span class="text-xs font-bold text-slate-400 uppercase mb-1">Тип операции:</span>
@@ -263,7 +265,6 @@
                     <span id="viewDocTarget" class="font-medium text-slate-700"></span>
                 </div>
             </div>
-            <!-- Спецификация -->
             <h4 class="font-bold text-slate-700 text-sm mb-3 flex items-center gap-2">
                 <i class="fa-solid fa-list-check text-slate-400"></i> Спецификация
             </h4>
@@ -390,5 +391,5 @@
     </div>
 </div>
 
-<!-- 🔥 КОНТЕЙНЕР ДЛЯ TOAST-УВЕДОМЛЕНИЙ -->
+<!-- КОНТЕЙНЕР ДЛЯ TOAST-УВЕДОМЛЕНИЙ -->
 <div id="toast-container" class="fixed bottom-6 right-6 z-[10000] flex flex-col gap-3 pointer-events-none"></div>

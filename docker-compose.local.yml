@@ -1,0 +1,331 @@
+# docker-compose.local.yml
+#
+# Конфиг для ЛОКАЛЬНОЙ разработки.
+#
+# БЫСТРЫЙ СТАРТ:
+#   make local-up
+#   # или вручную:
+#   docker compose -f docker-compose.local.yml --env-file .env.local up --build
+#
+# Адреса после запуска:
+#   http://localhost          — приложение через Nginx
+#   http://localhost:8001     — ЖКХ API напрямую + Swagger /docs
+#   http://localhost:8002     — Арсенал/ГСМ API напрямую + Swagger /docs
+#   http://localhost:9001     — MinIO Web Console
+#   localhost:5432            — PostgreSQL (DBeaver / PgAdmin)
+#   localhost:6379            — Redis (RedisInsight)
+#
+# Отличия от production docker-compose.yml:
+#   ✅ Образ собирается из Dockerfile.local (быстрее, dev-инструменты)
+#   ✅ Исходный код ./app монтируется томом → горячая перезагрузка без пересборки
+#   ✅ uvicorn --reload вместо gunicorn
+#   ✅ Без PgBouncer — прямое подключение к PostgreSQL
+#   ✅ Один Celery-воркер на все очереди
+#   ✅ PostgreSQL с разумными настройками памяти (не 16GB!)
+#   ✅ Swagger / docs / metrics открыты в Nginx
+#   ✅ Нет rate limiting
+#   ✅ Нет SSL / HTTPS
+#   ✅ Нет backup-сервиса
+
+services:
+
+  # ==========================================
+  # ===== DATABASE ============================
+  # ==========================================
+
+  db:
+    image: postgres:15
+    container_name: local_db
+    restart: unless-stopped
+    # Упрощённые настройки — не 16GB shared_buffers как в prod
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c work_mem=4MB
+      -c maintenance_work_mem=64MB
+      -c max_connections=50
+      -c log_min_duration_statement=1000
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-utility_db}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - local_postgres_data:/var/lib/postgresql/data
+      - ./init_db.sh:/docker-entrypoint-initdb.d/init_db.sh
+    ports:
+      - "5432:5432"   # Открыт для PgAdmin/DBeaver
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-utility_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - local_net
+
+  # ==========================================
+  # ===== REDIS ===============================
+  # ==========================================
+
+  redis:
+    image: redis:7
+    container_name: local_redis
+    restart: unless-stopped
+    # Без AOF persistence — быстрый старт, данные не нужны между перезапусками
+    command: redis-server --maxmemory 512mb --maxmemory-policy volatile-lru
+    ports:
+      - "6379:6379"   # Открыт для RedisInsight
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - local_net
+
+  # ==========================================
+  # ===== MINIO (S3) ==========================
+  # ==========================================
+
+  minio:
+    image: minio/minio:latest
+    container_name: local_minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadmin}
+    volumes:
+      - local_minio_data:/data
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web Console → http://localhost:9001
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9000' || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - local_net
+
+  # ==========================================
+  # ===== MIGRATIONS ==========================
+  # ==========================================
+
+  migration_job:
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    image: utility-calc:local
+    container_name: local_migrations
+    restart: "no"
+    env_file:
+      - .env.local
+    environment:
+      DB_HOST: db
+      DB_PORT: 5432
+      ENVIRONMENT: development
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./app:/app/app
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini
+      - ./alembic_arsenal:/app/alembic_arsenal
+      - ./alembic_arsenal.ini:/app/alembic_arsenal.ini
+    command: |
+      sh -c "
+      set -e
+      echo '==> Running JKH migrations...'
+      alembic upgrade head
+      echo '==> Running Arsenal migrations...'
+      alembic -c alembic_arsenal.ini upgrade head
+      echo '==> Seeding development data...'
+      python -m app.core.initial_data
+      echo '==> All done!'
+      "
+    networks:
+      - local_net
+
+  # ==========================================
+  # ===== WEB — ЖКХ (hot reload) ==============
+  # ==========================================
+
+  web_jkh:
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    image: utility-calc:local
+    container_name: local_web_jkh
+    restart: unless-stopped
+    env_file:
+      - .env.local
+    environment:
+      APP_MODE: "jkh"
+      DB_HOST: db
+      DB_PORT: 5432
+      ENVIRONMENT: development
+      DEBUG: "true"
+    volumes:
+      - ./app:/app/app           # Монтируем исходники → горячая перезагрузка
+      - ./static:/app/static
+      - ./templates:/app/templates
+    ports:
+      - "8001:8000"   # Swagger: http://localhost:8001/docs
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+      --reload-dir /app/app
+      --log-level debug
+    depends_on:
+      migration_job:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - local_net
+
+  # ==========================================
+  # ===== WEB — АРСЕНАЛ + ГСМ (hot reload) ===
+  # ==========================================
+
+  web_arsenal_gsm:
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    image: utility-calc:local
+    container_name: local_web_arsenal_gsm
+    restart: unless-stopped
+    env_file:
+      - .env.local
+    environment:
+      APP_MODE: "arsenal_gsm"
+      DB_HOST: db
+      DB_PORT: 5432
+      ENVIRONMENT: development
+      DEBUG: "true"
+    volumes:
+      - ./app:/app/app
+      - ./static:/app/static
+      - ./templates:/app/templates
+    ports:
+      - "8002:8000"   # Swagger: http://localhost:8002/docs
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --reload
+      --reload-dir /app/app
+      --log-level debug
+    depends_on:
+      migration_job:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    networks:
+      - local_net
+
+  # ==========================================
+  # ===== CELERY — ОДИН ВОРКЕР НА ВСЕ ОЧЕРЕДИ
+  # В prod — 3 отдельных воркера. Здесь один для простоты.
+  # ==========================================
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    image: utility-calc:local
+    container_name: local_worker
+    restart: unless-stopped
+    env_file:
+      - .env.local
+    environment:
+      APP_MODE: "all"
+      DB_HOST: db
+      DB_PORT: 5432
+      ENVIRONMENT: development
+    volumes:
+      - ./app:/app/app
+    command: >
+      celery -A app.worker worker
+      --loglevel=debug
+      --queues=default,heavy,arsenal_gsm_default
+      --concurrency=2
+    depends_on:
+      redis:
+        condition: service_healthy
+      migration_job:
+        condition: service_completed_successfully
+    networks:
+      - local_net
+
+  # ==========================================
+  # ===== CELERY BEAT =========================
+  # ==========================================
+
+  worker_beat:
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    image: utility-calc:local
+    container_name: local_beat
+    restart: unless-stopped
+    env_file:
+      - .env.local
+    environment:
+      APP_MODE: "all"
+      TZ: "Europe/Moscow"
+      ENVIRONMENT: development
+    volumes:
+      - ./app:/app/app
+    command: celery -A app.worker beat --loglevel=info
+    depends_on:
+      redis:
+        condition: service_healthy
+      migration_job:
+        condition: service_completed_successfully
+    networks:
+      - local_net
+
+  # ==========================================
+  # ===== NGINX — HTTP, без rate limit ========
+  # ==========================================
+
+  nginx:
+    image: nginx:alpine
+    container_name: local_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/conf.d/local.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./static:/usr/share/nginx/html/static:ro
+    depends_on:
+      - web_jkh
+      - web_arsenal_gsm
+    networks:
+      - local_net
+
+volumes:
+  local_postgres_data:
+  local_minio_data:
+
+networks:
+  local_net:
+    driver: bridge

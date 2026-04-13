@@ -13,17 +13,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    // 2. Инициализация UI
-    UI.injectSourceSelectIfNeeded();
-
-    // 3. Установка текущей даты
+    // 2. Установка текущей даты
     const dateInput = document.getElementById('newDocDate');
     if (dateInput) dateInput.valueAsDate = new Date();
 
-    // 4. Привязка всех событий
+    // 3. Привязка всех событий
     bindAppEvents();
 
-    // 5. Загрузка данных
+    // 4. Загрузка данных
     await Promise.all([
         Dictionaries.loadNomenclature(),
         Dictionaries.loadObjectsTree(),

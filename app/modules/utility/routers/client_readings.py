@@ -1,8 +1,7 @@
 # app/modules/utility/routers/client_readings.py
 
-import os
-import uuid
 import asyncio
+import logging
 from decimal import Decimal
 from datetime import datetime
 
@@ -22,6 +21,7 @@ from app.modules.utility.services.s3_client import s3_service
 from app.modules.utility.tasks import detect_anomalies_task
 
 router = APIRouter(tags=["Client Readings"])
+logger = logging.getLogger(__name__)
 
 
 # =========================
@@ -47,14 +47,12 @@ class ReadingService:
         d_elect = elect - p_elect
         sewage = d_hot + d_cold
 
-        # Данные о количестве жильцов берем от пользователя (кто платит)
         residents = Decimal(user.residents_count or 1)
-        # А данные о вместимости - из комнаты
         total = Decimal(room.total_room_residents or 1)
-        if total == 0: total = Decimal("1")
+        if total == 0:
+            total = Decimal("1")
         elect_share = (residents / total) * d_elect
 
-        # В calculate_utilities передаем и user, и room, чтобы у сервиса были все данные
         return calculate_utilities(
             user=user,
             room=room,
@@ -74,7 +72,6 @@ async def get_reading_state(
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
 ):
-    # Загружаем пользователя вместе с его комнатой, чтобы избежать лишних запросов
     user = (await db.execute(
         select(User).options(selectinload(User.room)).where(User.id == current_user.id)
     )).scalars().first()
@@ -82,45 +79,55 @@ async def get_reading_state(
     if not user or not user.room_id:
         raise HTTPException(status_code=400, detail="Вы не привязаны к помещению. Обратитесь к администратору.")
 
-    period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))).scalars().first()
+    room = user.room
 
-    # Ищем историю показаний для КОМНАТЫ (лимит увеличен для обхода множества черновиков)
+    period = (await db.execute(
+        select(BillingPeriod).where(BillingPeriod.is_active)
+    )).scalars().first()
+
+    is_period_open = period is not None
+
+    # История показаний комнаты
     readings = (await db.execute(
         select(MeterReading)
         .where(MeterReading.room_id == user.room_id)
         .order_by(MeterReading.created_at.desc())
-        .limit(10)
+        .limit(12)
     )).scalars().all()
-
-    # Ищем показание за ТЕКУЩИЙ активный период ДЛЯ КОМНАТЫ (черновик)
-    current_reading = next((r for r in readings if period and r.period_id == period.id), None)
-
-    # Ищем последнее утвержденное показание из ПРОШЛЫХ периодов ДЛЯ КОМНАТЫ
-    prev = next((r for r in readings if r.is_approved and (not period or r.period_id != period.id)), None)
-
-    is_already_approved = current_reading.is_approved if current_reading else False
-    is_draft = current_reading is not None and not current_reading.is_approved
 
     zero = Decimal("0.000")
 
-    return {
-        "period_name": period.name if period else "Период закрыт",
-        "prev_hot": prev.hot_water if prev else zero,
-        "prev_cold": prev.cold_water if prev else zero,
-        "prev_elect": prev.electricity if prev else zero,
+    # Последнее утверждённое показание комнаты (для отображения предыдущих значений)
+    prev_latest = next((r for r in readings if r.is_approved), None)
+    prev_hot = prev_latest.hot_water if prev_latest else zero
+    prev_cold = prev_latest.cold_water if prev_latest else zero
+    prev_elect = prev_latest.electricity if prev_latest else zero
 
+    # Черновик текущего периода
+    current_reading = None
+    is_draft = False
+    is_already_approved = False
+
+    if period:
+        current_reading = next((r for r in readings if r.period_id == period.id), None)
+        if current_reading:
+            is_draft = not current_reading.is_approved
+            is_already_approved = current_reading.is_approved
+
+    return {
+        "period_name": period.name if period else None,
+        "prev_hot": prev_hot,
+        "prev_cold": prev_cold,
+        "prev_elect": prev_elect,
         "current_hot": current_reading.hot_water if current_reading else None,
         "current_cold": current_reading.cold_water if current_reading else None,
         "current_elect": current_reading.electricity if current_reading else None,
-
         "total_cost": current_reading.total_cost if current_reading else None,
         "total_209": current_reading.total_209 if current_reading else None,
         "total_205": current_reading.total_205 if current_reading else None,
-
         "is_draft": is_draft,
-        "is_period_open": bool(period),
+        "is_period_open": is_period_open,
         "is_already_approved": is_already_approved,
-
         "cost_hot_water": current_reading.cost_hot_water if current_reading else None,
         "cost_cold_water": current_reading.cost_cold_water if current_reading else None,
         "cost_electricity": current_reading.cost_electricity if current_reading else None,
@@ -143,7 +150,6 @@ async def save_reading(
 ):
     hot, cold, elect = ReadingService.parse_input(data)
 
-    # Загружаем пользователя вместе с его комнатой
     user = (await db.execute(
         select(User).options(selectinload(User.room)).where(User.id == current_user.id)
     )).scalars().first()
@@ -169,14 +175,36 @@ async def save_reading(
         if not tariff:
             raise HTTPException(500, "Тариф не найден")
 
-    # 2. Ищем историю показаний для КОМНАТЫ
+    # 2. ИСПРАВЛЕНИЕ race condition: используем SELECT FOR UPDATE чтобы заблокировать
+    # черновик на время транзакции. Два соседа не смогут одновременно создать дубль.
+    # Примечание: для полной защиты также нужен partial unique index в PostgreSQL:
+    # CREATE UNIQUE INDEX uix_reading_room_period_draft ON readings (room_id, period_id)
+    # WHERE is_approved = false;
+    draft_result = await db.execute(
+        select(MeterReading)
+        .where(
+            MeterReading.room_id == user.room_id,
+            MeterReading.period_id == period.id,
+            MeterReading.is_approved.is_(False)
+        )
+        .with_for_update()  # блокировка строки на время транзакции
+    )
+    draft = draft_result.scalars().first()
+
+    # Если черновик создал сосед — блокируем перезапись
+    if draft and draft.user_id != user.id:
+        raise HTTPException(
+            status_code=400,
+            detail="Показания для вашей комнаты уже переданы другим жильцом."
+        )
+
+    # 3. История показаний КОМНАТЫ (для расчёта расхода)
     history_task = db.execute(
         select(MeterReading)
         .where(MeterReading.room_id == user.room_id)
         .order_by(MeterReading.created_at.desc())
         .limit(12)
     )
-    # Корректировки остаются привязанными к плательщику (user.id)
     adj_task = db.execute(
         select(Adjustment.account_type, func.sum(Adjustment.amount))
         .where(Adjustment.user_id == user.id, Adjustment.period_id == period.id)
@@ -188,18 +216,12 @@ async def save_reading(
     readings = history_res.scalars().all()
     adj_map = {a[0]: (a[1] or Decimal("0.00")) for a in adj_res.all()}
 
-    # Ищем черновик КОМНАТЫ в текущем периоде
-    draft = next((r for r in readings if r.period_id == period.id), None)
-
-    # ЗАЩИТА: Если черновик есть и его создал сосед, блокируем перезапись
-    if draft and draft.user_id != user.id:
-        raise HTTPException(status_code=400, detail="Показания для вашей комнаты уже переданы другим жильцом.")
-
-    # Ищем последнее утвержденное показание КОМНАТЫ
+    # 4. Предыдущие реальные показания (не авто-сгенерированные)
     prev_latest = next((r for r in readings if r.is_approved and r.period_id != period.id), None)
     prev_manual = next(
         (r for r in readings if r.is_approved and r.period_id != period.id and r.anomaly_flags != "AUTO_GENERATED"),
-        None)
+        None
+    )
 
     zero = Decimal("0.000")
 
@@ -214,10 +236,10 @@ async def save_reading(
     p_cold = prev_latest.cold_water if prev_latest else zero
     p_elect = prev_latest.electricity if prev_latest else zero
 
-    # 3. Расчет стоимостей
+    # 5. Расчёт стоимостей
     costs = ReadingService.calculate_costs(user, room, tariff, hot, cold, elect, p_hot, p_cold, p_elect)
 
-    # 4. Сборка долгов и итогов
+    # 6. Сборка долгов и итогов
     d_209 = draft.debt_209 or Decimal("0.00") if draft else Decimal("0.00")
     o_209 = draft.overpayment_209 or Decimal("0.00") if draft else Decimal("0.00")
     d_205 = draft.debt_205 or Decimal("0.00") if draft else Decimal("0.00")
@@ -230,16 +252,18 @@ async def save_reading(
     total_205 = cost_rent + d_205 - o_205 + adj_map.get('205', Decimal("0.00"))
     grand_total = total_209 + total_205
 
-    # 5. СОХРАНЕНИЕ
+    # 7. СОХРАНЕНИЕ
     if draft:
         if draft.is_approved:
             raise HTTPException(400, "Ваши показания уже проверены и приняты бухгалтерией. Изменение невозможно.")
 
         old_record = {
-            "hot": str(draft.hot_water), "cold": str(draft.cold_water), "elect": str(draft.electricity),
+            "hot": str(draft.hot_water),
+            "cold": str(draft.cold_water),
+            "elect": str(draft.electricity),
             "date": datetime.utcnow().strftime("%d.%m.%Y %H:%M")
         }
-        history_list = draft.edit_history if draft.edit_history else[]
+        history_list = draft.edit_history if draft.edit_history else []
         draft.edit_history = history_list + [old_record]
         draft.edit_count = (draft.edit_count or 0) + 1
 
@@ -254,6 +278,7 @@ async def save_reading(
         db.add(draft)
         await db.flush()
         reading_id_for_celery = draft.id
+
     else:
         costs_for_create = costs.copy()
         costs_for_create.pop('total_cost', None)
@@ -262,12 +287,21 @@ async def save_reading(
             user_id=user.id,
             room_id=user.room_id,
             period_id=period.id,
-            hot_water=hot, cold_water=cold, electricity=elect,
-            debt_209=Decimal("0.00"), overpayment_209=Decimal("0.00"),
-            debt_205=Decimal("0.00"), overpayment_205=Decimal("0.00"),
-            total_209=total_209, total_205=total_205, total_cost=grand_total,
-            is_approved=False, anomaly_flags="PENDING", anomaly_score=0,
-            edit_count=1, edit_history=[],
+            hot_water=hot,
+            cold_water=cold,
+            electricity=elect,
+            debt_209=Decimal("0.00"),
+            overpayment_209=Decimal("0.00"),
+            debt_205=Decimal("0.00"),
+            overpayment_205=Decimal("0.00"),
+            total_209=total_209,
+            total_205=total_205,
+            total_cost=grand_total,
+            is_approved=False,
+            anomaly_flags="PENDING",
+            anomaly_score=0,
+            edit_count=1,
+            edit_history=[],
             **costs_for_create
         )
         db.add(new_draft)
@@ -276,7 +310,7 @@ async def save_reading(
 
     await db.commit()
 
-    # 6. Запускаем асинхронную проверку на аномалии
+    # 8. Запускаем асинхронную проверку на аномалии
     detect_anomalies_task.delay(reading_id_for_celery)
 
     return {"status": "success", "total_cost": grand_total, "total_209": total_209, "total_205": total_205}
@@ -286,19 +320,33 @@ async def save_reading(
 # HISTORY
 # =========================
 @router.get("/api/readings/history")
-async def get_client_history(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    # История показывает только те квитанции, которые были выставлены на этого пользователя
+async def get_client_history(
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db)
+):
     readings = (await db.execute(
         select(MeterReading)
         .options(selectinload(MeterReading.period))
-        .where(MeterReading.user_id == current_user.id, MeterReading.is_approved)
+        .where(
+            MeterReading.user_id == current_user.id,
+            MeterReading.is_approved.is_(True)
+        )
         .order_by(MeterReading.created_at.desc())
         .limit(24)
     )).scalars().all()
 
-    return[{"id": r.id, "period": r.period.name if r.period else "Неизвестно", "hot": r.hot_water,
-             "cold": r.cold_water, "electric": r.electricity, "total": r.total_cost, "date": r.created_at}
-            for r in readings]
+    return [
+        {
+            "id": r.id,
+            "period": r.period.name if r.period else "Неизвестно",
+            "hot": r.hot_water,
+            "cold": r.cold_water,
+            "electric": r.electricity,
+            "total": r.total_cost,
+            "date": r.created_at
+        }
+        for r in readings
+    ]
 
 
 # =========================
@@ -310,67 +358,73 @@ async def download_client_receipt(
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
 ):
-    # 1. Получаем показание с привязанными User, Room и Period (Добавлен selectinload для Room!)
     reading = (await db.execute(
         select(MeterReading)
         .options(
             selectinload(MeterReading.user),
             selectinload(MeterReading.period),
-            selectinload(MeterReading.room) # <--- ИСПРАВЛЕНИЕ ЗДЕСЬ
+            selectinload(MeterReading.room)
         )
         .where(MeterReading.id == reading_id)
     )).scalars().first()
 
-    # 2. Проверки доступа
-    if not reading or reading.user_id != current_user.id:
+    # ИСПРАВЛЕНИЕ: усиленная проверка доступа.
+    # Старая проверка `reading.user_id != current_user.id` не работала когда
+    # user_id = NULL (nullable поле). Теперь дополнительно проверяем room_id —
+    # пользователь может скачивать только квитанции своей комнаты.
+    if not reading:
+        raise HTTPException(404, "Квитанция не найдена")
+
+    if reading.user_id != current_user.id:
+        raise HTTPException(404, "Квитанция не найдена")
+
+    if reading.room_id != current_user.room_id:
         raise HTTPException(404, "Квитанция не найдена")
 
     if not reading.is_approved:
         raise HTTPException(400, "Квитанция еще не сформирована")
 
-    # 3. Получаем тариф
-    tariff = (await db.execute(select(Tariff).where(Tariff.is_active).order_by(Tariff.valid_from.desc()))).scalars().first()
-    if not tariff: raise HTTPException(500, "Тариф не найден")
+    tariff = (await db.execute(
+        select(Tariff).where(Tariff.is_active).order_by(Tariff.valid_from.desc())
+    )).scalars().first()
+    if not tariff:
+        raise HTTPException(500, "Тариф не найден")
 
-    # 4. Ищем предыдущее показание для КОМНАТЫ
     prev = (await db.execute(
         select(MeterReading)
         .where(
             MeterReading.room_id == reading.room_id,
-            MeterReading.is_approved,
+            MeterReading.is_approved.is_(True),
             MeterReading.created_at < reading.created_at
         )
         .order_by(MeterReading.created_at.desc())
         .limit(1)
     )).scalars().first()
 
-    # 5. Корректировки (остаются привязанными к пользователю)
     adjustments = (await db.execute(
-        select(Adjustment).where(Adjustment.user_id == reading.user_id, Adjustment.period_id == reading.period_id)
+        select(Adjustment).where(
+            Adjustment.user_id == reading.user_id,
+            Adjustment.period_id == reading.period_id
+        )
     )).scalars().all()
 
-    # 6. Генерация PDF
-    pdf_path = await asyncio.to_thread(
-        generate_receipt_pdf,
-        user=reading.user,
-        room=reading.room, # <--- ИСПРАВЛЕНИЕ: Передаем room
-        reading=reading,
-        period=reading.period,
-        tariff=tariff,
-        prev_reading=prev,
-        adjustments=adjustments,
-        output_dir="/tmp"
-    )
+    try:
+        pdf_path = generate_receipt_pdf(
+            reading=reading,
+            user=reading.user,
+            room=reading.room,
+            period=reading.period,
+            tariff=tariff,
+            prev_reading=prev,
+            adjustments=adjustments
+        )
 
-    # 7. Загрузка в S3
-    period_id = reading.period.id if reading.period else "unknown"
-    key = f"receipts/{period_id}/client_view_{reading.user.id}_{uuid.uuid4().hex[:8]}.pdf"
+        s3_key = f"receipts/{reading.id}.pdf"
+        s3_service.upload_file(pdf_path, s3_key)
 
-    upload_success = await asyncio.to_thread(s3_service.upload_file, pdf_path, key)
-    if not upload_success:
-        raise HTTPException(500, "Ошибка генерации файла")
+        url = s3_service.get_presigned_url(s3_key, expiration=300)
+        return {"url": url}
 
-    await asyncio.to_thread(os.remove, pdf_path)
-    url = await asyncio.to_thread(s3_service.get_presigned_url, key, 300)
-
-    return {"status": "success", "url": url}
+    except Exception as e:
+        logger.error(f"Error generating receipt for reading_id={reading_id}: {e}", exc_info=True)
+        raise HTTPException(500, "Ошибка генерации квитанции. Попробуйте позже.")

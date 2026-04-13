@@ -6,22 +6,43 @@
 const AppState = {
     nomenclatures: [],
     objects: [],
-    userRole: localStorage.getItem('arsenal_role') || 'unit_head'
+    // Читаем роль из sessionStorage (изолирован на вкладку)
+    // вместо localStorage (общий для всех вкладок)
+    userRole: sessionStorage.getItem('arsenal_role') || 'unit_head'
 };
 
-// Централизованная функция запросов к API
+/**
+ * Централизованная функция запросов к API.
+ * Токен берётся из sessionStorage и передаётся
+ * в заголовке Authorization: Bearer <token>.
+ * Это позволяет разным пользователям работать в разных вкладках
+ * без смешивания сессий.
+ */
 async function apiFetch(url, options = {}) {
+    const token = sessionStorage.getItem('access_token');
+
     const defaultHeaders = { 'Content-Type': 'application/json' };
+
+    // Добавляем токен в заголовок если он есть
+    if (token) {
+        defaultHeaders['Authorization'] = `Bearer ${token}`;
+    }
+
     options.headers = { ...defaultHeaders, ...options.headers };
     options.credentials = 'same-origin';
 
     try {
         const response = await fetch(url, options);
+
         if (response.status === 401) {
-            // Автоматический редирект при потере сессии
+            // Токен истёк или недействителен — очищаем сессию и редиректим на вход
+            sessionStorage.removeItem('access_token');
+            sessionStorage.removeItem('arsenal_role');
+            sessionStorage.removeItem('arsenal_username');
             window.location.href = 'arsenal_login.html';
             return null;
         }
+
         return response;
     } catch (error) {
         console.error("Critical API Error:", error);
@@ -31,14 +52,12 @@ async function apiFetch(url, options = {}) {
 }
 
 const UI = {
-    // 🔥 НОВОЕ: Всплывающие уведомления (Toasts) вместо alert()
     showToast: (message, type = 'success') => {
         const container = document.getElementById('toast-container');
         if (!container) return;
 
         const toast = document.createElement('div');
 
-        // Стили в зависимости от типа (success / error / info)
         let bgClass = 'bg-slate-800';
         let icon = '<i class="fa-solid fa-circle-info text-blue-400"></i>';
 
@@ -52,7 +71,6 @@ const UI = {
 
         toast.className = `${bgClass} text-white px-5 py-3 rounded-xl shadow-2xl flex items-center gap-3 toast-show pointer-events-auto max-w-sm border border-white/10`;
 
-        // Преобразуем \n в <br> для корректного переноса строк (нужно для импорта из Excel)
         const formattedMessage = message.replace(/\n/g, '<br>');
 
         toast.innerHTML = `
@@ -65,24 +83,17 @@ const UI = {
 
         container.appendChild(toast);
 
-        // Автоматически скрываем через 5 секунд
         setTimeout(() => {
             if (toast.parentElement) {
                 toast.classList.replace('toast-show', 'toast-hide');
-                setTimeout(() => toast.remove(), 300); // Ждем окончания анимации скрытия
+                setTimeout(() => toast.remove(), 400);
             }
         }, 5000);
     },
 
-    // Управление модалками
     openModal: (id) => {
         const modal = document.getElementById(id);
-        if (modal) {
-            modal.style.display = 'flex';
-            // Фокус на первое поле ввода, если есть
-            const firstInput = modal.querySelector('input:not([disabled]), select');
-            if (firstInput) firstInput.focus();
-        }
+        if (modal) modal.style.display = 'flex';
     },
 
     closeModal: (id) => {
@@ -90,34 +101,31 @@ const UI = {
         if (modal) modal.style.display = 'none';
     },
 
-    // Хелпер для отображения загрузки в таблицах
-    setLoading: (elementId, message = 'Загрузка данных...', colspan = 1) => {
-        const el = document.getElementById(elementId);
-        if (el) {
-            el.innerHTML = `<tr><td colspan="${colspan}" class="text-center p-8 text-slate-500">
-                <i class="fa-solid fa-spinner fa-spin text-blue-600 mb-2 text-xl"></i><br>${message}
-            </td></tr>`;
+    setLoading: (btnIdOrElement, isLoading, loadingText = 'Загрузка...') => {
+        const btn = typeof btnIdOrElement === 'string' ? document.getElementById(btnIdOrElement) : btnIdOrElement;
+        if (!btn) return;
+
+        if (isLoading) {
+            btn._originalText = btn.innerHTML;
+            btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> ${loadingText}`;
+            btn.disabled = true;
+        } else {
+            btn.innerHTML = btn._originalText || loadingText;
+            btn.disabled = false;
         }
     },
 
-    // Динамическое добавление поля "Источник" (если его нет в HTML)
-    injectSourceSelectIfNeeded: () => {
-        if (document.getElementById('newDocSource')) return;
-        const targetContainer = document.getElementById('targetSelectContainer');
-        if (!targetContainer) return;
-
-        const sourceContainer = document.createElement('div');
-        sourceContainer.id = 'sourceSelectContainer';
-        sourceContainer.innerHTML = `
-            <label class="block text-xs font-bold text-slate-500 uppercase mb-1.5">Отправитель / Источник</label>
-            <select id="newDocSource" class="w-full border border-slate-300 p-2.5 rounded-lg bg-white focus:border-blue-500 outline-none">
-                <option value="">Загрузка...</option>
-            </select>
-        `;
-        targetContainer.parentElement.insertBefore(sourceContainer, targetContainer);
+    buildSelect: (selectEl, items, valueKey, labelKey, placeholder = 'Выберите...') => {
+        if (!selectEl) return;
+        selectEl.innerHTML = `<option value="">${placeholder}</option>`;
+        items.forEach(item => {
+            const option = document.createElement('option');
+            option.value = item[valueKey];
+            option.textContent = item[labelKey];
+            selectEl.appendChild(option);
+        });
     },
 
-    // Модалка с логином/паролем после создания объекта
     showCredentialsModal: (title, username, password) => {
         const titleEl = document.getElementById('credModalTitle');
         const userEl = document.getElementById('credUsername');

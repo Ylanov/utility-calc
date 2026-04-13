@@ -646,3 +646,84 @@ input:focus, select:focus, textarea:focus {
     .grid-3-col { grid-template-columns: 1fr; }
     .radio-group { flex-direction: column; align-items: flex-start; gap: 12px; }
 }
+
+/* =========================================
+   ПРОДВИНУТАЯ АДАПТИВНОСТЬ (Fluid & Responsive)
+   ========================================= */
+
+/* 1. Плавная типографика (Fluid Type) */
+.app-header h1 {
+    /* Минимум 18px, плавно растет (1vw + 10px), максимум 24px */
+    font-size: clamp(1.125rem, 1vw + 0.6rem, 1.5rem);
+}
+.portal-header h1 {
+    /* Для портала: от 32px до 48px */
+    font-size: clamp(2rem, 4vw + 1rem, 3rem);
+}
+
+/* 2. Тени для скролла таблиц на мобильных (Scroll Shadows) */
+.table-responsive {
+    /* Создает иллюзию тени, если контент уходит за край */
+    background:
+        linear-gradient(to right, var(--bg-card) 30%, rgba(255,255,255,0)),
+        linear-gradient(to right, rgba(255,255,255,0), var(--bg-card) 70%) 0 100%,
+        radial-gradient(farthest-side at 0 50%, rgba(0,0,0,0.15), rgba(0,0,0,0)),
+        radial-gradient(farthest-side at 100% 50%, rgba(0,0,0,0.15), rgba(0,0,0,0)) 0 100%;
+    background-repeat: no-repeat;
+    background-size: 40px 100%, 40px 100%, 14px 100%, 14px 100%;
+    background-position: 0 0, 100%, 0 0, 100%;
+    background-attachment: local, local, scroll, scroll;
+}
+
+/* 3. Удобство для телефонов и планшетов (Touch UI) */
+@media (max-width: 768px) {
+    /* Увеличиваем высоту для удобного нажатия пальцем */
+    input, select, textarea, .action-btn {
+        min-height: 44px;
+    }
+
+    /* Табы (Вкладки) можно свайпать вправо-влево */
+    .tabs {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch; /* Плавный скролл на iOS */
+        padding-bottom: 8px;
+    }
+    .tab-btn {
+        white-space: nowrap; /* Запрещаем тексту во вкладках переноситься */
+        flex: 0 0 auto; /* Вкладки не сжимаются */
+    }
+
+    /* Модальные окна не должны прилипать к самым краям экрана на мобилке */
+    .modal-overlay {
+        padding: 12px;
+        align-items: center; /* Центрируем, а не прижимаем ко дну */
+    }
+    .modal-window {
+        border-radius: 20px; /* Красивые круглые края как в iOS */
+        max-height: 95vh;
+    }
+
+    /* Убираем лишние отступы внутри форм на мобилках */
+    .styled-form .form-row, .styled-form .form-grid-2, .styled-form .grid-3-col {
+        gap: 12px;
+    }
+}
+
+/* 4. Для огромных экранов (Ultrawide мониторы 2K/4K) */
+@media (min-width: 1600px) {
+    .app-container {
+        /* Ограничиваем макс. ширину, чтобы интерфейс не был слишком "растянутым" */
+        max-width: 1536px;
+    }
+
+    .grid-2-col {
+        /* Разрешаем колонкам быть чуть шире */
+        grid-template-columns: repeat(auto-fit, minmax(600px, 1fr));
+    }
+
+    /* Делаем шрифт чуть крупнее, так как монитор обычно стоит дальше от глаз */
+    body {
+        font-size: 15px;
+    }
+}
