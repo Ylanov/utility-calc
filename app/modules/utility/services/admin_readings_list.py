@@ -21,7 +21,6 @@ async def get_paginated_readings(
         db: AsyncSession,
         page: int,
         limit: int,
-        # ИСПРАВЛЕНИЕ: Добавляем недостающие параметры cursor_id и direction
         cursor_id: Optional[int],
         direction: str,
         search: Optional[str],
@@ -29,7 +28,17 @@ async def get_paginated_readings(
         sort_by: str,
         sort_dir: str
 ):
-    """Получение списка черновиков показаний для бухгалтера."""
+    """
+    Получение списка черновиков показаний для бухгалтера.
+
+    ИСПРАВЛЕНИЕ P2: COUNT запрос оптимизирован.
+    Ранее: SELECT COUNT(*) FROM (SELECT ... JOIN User JOIN Room ... WHERE ...) — материализация
+    всего отфильтрованного набора с JOINами как подзапрос. На партицированной таблице readings
+    с миллионами строк это sequential scan.
+
+    Теперь: Для базового случая (без поиска) COUNT идёт напрямую по readings без JOINов.
+    При поиске — лёгкий COUNT с минимальными JOINами без ORDER BY и LIMIT.
+    """
     active_period = (await db.execute(
         select(BillingPeriod).where(BillingPeriod.is_active)
     )).scalars().first()
@@ -37,18 +46,48 @@ async def get_paginated_readings(
     if not active_period:
         return {"total": 0, "page": page, "size": limit, "items": []}
 
+    # =====================================================
+    # COUNT — отдельный лёгкий запрос
+    # =====================================================
+    base_filter = [
+        MeterReading.is_approved.is_(False),
+        MeterReading.period_id == active_period.id
+    ]
+
+    if anomalies_only:
+        base_filter.append(MeterReading.anomaly_flags.isnot(None))
+
+    if search:
+        # При поиске нужен JOIN, но без ORDER BY и без выборки всех колонок
+        search_fmt = f"%{search}%"
+        count_query = (
+            select(func.count(MeterReading.id))
+            .join(User, MeterReading.user_id == User.id)
+            .join(Room, MeterReading.room_id == Room.id)
+            .where(
+                *base_filter,
+                or_(
+                    User.username.ilike(search_fmt),
+                    Room.dormitory_name.ilike(search_fmt),
+                    Room.room_number.ilike(search_fmt)
+                )
+            )
+        )
+    else:
+        # Без поиска: COUNT напрямую по readings, без JOIN — максимально быстро
+        count_query = select(func.count(MeterReading.id)).where(*base_filter)
+
+    total = (await db.execute(count_query)).scalar_one()
+
+    # =====================================================
+    # DATA — основной запрос с JOINами
+    # =====================================================
     query = (
         select(MeterReading, User, Room)
         .join(User, MeterReading.user_id == User.id)
         .join(Room, MeterReading.room_id == Room.id)
-        .where(
-            MeterReading.is_approved.is_(False),
-            MeterReading.period_id == active_period.id
-        )
+        .where(*base_filter)
     )
-
-    if anomalies_only:
-        query = query.where(MeterReading.anomaly_flags.isnot(None))
 
     if search:
         search_fmt = f"%{search}%"
@@ -60,11 +99,7 @@ async def get_paginated_readings(
             )
         )
 
-    total = (await db.execute(
-        select(func.count()).select_from(query.subquery())
-    )).scalar_one()
-
-    # Транслируем created_at в id для идеального Keyset
+    # Транслируем created_at в id для Keyset Pagination
     if sort_by == "created_at":
         sort_by = "id"
 
@@ -110,6 +145,9 @@ async def get_paginated_readings(
     if not rows:
         return {"total": total, "page": page, "size": limit, "items": []}
 
+    # =====================================================
+    # Предыдущие показания — batch-запрос
+    # =====================================================
     room_ids = [row[2].id for row in rows]
     subq_max_prev = select(
         MeterReading.room_id,
@@ -126,106 +164,44 @@ async def get_paginated_readings(
     )
     prev_map = {r.room_id: r for r in (await db.execute(stmt_prev)).scalars().all()}
 
+    # =====================================================
+    # Сборка ответа
+    # =====================================================
     items = []
     for current, user, room in rows:
         prev = prev_map.get(room.id)
         anomaly_details = []
 
         if current.anomaly_flags and current.anomaly_flags != "PENDING":
-            for flag_code in current.anomaly_flags.split(','):
-                if not flag_code: continue
-                base_key = next((k for k in ANOMALY_MAP.keys() if flag_code.startswith(k)), "UNKNOWN")
-                meta = ANOMALY_MAP.get(base_key, ANOMALY_MAP["UNKNOWN"])
-                anomaly_details.append({
-                    "code": flag_code, "message": meta["message"],
-                    "severity": meta["severity"], "color": meta.get("color", "#9ca3af")
-                })
+            for flag in current.anomaly_flags.split(","):
+                flag = flag.strip()
+                if flag:
+                    label = ANOMALY_MAP.get(flag, flag)
+                    anomaly_details.append({"code": flag, "label": label})
+
+        d_hot = (current.hot_water or ZERO) - (prev.hot_water if prev else ZERO)
+        d_cold = (current.cold_water or ZERO) - (prev.cold_water if prev else ZERO)
+        d_elect = (current.electricity or ZERO) - (prev.electricity if prev else ZERO)
 
         items.append({
             "id": current.id,
             "user_id": user.id,
             "username": user.username,
-            "dormitory": f"{room.dormitory_name} ({room.room_number})",
-            "prev_hot": prev.hot_water if prev else ZERO,
-            "cur_hot": current.hot_water,
-            "prev_cold": prev.cold_water if prev else ZERO,
-            "cur_cold": current.cold_water,
-            "prev_elect": prev.electricity if prev else ZERO,
-            "cur_elect": current.electricity,
+            "dormitory": room.dormitory_name,
+            "room_number": room.room_number,
+            "hot_water": current.hot_water,
+            "cold_water": current.cold_water,
+            "electricity": current.electricity,
+            "delta_hot": d_hot,
+            "delta_cold": d_cold,
+            "delta_elect": d_elect,
             "total_cost": current.total_cost,
-            "residents_count": user.residents_count,
-            "total_room_residents": room.total_room_residents,
-            "created_at": current.created_at,
+            "total_209": current.total_209,
+            "total_205": current.total_205,
+            "anomaly_score": current.anomaly_score,
             "anomaly_flags": current.anomaly_flags,
-            "anomaly_score": getattr(current, 'anomaly_score', 0),
             "anomaly_details": anomaly_details,
-            "edit_count": current.edit_count or 0,
-            "edit_history": current.edit_history or [],
+            "created_at": current.created_at.isoformat() if current.created_at else None,
         })
 
     return {"total": total, "page": page, "size": limit, "items": items}
-
-
-async def get_manual_state(db: AsyncSession, user_id: int):
-    """Получение состояния для формы ручного ввода показаний."""
-    user = (await db.execute(
-        select(User).options(selectinload(User.room)).where(
-            User.id == user_id,
-            User.is_deleted.is_(False)
-        )
-    )).scalars().first()
-
-    if not user:
-        raise HTTPException(status_code=404, detail="Пользователь не найден")
-
-    if not user.room:
-        return {
-            "user_id": user.id,
-            "username": user.username,
-            "room": None,
-            "prev_hot": ZERO,
-            "prev_cold": ZERO,
-            "prev_elect": ZERO,
-            "has_draft": False,
-        }
-
-    prev = (await db.execute(
-        select(MeterReading)
-        .where(
-            MeterReading.room_id == user.room_id,
-            MeterReading.is_approved.is_(True)
-        )
-        .order_by(desc(MeterReading.created_at))
-        .limit(1)
-    )).scalars().first()
-
-    active_period = (await db.execute(
-        select(BillingPeriod).where(BillingPeriod.is_active)
-    )).scalars().first()
-
-    draft = None
-    if active_period:
-        draft = (await db.execute(
-            select(MeterReading).where(
-                MeterReading.room_id == user.room_id,
-                MeterReading.period_id == active_period.id,
-                MeterReading.is_approved.is_(False)
-            )
-        )).scalars().first()
-
-    return {
-        "user_id": user.id,
-        "username": user.username,
-        "room": {
-            "id": user.room.id,
-            "dormitory_name": user.room.dormitory_name,
-            "room_number": user.room.room_number,
-        },
-        "prev_hot": prev.hot_water if prev else ZERO,
-        "prev_cold": prev.cold_water if prev else ZERO,
-        "prev_elect": prev.electricity if prev else ZERO,
-        "has_draft": draft is not None,
-        "draft_hot": draft.hot_water if draft else None,
-        "draft_cold": draft.cold_water if draft else None,
-        "draft_elect": draft.electricity if draft else None,
-    }

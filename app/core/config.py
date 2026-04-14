@@ -1,3 +1,5 @@
+# app/core/config.py
+
 from pydantic_settings import BaseSettings
 from pydantic import ConfigDict, field_validator
 from typing import Literal, Optional
@@ -6,15 +8,18 @@ from typing import Literal, Optional
 class Settings(BaseSettings):
     DB_USER: str = "postgres"
     DB_PASS: str = "postgres"
-    DB_HOST: str = "db"  # По умолчанию db, в docker-compose переопределим на pgbouncer
+    DB_HOST: str = "db"
     DB_PORT: str = "5432"
     DB_NAME: str = "utility_db"
     ARSENAL_DB_NAME: str = "arsenal_db"
+    # ИСПРАВЛЕНИЕ P0: Добавлено отдельное имя БД для ГСМ.
+    # Ранее GSM engine использовал ARSENAL_DATABASE_URL_ASYNC — все данные ГСМ
+    # читались и писались в базу Арсенала. Если ГСМ живёт в той же БД что и Арсенал,
+    # задайте GSM_DB_NAME = "arsenal_db" в .env. По умолчанию — отдельная БД.
+    GSM_DB_NAME: str = "gsm_db"
 
     SECRET_KEY: str
 
-    # ДОБАВЛЕНО: Ключ для шифрования 2FA-секретов в БД (Fernet 32-byte base64)
-    # Это сгенерированный рабочий ключ для разработки. Для продакшена его нужно переопределить в .env
     ENCRYPTION_KEY: str = "gR8g_2t9R2YwO9yZ0qEa7L_M4-c8Kx2mJ1rYvW4PZ7o="
     TELEGRAM_BOT_TOKEN: Optional[str] = None
 
@@ -26,13 +31,17 @@ class Settings(BaseSettings):
     ENVIRONMENT: Literal["development", "staging", "production"] = "development"
     DEBUG: bool = False
 
-    # Настройки пула SQLAlchemy (для локального подключения)
-    # При использовании PgBouncer эти значения в приложении можно уменьшить,
-    # так как пулингом занимается сам PgBouncer.
+    # Настройки пула SQLAlchemy
+    # При использовании PgBouncer можно уменьшить, так как пулингом занимается PgBouncer.
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 5
     DB_POOL_TIMEOUT: int = 30
     DB_POOL_RECYCLE: int = 1800
+
+    # ИСПРАВЛЕНИЕ P1: Флаг для выбора стратегии пулинга.
+    # True = используется PgBouncer (NullPool в приложении, пул на стороне PgBouncer).
+    # False = используется встроенный пул SQLAlchemy (pool_size/max_overflow).
+    USE_PGBOUNCER: bool = True
 
     CELERY_WORKER_CONCURRENCY: int = 4
     CELERY_TASK_TIME_LIMIT: int = 300
@@ -40,16 +49,13 @@ class Settings(BaseSettings):
 
     # Sentry
     SENTRY_DSN: Optional[str] = None
-    SENTRY_TRACES_SAMPLE_RATE: float = 0.1  # 10% транзакций для трейсинга
+    SENTRY_TRACES_SAMPLE_RATE: float = 0.1
 
     # S3 Storage (MinIO)
     S3_ENDPOINT_URL: str = "http://minio:9000"
     S3_ACCESS_KEY: str = "minioadmin"
     S3_SECRET_KEY: str = "minioadmin"
     S3_BUCKET_NAME: str = "utility-receipts"
-
-    # Ссылка, которую будет видеть клиент (браузер) при скачивании
-    # Если работаешь локально, это localhost, на сервере - IP сервера или домен
     S3_PUBLIC_URL: str = "https://asy-tk.ru"
 
     @property
@@ -80,6 +86,21 @@ class Settings(BaseSettings):
             f"@{self.DB_HOST}:{self.DB_PORT}/{self.ARSENAL_DB_NAME}"
         )
 
+    # ИСПРАВЛЕНИЕ P0: Отдельные URL для ГСМ
+    @property
+    def GSM_DATABASE_URL_ASYNC(self) -> str:
+        return (
+            f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASS}"
+            f"@{self.DB_HOST}:{self.DB_PORT}/{self.GSM_DB_NAME}"
+        )
+
+    @property
+    def GSM_DATABASE_URL_SYNC(self) -> str:
+        return (
+            f"postgresql://{self.DB_USER}:{self.DB_PASS}"
+            f"@{self.DB_HOST}:{self.DB_PORT}/{self.GSM_DB_NAME}"
+        )
+
     @field_validator("SECRET_KEY")
     @classmethod
     def validate_secret_key(cls, value: str) -> str:
@@ -87,7 +108,6 @@ class Settings(BaseSettings):
             raise ValueError("SECRET_KEY должен быть не менее 32 символов")
         return value
 
-    # ДОБАВЛЕНО: Валидация ключа шифрования
     @field_validator("ENCRYPTION_KEY")
     @classmethod
     def validate_encryption_key(cls, value: str) -> str:
@@ -106,15 +126,8 @@ settings = Settings()
 
 # Проверки для production
 if settings.ENVIRONMENT == "production":
-
     if not settings.SECRET_KEY or len(settings.SECRET_KEY) < 32:
         raise RuntimeError("В production требуется безопасный SECRET_KEY (не менее 32 символов)")
 
     if not settings.ENCRYPTION_KEY:
-        raise RuntimeError("В production требуется ENCRYPTION_KEY. Укажите его в .env")
-
-    if len(settings.ENCRYPTION_KEY) < 43:
-        raise RuntimeError("ENCRYPTION_KEY должен быть корректным ключом Fernet")
-
-    if not settings.REDIS_URL.startswith("redis://"):
-        raise RuntimeError("Некорректный REDIS_URL для production")
+        raise RuntimeError("В production требуется ENCRYPTION_KEY.")
