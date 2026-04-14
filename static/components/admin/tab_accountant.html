@@ -1,6 +1,6 @@
 <div id="accountant" class="tab-content">
 
-    <!-- НОВЫЙ БЛОК: Предпросмотр закрытия периода -->
+    <!-- БЛОК: Предпросмотр закрытия периода -->
     <div id="closePreviewCard" class="card" style="display:none; margin-bottom: 20px; border-left: 4px solid #f59e0b;">
         <div class="card-header">
             <h3><i class="fa-solid fa-clipboard-check" style="color:#f59e0b; margin-right:8px;"></i> Предпросмотр закрытия периода</h3>
@@ -15,19 +15,20 @@
         </div>
     </div>
 
-    <!-- НОВЫЙ БЛОК: Сравнительная аналитика -->
+    <!-- БЛОК: Сравнительная аналитика (ИСПРАВЛЕНА ВЕРСТКА) -->
     <div class="card" style="margin-bottom: 20px;">
-        <div class="card-header">
-            <h3><i class="fa-solid fa-chart-column" style="color:#3b82f6; margin-right:8px;"></i> Сравнение периодов</h3>
-            <div class="header-controls" style="gap: 10px; align-items: center;">
-                <select id="comparePeriodA" style="min-width: 160px;">
+        <div class="card-header" style="flex-direction: column; align-items: stretch; gap: 12px;">
+            <h3 style="margin: 0;"><i class="fa-solid fa-chart-column" style="color:#3b82f6; margin-right:8px;"></i> Сравнение периодов</h3>
+            <!-- Селекторы и кнопка вынесены в отдельную строку -->
+            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px;">
+                <select id="comparePeriodA" style="flex: 1; min-width: 160px; max-width: 280px;">
                     <option value="">Период A...</option>
                 </select>
-                <span style="color: var(--text-secondary); font-weight: 600;">vs</span>
-                <select id="comparePeriodB" style="min-width: 160px;">
+                <span style="color: var(--text-secondary); font-weight: 600; font-size: 14px;">vs</span>
+                <select id="comparePeriodB" style="flex: 1; min-width: 160px; max-width: 280px;">
                     <option value="">Период B...</option>
                 </select>
-                <button id="btnCompare" class="action-btn primary-btn" style="padding: 6px 14px; font-size: 13px;">
+                <button id="btnCompare" class="action-btn primary-btn" style="padding: 8px 20px; font-size: 13px; white-space: nowrap;">
                     <i class="fa-solid fa-scale-balanced"></i> Сравнить
                 </button>
             </div>

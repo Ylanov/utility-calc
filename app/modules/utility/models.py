@@ -1,3 +1,5 @@
+# app/modules/utility/models.py
+
 from sqlalchemy import (
     Column,
     Integer,
@@ -6,38 +8,48 @@ from sqlalchemy import (
     Boolean,
     Index,
     DateTime,
+    Text,
     func
 )
 from sqlalchemy.types import Numeric
 from sqlalchemy.orm import relationship
-from datetime import datetime
+from datetime import datetime, timezone
 
 from app.core.database import Base
 from sqlalchemy.dialects.postgresql import JSONB
 
 
+def _utcnow():
+    """Возвращает текущее время в UTC (timezone-aware).
+    ИСПРАВЛЕНИЕ: datetime.utcnow() deprecated в Python 3.12+.
+    """
+    return datetime.now(timezone.utc)
+
+
 # ======================================================
-# ROOM (НОВАЯ ОСНОВА СИСТЕМЫ)
+# ROOM (ОСНОВА СИСТЕМЫ)
 # ======================================================
 class Room(Base):
     __tablename__ = "rooms"
 
     id = Column(Integer, primary_key=True, index=True)
 
-    dormitory_name = Column(String, index=True)  # общежитие
-    room_number = Column(String, index=True)     # комната / квартира
+    dormitory_name = Column(String, index=True)
+    room_number = Column(String, index=True)
 
     apartment_area = Column(Numeric(10, 2), default=0.00)
     total_room_residents = Column(Integer, default=1)
-    # === НОВЫЕ ПОЛЯ: Номера счетчиков ===
-    hw_meter_serial = Column(String, nullable=True)  # ГВС (Горячая вода)
-    cw_meter_serial = Column(String, nullable=True)  # ХВС (Холодная вода)
-    el_meter_serial = Column(String, nullable=True)  # Электричество
 
-    # Кэш последних показаний (ускорение расчетов)
+    hw_meter_serial = Column(String, nullable=True)
+    cw_meter_serial = Column(String, nullable=True)
+    el_meter_serial = Column(String, nullable=True)
+
     last_hot_water = Column(Numeric(12, 3), default=0.000)
     last_cold_water = Column(Numeric(12, 3), default=0.000)
     last_electricity = Column(Numeric(12, 3), default=0.000)
+
+    # НОВОЕ: Отслеживание последнего изменения
+    updated_at = Column(DateTime, nullable=True, onupdate=_utcnow)
 
     __table_args__ = (
         Index(
@@ -50,7 +62,7 @@ class Room(Base):
 
 
 # ======================================================
-# USER (ТЕПЕРЬ ТОЛЬКО ЖИЛЕЦ)
+# USER (ЖИЛЕЦ)
 # ======================================================
 class User(Base):
     __tablename__ = "users"
@@ -61,15 +73,11 @@ class User(Base):
     role = Column(String, nullable=False)
 
     workplace = Column(String, nullable=True)
-
-    # Сколько человек платит с этого аккаунта
     residents_count = Column(Integer, default=1)
 
-    # 🔑 Связь с комнатой
     room_id = Column(Integer, ForeignKey("rooms.id"), nullable=True)
     room = relationship("Room", backref="users")
 
-    # 🔑 СВЯЗЬ С ТАРИФОМ (которой не хватало)
     tariff_id = Column(Integer, ForeignKey("tariffs.id"), nullable=True)
     tariff = relationship("Tariff")
 
@@ -79,15 +87,15 @@ class User(Base):
     is_initial_setup_done = Column(Boolean, default=False)
     telegram_id = Column(String, unique=True, nullable=True, index=True)
 
+    # НОВОЕ: Отслеживание последнего изменения
+    updated_at = Column(DateTime, nullable=True, onupdate=_utcnow)
+
     __table_args__ = (
-        # защита от дублей username (без учета регистра)
         Index(
             "uq_user_username_lower",
             func.lower(username),
             unique=True
         ),
-
-        # поиск по username
         Index(
             "idx_user_username_trgm",
             "username",
@@ -106,7 +114,7 @@ class Tariff(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False, default="Базовый тариф")
     is_active = Column(Boolean, default=True, index=True)
-    valid_from = Column(DateTime, default=datetime.utcnow)
+    valid_from = Column(DateTime, default=_utcnow)
 
     maintenance_repair = Column(Numeric(10, 4), default=0.0)
     social_rent = Column(Numeric(10, 4), default=0.0)
@@ -117,6 +125,9 @@ class Tariff(Base):
     waste_disposal = Column(Numeric(10, 4), default=0.0)
     electricity_per_sqm = Column(Numeric(10, 4), default=0.0)
     electricity_rate = Column(Numeric(10, 4), default=5.0)
+
+    # НОВОЕ: Отслеживание последнего изменения
+    updated_at = Column(DateTime, nullable=True, onupdate=_utcnow)
 
 
 # ======================================================
@@ -131,7 +142,7 @@ class BillingPeriod(Base):
 
     name = Column(String, unique=True, nullable=False)
     is_active = Column(Boolean, default=True, index=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
 
 
 # ======================================================
@@ -149,7 +160,7 @@ class Adjustment(Base):
     description = Column(String, nullable=False)
     account_type = Column(String, default="209", nullable=False)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_utcnow)
 
     user = relationship("User")
     period = relationship("BillingPeriod")
@@ -160,7 +171,7 @@ class Adjustment(Base):
 
 
 # ======================================================
-# METER READING (ПРИВЯЗКА К КОМНАТЕ — КЛЮЧЕВОЕ)
+# METER READING (ПРИВЯЗКА К КОМНАТЕ)
 # ======================================================
 class MeterReading(Base):
     __tablename__ = "readings"
@@ -175,14 +186,10 @@ class MeterReading(Base):
     )
 
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    created_at = Column(DateTime, primary_key=True, default=datetime.utcnow)
+    created_at = Column(DateTime, primary_key=True, default=_utcnow)
 
-    # 🔑 Главное — комната
     room_id = Column(Integer, ForeignKey("rooms.id"), nullable=False)
-
-    # Кто передал (может быть NULL)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-
     period_id = Column(Integer, ForeignKey("periods.id"), nullable=True)
 
     room = relationship("Room")
@@ -237,21 +244,54 @@ class SystemSetting(Base):
 
 
 # ======================================================
-# DEVICE TOKENS (Для Push-уведомлений)
+# DEVICE TOKENS (Push-уведомления)
 # ======================================================
 class DeviceToken(Base):
     __tablename__ = "device_tokens"
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-
-    # Сам ключ устройства (FCM Token)
     token = Column(String, unique=True, nullable=False, index=True)
-
-    # Платформа (android, ios, web)
     device_type = Column(String, nullable=True)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    # Привязка к пользователю
+    created_at = Column(DateTime, default=_utcnow)
     user = relationship("User", backref="device_tokens")
+
+
+# ======================================================
+# AUDIT LOG (НОВОЕ: Журнал действий администратора)
+# ======================================================
+class AuditLog(Base):
+    """
+    Журнал действий администратора.
+    Фиксирует кто, когда и что сделал в системе.
+    Критично для бухгалтерских проверок и разрешения споров.
+    """
+    __tablename__ = "audit_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # Кто совершил действие
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    username = Column(String, nullable=False)
+
+    # Что сделал
+    action = Column(String, nullable=False)  # create, update, delete, approve, close_period, etc.
+
+    # Над чем (сущность)
+    entity_type = Column(String, nullable=False)  # user, room, tariff, reading, period, adjustment
+    entity_id = Column(Integer, nullable=True)  # ID объекта (может быть NULL для массовых операций)
+
+    # Детали (произвольный JSON)
+    details = Column(JSONB, nullable=True)
+
+    # Когда
+    created_at = Column(DateTime, default=_utcnow, index=True)
+
+    user = relationship("User")
+
+    __table_args__ = (
+        Index("idx_audit_user_id", "user_id"),
+        Index("idx_audit_entity", "entity_type", "entity_id"),
+        Index("idx_audit_action", "action"),
+        Index("idx_audit_created", "created_at"),
+    )

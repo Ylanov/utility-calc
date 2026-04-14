@@ -46,10 +46,10 @@ from app.modules.utility.routers import (
     admin_user_ops,
     financier,
     settings as settings_router,
+    admin_dashboard,
 )
 
 from app.modules.telegram import telegram_app
-
 # === АРСЕНАЛ ===
 from app.modules.arsenal.routers import (
     system as arsenal_system,
@@ -282,6 +282,7 @@ app.include_router(admin_user_ops.router)
 app.include_router(financier.router)
 app.include_router(settings_router.router)
 app.include_router(telegram_app.router)
+app.include_router(admin_dashboard.router)
 
 # =====================================================================
 # ROUTES — АРСЕНАЛ

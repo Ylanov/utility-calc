@@ -54,7 +54,11 @@
         <!-- NAV TABS -->
         <div class="nav-tabs-container">
             <div class="tabs">
-                <button class="tab-btn active" data-tab="readings"><i class="fa-solid fa-chart-line"></i> Сверка показаний</button>
+                <!-- ИСПРАВЛЕНИЕ: Дашборд — единственная вкладка с active.
+                     Ранее и dashboard, и readings имели active одновременно,
+                     что приводило к визуальному глитчу (две подсвеченные кнопки). -->
+                <button class="tab-btn active" data-tab="dashboard"><i class="fa-solid fa-gauge-high"></i> Дашборд</button>
+                <button class="tab-btn" data-tab="readings"><i class="fa-solid fa-chart-line"></i> Сверка показаний</button>
                 <button class="tab-btn" data-tab="manual"><i class="fa-solid fa-pen-to-square"></i> Ручной ввод</button>
                 <button class="tab-btn" data-tab="debts"><i class="fa-solid fa-file-invoice-dollar"></i> Долги 1С</button>
                 <button class="tab-btn" data-tab="housing"><i class="fa-solid fa-city"></i> Жилфонд</button>
@@ -67,8 +71,11 @@
         <!-- CONTENT AREA -->
         <main class="content-area" id="content-area">
 
-            <!-- 3. ВСТРОЕННАЯ ПЕРВАЯ ВКЛАДКА (Устраняем Network Waterfall) -->
-            <div id="readings" class="tab-content active">
+            <!-- ВСТРОЕННАЯ ВКЛАДКА: Сверка показаний
+                 ИСПРАВЛЕНИЕ: убран class="active" — теперь дефолтная вкладка dashboard,
+                 а readings загрузится при переключении через роутинг.
+                 Встроенный HTML остаётся в DOM для мгновенного отображения без fetch. -->
+            <div id="readings" class="tab-content">
                 <!-- Статусы периода -->
                 <div class="status-card">
                     <div id="periodActiveState" class="period-state open" style="display: none;">
@@ -214,7 +221,8 @@
                         </div>
                         <div class="form-group mb-3" style="margin-bottom: 20px;">
                             <label>Новый пароль</label>
-                            <input type="password" id="adminNewPass" autocomplete="new-password" placeholder="Минимум 6 символов" minlength="6">
+                            <!-- ИСПРАВЛЕНИЕ: minlength="8" — согласовано с бэкенд-валидацией (schemas.py min_length=8) -->
+                            <input type="password" id="adminNewPass" autocomplete="new-password" placeholder="Минимум 8 символов" minlength="8">
                         </div>
                         <button type="submit" class="action-btn primary-btn full-width" id="btnSaveAdminCreds">Сохранить изменения</button>
                     </form>
@@ -245,7 +253,8 @@
                     </div>
                     <div class="form-group">
                         <label>Придумайте новый надежный пароль</label>
-                        <input type="password" id="fsNewPassword" autocomplete="new-password" placeholder="Минимум 6 символов" minlength="6" required>
+                        <!-- ИСПРАВЛЕНИЕ: minlength="8" — согласовано с бэкенд-валидацией -->
+                        <input type="password" id="fsNewPassword" autocomplete="new-password" placeholder="Минимум 8 символов" minlength="8" required>
                     </div>
                     <button type="submit" class="action-btn success-btn full-width" id="btnFsSave" style="margin-top: 24px;">Сохранить и войти</button>
                 </form>

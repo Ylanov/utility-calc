@@ -225,9 +225,13 @@ function setupRouting() {
 
 function handleRoute() {
     const hash = window.location.hash.substring(1);
-    const defaultTab = 'readings';
 
-    const validTabs =['readings', 'housing', 'users', 'tariffs', 'accountant', 'debts', 'manual'];
+    // ИСПРАВЛЕНИЕ: дефолтная вкладка — dashboard (ранее readings).
+    // Дашборд — первое что видит администратор при входе: KPI, метрики, журнал.
+    const defaultTab = 'dashboard';
+
+    // ИСПРАВЛЕНИЕ: dashboard добавлен в список валидных вкладок.
+    const validTabs = ['dashboard', 'readings', 'housing', 'users', 'tariffs', 'accountant', 'debts', 'manual'];
     const tabToLoad = validTabs.includes(hash) ? hash : defaultTab;
 
     switchTab(tabToLoad);
@@ -303,6 +307,14 @@ async function switchTab(tabId) {
 async function initModule(tabId) {
     try {
         switch (tabId) {
+            // НОВОЕ: Модуль дашборда с KPI и журналом действий
+            case 'dashboard':
+                if (!loadedModules.dashboard) {
+                    const { DashboardModule } = await import('./modules/dashboard.js');
+                    loadedModules.dashboard = DashboardModule;
+                }
+                loadedModules.dashboard.init();
+                break;
             case 'readings':
                 if (!loadedModules.readings) {
                     const { ReadingsModule } = await import('./modules/readings.js');
@@ -367,6 +379,10 @@ function refreshModuleData(tabId) {
     if (!mod || !mod.isInitialized) return;
 
     switch (tabId) {
+        // НОВОЕ: При возврате на дашборд — обновляем KPI (лёгкий запрос)
+        case 'dashboard':
+            if (typeof mod.loadKPI === 'function') mod.loadKPI();
+            break;
         case 'readings':
         case 'housing':
         case 'users':
