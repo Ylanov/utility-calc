@@ -21,7 +21,9 @@ async def get_paginated_readings(
         db: AsyncSession,
         page: int,
         limit: int,
-        after_id: Optional[int],
+        # ИСПРАВЛЕНИЕ: Добавляем недостающие параметры cursor_id и direction
+        cursor_id: Optional[int],
+        direction: str,
         search: Optional[str],
         anomalies_only: bool,
         sort_by: str,
@@ -45,8 +47,6 @@ async def get_paginated_readings(
         )
     )
 
-    # ИСПРАВЛЕНИЕ: был Python-оператор `is not None` который всегда True.
-    # Правильный SQLAlchemy-метод: .isnot(None) — генерирует SQL: IS NOT NULL.
     if anomalies_only:
         query = query.where(MeterReading.anomaly_flags.isnot(None))
 
@@ -64,34 +64,53 @@ async def get_paginated_readings(
         select(func.count()).select_from(query.subquery())
     )).scalar_one()
 
-    # ИСПРАВЛЕНИЕ: добавлен "created_at" в словарь маппинга.
-    # Ранее дефолтное значение Query sort_by="created_at" не было в словаре
-    # и тихо падало на сортировку по MeterReading.id вместо даты.
-    sort_col = {
-        "created_at": MeterReading.created_at,
+    # Транслируем created_at в id для идеального Keyset
+    if sort_by == "created_at":
+        sort_by = "id"
+
+    sort_col_map = {
         "id": MeterReading.id,
         "username": User.username,
         "dormitory": Room.dormitory_name,
         "total_cost": MeterReading.total_cost,
         "anomaly_score": MeterReading.anomaly_score,
-    }.get(sort_by, MeterReading.created_at)  # default — по дате создания
+    }
+    sort_col = sort_col_map.get(sort_by, MeterReading.id)
 
-    if after_id and sort_by in ["created_at", "id"]:
-        if sort_dir == "desc":
-            query = query.where(MeterReading.id < after_id).order_by(desc(MeterReading.id))
-        else:
-            query = query.where(MeterReading.id > after_id).order_by(asc(MeterReading.id))
-        rows = (await db.execute(query.limit(limit))).all()
+    use_keyset = (sort_by == "id")
+
+    # === ЛОГИКА ПАГИНАЦИИ ===
+    if use_keyset and cursor_id is not None:
+        if direction == "next":
+            if sort_dir == "desc":
+                query = query.where(MeterReading.id < cursor_id)
+            else:
+                query = query.where(MeterReading.id > cursor_id)
+        else:  # prev
+            if sort_dir == "desc":
+                query = query.where(MeterReading.id > cursor_id)
+            else:
+                query = query.where(MeterReading.id < cursor_id)
     else:
-        query = query.order_by(asc(sort_col) if sort_dir == "asc" else desc(sort_col))
-        rows = (await db.execute(query.offset((page - 1) * limit).limit(limit))).all()
+        # Fallback для поиска или сложной сортировки (OFFSET)
+        query = query.offset((page - 1) * limit)
+
+    # === ЛОГИКА СОРТИРОВКИ ===
+    if use_keyset and direction == "prev":
+        query = query.order_by(asc(sort_col) if sort_dir == "desc" else desc(sort_col))
+    else:
+        query = query.order_by(desc(sort_col) if sort_dir == "desc" else asc(sort_col))
+
+    query = query.limit(limit)
+    rows = (await db.execute(query)).all()
+
+    if use_keyset and direction == "prev":
+        rows.reverse()
 
     if not rows:
         return {"total": total, "page": page, "size": limit, "items": []}
 
-    # Ищем предыдущие утверждённые показания по room_id для отображения разницы
     room_ids = [row[2].id for row in rows]
-
     subq_max_prev = select(
         MeterReading.room_id,
         func.max(MeterReading.created_at).label("max_created")
@@ -105,29 +124,21 @@ async def get_paginated_readings(
         (MeterReading.room_id == subq_max_prev.c.room_id) &
         (MeterReading.created_at == subq_max_prev.c.max_created)
     )
-
     prev_map = {r.room_id: r for r in (await db.execute(stmt_prev)).scalars().all()}
 
     items = []
-
     for current, user, room in rows:
         prev = prev_map.get(room.id)
         anomaly_details = []
 
         if current.anomaly_flags and current.anomaly_flags != "PENDING":
             for flag_code in current.anomaly_flags.split(','):
-                if not flag_code:
-                    continue
-                base_key = next(
-                    (k for k in ANOMALY_MAP.keys() if flag_code.startswith(k)),
-                    "UNKNOWN"
-                )
+                if not flag_code: continue
+                base_key = next((k for k in ANOMALY_MAP.keys() if flag_code.startswith(k)), "UNKNOWN")
                 meta = ANOMALY_MAP.get(base_key, ANOMALY_MAP["UNKNOWN"])
                 anomaly_details.append({
-                    "code": flag_code,
-                    "message": meta["message"],
-                    "severity": meta["severity"],
-                    "color": meta.get("color", "#9ca3af")
+                    "code": flag_code, "message": meta["message"],
+                    "severity": meta["severity"], "color": meta.get("color", "#9ca3af")
                 })
 
         items.append({
@@ -178,7 +189,6 @@ async def get_manual_state(db: AsyncSession, user_id: int):
             "has_draft": False,
         }
 
-    # Последнее утверждённое показание комнаты
     prev = (await db.execute(
         select(MeterReading)
         .where(
@@ -189,7 +199,6 @@ async def get_manual_state(db: AsyncSession, user_id: int):
         .limit(1)
     )).scalars().first()
 
-    # Черновик текущего периода
     active_period = (await db.execute(
         select(BillingPeriod).where(BillingPeriod.is_active)
     )).scalars().first()

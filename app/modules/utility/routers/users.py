@@ -41,7 +41,6 @@ ZERO = Decimal("0.00")
 # =================================================================
 class ChangeCredentials(BaseModel):
     new_username: Optional[str] = Field(None, min_length=3, max_length=100)
-    # ИСПРАВЛЕНИЕ: минимальная длина нового пароля проверяется на бэкенде
     new_password: Optional[str] = Field(None, min_length=8, max_length=128)
     old_password: Optional[str] = None
 
@@ -50,19 +49,9 @@ class ChangeCredentials(BaseModel):
 # ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: Проверка tariff_id
 # =================================================================
 async def _validate_tariff_id(tariff_id: Optional[int], db: AsyncSession) -> None:
-    """
-    Проверяет что тариф с указанным ID существует и активен.
-
-    ИСПРАВЛЕНИЕ: Ранее можно было указать несуществующий tariff_id при создании
-    пользователя. Он записывался в БД, но при расчёте costs система тихо
-    падала на fallback к default_tariff. Администратор не узнавал об ошибке,
-    а жилец получал квитанцию по неверному тарифу.
-
-    Теперь: при создании и обновлении пользователя tariff_id проверяется,
-    и если тариф не найден или деактивирован — возвращается 400.
-    """
+    """Проверяет что тариф с указанным ID существует и активен."""
     if tariff_id is None:
-        return  # None = базовый тариф по умолчанию, это допустимо
+        return
 
     tariff = await db.get(Tariff, tariff_id)
     if not tariff:
@@ -123,8 +112,6 @@ async def initial_setup(
     return {"status": "success", "message": "Данные успешно обновлены."}
 
 
-# ИСПРАВЛЕНИЕ: добавлен rate limiter — не более 5 запросов в минуту.
-# Смена пароля без ограничения позволяла перебирать новые пароли, имея токен.
 @router.post(
     "/me/change-password",
     dependencies=[Depends(RateLimiter(times=5, seconds=60))]
@@ -163,7 +150,6 @@ async def create_user(new_user: UserCreate, db: AsyncSession = Depends(get_db)):
         if not room_check:
             raise HTTPException(status_code=400, detail="Комната не найдена в Жилфонде")
 
-    # ИСПРАВЛЕНИЕ: Проверяем что tariff_id существует и активен.
     await _validate_tariff_id(new_user.tariff_id, db)
 
     db_user = User(
@@ -191,11 +177,18 @@ async def create_user(new_user: UserCreate, db: AsyncSession = Depends(get_db)):
 async def get_users(
         page: int = Query(1, ge=1),
         limit: int = Query(50, ge=1, le=500),
+        cursor_id: Optional[int] = Query(None, description="ID для Keyset Pagination"),
+        direction: str = Query("next", pattern="^(next|prev)$", description="Направление пагинации"),
         search: Optional[str] = Query(None),
         sort_by: str = Query("id"),
         sort_dir: str = Query("asc", pattern="^(asc|desc)$"),
         db: AsyncSession = Depends(get_db)
 ):
+    """
+    Получение списка пользователей с поддержкой умной гибридной пагинации.
+    Использует Keyset Pagination (O(1)) при сортировке по ID,
+    и автоматически переходит на OFFSET при использовании фильтров.
+    """
     items_query = select(User).options(selectinload(User.room)).where(User.is_deleted.is_(False))
     count_query = select(func.count(User.id)).where(User.is_deleted.is_(False))
 
@@ -225,9 +218,36 @@ async def get_users(
     if sort_by in ["dormitory", "apartment_area"] and not search:
         items_query = items_query.outerjoin(Room, User.room_id == Room.id)
 
-    items_query = items_query.order_by(desc(sort_column) if sort_dir == "desc" else asc(sort_column))
-    items_query = items_query.offset((page - 1) * limit).limit(limit)
-    items = (await db.execute(items_query)).scalars().all()
+    # Используем Keyset Pagination только для дефолтной сортировки по ID
+    use_keyset = (sort_by == "id")
+
+    if use_keyset and cursor_id is not None:
+        if direction == "next":
+            if sort_dir == "asc":
+                items_query = items_query.where(User.id > cursor_id)
+            else:
+                items_query = items_query.where(User.id < cursor_id)
+        else: # prev
+            if sort_dir == "asc":
+                items_query = items_query.where(User.id < cursor_id)
+            else:
+                items_query = items_query.where(User.id > cursor_id)
+    else:
+        # Fallback на OFFSET (для текстовых сортировок)
+        items_query = items_query.offset((page - 1) * limit)
+
+    # Сортировка (инверсия для Prev)
+    if use_keyset and direction == "prev":
+        items_query = items_query.order_by(desc(sort_column) if sort_dir == "asc" else asc(sort_column))
+    else:
+        items_query = items_query.order_by(asc(sort_column) if sort_dir == "asc" else desc(sort_column))
+
+    items_query = items_query.limit(limit)
+    items = list((await db.execute(items_query)).scalars().all())
+
+    # Возврат массива в правильном порядке при движении назад
+    if use_keyset and direction == "prev":
+        items.reverse()
 
     return {"total": total, "page": page, "size": limit, "items": items}
 
@@ -256,7 +276,6 @@ async def update_user(user_id: int, update_data: UserUpdate, db: AsyncSession = 
         if not room_check:
             raise HTTPException(status_code=400, detail="Комната не найдена в Жилфонде")
 
-    # ИСПРАВЛЕНИЕ: Проверяем tariff_id при обновлении пользователя.
     if "tariff_id" in update_dict:
         await _validate_tariff_id(update_dict["tariff_id"], db)
 

@@ -15,11 +15,6 @@ from app.modules.utility.services import admin_readings_manual
 
 router = APIRouter(tags=["Admin Readings"])
 
-# ИСПРАВЛЕНИЕ: вместо локальной функции check_role() используем RoleChecker —
-# стандартный механизм проверки ролей через зависимости FastAPI.
-# Это унифицирует код с остальными роутерами и позволяет корректно
-# интегрировать проверку в OpenAPI/Swagger.
-
 allow_readings_view = RoleChecker(["accountant", "admin", "financier"])
 allow_readings_manage = RoleChecker(["accountant", "admin"])
 
@@ -28,7 +23,8 @@ allow_readings_manage = RoleChecker(["accountant", "admin"])
 async def get_admin_readings(
         page: int = Query(1, ge=1),
         limit: int = Query(50, ge=1, le=1000),
-        after_id: Optional[int] = Query(None, description="Keyset пагинация"),
+        cursor_id: Optional[int] = Query(None, description="Keyset pagination cursor"),
+        direction: str = Query("next", pattern="^(next|prev)$"),
         search: Optional[str] = Query(None),
         anomalies_only: bool = Query(False),
         sort_by: str = Query("created_at"),
@@ -37,7 +33,7 @@ async def get_admin_readings(
         db: AsyncSession = Depends(get_db)
 ):
     return await admin_readings_list.get_paginated_readings(
-        db, page, limit, after_id, search, anomalies_only, sort_by, sort_dir
+        db, page, limit, cursor_id, direction, search, anomalies_only, sort_by, sort_dir
     )
 
 

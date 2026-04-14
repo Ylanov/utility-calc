@@ -1,4 +1,5 @@
 # app/modules/utility/routers/admin_reports.py
+
 import io
 import os
 import uuid
@@ -12,7 +13,7 @@ from sqlalchemy.orm import selectinload
 from celery.result import AsyncResult
 from openpyxl import Workbook
 from decimal import Decimal
-from urllib.parse import quote  # ДОБАВЛЕНО ДЛЯ РЕШЕНИЯ ОШИБКИ 500
+from urllib.parse import quote
 
 from app.core.database import get_db
 from app.modules.utility.models import User, MeterReading, Tariff, BillingPeriod, Adjustment, Room
@@ -107,6 +108,7 @@ async def export_report(
     period = await db.get(BillingPeriod, target_period_id)
     if not period: raise HTTPException(404, "Выбранный период не найден")
 
+    # ИСПРАВЛЕНИЕ: Используем потоковое чтение (yield_per) из БД, чтобы не грузить все в RAM
     statement = (
         select(User, MeterReading, Room)
         .join(MeterReading, User.id == MeterReading.user_id)
@@ -116,22 +118,29 @@ async def export_report(
             MeterReading.is_approved.is_(True)
         )
         .order_by(Room.dormitory_name, Room.room_number, User.username)
-    )
-    result = await db.execute(statement)
-    rows = result.all()
+    ).execution_options(yield_per=1000)
 
-    workbook = Workbook()
-    worksheet = workbook.active
-    worksheet.title = "Сводная ведомость"
+    # ИСПРАВЛЕНИЕ: Используем write_only=True для потоковой записи Excel
+    # (openpyxl не хранит документ в памяти, а пишет напрямую в байтовый буфер)
+    workbook = Workbook(write_only=True)
+    worksheet = workbook.create_sheet("Сводная ведомость")
+
     headers = ["Общежитие/Комната", "ФИО (Логин)", "Площадь", "Жильцов", "ГВС (руб)", "ХВС (руб)", "Водоотв. (руб)",
                "Электроэнергия (руб)", "Содержание (руб)", "Наем (руб)", "ТКО (руб)", "Отопление + ОДН (руб)",
                "Счет 209 (Комм.)", "Счет 205 (Найм)", "ИТОГО (руб)"]
     worksheet.append(headers)
 
     total_sum, total_209, total_205 = ZERO, ZERO, ZERO
-    for user, reading, room in rows:
-        total_cost, t_209, t_205 = Decimal(reading.total_cost or 0), Decimal(reading.total_209 or 0), Decimal(
-            reading.total_205 or 0)
+
+    # Потоковое получение результатов
+    result = await db.stream(statement)
+
+    async for row in result:
+        user, reading, room = row
+        total_cost = Decimal(reading.total_cost or 0)
+        t_209 = Decimal(reading.total_209 or 0)
+        t_205 = Decimal(reading.total_205 or 0)
+
         total_sum += total_cost
         total_209 += t_209
         total_205 += t_205
@@ -148,8 +157,6 @@ async def export_report(
 
     worksheet.append([""] * 12 + ["ИТОГО:", total_209, total_205, total_sum])
     filename = f"Report_{period.name.replace(' ', '_')}.xlsx"
-
-    # ИСПРАВЛЕНИЕ: Кодируем имя файла для избежания ошибки 500 (UnicodeEncodeError)
     encoded_filename = quote(filename)
 
     output = io.BytesIO()
@@ -209,9 +216,13 @@ async def get_accountant_summary(
 ):
     if current_user.role not in ("accountant", "admin"): raise HTTPException(status_code=403, detail="Доступ запрещен")
 
-    stmt = select(User, MeterReading, Room).join(MeterReading, User.id == MeterReading.user_id).join(Room,
-                                                                                                     User.room_id == Room.id).where(
-        MeterReading.is_approved.is_(True))
+    # ИСПРАВЛЕНИЕ: Добавляем yield_per, чтобы не грузить весь массив в RAM разом.
+    stmt = (
+        select(User, MeterReading, Room)
+        .join(MeterReading, User.id == MeterReading.user_id)
+        .join(Room, User.room_id == Room.id)
+        .where(MeterReading.is_approved.is_(True))
+    ).execution_options(yield_per=1000)
 
     if period_id:
         stmt = stmt.where(MeterReading.period_id == period_id)
@@ -221,9 +232,14 @@ async def get_accountant_summary(
         if not last_period: return {}
         stmt = stmt.where(MeterReading.period_id == last_period.id)
 
-    rows = (await db.execute(stmt.order_by(Room.dormitory_name, Room.room_number, User.username))).all()
+    stmt = stmt.order_by(Room.dormitory_name, Room.room_number, User.username)
+
     summary = {}
-    for user, reading, room in rows:
+
+    # Потоковое получение
+    result = await db.stream(stmt)
+    async for row in result:
+        user, reading, room = row
         dorm = room.dormitory_name or "Без общежития"
         if dorm not in summary: summary[dorm] = []
         summary[dorm].append({
@@ -236,4 +252,5 @@ async def get_accountant_summary(
             "total_205": reading.total_205 or 0,
             "date": reading.created_at.strftime("%Y-%m-%d %H:%M")
         })
+
     return summary

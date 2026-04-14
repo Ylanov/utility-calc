@@ -3,6 +3,7 @@
 import os
 import json
 import logging
+import asyncio
 from typing import List, Optional
 
 import firebase_admin
@@ -106,7 +107,9 @@ async def send_push_to_user(
 
     # 3. Отправка
     try:
-        response = messaging.send_each_multicast(message)
+        # ИСПРАВЛЕНИЕ: Выносим синхронный сетевой I/O вызов Firebase в отдельный поток,
+        # чтобы не блокировать async event loop сервера.
+        response = await asyncio.to_thread(messaging.send_each_multicast, message)
 
         logger.info(
             f"Пуши отправлены: success={response.success_count}, "
@@ -184,7 +187,8 @@ async def send_push_to_all(
         )
 
         try:
-            response = messaging.send_each_multicast(message)
+            # ИСПРАВЛЕНИЕ: Синхронный запрос к Firebase оборачиваем в asyncio.to_thread
+            response = await asyncio.to_thread(messaging.send_each_multicast, message)
 
             total_success += response.success_count
             total_failed += response.failure_count

@@ -5,7 +5,6 @@ import logging
 import tempfile
 import asyncio
 from datetime import datetime
-from celery import group, chain
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
@@ -17,7 +16,7 @@ from redis import Redis
 from app.worker import celery
 from app.core.database import SessionLocalSync
 from app.core.config import settings
-from app.modules.utility.models import MeterReading, Tariff, BillingPeriod, Adjustment, SystemSetting, User, Room
+from app.modules.utility.models import MeterReading, Tariff, BillingPeriod, Adjustment, SystemSetting, User
 from app.modules.utility.services.pdf_generator import generate_receipt_pdf
 from app.modules.utility.services.debt_import import sync_import_debts_process
 from app.modules.utility.services.s3_client import s3_service
@@ -39,16 +38,7 @@ def get_sync_db():
 def generate_receipt_task(reading_id: int) -> dict:
     """
     Генерация одной квитанции, загрузка в S3 и удаление локального файла.
-
-    ИСПРАВЛЕНИЕ: Безопасное управление DB-сессиями.
-    Ранее db = get_sync_db() вызывался до try, и если исключение происходило
-    на ранних этапах (например ValueError), сессия не закрывалась.
-    С autoretry_for=(Exception,) и 3 ретраями это открывало 3 незакрытых
-    соединения к БД за каждую неудачную задачу. При массовой генерации
-    квитанций (100+ жильцов) — исчерпание пула соединений.
-
-    Теперь: db = None перед try, проверка if db в finally,
-    явный db.rollback() в except перед raise.
+    Используется администратором при ручном запросе конкретной квитанции.
     """
     logger.info(f"[PDF] Start generation reading_id={reading_id}")
     db = None
@@ -117,7 +107,8 @@ def generate_receipt_task(reading_id: int) -> dict:
         if s3_service.upload_file(final_path, object_name):
             os.remove(final_path)
             logger.info(f"[PDF] Uploaded to S3: {object_name}")
-            return {"status": "ok", "s3_key": object_name, "filename": filename}
+            url = s3_service.get_presigned_url(object_name, expiration=600)
+            return {"status": "ok", "s3_key": object_name, "download_url": url, "filename": filename}
         else:
             raise RuntimeError("S3 Upload Failed")
 
@@ -131,49 +122,13 @@ def generate_receipt_task(reading_id: int) -> dict:
             db.close()
 
 
-@celery.task(name="create_zip_archive_task")
-def create_zip_archive_task(results) -> dict:
-    """Сборка ZIP-архива из файлов в S3."""
-    if isinstance(results, dict):
-        results = [results]
-
-    s3_keys = [r["s3_key"] for r in results if isinstance(r, dict) and r.get("status") == "ok" and "s3_key" in r]
-
-    if not s3_keys:
-        logger.error("[ZIP] No valid files to archive")
-        return {"status": "error", "message": "Нет файлов для архивации"}
-
-    timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-    zip_name = f"Receipts_{timestamp}.zip"
-    zip_s3_key = f"archives/{zip_name}"
-
-    try:
-        with tempfile.TemporaryDirectory() as tmpdirname:
-            logger.info(f"[ZIP] Using temp dir: {tmpdirname}")
-            zip_local_path = os.path.join(tmpdirname, zip_name)
-
-            with zipfile.ZipFile(zip_local_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-                for key in s3_keys:
-                    local_filename = os.path.basename(key)
-                    local_file_path = os.path.join(tmpdirname, local_filename)
-                    s3_service.s3.download_file(s3_service.bucket, key, local_file_path)
-                    zipf.write(local_file_path, arcname=local_filename)
-
-            if s3_service.upload_file(zip_local_path, zip_s3_key):
-                logger.info(f"[ZIP] Archive uploaded to S3: {zip_s3_key}")
-                return {"status": "done", "filename": zip_name, "s3_key": zip_s3_key, "count": len(s3_keys)}
-            else:
-                raise RuntimeError("Failed to upload ZIP archive to S3")
-
-    except Exception as error:
-        logger.exception("[ZIP] Creation failed")
-        return {"status": "error", "message": str(error)}
-
-
-@celery.task(name="start_bulk_receipt_generation")
+@celery.task(name="start_bulk_receipt_generation", queue="heavy")
 def start_bulk_receipt_generation(period_id: int):
-    """Запускает цепочку: Генерация всех PDF -> Сборка их в один ZIP."""
-    logger.info(f"[FLOW] Start bulk generation period={period_id}")
+    """
+    Генерирует все PDF локально кусками (chunks), пакует в ZIP и
+    отправляет в S3 одним файлом. Решает проблему DDoS базы, Redis и S3.
+    """
+    logger.info(f"[ZIP] Start bulk generation period={period_id}")
     db = None
     try:
         db = get_sync_db()
@@ -181,7 +136,6 @@ def start_bulk_receipt_generation(period_id: int):
         if not period:
             return {"status": "error", "message": "Период не найден"}
 
-        # ИСПРАВЛЕНИЕ: Безопасное извлечение ID из кортежа, который возвращает SQLAlchemy
         reading_ids_tuples = db.query(MeterReading.id).filter(
             MeterReading.period_id == period_id,
             MeterReading.is_approved.is_(True)
@@ -191,17 +145,66 @@ def start_bulk_receipt_generation(period_id: int):
         if not reading_ids:
             return {"status": "error", "message": "Нет утвержденных показаний"}
 
-        workflow = chain(
-            group(generate_receipt_task.s(rid) for rid in reading_ids),
-            create_zip_archive_task.s()
-        )
-        result = workflow.apply_async()
-        logger.info(f"[FLOW] Started task_id={result.id}")
+        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        zip_name = f"Receipts_{period.name.replace(' ', '_')}_{timestamp}.zip"
+        zip_s3_key = f"archives/{zip_name}"
 
-        return {"status": "processing", "task_id": result.id, "count": len(reading_ids)}
+        default_tariff = db.query(Tariff).filter(Tariff.is_active).order_by(Tariff.id).first()
+
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            zip_local_path = os.path.join(tmpdirname, zip_name)
+
+            with zipfile.ZipFile(zip_local_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+                chunk_size = 200  # Обрабатываем по 200 квитанций за раз (защита от OOM)
+
+                for i in range(0, len(reading_ids), chunk_size):
+                    chunk_ids = reading_ids[i:i + chunk_size]
+
+                    # Жадная загрузка (Eager Load) для куска, чтобы избежать N+1 запросов
+                    readings = db.query(MeterReading).options(
+                        selectinload(MeterReading.user).selectinload(User.room)
+                    ).filter(MeterReading.id.in_(chunk_ids)).all()
+
+                    for r in readings:
+                        try:
+                            # Получаем корректировки
+                            adjustments = db.query(Adjustment).filter(
+                                Adjustment.user_id == r.user_id,
+                                Adjustment.period_id == period_id
+                            ).all()
+
+                            # Предыдущее показание
+                            prev_reading = db.query(MeterReading).filter(
+                                MeterReading.room_id == r.room_id,
+                                MeterReading.is_approved.is_(True),
+                                MeterReading.created_at < r.created_at
+                            ).order_by(MeterReading.created_at.desc()).first()
+
+                            tariff = db.query(Tariff).filter(Tariff.id == r.user.tariff_id).first() if r.user.tariff_id else default_tariff
+
+                            # Генерируем PDF локально
+                            pdf_path = generate_receipt_pdf(
+                                user=r.user, room=r.user.room, reading=r, period=period,
+                                tariff=tariff, prev_reading=prev_reading,
+                                adjustments=adjustments, output_dir=tmpdirname
+                            )
+
+                            filename = os.path.basename(pdf_path)
+                            zipf.write(pdf_path, arcname=filename)
+                            os.remove(pdf_path)  # Сразу удаляем PDF, бережем диск
+
+                        except Exception as e:
+                            logger.error(f"Error generating PDF for reading {r.id}: {e}")
+
+            # Загружаем готовый архив в S3
+            if s3_service.upload_file(zip_local_path, zip_s3_key):
+                url = s3_service.get_presigned_url(zip_s3_key, expiration=86400) # Ссылка живет 24 часа
+                return {"status": "done", "s3_key": zip_s3_key, "download_url": url, "count": len(reading_ids)}
+            else:
+                raise RuntimeError("S3 Upload Failed")
 
     except Exception as error:
-        logger.exception("[FLOW] Failed")
+        logger.exception("[ZIP] Generation failed")
         if db:
             db.rollback()
         return {"status": "error", "message": str(error)}
@@ -346,9 +349,7 @@ def check_auto_period_task():
 def detect_anomalies_task(reading_id: int):
     """
     Анализ аномалий для одного показания.
-
-    ИСПРАВЛЕНИЕ: Безопасное управление DB-сессиями.
-    db = None перед try, rollback в except, close в finally.
+    Безопасное управление DB-сессиями.
     """
     db = None
     try:

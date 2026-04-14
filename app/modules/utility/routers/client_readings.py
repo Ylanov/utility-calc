@@ -175,9 +175,6 @@ async def save_reading(
 
     # 2. ИСПРАВЛЕНИЕ race condition: используем SELECT FOR UPDATE чтобы заблокировать
     # черновик на время транзакции. Два соседа не смогут одновременно создать дубль.
-    # Примечание: для полной защиты также нужен partial unique index в PostgreSQL:
-    # CREATE UNIQUE INDEX uix_reading_room_period_draft ON readings (room_id, period_id)
-    # WHERE is_approved = false;
     draft_result = await db.execute(
         select(MeterReading)
         .where(
@@ -366,10 +363,6 @@ async def download_client_receipt(
         .where(MeterReading.id == reading_id)
     )).scalars().first()
 
-    # ИСПРАВЛЕНИЕ: усиленная проверка доступа.
-    # Старая проверка `reading.user_id != current_user.id` не работала когда
-    # user_id = NULL (nullable поле). Теперь дополнительно проверяем room_id —
-    # пользователь может скачивать только квитанции своей комнаты.
     if not reading:
         raise HTTPException(404, "Квитанция не найдена")
 
@@ -407,7 +400,9 @@ async def download_client_receipt(
     )).scalars().all()
 
     try:
-        pdf_path = generate_receipt_pdf(
+        # ИСПРАВЛЕНИЕ: Выносим CPU-intensive генерацию PDF в отдельный поток
+        pdf_path = await asyncio.to_thread(
+            generate_receipt_pdf,
             reading=reading,
             user=reading.user,
             room=reading.room,
@@ -418,9 +413,16 @@ async def download_client_receipt(
         )
 
         s3_key = f"receipts/{reading.id}.pdf"
-        s3_service.upload_file(pdf_path, s3_key)
 
-        url = s3_service.get_presigned_url(s3_key, expiration=300)
+        # ИСПРАВЛЕНИЕ: Выносим Network I/O вызов в S3 в отдельный поток
+        upload_success = await asyncio.to_thread(s3_service.upload_file, pdf_path, s3_key)
+
+        if not upload_success:
+            raise HTTPException(500, "Ошибка генерации квитанции. Не удалось загрузить файл в хранилище.")
+
+        # ИСПРАВЛЕНИЕ: Выносим Network I/O вызов presigned_url в отдельный поток
+        url = await asyncio.to_thread(s3_service.get_presigned_url, s3_key, 300)
+
         return {"url": url}
 
     except Exception as e:
