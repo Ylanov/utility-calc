@@ -1,4 +1,41 @@
 <div id="accountant" class="tab-content">
+
+    <!-- НОВЫЙ БЛОК: Предпросмотр закрытия периода -->
+    <div id="closePreviewCard" class="card" style="display:none; margin-bottom: 20px; border-left: 4px solid #f59e0b;">
+        <div class="card-header">
+            <h3><i class="fa-solid fa-clipboard-check" style="color:#f59e0b; margin-right:8px;"></i> Предпросмотр закрытия периода</h3>
+            <div class="header-controls">
+                <button id="btnLoadPreview" class="action-btn warning-btn" style="padding: 6px 14px; font-size: 13px;">
+                    <i class="fa-solid fa-eye"></i> Загрузить отчёт
+                </button>
+            </div>
+        </div>
+        <div id="closePreviewContainer" style="padding: 0 16px 16px 16px;">
+            <p style="color: var(--text-secondary); font-size: 13px;">Нажмите «Загрузить отчёт» чтобы увидеть что произойдёт при закрытии текущего периода.</p>
+        </div>
+    </div>
+
+    <!-- НОВЫЙ БЛОК: Сравнительная аналитика -->
+    <div class="card" style="margin-bottom: 20px;">
+        <div class="card-header">
+            <h3><i class="fa-solid fa-chart-column" style="color:#3b82f6; margin-right:8px;"></i> Сравнение периодов</h3>
+            <div class="header-controls" style="gap: 10px; align-items: center;">
+                <select id="comparePeriodA" style="min-width: 160px;">
+                    <option value="">Период A...</option>
+                </select>
+                <span style="color: var(--text-secondary); font-weight: 600;">vs</span>
+                <select id="comparePeriodB" style="min-width: 160px;">
+                    <option value="">Период B...</option>
+                </select>
+                <button id="btnCompare" class="action-btn primary-btn" style="padding: 6px 14px; font-size: 13px;">
+                    <i class="fa-solid fa-scale-balanced"></i> Сравнить
+                </button>
+            </div>
+        </div>
+        <div id="compareContainer"></div>
+    </div>
+
+    <!-- СУЩЕСТВУЮЩИЙ БЛОК: Финансовая отчётность -->
     <div class="card">
         <div class="card-header">
             <h3>Финансовая отчетность</h3>

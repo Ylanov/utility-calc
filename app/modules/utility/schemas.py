@@ -73,6 +73,10 @@ class RoomResponse(BaseModel):
 # Это закрывает возможность создать пользователя с произвольной ролью через API.
 AllowedRole = Literal["user", "accountant", "financier", "admin"]
 
+# ИСПРАВЛЕНИЕ: account_type теперь Literal — принимает только "209" или "205".
+# Ранее можно было передать произвольную строку, и деньги «терялись» при расчёте.
+AllowedAccountType = Literal["209", "205"]
+
 
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=100)
@@ -184,7 +188,10 @@ class AdjustmentCreate(BaseModel):
     user_id: int
     amount: DecimalAmount
     description: str
-    account_type: str = "209"
+    # ИСПРАВЛЕНИЕ: account_type теперь Literal["209", "205"] вместо str.
+    # Ранее можно было передать любую строку через API (например "abc"),
+    # она записывалась в БД и при расчётах суммы не попадали ни в один счёт.
+    account_type: AllowedAccountType = "209"
 
 
 class AdjustmentResponse(BaseModel):
@@ -258,13 +265,16 @@ class AdminManualReadingSchema(BaseModel):
     cold_water: Decimal = Field(..., ge=0, le=99999, decimal_places=3)
     electricity: Decimal = Field(..., ge=0, le=999999, decimal_places=3)
     is_moving_out: bool = False
+    total_days_in_month: int = Field(30, ge=1, le=31)
+    days_lived: int = Field(30, ge=0, le=31)
 
 
 class OneTimeChargeSchema(BaseModel):
     user_id: int
     amount: DecimalAmount
     description: str
-    account_type: str = "209"
+    # ИСПРАВЛЕНИЕ: account_type теперь Literal["209", "205"] вместо str.
+    account_type: AllowedAccountType = "209"
 
 
 # ======================================================
@@ -283,7 +293,8 @@ class RelocateUserSchema(BaseModel):
     new_room_id: Optional[int] = None
     charge_amount: Optional[DecimalAmount] = None
     charge_description: Optional[str] = None
-    charge_account_type: str = "209"
+    # ИСПРАВЛЕНИЕ: account_type теперь Literal["209", "205"] вместо str.
+    charge_account_type: AllowedAccountType = "209"
     is_eviction: bool = False
 
 
@@ -303,6 +314,7 @@ class UserDebtResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
 
 class ReplaceMeterSchema(BaseModel):
     meter_type: str  # "hot", "cold", "elect"

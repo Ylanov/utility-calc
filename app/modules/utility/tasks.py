@@ -37,10 +37,23 @@ def get_sync_db():
     retry_backoff=True
 )
 def generate_receipt_task(reading_id: int) -> dict:
-    """Генерация одной квитанции, загрузка в S3 и удаление локального файла."""
+    """
+    Генерация одной квитанции, загрузка в S3 и удаление локального файла.
+
+    ИСПРАВЛЕНИЕ: Безопасное управление DB-сессиями.
+    Ранее db = get_sync_db() вызывался до try, и если исключение происходило
+    на ранних этапах (например ValueError), сессия не закрывалась.
+    С autoretry_for=(Exception,) и 3 ретраями это открывало 3 незакрытых
+    соединения к БД за каждую неудачную задачу. При массовой генерации
+    квитанций (100+ жильцов) — исчерпание пула соединений.
+
+    Теперь: db = None перед try, проверка if db в finally,
+    явный db.rollback() в except перед raise.
+    """
     logger.info(f"[PDF] Start generation reading_id={reading_id}")
-    db = get_sync_db()
+    db = None
     try:
+        db = get_sync_db()
         reading = (
             db.query(MeterReading)
             .options(
@@ -109,10 +122,13 @@ def generate_receipt_task(reading_id: int) -> dict:
             raise RuntimeError("S3 Upload Failed")
 
     except Exception as error:
-        logger.exception("[PDF] Generation failed")
+        logger.exception(f"[PDF] Generation failed for reading_id={reading_id}")
+        if db:
+            db.rollback()
         raise
     finally:
-        db.close()
+        if db:
+            db.close()
 
 
 @celery.task(name="create_zip_archive_task")
@@ -158,15 +174,16 @@ def create_zip_archive_task(results) -> dict:
 def start_bulk_receipt_generation(period_id: int):
     """Запускает цепочку: Генерация всех PDF -> Сборка их в один ZIP."""
     logger.info(f"[FLOW] Start bulk generation period={period_id}")
-    db = get_sync_db()
+    db = None
     try:
+        db = get_sync_db()
         period = db.query(BillingPeriod).filter(BillingPeriod.id == period_id).first()
         if not period:
             return {"status": "error", "message": "Период не найден"}
 
         # ИСПРАВЛЕНИЕ: Безопасное извлечение ID из кортежа, который возвращает SQLAlchemy
         reading_ids_tuples = db.query(MeterReading.id).filter(
-            MeterReading.period_id == period_id, 
+            MeterReading.period_id == period_id,
             MeterReading.is_approved.is_(True)
         ).all()
         reading_ids = [r[0] for r in reading_ids_tuples]
@@ -185,9 +202,12 @@ def start_bulk_receipt_generation(period_id: int):
 
     except Exception as error:
         logger.exception("[FLOW] Failed")
+        if db:
+            db.rollback()
         return {"status": "error", "message": str(error)}
     finally:
-        db.close()
+        if db:
+            db.close()
 
 
 @celery.task(
@@ -199,12 +219,15 @@ def start_bulk_receipt_generation(period_id: int):
 def import_debts_task(file_path: str, account_type: str) -> dict:
     """Фоновая задача импорта долгов."""
     logger.info(f"[IMPORT] Start {file_path} for Account {account_type}")
-    db = get_sync_db()
+    db = None
     try:
+        db = get_sync_db()
         result = sync_import_debts_process(file_path, db, account_type)
         return result
     except Exception:
         logger.exception("[IMPORT] Failed")
+        if db:
+            db.rollback()
         raise
     finally:
         try:
@@ -212,7 +235,8 @@ def import_debts_task(file_path: str, account_type: str) -> dict:
                 os.remove(file_path)
         except Exception as error:
             logger.warning(f"[IMPORT] File cleanup failed: {error}")
-        db.close()
+        if db:
+            db.close()
 
 
 async def run_async_close_period(admin_user_id: int):
@@ -273,8 +297,9 @@ def close_period_task(admin_user_id: int):
 def check_auto_period_task():
     """Ежедневная задача (Beat): автоматическое управление периодами."""
     logger.info("[AUTO] Checking period automation...")
-    db = get_sync_db()
+    db = None
     try:
+        db = get_sync_db()
         start_setting = db.query(SystemSetting).filter_by(key="submission_start_day").first()
         end_setting = db.query(SystemSetting).filter_by(key="submission_end_day").first()
         start_day = int(start_setting.value) if start_setting else 20
@@ -285,7 +310,7 @@ def check_auto_period_task():
 
         if start_day <= current_day <= end_day:
             if not active:
-                month_names =["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь",
+                month_names = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь",
                                "Октябрь", "Ноябрь", "Декабрь"]
                 period_name = f"{month_names[today.month]} {today.year}"
                 exists = db.query(BillingPeriod).filter_by(name=period_name).first()
@@ -310,15 +335,24 @@ def check_auto_period_task():
                     logger.info("[AUTO] Close already running, skip duplicate")
     except Exception:
         logger.exception("[AUTO] Automation failed")
+        if db:
+            db.rollback()
     finally:
-        db.close()
+        if db:
+            db.close()
 
 
 @celery.task(name="detect_anomalies_task", queue="default")
 def detect_anomalies_task(reading_id: int):
-    """Анализ аномалий для одного показания."""
-    db = get_sync_db()
+    """
+    Анализ аномалий для одного показания.
+
+    ИСПРАВЛЕНИЕ: Безопасное управление DB-сессиями.
+    db = None перед try, rollback в except, close в finally.
+    """
+    db = None
     try:
+        db = get_sync_db()
         reading = db.query(MeterReading).options(
             selectinload(MeterReading.user).selectinload(User.room)
         ).filter(MeterReading.id == reading_id).first()
@@ -339,6 +373,8 @@ def detect_anomalies_task(reading_id: int):
         db.commit()
     except Exception as e:
         logger.exception(f"Anomaly detection failed for reading_id={reading_id}: {e}")
-        db.rollback()
+        if db:
+            db.rollback()
     finally:
-        db.close()
+        if db:
+            db.close()

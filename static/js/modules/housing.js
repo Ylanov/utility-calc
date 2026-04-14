@@ -3,6 +3,19 @@ import { api } from '../core/api.js';
 import { el, toast, setLoading } from '../core/dom.js';
 import { TableController } from '../core/table-controller.js';
 
+// ==========================================
+// ИСПРАВЛЕНИЕ: Утилита для экранирования HTML.
+// Защищает от XSS-атак при вставке данных из API в innerHTML.
+// Если злоумышленник создаст комнату с именем типа <script>alert(1)</script>,
+// без экранирования этот код выполнится в браузере администратора.
+// ==========================================
+function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    const div = document.createElement('div');
+    div.textContent = String(str);
+    return div.innerHTML;
+}
+
 export const HousingModule = {
     table: null,
     isInitialized: false,
@@ -124,7 +137,7 @@ export const HousingModule = {
             const data = await api.get('/rooms/analyze');
             this.renderAnalysis(data);
         } catch(e) {
-            this.dom.analyzerResults.innerHTML = `<div style="color:red; text-align:center; padding: 20px;">Ошибка получения данных: ${e.message}</div>`;
+            this.dom.analyzerResults.innerHTML = `<div style="color:red; text-align:center; padding: 20px;">Ошибка получения данных: ${escapeHtml(e.message)}</div>`;
         }
     },
 
@@ -132,7 +145,7 @@ export const HousingModule = {
         let html = '';
 
         // Конфигурация блоков аномалий
-        const sections =[
+        const sections = [
             { key: 'unattached_users', icon: '👻', title: 'Жильцы без комнаты (Ошибки привязки)', color: '#dc2626', bg: '#fef2f2' },
             { key: 'shared_billing', icon: '👥', title: 'Совместное проживание (Раздельные Л/С в одной комнате)', color: '#3b82f6', bg: '#eff6ff' },
             { key: 'overcrowded', icon: '⚠️', title: 'Перенаселение (Платят за большее кол-во человек, чем есть мест)', color: '#ea580c', bg: '#fff7ed' },
@@ -155,8 +168,8 @@ export const HousingModule = {
                         <ul style="list-style: none; padding: 0; margin: 0; background: white; max-height: 250px; overflow-y: auto;">
                             ${items.map(item => `
                                 <li style="padding: 12px 15px; border-bottom: 1px solid #f3f4f6; font-size: 13px;">
-                                    <strong style="color: #1f2937; font-size: 14px;">${item.title}</strong>
-                                    <div style="color: #6b7280; margin-top: 4px; line-height: 1.4;">${item.desc}</div>
+                                    <strong style="color: #1f2937; font-size: 14px;">${escapeHtml(item.title)}</strong>
+                                    <div style="color: #6b7280; margin-top: 4px; line-height: 1.4;">${escapeHtml(item.desc)}</div>
                                 </li>
                             `).join('')}
                         </ul>

@@ -4,7 +4,7 @@ from sqlalchemy.future import select
 from sqlalchemy import update, insert, func
 from sqlalchemy.orm import selectinload
 
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 import logging
 from collections import defaultdict
@@ -18,6 +18,14 @@ logger = logging.getLogger("billing_service")
 async def close_current_period(db: AsyncSession, admin_user_id: int):
     """
     Закрывает текущий расчетный период.
+
+    ИСПРАВЛЕНИЯ:
+    1. Добавлена проверка is_active ПОСЛЕ with_for_update — защита от повторного
+       закрытия параллельным воркером. Ранее два Celery-воркера могли одновременно
+       пройти with_for_update (один ждал другого), но второй не проверял что период
+       уже закрыт первым, и генерировал дублирующие авто-показания.
+    2. datetime.utcnow() заменён на datetime.now(timezone.utc) для совместимости
+       с Python 3.12+ (где utcnow() deprecated).
     """
 
     # 1. Получаем активный период
@@ -30,6 +38,13 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
 
     if not active_period:
         raise ValueError("Нет активного периода для закрытия.")
+
+    # ИСПРАВЛЕНИЕ: Повторная проверка после блокировки.
+    # Если параллельный процесс уже закрыл период пока мы ждали lock —
+    # is_active будет False. Без этой проверки второй процесс продолжит
+    # генерировать авто-показания, создавая дубликаты.
+    if not active_period.is_active:
+        raise ValueError("Период уже был закрыт другим процессом.")
 
     # 2. Получаем тарифы
     tariffs_result = await db.execute(
@@ -247,7 +262,9 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
             "anomaly_flags": "AUTO_GENERATED",
             "anomaly_score": 0,
 
-            "created_at": datetime.utcnow(),
+            # ИСПРАВЛЕНИЕ: datetime.utcnow() → datetime.now(timezone.utc)
+            # Python 3.12+ помечает utcnow() как deprecated.
+            "created_at": datetime.now(timezone.utc),
 
             **costs
         })
@@ -310,7 +327,8 @@ async def open_new_period(db: AsyncSession, new_name: str):
     new_period = BillingPeriod(
         name=new_name,
         is_active=True,
-        created_at=datetime.utcnow()
+        # ИСПРАВЛЕНИЕ: datetime.utcnow() → datetime.now(timezone.utc)
+        created_at=datetime.now(timezone.utc)
     )
 
     db.add(new_period)

@@ -105,8 +105,10 @@ export const TariffsModule = {
 
     async load(selectedId = null) {
         try {
-            // Теперь бекенд отдает массив тарифов
-            this.tariffsList = await api.get('/tariffs');
+            // ИСПРАВЛЕНИЕ: Используем новый endpoint /with-stats для получения
+            // количества жильцов на каждом тарифе. Это позволяет администратору
+            // видеть в селекторе сколько людей затронет изменение тарифа.
+            this.tariffsList = await api.get('/tariffs/with-stats');
             this.populateSelector();
 
             if (this.tariffsList.length > 0) {
@@ -118,7 +120,18 @@ export const TariffsModule = {
                 this.clearFormForNew();
             }
         } catch (error) {
-            toast('Не удалось загрузить тарифы: ' + error.message, 'error');
+            // Fallback: если /with-stats не доступен, используем обычный endpoint
+            try {
+                this.tariffsList = await api.get('/tariffs');
+                this.populateSelector();
+                if (this.tariffsList.length > 0) {
+                    const targetId = selectedId || this.tariffsList[0].id;
+                    this.dom.selector.value = targetId;
+                    this.fillForm(targetId);
+                }
+            } catch (fallbackError) {
+                toast('Не удалось загрузить тарифы: ' + fallbackError.message, 'error');
+            }
         }
     },
 
@@ -129,7 +142,18 @@ export const TariffsModule = {
         this.tariffsList.forEach(t => {
             const opt = document.createElement('option');
             opt.value = t.id;
-            opt.textContent = t.name;
+
+            // ИСПРАВЛЕНИЕ: Показываем количество жильцов на тарифе в селекторе.
+            // Администратор видит "Базовый тариф (12 чел.)" вместо просто "Базовый тариф".
+            // Это критично перед редактированием или удалением — сразу видно масштаб влияния.
+            if (t.user_count !== undefined && t.user_count > 0) {
+                opt.textContent = `${t.name} (${t.user_count} чел.)`;
+            } else if (t.user_count !== undefined) {
+                opt.textContent = `${t.name} (нет жильцов)`;
+            } else {
+                opt.textContent = t.name;
+            }
+
             this.dom.selector.appendChild(opt);
         });
     },
@@ -233,7 +257,19 @@ export const TariffsModule = {
             return;
         }
 
-        if (!confirm('Вы действительно хотите удалить этот тарифный профиль?')) return;
+        // ИСПРАВЛЕНИЕ: Показываем администратору сколько жильцов на этом тарифе.
+        // Ранее администратор видел просто "Удалить?" — без информации о последствиях.
+        // Теперь он знает что при удалении N жильцов будут пересажены на базовый тариф.
+        const tariff = this.tariffsList.find(t => t.id === id);
+        const tariffName = tariff ? tariff.name : `ID=${id}`;
+        const userCount = tariff && tariff.user_count !== undefined ? tariff.user_count : '?';
+
+        let confirmMsg = `Удалить тарифный профиль "${tariffName}"?`;
+        if (userCount > 0) {
+            confirmMsg += `\n\n⚠️ На этом тарифе ${userCount} жилец(ов). Они будут автоматически переведены на базовый тариф.`;
+        }
+
+        if (!confirm(confirmMsg)) return;
 
         const originalText = this.dom.btnDelete.innerText;
         this.dom.btnDelete.innerText = 'Удаление...';
@@ -241,7 +277,12 @@ export const TariffsModule = {
 
         try {
             await api.delete(`/tariffs/${id}`);
-            toast('Тарифный профиль удален', 'success');
+
+            if (userCount > 0) {
+                toast(`Тариф удален. ${userCount} жилец(ов) переведены на базовый тариф.`, 'success');
+            } else {
+                toast('Тарифный профиль удален', 'success');
+            }
 
             // ВАЖНО: Очищаем кэш тарифов
             sessionStorage.removeItem('tariffs_cache');

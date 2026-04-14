@@ -15,7 +15,19 @@ ZERO = Decimal("0.00")
 
 
 async def bulk_approve_drafts(db: AsyncSession):
-    """Массовое утверждение всех безопасных черновиков."""
+    """
+    Массовое утверждение всех безопасных черновиков.
+
+    ИСПРАВЛЕНИЕ: добавлен .with_for_update(of=MeterReading) при выборке черновиков.
+    Ранее два администратора могли одновременно нажать «Утвердить все»,
+    оба прочитали бы одни и те же черновики и попытались обновить.
+    Кэш комнаты (room.last_hot_water) мог записаться непредсказуемо,
+    а показания — утвердиться с некорректными расчётами.
+
+    Теперь: with_for_update блокирует строки черновиков на уровне PostgreSQL.
+    Второй одновременный запрос будет ждать завершения первого, а после —
+    увидит что is_approved уже True, и drafts_rows вернёт пустой список.
+    """
     active_period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))).scalars().first()
     if not active_period: raise HTTPException(status_code=400, detail="Нет активного периода")
 
@@ -25,12 +37,15 @@ async def bulk_approve_drafts(db: AsyncSession):
     tariffs_map = {t.id: t for t in active_tariffs}
     default_tariff = tariffs_map.get(1) or active_tariffs[0]
 
+    # ИСПРАВЛЕНИЕ: .with_for_update(of=MeterReading) — блокируем строки черновиков
+    # на уровне БД для защиты от параллельного утверждения двумя администраторами.
     drafts_rows = (await db.execute(
         select(MeterReading, User, Room)
         .join(User, MeterReading.user_id == User.id)
         .join(Room, MeterReading.room_id == Room.id)
         .where(MeterReading.is_approved.is_(False), MeterReading.period_id == active_period.id,
                MeterReading.anomaly_score < 80)
+        .with_for_update(of=MeterReading)
     )).all()
 
     if not drafts_rows: return {"status": "success", "approved_count": 0}
@@ -152,6 +167,7 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
     cost_rent_205 = costs['cost_social_rent']
     total_209 = (costs['total_cost'] - cost_rent_205) + (reading.debt_209 or ZERO) - (
                 reading.overpayment_209 or ZERO) + adj_map.get('209', ZERO)
+
     total_205 = cost_rent_205 + (reading.debt_205 or ZERO) - (reading.overpayment_205 or ZERO) + adj_map.get('205',
                                                                                                              ZERO)
 

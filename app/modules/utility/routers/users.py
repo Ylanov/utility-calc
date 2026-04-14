@@ -47,6 +47,37 @@ class ChangeCredentials(BaseModel):
 
 
 # =================================================================
+# ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: Проверка tariff_id
+# =================================================================
+async def _validate_tariff_id(tariff_id: Optional[int], db: AsyncSession) -> None:
+    """
+    Проверяет что тариф с указанным ID существует и активен.
+
+    ИСПРАВЛЕНИЕ: Ранее можно было указать несуществующий tariff_id при создании
+    пользователя. Он записывался в БД, но при расчёте costs система тихо
+    падала на fallback к default_tariff. Администратор не узнавал об ошибке,
+    а жилец получал квитанцию по неверному тарифу.
+
+    Теперь: при создании и обновлении пользователя tariff_id проверяется,
+    и если тариф не найден или деактивирован — возвращается 400.
+    """
+    if tariff_id is None:
+        return  # None = базовый тариф по умолчанию, это допустимо
+
+    tariff = await db.get(Tariff, tariff_id)
+    if not tariff:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Тариф с ID={tariff_id} не найден в системе"
+        )
+    if not tariff.is_active:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Тариф '{tariff.name}' (ID={tariff_id}) деактивирован. Выберите активный тариф."
+        )
+
+
+# =================================================================
 # ЛИЧНЫЙ ПРОФИЛЬ
 # =================================================================
 @router.get("/me", response_model=UserResponse)
@@ -131,6 +162,9 @@ async def create_user(new_user: UserCreate, db: AsyncSession = Depends(get_db)):
         room_check = await db.get(Room, new_user.room_id)
         if not room_check:
             raise HTTPException(status_code=400, detail="Комната не найдена в Жилфонде")
+
+    # ИСПРАВЛЕНИЕ: Проверяем что tariff_id существует и активен.
+    await _validate_tariff_id(new_user.tariff_id, db)
 
     db_user = User(
         username=new_user.username,
@@ -221,6 +255,10 @@ async def update_user(user_id: int, update_data: UserUpdate, db: AsyncSession = 
         room_check = await db.get(Room, update_dict["room_id"])
         if not room_check:
             raise HTTPException(status_code=400, detail="Комната не найдена в Жилфонде")
+
+    # ИСПРАВЛЕНИЕ: Проверяем tariff_id при обновлении пользователя.
+    if "tariff_id" in update_dict:
+        await _validate_tariff_id(update_dict["tariff_id"], db)
 
     if "password" in update_dict and update_dict["password"]:
         db_user.hashed_password = get_password_hash(update_dict.pop("password"))

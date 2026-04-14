@@ -112,7 +112,14 @@ async def delete_adjustment(
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
 ):
-    """Удаление корректировки. Только для бухгалтера и админа."""
+    """
+    Удаление корректировки с обратным пересчётом черновика.
+
+    ИСПРАВЛЕНИЕ: ранее при удалении корректировки черновик показания
+    оставался с завышенной/заниженной суммой, т.к. при создании корректировки
+    сумма прибавлялась к draft.total_209/205, но при удалении — не вычиталась.
+    Теперь сумма корректно откатывается.
+    """
     if current_user.role not in ("accountant", "admin"):
         raise HTTPException(status_code=403, detail="Доступ запрещен")
 
@@ -120,8 +127,28 @@ async def delete_adjustment(
     if not adj:
         raise HTTPException(status_code=404, detail="Корректировка не найдена")
 
+    # --- ИСПРАВЛЕНИЕ: откатываем сумму из черновика, если он существует ---
+    target_user = await db.get(User, adj.user_id)
+    if target_user and target_user.room_id:
+        draft = (await db.execute(
+            select(MeterReading).where(
+                MeterReading.room_id == target_user.room_id,
+                MeterReading.period_id == adj.period_id,
+                MeterReading.is_approved.is_(False)
+            )
+        )).scalars().first()
+
+        if draft:
+            amount = Decimal(str(adj.amount))
+            if adj.account_type == "209":
+                draft.total_209 = (draft.total_209 or Decimal("0.00")) - amount
+            elif adj.account_type == "205":
+                draft.total_205 = (draft.total_205 or Decimal("0.00")) - amount
+            draft.total_cost = (draft.total_209 or Decimal("0.00")) + (draft.total_205 or Decimal("0.00"))
+            db.add(draft)
+
     await db.delete(adj)
     await db.commit()
 
-    logger.info(f"Adjustment {adjustment_id} deleted by {current_user.username}")
+    logger.info(f"Adjustment {adjustment_id} deleted (with draft rollback) by {current_user.username}")
     return {"status": "deleted"}
