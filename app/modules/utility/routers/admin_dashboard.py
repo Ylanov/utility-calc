@@ -105,7 +105,6 @@ async def get_dashboard_kpi(
     )).scalars().first()
 
     period_data = None
-    finance_data = None
     comparison = None
 
     if active_period:
