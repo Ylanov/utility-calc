@@ -1,6 +1,6 @@
 # app/modules/utility/schemas.py
 
-from pydantic import BaseModel, condecimal, Field
+from pydantic import BaseModel, condecimal, Field, ConfigDict
 from typing import Optional, List, Generic, TypeVar, Literal
 from datetime import datetime
 from decimal import Decimal
@@ -61,26 +61,19 @@ class RoomResponse(BaseModel):
     cw_meter_serial: Optional[str] = None
     el_meter_serial: Optional[str] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ======================================================
 # USER SCHEMAS
 # ======================================================
 
-# ИСПРАВЛЕНИЕ: role теперь Literal — принимает только допустимые значения.
-# Это закрывает возможность создать пользователя с произвольной ролью через API.
 AllowedRole = Literal["user", "accountant", "financier", "admin"]
-
-# ИСПРАВЛЕНИЕ: account_type теперь Literal — принимает только "209" или "205".
-# Ранее можно было передать произвольную строку, и деньги «терялись» при расчёте.
 AllowedAccountType = Literal["209", "205"]
 
 
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=100)
-    # ИСПРАВЛЕНИЕ: минимальная длина пароля 8 символов на уровне бэкенда.
     password: str = Field(..., min_length=8, max_length=128)
     role: AllowedRole = "user"
     workplace: str = ""
@@ -107,15 +100,12 @@ class UserResponse(BaseModel):
 
     room: Optional[RoomResponse] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserUpdate(BaseModel):
     username: Optional[str] = Field(None, min_length=3, max_length=100)
-    # ИСПРАВЛЕНИЕ: минимальная длина нового пароля 8 символов.
     password: Optional[str] = Field(None, min_length=8, max_length=128)
-    # ИСПРАВЛЕНИЕ: role принимает только допустимые значения.
     role: Optional[AllowedRole] = None
     workplace: Optional[str] = None
     residents_count: Optional[int] = Field(None, ge=1, le=20)
@@ -158,8 +148,7 @@ class TariffSchema(BaseModel):
     electricity_per_sqm: DecimalTariff
     electricity_rate: DecimalTariff
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ======================================================
@@ -176,8 +165,7 @@ class PeriodResponse(BaseModel):
     is_active: bool
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ======================================================
@@ -188,9 +176,6 @@ class AdjustmentCreate(BaseModel):
     user_id: int
     amount: DecimalAmount
     description: str
-    # ИСПРАВЛЕНИЕ: account_type теперь Literal["209", "205"] вместо str.
-    # Ранее можно было передать любую строку через API (например "abc"),
-    # она записывалась в БД и при расчётах суммы не попадали ни в один счёт.
     account_type: AllowedAccountType = "209"
 
 
@@ -201,8 +186,7 @@ class AdjustmentResponse(BaseModel):
     account_type: str
     created_at: datetime
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ======================================================
@@ -210,9 +194,6 @@ class AdjustmentResponse(BaseModel):
 # ======================================================
 
 class ReadingSchema(BaseModel):
-    # ИСПРАВЛЕНИЕ: добавлены ограничения ge=0 и le=99999 для показаний.
-    # Отрицательные значения и фантастически большие числа теперь отклоняются
-    # на уровне валидации схемы — до попадания в бизнес-логику.
     hot_water: Decimal = Field(..., ge=0, le=99999, decimal_places=3)
     cold_water: Decimal = Field(..., ge=0, le=99999, decimal_places=3)
     electricity: Decimal = Field(..., ge=0, le=999999, decimal_places=3)
@@ -273,7 +254,6 @@ class OneTimeChargeSchema(BaseModel):
     user_id: int
     amount: DecimalAmount
     description: str
-    # ИСПРАВЛЕНИЕ: account_type теперь Literal["209", "205"] вместо str.
     account_type: AllowedAccountType = "209"
 
 
@@ -293,7 +273,6 @@ class RelocateUserSchema(BaseModel):
     new_room_id: Optional[int] = None
     charge_amount: Optional[DecimalAmount] = None
     charge_description: Optional[str] = None
-    # ИСПРАВЛЕНИЕ: account_type теперь Literal["209", "205"] вместо str.
     charge_account_type: AllowedAccountType = "209"
     is_eviction: bool = False
 
@@ -312,8 +291,7 @@ class UserDebtResponse(BaseModel):
     overpayment_205: Optional[Decimal] = None
     total_cost: Optional[Decimal] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ReplaceMeterSchema(BaseModel):

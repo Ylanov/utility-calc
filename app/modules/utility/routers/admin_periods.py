@@ -48,12 +48,6 @@ async def _send_period_push(period_name: str):
             logger.error(f"Push notification error: {e}", exc_info=True)
 
 
-# =====================================================================
-# ПРЕДПРОСМОТР ЗАКРЫТИЯ ПЕРИОДА
-#
-# ИСПРАВЛЕНИЕ P2: 9 последовательных запросов заменены на asyncio.gather().
-# Независимые запросы выполняются параллельно. ~10ms вместо ~50-90ms.
-# =====================================================================
 @router.get("/api/admin/periods/close-preview", summary="Предпросмотр последствий закрытия периода")
 async def close_period_preview(
         current_user: User = Depends(allow_period_management),
@@ -68,7 +62,6 @@ async def close_period_preview(
 
     pid = active_period.id
 
-    # Параллельные запросы (не зависят друг от друга)
     (
         total_occupied_res,
         rooms_with_readings_res,
@@ -125,7 +118,6 @@ async def close_period_preview(
     approved_sum = float(approved_row[1])
     draft_sum = float(draft_sum_res.scalar_one())
 
-    # Детализация по общежитиям — тоже параллельно
     dorm_stats_res, dorm_submitted_res = await asyncio.gather(
         db.execute(
             select(Room.dormitory_name, func.count(func.distinct(User.room_id)).label("total_rooms"))
@@ -164,10 +156,6 @@ async def close_period_preview(
         "estimated_total": approved_sum + draft_sum, "dormitories": dormitories,
     }
 
-
-# =====================================================================
-# СРАВНИТЕЛЬНАЯ АНАЛИТИКА ПЕРИОДОВ
-# =====================================================================
 @router.get("/api/admin/periods/compare", summary="Сравнение двух периодов по ресурсам")
 async def compare_periods(
         period_a: int = Query(..., description="ID первого периода"),
@@ -206,7 +194,6 @@ async def compare_periods(
             data[dorm] = entry
         return data
 
-    # ИСПРАВЛЕНИЕ P2: оба периода параллельно
     data_a, data_b = await asyncio.gather(
         _aggregate_period(period_a), _aggregate_period(period_b)
     )
@@ -221,17 +208,25 @@ async def compare_periods(
     empty_entry = {f: 0 for f in cost_fields}
     empty_entry["records"] = 0
     comparison = []
-    totals_a = {f: 0.0 for f in cost_fields}; totals_a["records"] = 0
-    totals_b = {f: 0.0 for f in cost_fields}; totals_b["records"] = 0
+
+    # ИСПРАВЛЕНИЕ: Разделение команд на разные строки
+    totals_a = {f: 0.0 for f in cost_fields}
+    totals_a["records"] = 0
+    totals_b = {f: 0.0 for f in cost_fields}
+    totals_b["records"] = 0
 
     for dorm in all_dorms:
-        a = data_a.get(dorm, empty_entry); b = data_b.get(dorm, empty_entry)
+        a = data_a.get(dorm, empty_entry)
+        b = data_b.get(dorm, empty_entry)
         deltas = {}
         for f in cost_fields:
-            val_a = a.get(f, 0); val_b = b.get(f, 0)
+            val_a = a.get(f, 0)
+            val_b = b.get(f, 0)
             deltas[f] = {"period_a": val_a, "period_b": val_b, "delta": round(val_b - val_a, 2), "percent": _safe_pct(val_a, val_b)}
-            totals_a[f] += val_a; totals_b[f] += val_b
-        totals_a["records"] += a.get("records", 0); totals_b["records"] += b.get("records", 0)
+            totals_a[f] += val_a
+            totals_b[f] += val_b
+        totals_a["records"] += a.get("records", 0)
+        totals_b["records"] += b.get("records", 0)
         comparison.append({"dormitory": dorm, "records_a": a.get("records", 0), "records_b": b.get("records", 0), "details": deltas})
 
     grand_deltas = {}
@@ -247,10 +242,6 @@ async def compare_periods(
         "totals": {"records_a": totals_a["records"], "records_b": totals_b["records"], "details": grand_deltas}
     }
 
-
-# =====================================================================
-# ОТКРЫТИЕ / ЗАКРЫТИЕ / ИСТОРИЯ
-# =====================================================================
 @router.post("/api/admin/periods/open", summary="Открыть новый месяц",
              dependencies=[Depends(RateLimiter(times=1, seconds=10))])
 async def api_open_period(data: PeriodCreate, background_tasks: BackgroundTasks,
@@ -270,7 +261,6 @@ async def api_open_period(data: PeriodCreate, background_tasks: BackgroundTasks,
     background_tasks.add_task(_send_period_push, new_period.name)
     return {"status": "opened", "period": new_period.name}
 
-
 @router.post("/api/admin/periods/close", summary="Закрыть текущий месяц (Фоновая задача)",
              dependencies=[Depends(RateLimiter(times=1, seconds=30))])
 async def api_close_period(current_user: User = Depends(allow_period_management), db: AsyncSession = Depends(get_db)):
@@ -280,13 +270,11 @@ async def api_close_period(current_user: User = Depends(allow_period_management)
     task = close_period_task.delay(current_user.id)
     return {"status": "processing", "task_id": task.id, "message": "Процесс закрытия периода запущен в фоне."}
 
-
 @router.get("/api/admin/periods/active", response_model=Optional[PeriodResponse])
 @cache(expire=300, namespace="periods")
 async def get_active_period(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     res = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))
     return res.scalars().first()
-
 
 @router.get("/api/admin/periods/history", response_model=List[PeriodResponse], summary="История всех периодов")
 async def get_all_periods(current_user: User = Depends(allow_period_management), db: AsyncSession = Depends(get_db)):
