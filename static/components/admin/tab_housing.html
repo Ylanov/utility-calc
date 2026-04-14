@@ -1,7 +1,7 @@
 <!-- static/components/admin/tab_housing.html -->
 <div id="housing" class="tab-content">
     <div class="grid-2-col" style="grid-template-columns: 320px 1fr;">
-        <!-- Левая колонка: Фильтр по общежитиям -->
+        <!-- Левая колонка: Управление -->
         <div class="card" style="align-self: start;">
             <div class="card-header">
                 <h3><i class="fa-solid fa-building" style="color: var(--primary-color); margin-right: 8px;"></i> Общежития</h3>
@@ -10,23 +10,40 @@
                 <label>Фильтр по зданию:</label>
                 <select id="dormFilterSelect">
                     <option value="">Все объекты</option>
-                    <!-- Заполняется из API -->
                 </select>
             </div>
             <button id="btnOpenAddRoom" class="action-btn primary-btn full-width mb-3"><i class="fa-solid fa-plus"></i> Добавить помещение</button>
 
-            <!-- КНОПКА АНАЛИЗАТОРА -->
-            <button id="btnAnalyzeHousing" class="action-btn warning-btn full-width" style="margin-top: 12px;">
-                <i class="fa-solid fa-magnifying-glass-chart"></i> Анализ жилфонда
-            </button>
-            <p style="font-size: 12px; color: var(--text-secondary); text-align: center; margin-top: 12px;">Поиск дублей, пустых комнат и раздельных счетов</p>
+            <!-- НОВОЕ: Блок начальных показаний -->
+            <div style="margin-top: 20px; padding-top: 16px; border-top: 1px dashed var(--border-color);">
+                <h4 style="font-size: 13px; color: var(--text-main); margin-bottom: 12px;"><i class="fa-solid fa-download" style="color: #6366f1; margin-right: 6px;"></i> Начальные показания</h4>
+                <p style="font-size: 11px; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.4;">
+                    Загрузите текущие показания счётчиков из Excel, чтобы первый расчёт жильцов не шёл от нуля.
+                </p>
+                <button id="btnDownloadReadingsTemplate" class="action-btn secondary-btn full-width" style="margin-bottom: 8px; font-size: 12px;">
+                    <i class="fa-solid fa-file-excel"></i> Скачать шаблон
+                </button>
+                <div class="compact-upload" style="width: 100%;">
+                    <input type="file" id="importInitialReadingsFile" accept=".xlsx, .xls">
+                    <button id="btnImportInitialReadings" class="action-btn primary-btn" style="font-size: 12px; white-space: nowrap;">
+                        <i class="fa-solid fa-upload"></i> Загрузить
+                    </button>
+                </div>
+            </div>
+
+            <!-- Анализатор -->
+            <div style="margin-top: 20px; padding-top: 16px; border-top: 1px dashed var(--border-color);">
+                <button id="btnAnalyzeHousing" class="action-btn warning-btn full-width">
+                    <i class="fa-solid fa-magnifying-glass-chart"></i> Анализ жилфонда
+                </button>
+                <p style="font-size: 12px; color: var(--text-secondary); text-align: center; margin-top: 12px;">Поиск дублей, пустых комнат и раздельных счетов</p>
+            </div>
         </div>
 
         <!-- Правая колонка: Таблица помещений -->
         <div class="card" style="margin: 0;">
             <div class="card-header">
                 <h3>Список помещений</h3>
-                <!-- НОВЫЙ ТУЛБАР В СТРОКУ -->
                 <div class="toolbar-controls">
                     <select id="roomsLimitSelect">
                         <option value="25">25 строк</option>
@@ -120,6 +137,42 @@
                 <div class="modal-footer">
                     <button type="button" class="action-btn secondary-btn close-btn">Отмена</button>
                     <button type="submit" class="action-btn primary-btn confirm-btn">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- НОВОЕ: МОДАЛКА НАЧАЛЬНЫХ ПОКАЗАНИЙ -->
+    <div id="initialReadingsModal" class="modal-overlay">
+        <div class="modal-window" style="width: 480px;">
+            <div class="modal-header" style="background: #eef2ff; border-bottom: 1px solid #c7d2fe;">
+                <h3 style="color: #4338ca;"><i class="fa-solid fa-gauge"></i> Начальные показания счётчиков</h3>
+                <button class="close-btn close-icon" id="btnCloseInitial">&times;</button>
+            </div>
+            <form id="initialReadingsForm" class="styled-form">
+                <div class="modal-form" style="padding-top: 16px;">
+                    <input type="hidden" id="initialRoomId">
+                    <p style="font-size: 14px; margin-bottom: 8px;">Помещение: <b id="initialRoomName" style="color: var(--primary-color);">...</b></p>
+                    <p style="font-size: 12px; color: var(--text-secondary); margin-bottom: 20px; line-height: 1.4;">
+                        Введите текущие показания счётчиков. Система будет считать потребление от этих значений, а не от нуля.
+                    </p>
+
+                    <div class="form-group mb-3">
+                        <label style="color: var(--danger-color);"><i class="fa-solid fa-fire"></i> ГВС — Горячая вода (м³)</label>
+                        <input type="number" step="0.001" id="initialHot" required min="0" placeholder="Например: 150.500">
+                    </div>
+                    <div class="form-group mb-3">
+                        <label style="color: var(--primary-color);"><i class="fa-solid fa-snowflake"></i> ХВС — Холодная вода (м³)</label>
+                        <input type="number" step="0.001" id="initialCold" required min="0" placeholder="Например: 230.100">
+                    </div>
+                    <div class="form-group mb-3">
+                        <label style="color: #d97706;"><i class="fa-solid fa-bolt"></i> Электричество (кВт·ч)</label>
+                        <input type="number" step="0.001" id="initialElect" required min="0" placeholder="Например: 5430.000">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="action-btn secondary-btn" id="btnCancelInitial">Отмена</button>
+                    <button type="submit" class="action-btn primary-btn" id="btnSubmitInitial">Сохранить показания</button>
                 </div>
             </form>
         </div>

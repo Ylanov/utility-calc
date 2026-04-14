@@ -3,12 +3,6 @@ import { api } from '../core/api.js';
 import { el, toast, setLoading } from '../core/dom.js';
 import { TableController } from '../core/table-controller.js';
 
-// ==========================================
-// ИСПРАВЛЕНИЕ: Утилита для экранирования HTML.
-// Защищает от XSS-атак при вставке данных из API в innerHTML.
-// Если злоумышленник создаст комнату с именем типа <script>alert(1)</script>,
-// без экранирования этот код выполнится в браузере администратора.
-// ==========================================
 function escapeHtml(str) {
     if (str === null || str === undefined) return '';
     const div = document.createElement('div');
@@ -39,11 +33,16 @@ export const HousingModule = {
             btnOpenAdd: document.getElementById('btnOpenAddRoom'),
             btnRefresh: document.getElementById('btnRefreshRooms'),
 
-            // Элементы анализатора
+            // Анализатор
             btnAnalyze: document.getElementById('btnAnalyzeHousing'),
             analyzerModal: document.getElementById('analyzerModal'),
             analyzerResults: document.getElementById('analyzerResults'),
-            btnAnalyzerClose: document.querySelectorAll('#analyzerModal .close-btn')
+            btnAnalyzerClose: document.querySelectorAll('#analyzerModal .close-btn'),
+
+            // НОВОЕ: Начальные показания — импорт
+            btnDownloadReadingsTemplate: document.getElementById('btnDownloadReadingsTemplate'),
+            btnImportInitialReadings: document.getElementById('btnImportInitialReadings'),
+            importInitialReadingsFile: document.getElementById('importInitialReadingsFile'),
         };
 
         this.modal = {
@@ -64,7 +63,7 @@ export const HousingModule = {
             }
         };
 
-        // Элементы модалки замены счетчика
+        // Замена счетчика
         this.meter = {
             modal: document.getElementById('replaceMeterModal'),
             form: document.getElementById('replaceMeterForm'),
@@ -77,6 +76,20 @@ export const HousingModule = {
             btnClose: document.getElementById('btnCloseMeter'),
             btnCancel: document.getElementById('btnCancelMeter'),
             btnSubmit: document.getElementById('btnSubmitMeter')
+        };
+
+        // НОВОЕ: Начальные показания — модалка
+        this.initial = {
+            modal: document.getElementById('initialReadingsModal'),
+            form: document.getElementById('initialReadingsForm'),
+            roomId: document.getElementById('initialRoomId'),
+            roomName: document.getElementById('initialRoomName'),
+            hot: document.getElementById('initialHot'),
+            cold: document.getElementById('initialCold'),
+            elect: document.getElementById('initialElect'),
+            btnClose: document.getElementById('btnCloseInitial'),
+            btnCancel: document.getElementById('btnCancelInitial'),
+            btnSubmit: document.getElementById('btnSubmitInitial'),
         };
     },
 
@@ -104,7 +117,7 @@ export const HousingModule = {
             });
         });
 
-        // События Анализатора
+        // Анализатор
         if (this.dom.btnAnalyze) {
             this.dom.btnAnalyze.addEventListener('click', () => this.runAnalysis());
         }
@@ -114,16 +127,31 @@ export const HousingModule = {
             }));
         }
 
-        // События замены счетчика
+        // Замена счетчика
         if (this.meter.form) {
             this.meter.form.addEventListener('submit', (e) => this.handleMeterSubmit(e));
             this.meter.btnClose.addEventListener('click', (e) => { e.preventDefault(); this.meter.modal.classList.remove('open'); });
             this.meter.btnCancel.addEventListener('click', (e) => { e.preventDefault(); this.meter.modal.classList.remove('open'); });
         }
+
+        // НОВОЕ: Начальные показания — модалка
+        if (this.initial.form) {
+            this.initial.form.addEventListener('submit', (e) => this.handleInitialSubmit(e));
+            if (this.initial.btnClose) this.initial.btnClose.addEventListener('click', (e) => { e.preventDefault(); this.initial.modal.classList.remove('open'); });
+            if (this.initial.btnCancel) this.initial.btnCancel.addEventListener('click', (e) => { e.preventDefault(); this.initial.modal.classList.remove('open'); });
+        }
+
+        // НОВОЕ: Начальные показания — шаблон и импорт
+        if (this.dom.btnDownloadReadingsTemplate) {
+            this.dom.btnDownloadReadingsTemplate.addEventListener('click', () => this.downloadReadingsTemplate());
+        }
+        if (this.dom.btnImportInitialReadings) {
+            this.dom.btnImportInitialReadings.addEventListener('click', () => this.importInitialReadings());
+        }
     },
 
     // ==========================================
-    // ЛОГИКА АНАЛИЗАТОРА ЖИЛФОНДА
+    // АНАЛИЗАТОР ЖИЛФОНДА
     // ==========================================
     async runAnalysis() {
         this.dom.analyzerModal.classList.add('open');
@@ -143,8 +171,6 @@ export const HousingModule = {
 
     renderAnalysis(data) {
         let html = '';
-
-        // Конфигурация блоков аномалий
         const sections = [
             { key: 'unattached_users', icon: '👻', title: 'Жильцы без комнаты (Ошибки привязки)', color: '#dc2626', bg: '#fef2f2' },
             { key: 'shared_billing', icon: '👥', title: 'Совместное проживание (Раздельные Л/С в одной комнате)', color: '#3b82f6', bg: '#eff6ff' },
@@ -196,20 +222,14 @@ export const HousingModule = {
     async loadDormitories() {
         try {
             const dorms = await api.get('/rooms/dormitories');
-
-            // Заполняем фильтр
             let filterHtml = '<option value="">Все объекты</option>';
-            // Заполняем datalist для автодополнения в форме
             let datalistHtml = '';
-
             dorms.forEach(d => {
                 filterHtml += `<option value="${d}">${d}</option>`;
                 datalistHtml += `<option value="${d}">`;
             });
-
             this.dom.dormFilterSelect.innerHTML = filterHtml;
             this.dom.dormList.innerHTML = datalistHtml;
-
         } catch (e) {
             toast('Ошибка загрузки списка общежитий', 'error');
         }
@@ -227,9 +247,7 @@ export const HousingModule = {
                 pageInfo: 'roomsPageInfo'
             },
             getExtraParams: () => {
-                return {
-                    dormitory: this.dom.dormFilterSelect.value
-                };
+                return { dormitory: this.dom.dormFilterSelect.value };
             },
             renderRow: (room) => {
                 return el('tr', { class: 'hover:bg-gray-50 transition-colors' },
@@ -242,13 +260,20 @@ export const HousingModule = {
                     el('td', { class: 'text-sm font-mono', style: {color: '#2563eb'} }, room.cw_meter_serial || '-'),
                     el('td', { class: 'text-sm font-mono', style: {color: '#d97706'} }, room.el_meter_serial || '-'),
                     el('td', { class: 'text-center' },
-                        // НОВАЯ КНОПКА ЗАМЕНЫ СЧЕТЧИКА
+                        // НОВОЕ: Кнопка установки начальных показаний
                         el('button', {
-                            class: 'btn-icon', title: 'Замена счетчика', style: { marginRight: '5px', background: '#f0fdf4', color: '#166534', borderColor: '#bbf7d0' },
+                            class: 'btn-icon', title: 'Начальные показания',
+                            style: { marginRight: '5px', background: '#eef2ff', color: '#4338ca', borderColor: '#c7d2fe' },
+                            onclick: () => this.openInitialModal(room)
+                        }, '📊'),
+                        el('button', {
+                            class: 'btn-icon', title: 'Замена счетчика',
+                            style: { marginRight: '5px', background: '#f0fdf4', color: '#166534', borderColor: '#bbf7d0' },
                             onclick: () => this.openMeterModal(room)
                         }, '🔄'),
                         el('button', {
-                            class: 'btn-icon btn-edit', title: 'Редактировать', style: { marginRight: '5px' },
+                            class: 'btn-icon btn-edit', title: 'Редактировать',
+                            style: { marginRight: '5px' },
                             onclick: () => this.openModal(room)
                         }, '✎'),
                         el('button', {
@@ -265,7 +290,6 @@ export const HousingModule = {
 
     openModal(room = null) {
         this.modal.form.reset();
-
         if (room) {
             this.modal.title.textContent = 'Редактировать помещение';
             this.modal.inputs.id.value = room.id;
@@ -279,12 +303,10 @@ export const HousingModule = {
         } else {
             this.modal.title.textContent = 'Добавить помещение';
             this.modal.inputs.id.value = '';
-            // Если выбран фильтр, подставляем его в создание
             if (this.dom.dormFilterSelect.value) {
                 this.modal.inputs.dorm.value = this.dom.dormFilterSelect.value;
             }
         }
-
         this.modal.window.classList.add('open');
     },
 
@@ -292,7 +314,6 @@ export const HousingModule = {
         e.preventDefault();
         const btn = this.modal.form.querySelector('.confirm-btn');
         const id = this.modal.inputs.id.value;
-
         const data = {
             dormitory_name: this.modal.inputs.dorm.value.trim(),
             room_number: this.modal.inputs.num.value.trim(),
@@ -304,7 +325,6 @@ export const HousingModule = {
         };
 
         setLoading(btn, true, 'Сохранение...');
-
         try {
             if (id) {
                 await api.put(`/rooms/${id}`, data);
@@ -313,12 +333,9 @@ export const HousingModule = {
                 await api.post('/rooms', data);
                 toast('Помещение добавлено', 'success');
             }
-
             this.modal.window.classList.remove('open');
             this.table.refresh();
-            // Обновляем список общежитий на случай, если добавилось новое
             this.loadDormitories();
-
         } catch (err) {
             toast(err.message, 'error');
         } finally {
@@ -328,7 +345,6 @@ export const HousingModule = {
 
     async deleteRoom(id) {
         if (!confirm('ВНИМАНИЕ! Вы уверены, что хотите удалить помещение? Это возможно только если к нему не привязаны жильцы и нет истории показаний.')) return;
-
         try {
             await api.delete(`/rooms/${id}`);
             toast('Помещение удалено', 'success');
@@ -339,30 +355,27 @@ export const HousingModule = {
     },
 
     // ==========================================
-    // ЛОГИКА ЗАМЕНЫ СЧЕТЧИКА
+    // ЗАМЕНА СЧЕТЧИКА
     // ==========================================
     openMeterModal(room) {
         if (!this.meter.modal) return;
         this.meter.form.reset();
         this.meter.roomId.value = room.id;
         this.meter.roomName.textContent = `${room.dormitory_name}, ком. ${room.room_number}`;
-        this.meter.initialNew.value = "0"; // Обычно новый счетчик начинается с нуля
+        this.meter.initialNew.value = "0";
         this.meter.modal.classList.add('open');
     },
 
     async handleMeterSubmit(e) {
         e.preventDefault();
-
         const payload = {
             meter_type: this.meter.type.value,
             new_serial: this.meter.newSerial.value.trim(),
             final_old_value: parseFloat(this.meter.finalOld.value.replace(',', '.')),
             initial_new_value: parseFloat(this.meter.initialNew.value.replace(',', '.'))
         };
-
         if (!payload.new_serial) return toast('Укажите новый номер счетчика', 'error');
         if (isNaN(payload.final_old_value)) return toast('Введите финальное показание', 'error');
-
         if (!confirm('Вы уверены? Система рассчитает потребление по старому счетчику и установит новые базовые значения. Это действие нельзя отменить.')) return;
 
         setLoading(this.meter.btnSubmit, true, 'Оформление...');
@@ -375,6 +388,98 @@ export const HousingModule = {
             toast(err.message, 'error');
         } finally {
             setLoading(this.meter.btnSubmit, false, 'Оформить замену');
+        }
+    },
+
+    // ==========================================
+    // НОВОЕ: НАЧАЛЬНЫЕ ПОКАЗАНИЯ (ПОШТУЧНО)
+    // ==========================================
+    async openInitialModal(room) {
+        if (!this.initial.modal) return;
+        this.initial.form.reset();
+        this.initial.roomId.value = room.id;
+        this.initial.roomName.textContent = `${room.dormitory_name}, ком. ${room.room_number}`;
+
+        // Загружаем текущие показания комнаты
+        try {
+            const data = await api.get(`/rooms/${room.id}/current-readings`);
+            this.initial.hot.value = parseFloat(data.hot_water) || '';
+            this.initial.cold.value = parseFloat(data.cold_water) || '';
+            this.initial.elect.value = parseFloat(data.electricity) || '';
+        } catch (e) {
+            // Если ошибка — поля останутся пустыми
+        }
+
+        this.initial.modal.classList.add('open');
+    },
+
+    async handleInitialSubmit(e) {
+        e.preventDefault();
+        const roomId = this.initial.roomId.value;
+        const hot = parseFloat(this.initial.hot.value);
+        const cold = parseFloat(this.initial.cold.value);
+        const elect = parseFloat(this.initial.elect.value);
+
+        if (isNaN(hot) || isNaN(cold) || isNaN(elect)) {
+            return toast('Заполните все три поля показаний', 'error');
+        }
+
+        setLoading(this.initial.btnSubmit, true, 'Сохранение...');
+        try {
+            await api.post(`/rooms/${roomId}/initial-readings?hot_water=${hot}&cold_water=${cold}&electricity=${elect}`);
+            toast('Начальные показания сохранены!', 'success');
+            this.initial.modal.classList.remove('open');
+            this.table.refresh();
+        } catch (err) {
+            toast(err.message, 'error');
+        } finally {
+            setLoading(this.initial.btnSubmit, false, 'Сохранить показания');
+        }
+    },
+
+    // ==========================================
+    // НОВОЕ: НАЧАЛЬНЫЕ ПОКАЗАНИЯ (МАССОВЫЙ ИМПОРТ)
+    // ==========================================
+    async downloadReadingsTemplate() {
+        setLoading(this.dom.btnDownloadReadingsTemplate, true, 'Генерация...');
+        try {
+            await api.download('/rooms/initial-readings/template', 'Initial_Readings_Template.xlsx');
+            toast('Шаблон скачан. Заполните показания и загрузите обратно.', 'success');
+        } catch (e) {
+            toast('Ошибка скачивания шаблона: ' + e.message, 'error');
+        } finally {
+            setLoading(this.dom.btnDownloadReadingsTemplate, false, 'Скачать шаблон');
+        }
+    },
+
+    async importInitialReadings() {
+        const file = this.dom.importInitialReadingsFile?.files[0];
+        if (!file) return toast('Выберите файл Excel', 'info');
+        if (!file.name.match(/\.(xlsx|xls)$/)) return toast('Только файлы Excel (.xlsx)', 'error');
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        setLoading(this.dom.btnImportInitialReadings, true, 'Загрузка...');
+        try {
+            const result = await api.post('/rooms/import-initial-readings', formData);
+
+            let msg = `Обновлено комнат: ${result.updated}`;
+            if (result.skipped > 0) msg += `, пропущено: ${result.skipped}`;
+
+            if (result.errors && result.errors.length > 0) {
+                toast(msg + '. Есть предупреждения — см. консоль.', 'warning');
+                console.warn('Import errors:', result.errors);
+            } else {
+                toast(msg, 'success');
+            }
+
+            this.dom.importInitialReadingsFile.value = '';
+            this.table.refresh();
+        } catch (e) {
+            toast('Ошибка импорта: ' + e.message, 'error');
+        } finally {
+            setLoading(this.dom.btnImportInitialReadings, false, 'Загрузить');
         }
     }
 };

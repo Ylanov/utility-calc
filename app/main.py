@@ -47,6 +47,7 @@ from app.modules.utility.routers import (
     financier,
     settings as settings_router,
     admin_dashboard,
+    admin_initial_readings,
 )
 
 from app.modules.telegram import telegram_app
@@ -283,6 +284,8 @@ app.include_router(financier.router)
 app.include_router(settings_router.router)
 app.include_router(telegram_app.router)
 app.include_router(admin_dashboard.router)
+
+app.include_router(admin_initial_readings.router)
 
 # =====================================================================
 # ROUTES — АРСЕНАЛ
