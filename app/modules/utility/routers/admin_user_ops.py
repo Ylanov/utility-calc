@@ -7,17 +7,22 @@ from sqlalchemy import delete
 
 from app.core.database import get_db
 from app.modules.utility.models import User, MeterReading, Adjustment
-from app.core.dependencies import get_current_user
+from app.core.dependencies import get_current_user, RoleChecker
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Admin User Ops"])
 
+# ИСПРАВЛЕНИЕ: Используем RoleChecker вместо ручной проверки role != "accountant".
+# Ранее роль 'admin' не могла удалять пользователей — только 'accountant'.
+# Это противоречит логике всех остальных роутеров, где admin имеет полный доступ.
+allow_delete_users = RoleChecker(["accountant", "admin"])
+
 
 @router.delete("/api/admin/users/{user_id}")
 async def delete_user_with_cleanup(
         user_id: int,
-        current_user: User = Depends(get_current_user),
+        current_user: User = Depends(allow_delete_users),
         db: AsyncSession = Depends(get_db)
 ):
     """
@@ -26,18 +31,23 @@ async def delete_user_with_cleanup(
     - Показания счетчиков (MeterReading)
     - Сама запись пользователя (User)
 
-    Доступно только для роли 'accountant'.
+    Доступно для ролей 'accountant' и 'admin'.
     """
-    if current_user.role != "accountant":
-        raise HTTPException(status_code=403, detail="Доступ запрещен")
-
     try:
         user = await db.get(User, user_id)
         if not user:
             raise HTTPException(status_code=404, detail="Пользователь не найден")
 
-        if user.username == "admin" or (hasattr(user, 'username') and user.username.startswith("admin")):
+        # ИСПРАВЛЕНИЕ: Проверяем точное совпадение username == "admin" вместо startswith("admin").
+        # Ранее startswith("admin") блокировало удаление любого пользователя,
+        # чьё имя начинается с "admin" (например "admin_test", "administrator", "admin2").
+        # Защищаем только суперадмина с username ровно "admin".
+        if user.username == "admin":
             raise HTTPException(status_code=400, detail="Нельзя удалить главного администратора")
+
+        # Дополнительная защита: нельзя удалить самого себя
+        if user.id == current_user.id:
+            raise HTTPException(status_code=400, detail="Нельзя удалить свою учётную запись")
 
         # Удаляем финансовые корректировки
         await db.execute(delete(Adjustment).where(Adjustment.user_id == user_id))
@@ -51,9 +61,14 @@ async def delete_user_with_cleanup(
         # Фиксируем всё одной транзакцией
         await db.commit()
 
+        logger.info(
+            f"User {user_id} ('{user.username}') permanently deleted "
+            f"with all related data by {current_user.username}"
+        )
+
         return {
             "status": "success",
-            "message": f"Пользователь и все связанные данные успешно удалены"
+            "message": "Пользователь и все связанные данные успешно удалены"
         }
 
     except HTTPException:
@@ -61,7 +76,6 @@ async def delete_user_with_cleanup(
         raise
     except Exception as e:
         await db.rollback()
-        # ИСПРАВЛЕНИЕ: логируем полную ошибку в лог, клиенту отдаём generic-сообщение
         logger.error(f"Critical error deleting user {user_id}: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,

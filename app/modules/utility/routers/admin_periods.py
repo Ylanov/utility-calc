@@ -28,6 +28,21 @@ ZERO = Decimal("0.00")
 allow_period_management = RoleChecker(["accountant", "admin"])
 
 
+# =====================================================
+# ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: Безопасная очистка кэша
+# =====================================================
+async def _safe_clear_cache(namespace: str = "periods"):
+    """
+    Очищает кэш без выброса исключения.
+    ИСПРАВЛЕНИЕ: Ранее FastAPICache.clear() внутри try-блока после db.commit()
+    приводило к 500, хотя период уже был успешно открыт/закрыт в БД.
+    """
+    try:
+        await FastAPICache.clear(namespace=namespace)
+    except Exception as e:
+        logger.warning(f"Не удалось очистить кэш '{namespace}': {e}")
+
+
 async def _send_period_push(period_name: str):
     """
     Фоновая задача отправки пуш-уведомлений при открытии периода.
@@ -45,7 +60,7 @@ async def _send_period_push(period_name: str):
 
 
 # =====================================================================
-# НОВАЯ ФУНКЦИЯ: ПРЕДПРОСМОТР ЗАКРЫТИЯ ПЕРИОДА
+# ПРЕДПРОСМОТР ЗАКРЫТИЯ ПЕРИОДА
 # =====================================================================
 @router.get("/api/admin/periods/close-preview", summary="Предпросмотр последствий закрытия периода")
 async def close_period_preview(
@@ -188,7 +203,7 @@ async def close_period_preview(
 
 
 # =====================================================================
-# НОВАЯ ФУНКЦИЯ: СРАВНИТЕЛЬНАЯ АНАЛИТИКА ПЕРИОДОВ
+# СРАВНИТЕЛЬНАЯ АНАЛИТИКА ПЕРИОДОВ
 # =====================================================================
 @router.get("/api/admin/periods/compare", summary="Сравнение двух периодов по ресурсам")
 async def compare_periods(
@@ -318,9 +333,50 @@ async def compare_periods(
 
 
 # =====================================================================
-# СУЩЕСТВУЮЩИЕ ENDPOINTS (без изменений, с исправлениями из группы A)
+# ОТКРЫТИЕ НОВОГО ПЕРИОДА
 # =====================================================================
+@router.post(
+    "/api/admin/periods/open",
+    summary="Открыть новый месяц",
+    dependencies=[Depends(RateLimiter(times=1, seconds=10))]
+)
+async def api_open_period(
+        data: PeriodCreate,
+        background_tasks: BackgroundTasks,
+        current_user: User = Depends(allow_period_management),
+        db: AsyncSession = Depends(get_db)
+):
+    """
+    ИСПРАВЛЕНИЕ: FastAPICache.clear() вынесен за пределы try-блока в безопасную обёртку.
+    Ранее если Redis был недоступен, clear() бросал исключение ПОСЛЕ db.commit() —
+    период уже был открыт в БД, но клиент получал 500 и думал, что ничего не произошло.
+    """
+    try:
+        new_period = await open_new_period(db=db, new_name=data.name)
+        await db.commit()
+    except ValueError as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Critical error in api_open_period: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Внутренняя ошибка при открытии периода. Обратитесь к администратору."
+        )
 
+    # Безопасная очистка кэша — вне try, не сломает ответ клиенту
+    await _safe_clear_cache("periods")
+
+    # Фоновая отправка пушей
+    background_tasks.add_task(_send_period_push, new_period.name)
+
+    return {"status": "opened", "period": new_period.name}
+
+
+# =====================================================================
+# ЗАКРЫТИЕ ПЕРИОДА (Фоновая задача)
+# =====================================================================
 @router.post(
     "/api/admin/periods/close",
     summary="Закрыть текущий месяц (Фоновая задача)",
@@ -345,38 +401,9 @@ async def api_close_period(
     }
 
 
-@router.post(
-    "/api/admin/periods/open",
-    summary="Открыть новый месяц",
-    dependencies=[Depends(RateLimiter(times=1, seconds=10))]
-)
-async def api_open_period(
-        data: PeriodCreate,
-        background_tasks: BackgroundTasks,
-        current_user: User = Depends(allow_period_management),
-        db: AsyncSession = Depends(get_db)
-):
-    try:
-        new_period = await open_new_period(db=db, new_name=data.name)
-        await db.commit()
-        await FastAPICache.clear(namespace="periods")
-
-        background_tasks.add_task(_send_period_push, new_period.name)
-
-        return {"status": "opened", "period": new_period.name}
-
-    except ValueError as e:
-        await db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Critical error in api_open_period: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail="Внутренняя ошибка при открытии периода. Обратитесь к администратору."
-        )
-
-
+# =====================================================================
+# ПОЛУЧЕНИЕ АКТИВНОГО ПЕРИОДА (кэшированный)
+# =====================================================================
 @router.get("/api/admin/periods/active", response_model=Optional[PeriodResponse])
 @cache(expire=300, namespace="periods")
 async def get_active_period(
@@ -387,6 +414,9 @@ async def get_active_period(
     return res.scalars().first()
 
 
+# =====================================================================
+# ИСТОРИЯ ВСЕХ ПЕРИОДОВ
+# =====================================================================
 @router.get("/api/admin/periods/history", response_model=List[PeriodResponse], summary="История всех периодов")
 async def get_all_periods(
         current_user: User = Depends(allow_period_management),

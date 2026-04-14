@@ -1,28 +1,48 @@
 # app/modules/utility/routers/tariffs.py
 
+import logging
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func
+from sqlalchemy import func, update
 from fastapi_cache.decorator import cache
 from fastapi_cache import FastAPICache
 
 from app.core.database import get_db
 from app.modules.utility.models import User, Tariff
 from app.modules.utility.schemas import TariffSchema
-# ИСПРАВЛЕНИЕ: Добавляем финансиста в список тех, кто может управлять тарифами
 from app.core.dependencies import get_current_user, RoleChecker
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/tariffs", tags=["Tariffs"])
-# Добавляем роль 'financier', так как это тоже управляющая роль
 allow_management_roles = RoleChecker(["accountant", "admin", "financier"])
 
 
+# =====================================================
+# ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ: Безопасная очистка кэша
+# =====================================================
+async def _safe_clear_cache(namespace: str = "tariffs"):
+    """
+    Очищает кэш без выброса исключения.
+    Если Redis/кэш-бэкенд недоступен — логируем и продолжаем.
+    КРИТИЧЕСКИ ВАЖНО: ранее падение кэша при clear() вызывало 500,
+    хотя данные в БД уже были успешно сохранены.
+    """
+    try:
+        await FastAPICache.clear(namespace=namespace)
+    except Exception as e:
+        logger.warning(f"Не удалось очистить кэш '{namespace}': {e}")
+
+
+# =====================================================
+# GET /api/tariffs — Список активных тарифов (кэшированный)
+# =====================================================
 @router.get("", response_model=List[TariffSchema])
-@cache(expire=3600, namespace="tariffs")  # Кэшируем на 1 час
+@cache(expire=3600, namespace="tariffs")
 async def get_tariffs(
-        current_user: User = Depends(get_current_user),  # Доступно всем для чтения
+        current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
 ):
     """Получить список всех активных тарифов, отсортированных по ID."""
@@ -32,6 +52,9 @@ async def get_tariffs(
     return result.scalars().all()
 
 
+# =====================================================
+# GET /api/tariffs/with-stats — Тарифы + кол-во жильцов
+# =====================================================
 @router.get("/with-stats", summary="Тарифы с количеством привязанных жильцов")
 async def get_tariffs_with_stats(
         current_user: User = Depends(allow_management_roles),
@@ -39,11 +62,9 @@ async def get_tariffs_with_stats(
 ):
     """
     Возвращает список активных тарифов с количеством привязанных пользователей.
-
-    НОВАЯ ФУНКЦИЯ: Позволяет администратору видеть сколько жильцов
-    используют каждый тариф, что критично перед удалением или изменением.
+    Позволяет администратору видеть сколько жильцов используют каждый тариф,
+    что критично перед удалением или изменением.
     """
-    # Получаем тарифы
     tariffs_result = await db.execute(
         select(Tariff).where(Tariff.is_active).order_by(Tariff.id)
     )
@@ -88,68 +109,83 @@ async def get_tariffs_with_stats(
     return result
 
 
+# =====================================================
+# POST /api/tariffs — Создание / обновление тарифа
+# =====================================================
 @router.post("", response_model=TariffSchema)
 async def create_or_update_tariff(
         data: TariffSchema,
-        current_user: User = Depends(allow_management_roles),  # Права на запись
+        current_user: User = Depends(allow_management_roles),
         db: AsyncSession = Depends(get_db)
 ):
     """
     Создать новый тарифный профиль или обновить существующий.
     Если в `data` передан `id`, происходит обновление.
     Если `id` отсутствует, создается новая запись.
+
+    ИСПРАВЛЕНИЕ: Добавлен try/except + rollback.
+    Ранее любая ошибка БД или кэша приводила к голому 500 без логирования.
     """
-    if data.id:
-        # Режим обновления
-        tariff = await db.get(Tariff, data.id)
-        if not tariff:
-            raise HTTPException(status_code=404, detail="Тарифный профиль не найден")
+    try:
+        if data.id:
+            # Режим обновления
+            tariff = await db.get(Tariff, data.id)
+            if not tariff:
+                raise HTTPException(status_code=404, detail="Тарифный профиль не найден")
 
-        # ИСПРАВЛЕНИЕ: Нельзя редактировать деактивированный (мягко удалённый) тариф.
-        if not tariff.is_active:
-            raise HTTPException(
-                status_code=400,
-                detail="Нельзя редактировать деактивированный тариф. Создайте новый."
-            )
-    else:
-        # Режим создания
-        tariff = Tariff()
-        db.add(tariff)
+            if not tariff.is_active:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Нельзя редактировать деактивированный тариф. Создайте новый."
+                )
+        else:
+            # Режим создания
+            tariff = Tariff()
+            db.add(tariff)
 
-    # Обновляем все поля из пришедшей схемы, кроме ID и системных
-    update_data = data.dict(exclude={"id", "is_active"})
-    for key, value in update_data.items():
-        if hasattr(tariff, key):  # Доп. проверка на существование атрибута
-            setattr(tariff, key, value)
+        # Обновляем все поля из пришедшей схемы, кроме ID и системных
+        update_data = data.dict(exclude={"id", "is_active"})
+        for key, value in update_data.items():
+            if hasattr(tariff, key):
+                setattr(tariff, key, value)
 
-    await db.commit()
-    await db.refresh(tariff)
+        await db.commit()
+        await db.refresh(tariff)
 
-    # ВАЖНО: Сбрасываем кэш, так как данные изменились
-    await FastAPICache.clear(namespace="tariffs")
+    except HTTPException:
+        # Штатные HTTP-ошибки (404, 400) пробрасываем как есть
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Ошибка при сохранении тарифа: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Внутренняя ошибка при сохранении тарифа. Обратитесь к администратору."
+        )
+
+    # ИСПРАВЛЕНИЕ: Сбрасываем кэш ПОСЛЕ успешного коммита, безопасно.
+    # Ранее FastAPICache.clear() был внутри основного блока — если Redis недоступен,
+    # данные уже в БД, но клиент получал 500.
+    await _safe_clear_cache("tariffs")
 
     return tariff
 
 
+# =====================================================
+# DELETE /api/tariffs/{tariff_id} — Мягкое удаление
+# =====================================================
 @router.delete("/{tariff_id}", status_code=204)
 async def delete_tariff(
         tariff_id: int,
-        current_user: User = Depends(allow_management_roles),  # Права на удаление
+        current_user: User = Depends(allow_management_roles),
         db: AsyncSession = Depends(get_db)
 ):
     """
     Мягкое удаление тарифа (пометка неактивным) с пересадкой жильцов на базовый.
 
-    ИСПРАВЛЕНИЕ: Ранее при удалении тарифа пользователи оставались с tariff_id,
-    указывающим на деактивированный тариф. При расчёте система тихо падала на
-    fallback к default_tariff через getattr(user, 'tariff_id', 1), но администратор
-    не знал об этом.
-
-    Теперь: при мягком удалении тарифа все привязанные к нему жильцы
-    автоматически переводятся на базовый тариф (tariff_id = NULL → fallback id=1).
-    Администратор видит в ответе сколько жильцов было пересажено.
+    При удалении тарифа все привязанные к нему жильцы автоматически переводятся
+    на базовый тариф (tariff_id = NULL → fallback id=1).
     """
-    # Защита от удаления базового тарифа, который является фоллбэком
     if tariff_id == 1:
         raise HTTPException(
             status_code=400,
@@ -165,30 +201,39 @@ async def delete_tariff(
         # Уже удалён — идемпотентность
         return None
 
-    # Считаем сколько жильцов на этом тарифе
-    affected_count_result = await db.execute(
-        select(func.count(User.id)).where(
-            User.tariff_id == tariff_id,
-            User.is_deleted.is_(False)
+    try:
+        # Считаем сколько жильцов на этом тарифе
+        affected_count_result = await db.execute(
+            select(func.count(User.id)).where(
+                User.tariff_id == tariff_id,
+                User.is_deleted.is_(False)
+            )
         )
-    )
-    affected_count = affected_count_result.scalar_one()
+        affected_count = affected_count_result.scalar_one()
 
-    # Пересаживаем жильцов на базовый тариф (NULL = fallback на id=1)
-    if affected_count > 0:
-        from sqlalchemy import update
-        await db.execute(
-            update(User)
-            .where(User.tariff_id == tariff_id, User.is_deleted.is_(False))
-            .values(tariff_id=None)
+        # Пересаживаем жильцов на базовый тариф (NULL = fallback на id=1)
+        if affected_count > 0:
+            await db.execute(
+                update(User)
+                .where(User.tariff_id == tariff_id, User.is_deleted.is_(False))
+                .values(tariff_id=None)
+            )
+
+        # Мягкое удаление
+        tariff.is_active = False
+        await db.commit()
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Ошибка при удалении тарифа {tariff_id}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Внутренняя ошибка при удалении тарифа. Обратитесь к администратору."
         )
 
-    # Мягкое удаление
-    tariff.is_active = False
-    await db.commit()
+    # Безопасная очистка кэша после удаления
+    await _safe_clear_cache("tariffs")
 
-    # ВАЖНО: Сбрасываем кэш после удаления
-    await FastAPICache.clear(namespace="tariffs")
-
-    # Возвращаем 204 No Content (стандарт REST для DELETE)
     return None

@@ -1,3 +1,6 @@
+# app/modules/utility/routers/settings.py
+
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel, Field
@@ -5,6 +8,8 @@ from pydantic import BaseModel, Field
 from app.core.database import get_db
 from app.modules.utility.models import User, SystemSetting
 from app.core.dependencies import RoleChecker, get_current_user
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/settings", tags=["System Settings"])
 
@@ -25,7 +30,6 @@ async def get_submission_period(
     Получить дни подачи показаний.
     Доступно всем авторизованным пользователям.
     """
-
     start = await db.get(SystemSetting, "submission_start_day")
     end = await db.get(SystemSetting, "submission_end_day")
 
@@ -50,29 +54,41 @@ async def update_submission_period(
     """
     Обновить дни подачи показаний.
     Доступно бухгалтеру, финансисту и админу.
-    """
 
+    ИСПРАВЛЕНИЕ: Добавлен try/except + rollback.
+    Ранее если commit падал (например, конкурентная запись или constraint),
+    клиент получал голый 500 без логирования.
+    """
     if data.start_day >= data.end_day:
         raise HTTPException(
             status_code=400,
             detail="День начала должен быть раньше дня окончания"
         )
 
-    async def upsert(key: str, val: int, desc: str):
-        item = await db.get(SystemSetting, key)
-        if item:
-            item.value = str(val)
-        else:
-            db.add(SystemSetting(
-                key=key,
-                value=str(val),
-                description=desc
-            ))
+    try:
+        async def upsert(key: str, val: int, desc: str):
+            item = await db.get(SystemSetting, key)
+            if item:
+                item.value = str(val)
+            else:
+                db.add(SystemSetting(
+                    key=key,
+                    value=str(val),
+                    description=desc
+                ))
 
-    await upsert("submission_start_day", data.start_day, "День начала приема показаний")
-    await upsert("submission_end_day", data.end_day, "День окончания приема показаний")
+        await upsert("submission_start_day", data.start_day, "День начала приема показаний")
+        await upsert("submission_end_day", data.end_day, "День окончания приема показаний")
 
-    await db.commit()
+        await db.commit()
+
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Ошибка при обновлении графика подачи показаний: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail="Внутренняя ошибка при сохранении графика. Обратитесь к администратору."
+        )
 
     return {
         "status": "success",
