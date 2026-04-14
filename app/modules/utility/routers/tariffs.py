@@ -5,7 +5,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func, update
+from sqlalchemy import func, update, text
 from fastapi_cache.decorator import cache
 from fastapi_cache import FastAPICache
 
@@ -123,8 +123,7 @@ async def create_or_update_tariff(
     Если в `data` передан `id`, происходит обновление.
     Если `id` отсутствует, создается новая запись.
 
-    ИСПРАВЛЕНИЕ: Добавлен try/except + rollback.
-    Ранее любая ошибка БД или кэша приводила к голому 500 без логирования.
+    ИСПРАВЛЕНИЕ: Добавлен try/except + rollback. И синхронизация Sequence.
     """
     try:
         if data.id:
@@ -139,12 +138,24 @@ async def create_or_update_tariff(
                     detail="Нельзя редактировать деактивированный тариф. Создайте новый."
                 )
         else:
+            # ИСПРАВЛЕНИЕ: Синхронизируем счетчик БД перед созданием,
+            # чтобы избежать UniqueViolationError при первой записи через API.
+            try:
+                await db.execute(text("SELECT setval('tariffs_id_seq', COALESCE((SELECT MAX(id) FROM tariffs), 1))"))
+            except Exception as seq_err:
+                logger.warning(f"Не удалось обновить секвенцию тарифов: {seq_err}")
+
             # Режим создания
             tariff = Tariff()
             db.add(tariff)
 
         # Обновляем все поля из пришедшей схемы, кроме ID и системных
-        update_data = data.dict(exclude={"id", "is_active"})
+        # ИСПРАВЛЕНИЕ: Поддержка разных версий Pydantic
+        if hasattr(data, "model_dump"):
+            update_data = data.model_dump(exclude={"id", "is_active"})
+        else:
+            update_data = data.dict(exclude={"id", "is_active"})
+
         for key, value in update_data.items():
             if hasattr(tariff, key):
                 setattr(tariff, key, value)
@@ -164,8 +175,6 @@ async def create_or_update_tariff(
         )
 
     # ИСПРАВЛЕНИЕ: Сбрасываем кэш ПОСЛЕ успешного коммита, безопасно.
-    # Ранее FastAPICache.clear() был внутри основного блока — если Redis недоступен,
-    # данные уже в БД, но клиент получал 500.
     await _safe_clear_cache("tariffs")
 
     return tariff

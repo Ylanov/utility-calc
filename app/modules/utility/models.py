@@ -20,10 +20,11 @@ from sqlalchemy.dialects.postgresql import JSONB
 
 
 def _utcnow():
-    """Возвращает текущее время в UTC (timezone-aware).
-    ИСПРАВЛЕНИЕ: datetime.utcnow() deprecated в Python 3.12+.
+    """Возвращает текущее время в UTC (naive).
+    ИСПРАВЛЕНИЕ: Драйвер asyncpg строго требует naive datetime для колонок TIMESTAMP.
+    Использование tz-aware времени приводило к 500 ошибке (DataError).
     """
-    return datetime.now(timezone.utc)
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 # ======================================================

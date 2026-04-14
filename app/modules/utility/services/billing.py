@@ -168,7 +168,7 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
                 "debt_205": zero_money, "overpayment_205": zero_money,
                 "total_209": cost_utils_209, "total_205": cost_rent_205,
                 "is_approved": True, "anomaly_flags": "AUTO_GENERATED", "anomaly_score": 0,
-                "created_at": datetime.now(timezone.utc),
+                "created_at": datetime.now(timezone.utc).replace(tzinfo=None),  # ИСПРАВЛЕНИЕ
                 **costs
             })
             generated_count += 1
@@ -206,7 +206,7 @@ async def open_new_period(db: AsyncSession, new_name: str):
     new_period = BillingPeriod(
         name=new_name,
         is_active=True,
-        created_at=datetime.now(timezone.utc)
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None)  # ИСПРАВЛЕНИЕ
     )
 
     db.add(new_period)
