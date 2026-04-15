@@ -472,6 +472,9 @@ th.sortable.sort-desc::after { content: '▼'; opacity: 1; color: var(--primary-
 .danger-btn { background: var(--danger-color); color: white; }
 .danger-btn:hover { background: #c5221f; box-shadow: 0 1px 3px 1px rgba(217,48,37,0.15); }
 
+.warning-btn { background: #e08e00; color: white; }
+.warning-btn:hover { background: #c67c00; box-shadow: 0 1px 3px 1px rgba(224,142,0,0.15); }
+
 .secondary-btn {
     background: transparent;
     border: 1px solid var(--border-color);
