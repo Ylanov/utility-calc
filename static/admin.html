@@ -80,7 +80,7 @@
                 <div class="status-card">
                     <div id="periodActiveState" class="period-state open" style="display: none;">
                         <div style="display: flex; align-items: center; gap: 15px;">
-                            <span class="state-icon">✅</span>
+                            <span class="state-icon"><i class="fa-regular fa-circle-check" style="color:var(--success-color);"></i></span>
                             <div class="state-info">
                                 <h2>Прием показаний открыт</h2>
                                 <p>Текущий период: <strong id="activePeriodLabel">...</strong></p>
@@ -89,7 +89,7 @@
                     </div>
                     <div id="periodClosedState" class="period-state closed" style="display: flex;">
                         <div style="display: flex; align-items: center; gap: 15px;">
-                            <span class="state-icon">🔒</span>
+                            <span class="state-icon"><i class="fa-solid fa-lock" style="color:var(--danger-color);"></i></span>
                             <div class="state-info">
                                 <h2>Прием показаний закрыт</h2>
                                 <p>Ожидание открытия нового периода бухгалтерией</p>
@@ -109,7 +109,7 @@
                             </label>
                             <div class="compact-upload">
                                 <input type="file" id="importReadingsFile" accept=".xlsx, .xls">
-                                <button id="btnImportReadings" class="action-btn secondary-btn" style="height: 30px; font-size: 12px; padding: 0 10px;">📥 Загрузить Excel</button>
+                                <button id="btnImportReadings" class="action-btn secondary-btn" style="height: 30px; font-size: 12px; padding: 0 10px;"><i class="fa-solid fa-file-arrow-down"></i> Загрузить Excel</button>
                             </div>
                             <button id="btnBulkApprove" class="action-btn success-btn"><i class="fa-solid fa-check-double"></i> Утвердить все</button>
                             <button id="btnRefreshReadings" class="icon-btn" title="Обновить таблицу"><i class="fa-solid fa-rotate-right"></i></button>
@@ -168,9 +168,9 @@
                     <strong id="m_username" style="font-size: 16px; color: var(--primary-color); display: block; margin-bottom: 12px;">...</strong>
 
                     <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; font-weight: 600; font-size: 14px;">
-                        <div>🔥 ГВС: <span id="m_hot_usage">0</span></div>
-                        <div>❄️ ХВС: <span id="m_cold_usage">0</span></div>
-                        <div>⚡ Свет: <span id="m_elect_usage">0</span></div>
+                        <div><i class="fa-solid fa-fire" style="color:var(--danger-color);"></i> ГВС: <span id="m_hot_usage">0</span></div>
+                        <div><i class="fa-solid fa-snowflake" style="color:var(--primary-color);"></i> ХВС: <span id="m_cold_usage">0</span></div>
+                        <div><i class="fa-solid fa-bolt" style="color:#d97706;"></i> Свет: <span id="m_elect_usage">0</span></div>
                     </div>
                 </div>
 

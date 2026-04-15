@@ -4,28 +4,43 @@
     <!-- KPI КАРТОЧКИ -->
     <div id="kpiContainer" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:16px; margin-bottom:24px;">
         <div class="card" style="padding:20px; text-align:center;">
-            <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px;">Жильцы</div>
-            <div id="kpiUsers" style="font-size:32px; font-weight:700; color:var(--text-main); margin:8px 0;">—</div>
+            <div style="width:48px; height:48px; border-radius:50%; background:var(--primary-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
+                <i class="fa-solid fa-users" style="color:var(--primary-color); font-size:20px;"></i>
+            </div>
+            <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Жильцы</div>
+            <div id="kpiUsers" style="font-size:32px; font-weight:700; color:var(--text-main); margin:4px 0;">—</div>
             <div id="kpiUsersDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
         </div>
         <div class="card" style="padding:20px; text-align:center;">
-            <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px;">Комнаты</div>
-            <div id="kpiRooms" style="font-size:32px; font-weight:700; color:var(--text-main); margin:8px 0;">—</div>
+            <div style="width:48px; height:48px; border-radius:50%; background:var(--primary-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
+                <i class="fa-solid fa-door-open" style="color:var(--primary-color); font-size:20px;"></i>
+            </div>
+            <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Комнаты</div>
+            <div id="kpiRooms" style="font-size:32px; font-weight:700; color:var(--text-main); margin:4px 0;">—</div>
             <div id="kpiRoomsDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
         </div>
         <div class="card" style="padding:20px; text-align:center;">
-            <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px;">Сдали показания</div>
-            <div id="kpiSubmitted" style="font-size:32px; font-weight:700; color:#10b981; margin:8px 0;">—</div>
+            <div style="width:48px; height:48px; border-radius:50%; background:var(--success-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
+                <i class="fa-solid fa-circle-check" style="color:var(--success-color); font-size:20px;"></i>
+            </div>
+            <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Сдали показания</div>
+            <div id="kpiSubmitted" style="font-size:32px; font-weight:700; color:#10b981; margin:4px 0;">—</div>
             <div id="kpiSubmittedDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
         </div>
         <div class="card" style="padding:20px; text-align:center;">
-            <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px;">Аномалии</div>
-            <div id="kpiAnomalies" style="font-size:32px; font-weight:700; color:#f59e0b; margin:8px 0;">—</div>
+            <div style="width:48px; height:48px; border-radius:50%; background:var(--warning-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
+                <i class="fa-solid fa-triangle-exclamation" style="color:#f59e0b; font-size:20px;"></i>
+            </div>
+            <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Аномалии</div>
+            <div id="kpiAnomalies" style="font-size:32px; font-weight:700; color:#f59e0b; margin:4px 0;">—</div>
             <div id="kpiAnomaliesDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
         </div>
         <div class="card" style="padding:20px; text-align:center;">
-            <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px;">Начислено</div>
-            <div id="kpiRevenue" style="font-size:28px; font-weight:700; color:#059669; margin:8px 0;">—</div>
+            <div style="width:48px; height:48px; border-radius:50%; background:var(--success-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
+                <i class="fa-solid fa-ruble-sign" style="color:#059669; font-size:20px;"></i>
+            </div>
+            <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Начислено</div>
+            <div id="kpiRevenue" style="font-size:28px; font-weight:700; color:#059669; margin:4px 0;">—</div>
             <div id="kpiRevenueDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
         </div>
     </div>
@@ -46,7 +61,7 @@
         <div class="card-header" style="flex-direction:column; align-items:stretch; gap:12px;">
             <div style="display:flex; justify-content:space-between; align-items:center;">
                 <h3 style="margin:0;"><i class="fa-solid fa-scroll" style="color:#6366f1; margin-right:8px;"></i> Журнал действий</h3>
-                <button id="btnRefreshAudit" class="icon-btn refresh" title="Обновить">↻</button>
+                <button id="btnRefreshAudit" class="icon-btn" title="Обновить"><i class="fa-solid fa-rotate-right"></i></button>
             </div>
             <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
                 <select id="auditFilterAction" style="min-width:140px;">
@@ -64,9 +79,9 @@
         </div>
 
         <div style="display:flex; justify-content:center; align-items:center; gap:12px; padding:12px 16px; border-top:1px solid var(--border-color);">
-            <button id="btnAuditPrev" class="page-btn" disabled>←</button>
-            <span id="auditPageInfo" style="font-size:13px; color:var(--text-secondary);">Стр. 1</span>
-            <button id="btnAuditNext" class="page-btn">→</button>
+            <button id="btnAuditPrev" class="page-btn" disabled><i class="fa-solid fa-chevron-left"></i> Назад</button>
+            <span id="auditPageInfo" style="font-size:13px; font-weight:500; color:var(--text-secondary);">Стр. 1</span>
+            <button id="btnAuditNext" class="page-btn">Вперед <i class="fa-solid fa-chevron-right"></i></button>
         </div>
     </div>
 </div>

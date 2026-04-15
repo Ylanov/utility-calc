@@ -5,7 +5,12 @@
             <div class="card-header">
                 <h3>1. Выбор жильца</h3>
             </div>
-            <input type="text" id="manualSearchInput" placeholder="Поиск по ФИО или комнате..." style="margin-bottom: 15px; padding: 10px; font-size: 14px;">
+            <div class="form-group" style="margin-bottom: 12px;">
+                <label style="display:flex; align-items:center; gap:6px;">
+                    <i class="fa-solid fa-magnifying-glass" style="color:var(--text-secondary);"></i> Поиск жильца
+                </label>
+                <input type="text" id="manualSearchInput" placeholder="Логин, ФИО или номер комнаты...">
+            </div>
             <div style="flex: 1; border: 1px solid var(--border-color); border-radius: 8px; overflow-y: auto; max-height: 400px; background: #f9fafb;">
                 <ul id="manualUserList" style="list-style: none; padding: 0; margin: 0;">
                     <li style="padding: 20px; text-align: center; color: var(--text-secondary);">Введите ФИО или комнату для поиска</li>
@@ -51,7 +56,7 @@
                     <input type="number" step="0.001" id="manElect" required placeholder="Текущее значение" style="font-size: 18px; font-weight: bold; color: #1f2937;">
                 </div>
 
-                <button type="submit" class="action-btn success-btn full-width" id="btnSaveManual" style="padding: 12px; font-size: 15px;">💾 Сохранить показания (Черновик)</button>
+                <button type="submit" class="action-btn success-btn full-width" id="btnSaveManual" style="padding: 12px; font-size: 15px;"><i class="fa-solid fa-floppy-disk"></i> Сохранить показания (Черновик)</button>
             </form>
         </div>
     </div>
