@@ -205,3 +205,67 @@ async def get_paginated_readings(
         })
 
     return {"total": total, "page": page, "size": limit, "items": items}
+
+async def get_manual_state(db: AsyncSession, user_id: int):
+    """Получение состояния для формы ручного ввода показаний."""
+    user = (await db.execute(
+        select(User).options(selectinload(User.room)).where(
+            User.id == user_id,
+            User.is_deleted.is_(False)
+        )
+    )).scalars().first()
+
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+
+    if not user.room:
+        return {
+            "user_id": user.id,
+            "username": user.username,
+            "room": None,
+            "prev_hot": ZERO,
+            "prev_cold": ZERO,
+            "prev_elect": ZERO,
+            "has_draft": False,
+        }
+
+    prev = (await db.execute(
+        select(MeterReading)
+        .where(
+            MeterReading.room_id == user.room_id,
+            MeterReading.is_approved.is_(True)
+        )
+        .order_by(desc(MeterReading.created_at))
+        .limit(1)
+    )).scalars().first()
+
+    active_period = (await db.execute(
+        select(BillingPeriod).where(BillingPeriod.is_active)
+    )).scalars().first()
+
+    draft = None
+    if active_period:
+        draft = (await db.execute(
+            select(MeterReading).where(
+                MeterReading.room_id == user.room_id,
+                MeterReading.period_id == active_period.id,
+                MeterReading.is_approved.is_(False)
+            )
+        )).scalars().first()
+
+    return {
+        "user_id": user.id,
+        "username": user.username,
+        "room": {
+            "id": user.room.id,
+            "dormitory_name": user.room.dormitory_name,
+            "room_number": user.room.room_number,
+        },
+        "prev_hot": prev.hot_water if prev else ZERO,
+        "prev_cold": prev.cold_water if prev else ZERO,
+        "prev_elect": prev.electricity if prev else ZERO,
+        "has_draft": draft is not None,
+        "draft_hot": draft.hot_water if draft else None,
+        "draft_cold": draft.cold_water if draft else None,
+        "draft_elect": draft.electricity if draft else None,
+    }

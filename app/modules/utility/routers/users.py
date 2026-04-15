@@ -27,6 +27,9 @@ from app.modules.utility.services.excel_service import import_users_from_excel
 from app.modules.utility.services.user_service import delete_user_service
 from app.modules.utility.services.calculations import calculate_utilities
 
+# ИМПОРТ ДЛЯ ЖУРНАЛА ДЕЙСТВИЙ
+from app.modules.utility.routers.admin_dashboard import write_audit_log
+
 router = APIRouter(prefix="/api/users", tags=["Users"])
 logger = logging.getLogger(__name__)
 
@@ -108,6 +111,14 @@ async def initial_setup(
 
     current_user.is_initial_setup_done = True
     db.add(current_user)
+
+    # ЗАПИСЬ В ЖУРНАЛ: Настройка профиля
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action="update", entity_type="user", entity_id=current_user.id,
+        details={"action": "initial_setup"}
+    )
+
     await db.commit()
     return {"status": "success", "message": "Данные успешно обновлены."}
 
@@ -129,6 +140,14 @@ async def change_password(
 
     current_user.hashed_password = get_password_hash(data.new_password)
     db.add(current_user)
+
+    # ЗАПИСЬ В ЖУРНАЛ: Смена пароля
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action="change_password", entity_type="user", entity_id=current_user.id,
+        details={}
+    )
+
     await db.commit()
     return {"status": "success", "message": "Пароль успешно изменен"}
 
@@ -136,8 +155,12 @@ async def change_password(
 # =================================================================
 # CRUD ЖИЛЬЦОВ
 # =================================================================
-@router.post("", response_model=UserResponse, dependencies=[Depends(allow_accountant)])
-async def create_user(new_user: UserCreate, db: AsyncSession = Depends(get_db)):
+@router.post("", response_model=UserResponse)
+async def create_user(
+        new_user: UserCreate,
+        current_user: User = Depends(allow_accountant),  # Добавили current_user
+        db: AsyncSession = Depends(get_db)
+):
     """Создание нового пользователя с привязкой к комнате по room_id."""
     existing = await db.execute(
         select(User).where(func.lower(User.username) == func.lower(new_user.username))
@@ -164,6 +187,14 @@ async def create_user(new_user: UserCreate, db: AsyncSession = Depends(get_db)):
         is_initial_setup_done=False
     )
     db.add(db_user)
+
+    # ЗАПИСЬ В ЖУРНАЛ: Создание пользователя
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action="create", entity_type="user",
+        details={"new_username": new_user.username, "role": new_user.role}
+    )
+
     await db.commit()
     await db.refresh(db_user)
 
@@ -227,7 +258,7 @@ async def get_users(
                 items_query = items_query.where(User.id > cursor_id)
             else:
                 items_query = items_query.where(User.id < cursor_id)
-        else: # prev
+        else:  # prev
             if sort_dir == "asc":
                 items_query = items_query.where(User.id < cursor_id)
             else:
@@ -263,8 +294,13 @@ async def read_user(user_id: int, db: AsyncSession = Depends(get_db)):
     return user
 
 
-@router.put("/{user_id}", response_model=UserResponse, dependencies=[Depends(allow_accountant)])
-async def update_user(user_id: int, update_data: UserUpdate, db: AsyncSession = Depends(get_db)):
+@router.put("/{user_id}", response_model=UserResponse)
+async def update_user(
+        user_id: int,
+        update_data: UserUpdate,
+        current_user: User = Depends(allow_accountant),  # Добавили current_user
+        db: AsyncSession = Depends(get_db)
+):
     db_user = await db.get(User, user_id)
     if not db_user:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
@@ -285,6 +321,13 @@ async def update_user(user_id: int, update_data: UserUpdate, db: AsyncSession = 
     for key, value in update_dict.items():
         setattr(db_user, key, value)
 
+    # ЗАПИСЬ В ЖУРНАЛ: Обновление пользователя
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action="update", entity_type="user", entity_id=db_user.id,
+        details={"updated_fields": list(update_dict.keys())}
+    )
+
     await db.commit()
     await db.refresh(db_user)
 
@@ -294,10 +337,22 @@ async def update_user(user_id: int, update_data: UserUpdate, db: AsyncSession = 
     return result.scalars().first()
 
 
-@router.delete("/{user_id}", status_code=204, dependencies=[Depends(allow_accountant)])
-async def delete_user(user_id: int, db: AsyncSession = Depends(get_db)):
+@router.delete("/{user_id}", status_code=204)
+async def delete_user(
+        user_id: int,
+        current_user: User = Depends(allow_accountant),  # Добавили current_user
+        db: AsyncSession = Depends(get_db)
+):
     try:
         await delete_user_service(user_id, db)
+
+        # ЗАПИСЬ В ЖУРНАЛ: Удаление (выселение)
+        await write_audit_log(
+            db, current_user.id, current_user.username,
+            action="delete", entity_type="user", entity_id=user_id,
+            details={"action": "soft_delete"}
+        )
+
         await db.commit()
     except ValueError as e:
         await db.rollback()
@@ -311,8 +366,13 @@ async def delete_user(user_id: int, db: AsyncSession = Depends(get_db)):
 # =================================================================
 # ЕДИНОЕ ОКНО: РАЗОВОЕ НАЧИСЛЕНИЕ И ПЕРЕСЕЛЕНИЕ/ВЫСЕЛЕНИЕ
 # =================================================================
-@router.post("/{user_id}/relocate", dependencies=[Depends(allow_accountant)])
-async def relocate_user(user_id: int, data: RelocateUserSchema, db: AsyncSession = Depends(get_db)):
+@router.post("/{user_id}/relocate")
+async def relocate_user(
+        user_id: int,
+        data: RelocateUserSchema,
+        current_user: User = Depends(allow_accountant),  # Добавили current_user
+        db: AsyncSession = Depends(get_db)
+):
     """Единый процесс: Разовое начисление по старой комнате + Переселение/Выселение"""
     active_period = (await db.execute(
         select(BillingPeriod).where(BillingPeriod.is_active)
@@ -345,6 +405,13 @@ async def relocate_user(user_id: int, data: RelocateUserSchema, db: AsyncSession
         user.room_id = new_room.id
         message = f"Финальная квитанция сформирована. Жилец переведен в {new_room.dormitory_name}, ком. {new_room.room_number}."
 
+    # ЗАПИСЬ В ЖУРНАЛ: Переселение/Выселение
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action=action, entity_type="user", entity_id=user.id,
+        details={"new_room_id": data.new_room_id if action == "move" else None}
+    )
+
     await db.commit()
     return {"status": "success", "message": message}
 
@@ -352,8 +419,12 @@ async def relocate_user(user_id: int, data: RelocateUserSchema, db: AsyncSession
 # =================================================================
 # ИМПОРТ И ЭКСПОРТ EXCEL
 # =================================================================
-@router.post("/import_excel", summary="Умный импорт (Жилфонд + Жильцы)", dependencies=[Depends(allow_accountant)])
-async def import_users(file: UploadFile = File(...), db: AsyncSession = Depends(get_db)):
+@router.post("/import_excel", summary="Умный импорт (Жилфонд + Жильцы)")
+async def import_users(
+        file: UploadFile = File(...),
+        current_user: User = Depends(allow_accountant),  # Добавили current_user
+        db: AsyncSession = Depends(get_db)
+):
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="Только файлы Excel (.xlsx, .xls)")
 
@@ -363,7 +434,25 @@ async def import_users(file: UploadFile = File(...), db: AsyncSession = Depends(
         raise HTTPException(status_code=400, detail="Неверная сигнатура Excel файла")
 
     content = await file.read()
-    return await import_users_from_excel(content, db)
+
+    # Выполняем импорт
+    result = await import_users_from_excel(content, db)
+
+    # ЗАПИСЬ В ЖУРНАЛ: Массовый импорт Excel
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action="import", entity_type="system",
+        details={
+            "added_users": result.get("added_users", 0),
+            "updated_users": result.get("updated_users", 0),
+            "added_rooms": result.get("added_rooms", 0),
+            "updated_rooms": result.get("updated_rooms", 0)
+        }
+    )
+    # Коммит нужен для сохранения записи в лог (сам excel сервис коммитит свои данные внутри себя)
+    await db.commit()
+
+    return result
 
 
 @router.get("/export/template", summary="Скачать шаблон для импорта")

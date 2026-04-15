@@ -13,6 +13,9 @@ from app.modules.utility.schemas import ApproveRequest
 from app.modules.utility.services.calculations import calculate_utilities, D
 from app.modules.utility.services.notification_service import send_push_to_user
 
+# ИМПОРТ ДЛЯ ЖУРНАЛА ДЕЙСТВИЙ
+from app.modules.utility.routers.admin_dashboard import write_audit_log
+
 ZERO = Decimal("0.00")
 
 
@@ -33,7 +36,7 @@ async def bulk_approve_drafts(db: AsyncSession):
     tariffs_map = {t.id: t for t in active_tariffs}
     default_tariff = tariffs_map.get(1) or active_tariffs[0]
 
-    # ИСПРАВЛЕНИЕ: Убрали .with_for_update().
+    # Убрали .with_for_update().
     # Это позволяет базе "дышать" и принимать другие запросы во время расчетов.
     # Если кто-то параллельно нажмет "Утвердить", операции будут идемпотентны.
     drafts_rows = (await db.execute(
@@ -144,13 +147,19 @@ async def bulk_approve_drafts(db: AsyncSession):
             "last_electricity": reading.electricity
         })
 
-    # ИСПРАВЛЕНИЕ: Пакетное обновление (Chunking).
-    # Сохраняет RAM и ускоряет работу БД в разы.
+    # Пакетное обновление (Chunking). Сохраняет RAM и ускоряет работу БД в разы.
     if update_mappings:
         chunk_size = 1000
         for i in range(0, len(update_mappings), chunk_size):
             await db.execute(update(MeterReading), update_mappings[i:i + chunk_size])
             await db.execute(update(Room), room_updates[i:i + chunk_size])
+
+        # ЗАПИСЬ В ЖУРНАЛ: Массовое утверждение
+        await write_audit_log(
+            db, user_id=1, username="Система (Bulk)",
+            action="approve_bulk", entity_type="reading",
+            details={"approved_count": len(update_mappings)}
+        )
 
         await db.commit()
 
@@ -241,6 +250,14 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
     room.last_electricity = reading.electricity
 
     db.add(room)
+
+    # ЗАПИСЬ В ЖУРНАЛ: Ручное утверждение бухгалтером
+    await write_audit_log(
+        db, user_id=user.id, username="Бухгалтер",
+        action="approve", entity_type="reading", entity_id=reading.id,
+        details={"total_sum": str(total_209 + total_205), "owner": user.username}
+    )
+
     await db.commit()
 
     # ---> ОТПРАВЛЯЕМ ПУШ КОНКРЕТНОМУ ЖИЛЬЦУ <---

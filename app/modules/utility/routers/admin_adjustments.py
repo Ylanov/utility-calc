@@ -12,6 +12,9 @@ from app.modules.utility.models import User, Adjustment, BillingPeriod, MeterRea
 from app.modules.utility.schemas import AdjustmentCreate, AdjustmentResponse
 from app.core.dependencies import get_current_user
 
+# ИМПОРТ ДЛЯ ЖУРНАЛА ДЕЙСТВИЙ
+from app.modules.utility.routers.admin_dashboard import write_audit_log
+
 router = APIRouter(tags=["Admin Adjustments"])
 logger = logging.getLogger(__name__)
 
@@ -78,6 +81,13 @@ async def create_adjustment(
                 draft.total_205 = (draft.total_205 or Decimal("0.00")) + amount
             draft.total_cost = (draft.total_209 or Decimal("0.00")) + (draft.total_205 or Decimal("0.00"))
             db.add(draft)
+
+        # ЗАПИСЬ В ЖУРНАЛ: Создание финансовой корректировки
+        await write_audit_log(
+            db, current_user.id, current_user.username,
+            action="adjustment", entity_type="user", entity_id=data.user_id,
+            details={"amount": str(data.amount), "account": data.account_type, "type": "create"}
+        )
 
         await db.commit()
         await db.refresh(adj)
@@ -165,6 +175,13 @@ async def delete_adjustment(
                     draft.total_205 = (draft.total_205 or Decimal("0.00")) - amount
                 draft.total_cost = (draft.total_209 or Decimal("0.00")) + (draft.total_205 or Decimal("0.00"))
                 db.add(draft)
+
+        # ЗАПИСЬ В ЖУРНАЛ: Удаление корректировки (отмена)
+        await write_audit_log(
+            db, current_user.id, current_user.username,
+            action="adjustment", entity_type="user", entity_id=adj.user_id,
+            details={"amount": str(adj.amount), "account": adj.account_type, "type": "delete"}
+        )
 
         await db.delete(adj)
         await db.commit()

@@ -14,6 +14,9 @@ from app.modules.utility.models import User, Tariff
 from app.modules.utility.schemas import TariffSchema
 from app.core.dependencies import get_current_user, RoleChecker
 
+# ИМПОРТ ДЛЯ ЖУРНАЛА ДЕЙСТВИЙ
+from app.modules.utility.routers.admin_dashboard import write_audit_log
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tariffs", tags=["Tariffs"])
@@ -138,7 +141,7 @@ async def create_or_update_tariff(
                     detail="Нельзя редактировать деактивированный тариф. Создайте новый."
                 )
         else:
-            # ИСПРАВЛЕНИЕ: Синхронизируем счетчик БД перед созданием,
+            # Синхронизируем счетчик БД перед созданием,
             # чтобы избежать UniqueViolationError при первой записи через API.
             try:
                 await db.execute(text("SELECT setval('tariffs_id_seq', COALESCE((SELECT MAX(id) FROM tariffs), 1))"))
@@ -150,7 +153,7 @@ async def create_or_update_tariff(
             db.add(tariff)
 
         # Обновляем все поля из пришедшей схемы, кроме ID и системных
-        # ИСПРАВЛЕНИЕ: Поддержка разных версий Pydantic
+        # Поддержка разных версий Pydantic
         if hasattr(data, "model_dump"):
             update_data = data.model_dump(exclude={"id", "is_active"})
         else:
@@ -159,6 +162,14 @@ async def create_or_update_tariff(
         for key, value in update_data.items():
             if hasattr(tariff, key):
                 setattr(tariff, key, value)
+
+        # ЗАПИСЬ В ЖУРНАЛ: Создание/Обновление тарифа
+        action_type = "update" if data.id else "create"
+        await write_audit_log(
+            db, current_user.id, current_user.username,
+            action=action_type, entity_type="tariff", entity_id=tariff.id,
+            details={"tariff_name": tariff.name}
+        )
 
         await db.commit()
         await db.refresh(tariff)
@@ -174,7 +185,7 @@ async def create_or_update_tariff(
             detail="Внутренняя ошибка при сохранении тарифа. Обратитесь к администратору."
         )
 
-    # ИСПРАВЛЕНИЕ: Сбрасываем кэш ПОСЛЕ успешного коммита, безопасно.
+    # Сбрасываем кэш ПОСЛЕ успешного коммита, безопасно.
     await _safe_clear_cache("tariffs")
 
     return tariff
@@ -230,6 +241,14 @@ async def delete_tariff(
 
         # Мягкое удаление
         tariff.is_active = False
+
+        # ЗАПИСЬ В ЖУРНАЛ: Удаление тарифа
+        await write_audit_log(
+            db, current_user.id, current_user.username,
+            action="delete", entity_type="tariff", entity_id=tariff_id,
+            details={"tariff_name": tariff.name, "users_reassigned": affected_count}
+        )
+
         await db.commit()
 
     except HTTPException:
