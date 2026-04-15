@@ -147,6 +147,8 @@ class TariffSchema(BaseModel):
     waste_disposal: DecimalTariff
     electricity_per_sqm: DecimalTariff
     electricity_rate: DecimalTariff
+    # Дата вступления в силу (необязательная)
+    effective_from: Optional[datetime] = None
 
     model_config = ConfigDict(from_attributes=True)
 

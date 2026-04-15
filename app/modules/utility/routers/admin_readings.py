@@ -42,7 +42,7 @@ async def bulk_approve_readings(
         current_user: User = Depends(allow_readings_manage),
         db: AsyncSession = Depends(get_db)
 ):
-    return await admin_readings_approve.bulk_approve_drafts(db)
+    return await admin_readings_approve.bulk_approve_drafts(db, current_user)
 
 
 @router.post("/api/admin/approve/{reading_id}")
@@ -52,7 +52,7 @@ async def approve_reading(
         current_user: User = Depends(allow_readings_manage),
         db: AsyncSession = Depends(get_db)
 ):
-    return await admin_readings_approve.approve_single(db, reading_id, correction_data)
+    return await admin_readings_approve.approve_single(db, reading_id, correction_data, current_user)
 
 
 @router.delete("/api/admin/readings/{reading_id}")

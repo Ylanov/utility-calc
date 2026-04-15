@@ -45,10 +45,23 @@
         <form id="tariffsForm" class="styled-form">
             <input type="hidden" id="t_id">
 
-            <!-- Название на всю ширину -->
-            <div class="form-group" style="margin-bottom: 24px;">
-                <label>Название профиля (например: ЦСООР Лидер)</label>
-                <input type="text" id="t_name" required style="font-size: 16px; font-weight: 500;">
+            <!-- Название и дата вступления в силу -->
+            <div style="display: grid; grid-template-columns: 1fr auto; gap: 16px; margin-bottom: 24px; align-items: end;">
+                <div class="form-group" style="margin: 0;">
+                    <label>Название профиля (например: ЦСООР Лидер)</label>
+                    <input type="text" id="t_name" required style="font-size: 16px; font-weight: 500;">
+                </div>
+                <div class="form-group" style="margin: 0; min-width: 220px;">
+                    <label style="display: flex; align-items: center; gap: 6px;">
+                        <i class="fa-regular fa-calendar-check" style="color: var(--primary-color);"></i>
+                        Вступает в силу с (необязательно)
+                    </label>
+                    <input type="datetime-local" id="t_effective_from"
+                           title="Оставьте пустым — тариф активен сразу. Укажите дату — тариф станет активным автоматически в эту дату.">
+                </div>
+            </div>
+            <div id="tariffScheduledAlert" style="display:none; padding:10px 14px; background:#fef3c7; color:#92400e; border-radius:6px; margin-bottom:16px; font-size:13px; border:1px solid #fde68a;">
+                <i class="fa-solid fa-clock"></i> <strong>Запланированный тариф:</strong> будет автоматически активирован в указанную дату. До этого момента он <b>не применяется</b> в расчётах.
             </div>
 
             <h4 style="margin-bottom: 16px; font-size: 15px; color: var(--text-main); border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">Стоимость ресурсов и услуг (₽)</h4>
@@ -97,5 +110,19 @@
                 <button type="submit" class="action-btn success-btn" style="padding: 12px 24px; font-size: 15px;"><i class="fa-solid fa-check"></i> Сохранить изменения тарифа</button>
             </div>
         </form>
+    </div>
+
+    <!-- ЗАПЛАНИРОВАННЫЕ ТАРИФЫ -->
+    <div class="card" id="scheduledTariffsCard" style="display: none; border-left: 4px solid #f59e0b;">
+        <div class="card-header">
+            <h3><i class="fa-solid fa-clock" style="color: #f59e0b; margin-right: 8px;"></i> Запланированные тарифы</h3>
+            <button id="btnRefreshScheduled" class="icon-btn" title="Обновить">
+                <i class="fa-solid fa-rotate-right"></i>
+            </button>
+        </div>
+        <p style="font-size: 13px; color: var(--text-secondary); margin: 0 0 16px 0;">
+            Эти тарифы ещё не активны — они автоматически вступят в силу в указанную дату.
+        </p>
+        <div id="scheduledTariffsList"></div>
     </div>
 </div>

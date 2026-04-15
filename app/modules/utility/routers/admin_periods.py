@@ -20,6 +20,7 @@ from app.core.dependencies import get_current_user, RoleChecker
 from app.modules.utility.services.billing import open_new_period
 from app.modules.utility.tasks import close_period_task
 from app.modules.utility.services.notification_service import send_push_to_all
+from app.modules.utility.routers.admin_dashboard import write_audit_log
 
 router = APIRouter(tags=["Admin Periods"])
 logger = logging.getLogger(__name__)
@@ -248,6 +249,11 @@ async def api_open_period(data: PeriodCreate, background_tasks: BackgroundTasks,
                           current_user: User = Depends(allow_period_management), db: AsyncSession = Depends(get_db)):
     try:
         new_period = await open_new_period(db=db, new_name=data.name)
+        await write_audit_log(
+            db, current_user.id, current_user.username,
+            action="open_period", entity_type="period", entity_id=new_period.id,
+            details={"name": new_period.name}
+        )
         await db.commit()
     except ValueError as e:
         await db.rollback()
@@ -264,9 +270,15 @@ async def api_open_period(data: PeriodCreate, background_tasks: BackgroundTasks,
 @router.post("/api/admin/periods/close", summary="Закрыть текущий месяц (Фоновая задача)",
              dependencies=[Depends(RateLimiter(times=1, seconds=30))])
 async def api_close_period(current_user: User = Depends(allow_period_management), db: AsyncSession = Depends(get_db)):
-    active_check = await db.execute(select(BillingPeriod).where(BillingPeriod.is_active.is_(True)))
-    if not active_check.scalars().first():
+    active_period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active.is_(True)))).scalars().first()
+    if not active_period:
         raise HTTPException(status_code=400, detail="Нет активного периода для закрытия")
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action="close_period", entity_type="period", entity_id=active_period.id,
+        details={"name": active_period.name, "triggered_by": current_user.username}
+    )
+    await db.commit()
     task = close_period_task.delay(current_user.id)
     return {"status": "processing", "task_id": task.id, "message": "Процесс закрытия периода запущен в фоне."}
 

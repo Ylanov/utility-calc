@@ -19,7 +19,7 @@ from app.modules.utility.routers.admin_dashboard import write_audit_log
 ZERO = Decimal("0.00")
 
 
-async def bulk_approve_drafts(db: AsyncSession):
+async def bulk_approve_drafts(db: AsyncSession, current_user=None):
     """
     Массовое утверждение всех безопасных черновиков.
     Используется пакетное обновление (bulk update) для предотвращения
@@ -155,8 +155,10 @@ async def bulk_approve_drafts(db: AsyncSession):
             await db.execute(update(Room), room_updates[i:i + chunk_size])
 
         # ЗАПИСЬ В ЖУРНАЛ: Массовое утверждение
+        uid = current_user.id if current_user else None
+        uname = current_user.username if current_user else "Система"
         await write_audit_log(
-            db, user_id=1, username="Система (Bulk)",
+            db, user_id=uid, username=uname,
             action="approve_bulk", entity_type="reading",
             details={"approved_count": len(update_mappings)}
         )
@@ -166,7 +168,7 @@ async def bulk_approve_drafts(db: AsyncSession):
     return {"status": "success", "approved_count": len(update_mappings)}
 
 
-async def approve_single(db: AsyncSession, reading_id: int, correction_data: ApproveRequest):
+async def approve_single(db: AsyncSession, reading_id: int, correction_data: ApproveRequest, current_user=None):
     """Ручное утверждение бухгалтером с возможными корректировками объема."""
     reading = (await db.execute(
         select(MeterReading)
@@ -252,8 +254,10 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
     db.add(room)
 
     # ЗАПИСЬ В ЖУРНАЛ: Ручное утверждение бухгалтером
+    uid = current_user.id if current_user else None
+    uname = current_user.username if current_user else "Бухгалтер"
     await write_audit_log(
-        db, user_id=user.id, username="Бухгалтер",
+        db, user_id=uid, username=uname,
         action="approve", entity_type="reading", entity_id=reading.id,
         details={"total_sum": str(total_209 + total_205), "owner": user.username}
     )

@@ -19,6 +19,14 @@ export const TariffsModule = {
         electricity_per_sqm: 't_el_sqm'
     },
 
+    // Утилита: форматировать дату для отображения
+    _formatDate(isoStr) {
+        if (!isoStr) return '—';
+        try {
+            return new Date(isoStr).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        } catch { return isoStr; }
+    },
+
     init() {
         this.cacheDOM();
 
@@ -30,7 +38,8 @@ export const TariffsModule = {
 
         // Данные загружаем каждый раз при открытии вкладки
         this.load();
-        this.loadSchedule(); // Загружаем график
+        this.loadSchedule();
+        this.loadScheduledTariffs();
     },
 
     cacheDOM() {
@@ -40,7 +49,12 @@ export const TariffsModule = {
             btnCreate: document.getElementById('btnCreateNewTariff'),
             btnDelete: document.getElementById('btnDeleteTariff'),
             inputId: document.getElementById('t_id'),
-            inputName: document.getElementById('t_name')
+            inputName: document.getElementById('t_name'),
+            inputEffectiveFrom: document.getElementById('t_effective_from'),
+            scheduledAlert: document.getElementById('tariffScheduledAlert'),
+            scheduledCard: document.getElementById('scheduledTariffsCard'),
+            scheduledList: document.getElementById('scheduledTariffsList'),
+            btnRefreshScheduled: document.getElementById('btnRefreshScheduled'),
         };
     },
 
@@ -63,11 +77,28 @@ export const TariffsModule = {
                 this.handleDelete();
             });
         }
+        if (this.dom.btnRefreshScheduled) {
+            this.dom.btnRefreshScheduled.addEventListener('click', () => this.loadScheduledTariffs());
+        }
+        // Показываем/скрываем предупреждение когда меняется дата effective_from
+        if (this.dom.inputEffectiveFrom) {
+            this.dom.inputEffectiveFrom.addEventListener('change', () => this._updateScheduledAlert());
+        }
 
         // Событие для кнопки сохранения графика
         const btnSaveSchedule = document.getElementById('btnSaveSchedule');
         if (btnSaveSchedule) {
             btnSaveSchedule.addEventListener('click', () => this.saveSchedule());
+        }
+    },
+
+    _updateScheduledAlert() {
+        if (!this.dom.scheduledAlert || !this.dom.inputEffectiveFrom) return;
+        const val = this.dom.inputEffectiveFrom.value;
+        if (val && new Date(val) > new Date()) {
+            this.dom.scheduledAlert.style.display = 'block';
+        } else {
+            this.dom.scheduledAlert.style.display = 'none';
         }
     },
 
@@ -173,6 +204,14 @@ export const TariffsModule = {
         if (this.dom.inputId) this.dom.inputId.value = tariff.id;
         if (this.dom.inputName) this.dom.inputName.value = tariff.name;
 
+        // Дата вступления в силу
+        if (this.dom.inputEffectiveFrom) {
+            this.dom.inputEffectiveFrom.value = tariff.effective_from
+                ? tariff.effective_from.substring(0, 16)  // "YYYY-MM-DDTHH:MM"
+                : '';
+        }
+        this._updateScheduledAlert();
+
         // Проходим по нашей карте и заполняем инпуты с ценами
         for (const [dbKey, htmlId] of Object.entries(this.MAPPING)) {
             const input = document.getElementById(htmlId);
@@ -188,17 +227,51 @@ export const TariffsModule = {
     },
 
     clearFormForNew() {
-        if (this.dom.selector) this.dom.selector.value = ""; // Сбрасываем выбор
+        if (this.dom.selector) this.dom.selector.value = "";
         if (this.dom.inputId) this.dom.inputId.value = "";
         if (this.dom.inputName) this.dom.inputName.value = "Новый профиль";
+        if (this.dom.inputEffectiveFrom) this.dom.inputEffectiveFrom.value = "";
+        if (this.dom.scheduledAlert) this.dom.scheduledAlert.style.display = 'none';
 
         for (const htmlId of Object.values(this.MAPPING)) {
             const input = document.getElementById(htmlId);
             if (input) input.value = "0.00";
         }
 
-        // Кнопку удаления при создании нового профиля прячем
         if (this.dom.btnDelete) this.dom.btnDelete.style.display = 'none';
+    },
+
+    async loadScheduledTariffs() {
+        if (!this.dom.scheduledCard || !this.dom.scheduledList) return;
+        try {
+            const list = await api.get('/tariffs/scheduled');
+            if (!list || list.length === 0) {
+                this.dom.scheduledCard.style.display = 'none';
+                return;
+            }
+            this.dom.scheduledCard.style.display = 'block';
+
+            const rows = list.map(t => {
+                const dateStr = this._formatDate(t.effective_from);
+                return `
+                    <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-bottom:1px solid var(--border-color); flex-wrap:wrap; gap:8px;">
+                        <div>
+                            <span style="font-weight:600; font-size:14px;">${t.name}</span>
+                            <span style="margin-left:10px; font-size:12px; background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:12px;">
+                                <i class="fa-solid fa-clock"></i> вступает ${dateStr}
+                            </span>
+                        </div>
+                        <div style="font-size:12px; color:var(--text-secondary);">
+                            Свет: ${Number(t.electricity_rate).toFixed(2)} ₽/кВт ·
+                            ГВС: ${Number(t.water_heating).toFixed(2)} ₽/м³ ·
+                            ХВС: ${Number(t.water_supply).toFixed(2)} ₽/м³
+                        </div>
+                    </div>`;
+            }).join('');
+            this.dom.scheduledList.innerHTML = rows;
+        } catch (e) {
+            this.dom.scheduledCard.style.display = 'none';
+        }
     },
 
     async handleSubmit(e) {
@@ -221,6 +294,10 @@ export const TariffsModule = {
             data.id = parseInt(idVal);
         }
 
+        // Дата вступления в силу (необязательная)
+        const effFrom = this.dom.inputEffectiveFrom ? this.dom.inputEffectiveFrom.value : '';
+        data.effective_from = effFrom ? new Date(effFrom).toISOString() : null;
+
         // Собираем данные цен из формы обратно в объект по карте
         for (const [dbKey, htmlId] of Object.entries(this.MAPPING)) {
             const input = document.getElementById(htmlId);
@@ -233,17 +310,23 @@ export const TariffsModule = {
 
         try {
             const savedTariff = await api.post('/tariffs', data);
-            toast('Тарифный профиль успешно сохранен!', 'success');
 
-            // ВАЖНО: Очищаем кэш тарифов, чтобы во вкладке "Жильцы" обновились данные
+            const isScheduled = data.effective_from && new Date(data.effective_from) > new Date();
+            if (isScheduled) {
+                toast(`Тариф запланирован! Вступит в силу ${this._formatDate(data.effective_from)}`, 'success');
+            } else {
+                toast('Тарифный профиль успешно сохранен!', 'success');
+            }
+
             sessionStorage.removeItem('tariffs_cache');
 
-            // Перезагружаем список и выделяем только что сохраненный тариф
-            this.load(savedTariff.id);
+            // Перезагружаем активные тарифы и запланированные
+            await this.load(isScheduled ? null : savedTariff.id);
+            await this.loadScheduledTariffs();
         } catch (error) {
             toast('Ошибка сохранения: ' + error.message, 'error');
         } finally {
-            setLoading(btnSubmit, false, 'Сохранить изменения профиля');
+            setLoading(btnSubmit, false, 'Сохранить изменения тарифа');
         }
     },
 
@@ -289,6 +372,7 @@ export const TariffsModule = {
 
             // Перезагружаем и переключаемся на базовый тариф (id=1)
             this.load(1);
+            this.loadScheduledTariffs();
         } catch (error) {
             toast('Ошибка удаления: ' + error.message, 'error');
         } finally {

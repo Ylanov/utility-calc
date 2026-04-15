@@ -372,6 +372,46 @@ def check_auto_period_task():
             db.close()
 
 
+@celery.task(name="activate_scheduled_tariffs_task", queue="default")
+def activate_scheduled_tariffs_task():
+    """
+    Ежедневная задача (Beat): автоматическая активация тарифов по дате вступления в силу.
+    Находит тарифы с effective_from <= сейчас и is_active=False → устанавливает is_active=True.
+    """
+    logger.info("[TARIFF] Checking scheduled tariffs for activation...")
+    db = None
+    try:
+        db = get_sync_db()
+        from app.modules.utility.models import Tariff
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        tariffs_to_activate = db.query(Tariff).filter(
+            Tariff.effective_from.is_not(None),
+            Tariff.effective_from <= now,
+            Tariff.is_active.is_(False)
+        ).all()
+
+        if not tariffs_to_activate:
+            logger.info("[TARIFF] No scheduled tariffs to activate.")
+            return {"activated": 0}
+
+        for t in tariffs_to_activate:
+            t.is_active = True
+            logger.info(f"[TARIFF] Activated tariff '{t.name}' (id={t.id}), effective_from={t.effective_from}")
+
+        db.commit()
+        logger.info(f"[TARIFF] Activated {len(tariffs_to_activate)} tariff(s).")
+        return {"activated": len(tariffs_to_activate), "ids": [t.id for t in tariffs_to_activate]}
+
+    except Exception:
+        logger.exception("[TARIFF] activate_scheduled_tariffs_task failed")
+        if db:
+            db.rollback()
+        return {"activated": 0, "error": "task failed"}
+    finally:
+        if db:
+            db.close()
+
+
 @celery.task(name="detect_anomalies_task", queue="default")
 def detect_anomalies_task(reading_id: int):
     """

@@ -17,6 +17,7 @@ const ACTION_LABELS = {
     import: '📥 Импорт', login: '🔑 Вход', change_password: '🔐 Смена пароля',
     relocate: '🚚 Переселение', evict: '🚪 Выселение',
     replace_meter: '🔄 Замена счётчика', adjustment: '💰 Корректировка',
+    activate_tariff: '⚡ Активация тарифа',
 };
 
 const ENTITY_LABELS = {

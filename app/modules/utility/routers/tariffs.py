@@ -1,6 +1,7 @@
 # app/modules/utility/routers/tariffs.py
 
 import logging
+from datetime import datetime
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -98,6 +99,7 @@ async def get_tariffs_with_stats(
             "name": t.name,
             "is_active": t.is_active,
             "user_count": effective_count,
+            "effective_from": t.effective_from.strftime("%Y-%m-%dT%H:%M") if t.effective_from else None,
             "maintenance_repair": t.maintenance_repair,
             "social_rent": t.social_rent,
             "heating": t.heating,
@@ -110,6 +112,41 @@ async def get_tariffs_with_stats(
         })
 
     return result
+
+
+# =====================================================
+# GET /api/tariffs/scheduled — Запланированные тарифы
+# =====================================================
+@router.get("/scheduled", summary="Запланированные (ещё не активные) тарифы")
+async def get_scheduled_tariffs(
+        current_user: User = Depends(allow_management_roles),
+        db: AsyncSession = Depends(get_db)
+):
+    """Тарифы с будущей датой вступления в силу (is_active=False, effective_from задан)."""
+    result = await db.execute(
+        select(Tariff).where(
+            Tariff.is_active.is_(False),
+            Tariff.effective_from.is_not(None)
+        ).order_by(Tariff.effective_from)
+    )
+    tariffs = result.scalars().all()
+    return [
+        {
+            "id": t.id,
+            "name": t.name,
+            "effective_from": t.effective_from.strftime("%Y-%m-%dT%H:%M") if t.effective_from else None,
+            "maintenance_repair": t.maintenance_repair,
+            "social_rent": t.social_rent,
+            "heating": t.heating,
+            "water_heating": t.water_heating,
+            "water_supply": t.water_supply,
+            "sewage": t.sewage,
+            "waste_disposal": t.waste_disposal,
+            "electricity_per_sqm": t.electricity_per_sqm,
+            "electricity_rate": t.electricity_rate,
+        }
+        for t in tariffs
+    ]
 
 
 # =====================================================
@@ -160,15 +197,32 @@ async def create_or_update_tariff(
             update_data = data.dict(exclude={"id", "is_active"})
 
         for key, value in update_data.items():
-            if hasattr(tariff, key):
+            if hasattr(tariff, key) and key != "effective_from":
                 setattr(tariff, key, value)
+
+        # Обрабатываем effective_from отдельно: если задана будущая дата → тариф "запланирован"
+        if data.effective_from:
+            now = datetime.utcnow()
+            tariff.effective_from = data.effective_from.replace(tzinfo=None) if data.effective_from.tzinfo else data.effective_from
+            if tariff.effective_from > now:
+                tariff.is_active = False  # Запланирован, ещё не активен
+            else:
+                tariff.is_active = True   # Дата уже прошла — активируем сразу
+        else:
+            tariff.effective_from = None  # Очищаем, если не указана
+
+        # Для новых тарифов без effective_from — активны сразу
+        if not data.id and not data.effective_from:
+            tariff.is_active = True
 
         # ЗАПИСЬ В ЖУРНАЛ: Создание/Обновление тарифа
         action_type = "update" if data.id else "create"
+        status_detail = "scheduled" if (tariff.effective_from and not tariff.is_active) else "active"
         await write_audit_log(
             db, current_user.id, current_user.username,
             action=action_type, entity_type="tariff", entity_id=tariff.id,
-            details={"tariff_name": tariff.name}
+            details={"tariff_name": tariff.name, "status": status_detail,
+                     "effective_from": str(tariff.effective_from) if tariff.effective_from else None}
         )
 
         await db.commit()

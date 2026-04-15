@@ -83,8 +83,13 @@ celery.conf.update(
 
 celery.conf.beat_schedule = {
     "check-submission-period-daily": {
-        "task": "check_auto_period_task",  # <--- Оставляем только короткое имя!
+        "task": "check_auto_period_task",
         "schedule": crontab(minute=5, hour=0),
+    },
+    # Активация запланированных тарифов — каждый день в 00:01 (раньше check_auto_period)
+    "activate-scheduled-tariffs-daily": {
+        "task": "activate_scheduled_tariffs_task",
+        "schedule": crontab(minute=1, hour=0),
     },
 }
 

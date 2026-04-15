@@ -127,7 +127,11 @@ class Tariff(Base):
     electricity_per_sqm = Column(Numeric(10, 4), default=0.0)
     electricity_rate = Column(Numeric(10, 4), default=5.0)
 
-    # НОВОЕ: Отслеживание последнего изменения
+    # Дата вступления в силу. Если задана в будущем — тариф "запланирован" (is_active=False)
+    # и автоматически активируется Celery-задачей в эту дату.
+    effective_from = Column(DateTime, nullable=True, index=True)
+
+    # Отслеживание последнего изменения
     updated_at = Column(DateTime, nullable=True, onupdate=_utcnow)
 
 
@@ -271,8 +275,8 @@ class AuditLog(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
-    # Кто совершил действие
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    # Кто совершил действие (nullable + SET NULL — сохраняем лог даже если пользователь удалён)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     username = Column(String, nullable=False)
 
     # Что сделал
