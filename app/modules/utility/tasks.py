@@ -1,10 +1,11 @@
 # app/modules/utility/tasks.py
 import os
+import shutil
 import zipfile
 import logging
 import tempfile
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
@@ -110,7 +111,14 @@ def generate_receipt_task(reading_id: int) -> dict:
             url = s3_service.get_presigned_url(object_name, expiration=600)
             return {"status": "ok", "s3_key": object_name, "download_url": url, "filename": filename}
         else:
-            raise RuntimeError("S3 Upload Failed")
+            # S3 недоступен — перекладываем файл в статику, отдаём прямую ссылку
+            logger.warning(f"[PDF] S3 unavailable, falling back to static dir for reading_id={reading_id}")
+            static_dir = "/app/static/generated_files"
+            os.makedirs(static_dir, exist_ok=True)
+            static_path = os.path.join(static_dir, filename)
+            shutil.move(final_path, static_path)
+            local_url = f"/generated_files/{filename}"
+            return {"status": "ok", "s3_key": None, "download_url": local_url, "filename": filename}
 
     except Exception as error:
         logger.exception(f"[PDF] Generation failed for reading_id={reading_id}")
@@ -145,11 +153,13 @@ def start_bulk_receipt_generation(period_id: int):
         if not reading_ids:
             return {"status": "error", "message": "Нет утвержденных показаний"}
 
-        timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         zip_name = f"Receipts_{period.name.replace(' ', '_')}_{timestamp}.zip"
         zip_s3_key = f"archives/{zip_name}"
 
         default_tariff = db.query(Tariff).filter(Tariff.is_active).order_by(Tariff.id).first()
+
+        failed_ids = []
 
         with tempfile.TemporaryDirectory() as tmpdirname:
             zip_local_path = os.path.join(tmpdirname, zip_name)
@@ -195,13 +205,30 @@ def start_bulk_receipt_generation(period_id: int):
 
                         except Exception as e:
                             logger.error(f"Error generating PDF for reading {r.id}: {e}")
+                            failed_ids.append(r.id)
+
+            if failed_ids:
+                logger.warning(f"[ZIP] {len(failed_ids)} PDF(s) failed: {failed_ids}")
 
             # Загружаем готовый архив в S3
             if s3_service.upload_file(zip_local_path, zip_s3_key):
-                url = s3_service.get_presigned_url(zip_s3_key, expiration=86400) # Ссылка живет 24 часа
-                return {"status": "done", "s3_key": zip_s3_key, "download_url": url, "count": len(reading_ids)}
+                url = s3_service.get_presigned_url(zip_s3_key, expiration=86400)  # Ссылка живет 24 часа
+                return {
+                    "status": "done", "s3_key": zip_s3_key, "download_url": url,
+                    "count": len(reading_ids), "failed_count": len(failed_ids), "failed_ids": failed_ids
+                }
             else:
-                raise RuntimeError("S3 Upload Failed")
+                # S3 недоступен — перекладываем ZIP в статику
+                logger.warning("[ZIP] S3 unavailable, falling back to static dir for archive")
+                static_dir = "/app/static/generated_files"
+                os.makedirs(static_dir, exist_ok=True)
+                static_zip_path = os.path.join(static_dir, zip_name)
+                shutil.copy2(zip_local_path, static_zip_path)
+                local_url = f"/generated_files/{zip_name}"
+                return {
+                    "status": "done", "s3_key": None, "download_url": local_url,
+                    "count": len(reading_ids), "failed_count": len(failed_ids), "failed_ids": failed_ids
+                }
 
     except Exception as error:
         logger.exception("[ZIP] Generation failed")

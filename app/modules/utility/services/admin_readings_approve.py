@@ -106,15 +106,17 @@ async def bulk_approve_drafts(db: AsyncSession):
         residents_count = user.residents_count if user.residents_count is not None else 1
         total_room = room.total_room_residents if room.total_room_residents > 0 else 1
 
-        user_elect_share = (Decimal(residents_count) / Decimal(total_room)) * (cur_elect - p_elect)
+        vol_hot = max(ZERO, cur_hot - p_hot)
+        vol_cold = max(ZERO, cur_cold - p_cold)
+        user_elect_share = max(ZERO, (Decimal(residents_count) / Decimal(total_room)) * (cur_elect - p_elect))
 
         costs = calculate_utilities(
             user=user,
             room=room,
             tariff=user_tariff or default_tariff,
-            volume_hot=cur_hot - p_hot,
-            volume_cold=cur_cold - p_cold,
-            volume_sewage=(cur_hot - p_hot) + (cur_cold - p_cold),
+            volume_hot=vol_hot,
+            volume_cold=vol_cold,
+            volume_sewage=vol_hot + vol_cold,
             volume_electricity_share=user_elect_share
         )
 
@@ -187,14 +189,14 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
     p_cold = D(prev.cold_water) if prev else ZERO
     p_elect = D(prev.electricity) if prev else ZERO
 
-    d_hot_final = (D(reading.hot_water) - p_hot) - correction_data.hot_correction
-    d_cold_final = (D(reading.cold_water) - p_cold) - correction_data.cold_correction
+    d_hot_final = max(ZERO, (D(reading.hot_water) - p_hot) - correction_data.hot_correction)
+    d_cold_final = max(ZERO, (D(reading.cold_water) - p_cold) - correction_data.cold_correction)
 
     residents_count = user.residents_count if user.residents_count is not None else 1
     total_room = room.total_room_residents if room.total_room_residents > 0 else 1
 
-    d_elect_final = ((Decimal(residents_count) / Decimal(total_room)) * (
-            D(reading.electricity) - p_elect)) - correction_data.electricity_correction
+    d_elect_final = max(ZERO, ((Decimal(residents_count) / Decimal(total_room)) * (
+            D(reading.electricity) - p_elect)) - correction_data.electricity_correction)
 
     costs = calculate_utilities(
         user=user,
@@ -202,7 +204,7 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
         tariff=t,
         volume_hot=d_hot_final,
         volume_cold=d_cold_final,
-        volume_sewage=(d_hot_final + d_cold_final) - correction_data.sewage_correction,
+        volume_sewage=max(ZERO, (d_hot_final + d_cold_final) - correction_data.sewage_correction),
         volume_electricity_share=d_elect_final
     )
 

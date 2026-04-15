@@ -77,8 +77,17 @@ async def get_receipt_pdf(
             download_url = await asyncio.to_thread(s3_service.get_presigned_url, s3_key, 300)
             return {"status": "success", "url": download_url}
         else:
-            raise HTTPException(500, "Ошибка загрузки файла в хранилище")
+            # S3 недоступен — перемещаем PDF в статику и отдаём прямую ссылку
+            import shutil
+            static_dir = "/app/static/generated_files"
+            await asyncio.to_thread(os.makedirs, static_dir, exist_ok=True)
+            filename = os.path.basename(pdf_path)
+            static_path = os.path.join(static_dir, filename)
+            await asyncio.to_thread(shutil.move, pdf_path, static_path)
+            return {"status": "success", "url": f"/generated_files/{filename}"}
 
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"Ошибка генерации PDF: {e}")
 
