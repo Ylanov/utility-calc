@@ -43,13 +43,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 function bindAppEvents() {
     // --- Навигация ---
     document.getElementById('menuDocs')?.addEventListener('click', Documents.loadList);
-    document.getElementById('menuObjects')?.addEventListener('click', Dictionaries.loadObjectsTree);
+    document.getElementById('menuObjects')?.addEventListener('click', Dictionaries.openObjectsModal);
     document.getElementById('menuNomenclature')?.addEventListener('click', Dictionaries.openNomenclatureModal);
     document.getElementById('menuUsers')?.addEventListener('click', Users.loadAndShow);
     document.getElementById('menuReports')?.addEventListener('click', () => UI.openModal('reportModal'));
 
     // --- Основные кнопки ---
     document.getElementById('btnAddObject')?.addEventListener('click', () => UI.openModal('newObjectModal'));
+    document.getElementById('btnAddObjectFromModal')?.addEventListener('click', () => UI.openModal('newObjectModal'));
     document.getElementById('btnOpenCreateModal')?.addEventListener('click', Documents.openCreateModal);
     document.getElementById('btnRefreshDocs')?.addEventListener('click', () => {
         Documents.state.skip = 0;

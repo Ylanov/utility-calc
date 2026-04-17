@@ -66,6 +66,12 @@ const Dictionaries = {
         }
     },
 
+    // Открыть модалку управления объектами
+    openObjectsModal: async () => {
+        UI.openModal('objectsModal');
+        await Objects.loadAndShow();
+    },
+
     // Создание нового объекта
     createObject: async () => {
         const nameInput = document.getElementById('newObjName');
@@ -93,6 +99,12 @@ const Dictionaries = {
                 molInput.value = '';
 
                 await Dictionaries.loadObjectsTree();
+
+                // Обновляем модалку Objects если она открыта
+                const objModal = document.getElementById('objectsModal');
+                if (objModal && objModal.style.display !== 'none') {
+                    await Objects.loadAndShow();
+                }
 
                 if (data.credentials) {
                     UI.showCredentialsModal(`Объект "${data.name}" успешно создан!`, data.credentials.username, data.credentials.password);
@@ -625,6 +637,96 @@ const Reports = {
             console.error(e);
             container.innerHTML = '<div class="pl-6 text-rose-500 text-sm font-bold">Ошибка формирования отчета. Проверьте подключение к серверу.</div>';
         }
+    }
+};
+
+const Objects = {
+    loadAndShow: async () => {
+        const tb = document.getElementById('objectsTableBody');
+        const countEl = document.getElementById('objectsCountLabel');
+        const isAdmin = AppState.userRole === 'admin';
+
+        const addBtn = document.getElementById('btnAddObjectFromModal');
+        if (addBtn) addBtn.style.display = isAdmin ? 'flex' : 'none';
+
+        if (tb) UI.setLoading('objectsTableBody', 'Загрузка объектов...', 5);
+
+        try {
+            const res = await apiFetch('/api/arsenal/objects');
+            if (!res || !res.ok) return;
+            const objects = await res.json();
+
+            AppState.objects = objects;
+            if (countEl) countEl.textContent = `Всего объектов: ${objects.length}`;
+
+            if (!tb) return;
+
+            if (objects.length === 0) {
+                tb.innerHTML = '<tr><td colspan="5" class="text-center p-8 text-slate-400">Нет объектов. Нажмите «Добавить объект».</td></tr>';
+                return;
+            }
+
+            const typeBadge = (type) => {
+                const styles = {
+                    'Склад':         'bg-blue-100 text-blue-800 border-blue-200',
+                    'Подразделение': 'bg-slate-100 text-slate-700 border-slate-200',
+                    'Контрагент':    'bg-amber-100 text-amber-800 border-amber-200',
+                };
+                const cls = styles[type] || 'bg-slate-100 text-slate-700 border-slate-200';
+                return `<span class="px-2 py-0.5 rounded text-xs font-bold border ${cls}">${type}</span>`;
+            };
+
+            tb.innerHTML = objects.map(o => {
+                const safeName = o.name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                const delBtn = isAdmin
+                    ? `<button onclick="Objects.deleteFromModal(${o.id}, '${safeName}')"
+                           class="text-slate-400 hover:text-rose-600 p-1.5 rounded hover:bg-rose-50 transition" title="Удалить">
+                           <i class="fa-solid fa-trash text-xs"></i>
+                       </button>`
+                    : '';
+                return `
+                    <tr class="border-b border-slate-100 hover:bg-slate-50 last:border-0">
+                        <td class="p-3 text-slate-400 font-mono text-xs">${o.id}</td>
+                        <td class="p-3">
+                            <div class="flex items-center gap-2">
+                                <i class="fa-solid ${o.obj_type === 'Склад' ? 'fa-box text-blue-500' : o.obj_type === 'Контрагент' ? 'fa-building text-amber-500' : 'fa-layer-group text-slate-400'} w-4 text-center shrink-0"></i>
+                                <span class="font-semibold text-slate-800">${o.name}</span>
+                            </div>
+                        </td>
+                        <td class="p-3">${typeBadge(o.obj_type)}</td>
+                        <td class="p-3 text-slate-600 text-sm">${o.mol_name || '<span class="text-slate-300 italic text-xs">Не указан</span>'}</td>
+                        <td class="p-3 text-center">
+                            <div class="flex items-center justify-center gap-1">
+                                <button onclick="UI.closeModal('objectsModal'); Balance.initModal(${o.id}, '${safeName}')"
+                                    class="text-slate-400 hover:text-emerald-600 p-1.5 rounded hover:bg-emerald-50 transition" title="Открыть остатки">
+                                    <i class="fa-solid fa-box-archive text-sm"></i>
+                                </button>
+                                ${delBtn}
+                            </div>
+                        </td>
+                    </tr>`;
+            }).join('');
+
+        } catch (e) {
+            console.error(e);
+            if (tb) tb.innerHTML = '<tr><td colspan="5" class="text-center p-4 text-rose-500">Ошибка загрузки объектов.</td></tr>';
+        }
+    },
+
+    deleteFromModal: async (id, name) => {
+        if (!confirm(`Удалить объект "${name}"?\nВнимание: удаление возможно только если нет остатков и привязанных документов.`)) return;
+        try {
+            const res = await apiFetch(`/api/arsenal/objects/${id}`, { method: 'DELETE' });
+            if (res && res.ok) {
+                UI.showToast(`Объект "${name}" удалён.`, "success");
+                await Objects.loadAndShow();
+                await Dictionaries.loadObjectsTree();
+                await Dashboard.loadKPIs();
+            } else {
+                const err = await res.json();
+                UI.showToast("Ошибка: " + (err.detail || 'Не удалось удалить'), "error");
+            }
+        } catch (e) { UI.showToast("Сетевая ошибка", "error"); }
     }
 };
 
