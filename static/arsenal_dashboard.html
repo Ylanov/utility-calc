@@ -4,14 +4,26 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>СТРОБ.Арсенал v3.0</title>
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Иконки FontAwesome -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <!-- 🔥 Наши вынесенные стили -->
     <link rel="stylesheet" href="css/arsenal.css">
 </head>
 <body class="bg-slate-100 text-slate-800 h-screen flex flex-col overflow-hidden">
+
+<!-- =====================================================
+     СПЛЭШ ЗАГРУЗКИ
+     Показывается сразу при загрузке страницы и скрывает
+     весь контент до завершения инициализации (роль, данные).
+     Убирается из arsenal-app.js после loadList().
+     ===================================================== -->
+<div id="appSplash" style="position:fixed;inset:0;background:#f1f5f9;display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:10000;font-family:'Segoe UI',system-ui,sans-serif;">
+    <div style="width:60px;height:60px;background:#1d4ed8;border-radius:14px;display:flex;align-items:center;justify-content:center;margin-bottom:20px;box-shadow:0 12px 30px rgba(29,78,216,0.35);">
+        <!-- SVG щит — не зависит от загрузки FontAwesome -->
+        <svg width="28" height="28" fill="white" viewBox="0 0 24 24"><path d="M12 2L4 5.5V11c0 5.25 3.5 10.15 8 11.5 4.5-1.35 8-6.25 8-11.5V5.5L12 2z"/></svg>
+    </div>
+    <div style="font-weight:800;font-size:17px;color:#1e293b;letter-spacing:.5px;text-transform:uppercase;">СТРОБ.Арсенал</div>
+    <div style="color:#94a3b8;font-size:13px;margin-top:6px;">Инициализация системы...</div>
+</div>
 
 <!-- ВЕРХНЯЯ ПАНЕЛЬ И НАВИГАЦИЯ -->
 <div class="bg-white border-b border-slate-200 shadow-sm px-6 h-16 flex items-center justify-between shrink-0">
@@ -24,13 +36,15 @@
             <span class="font-bold text-lg tracking-wide text-slate-800">СТРОБ.Арсенал</span>
         </div>
 
-        <!-- Меню -->
+        <!-- Меню навигации.
+             admin-only элементы скрыты по умолчанию (display:none inline).
+             arsenal-app.js покажет их только для роли admin. -->
         <div class="hidden md:flex items-center gap-2 text-sm border-l border-slate-200 pl-6">
             <div class="menu-item" id="menuDocs"><i class="fa-solid fa-folder-open mr-2 text-amber-500"></i>Документы</div>
             <div class="menu-item" id="menuObjects"><i class="fa-solid fa-sitemap mr-2 text-blue-500"></i>Объекты</div>
-            <div class="menu-item" id="menuNomenclature"><i class="fa-solid fa-list mr-2 text-emerald-500"></i>Номенклатура</div>
+            <div class="menu-item" id="menuNomenclature" style="display:none"><i class="fa-solid fa-list mr-2 text-emerald-500"></i>Номенклатура</div>
             <div class="menu-item" id="menuReports"><i class="fa-solid fa-chart-pie mr-2 text-purple-500"></i>Отчеты</div>
-            <div class="menu-item" id="menuUsers"><i class="fa-solid fa-users-gear mr-2 text-teal-500"></i>Пользователи</div>
+            <div class="menu-item" id="menuUsers" style="display:none"><i class="fa-solid fa-users-gear mr-2 text-teal-500"></i>Пользователи</div>
         </div>
     </div>
 
@@ -52,10 +66,11 @@
         <div class="px-5 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
             <span class="text-xs font-bold text-slate-500 uppercase tracking-wider"><i class="fa-solid fa-network-wired mr-2"></i>Структура складов</span>
             <div class="flex gap-2">
-                <button id="btnImportExcel" class="w-7 h-7 flex items-center justify-center rounded bg-white border border-slate-200 text-emerald-600 hover:bg-emerald-50 hover:border-emerald-300 transition" title="Массовый импорт из Excel">
+                <!-- admin-only: скрыты по умолчанию -->
+                <button id="btnImportExcel" style="display:none" class="w-7 h-7 flex items-center justify-center rounded bg-white border border-slate-200 text-emerald-600 hover:bg-emerald-50 hover:border-emerald-300 transition" title="Массовый импорт из Excel">
                     <i class="fa-solid fa-file-excel"></i>
                 </button>
-                <button id="btnAddObject" class="w-7 h-7 flex items-center justify-center rounded bg-blue-600 text-white hover:bg-blue-700 transition shadow-sm" title="Добавить объект">
+                <button id="btnAddObject" style="display:none" class="w-7 h-7 flex items-center justify-center rounded bg-blue-600 text-white hover:bg-blue-700 transition shadow-sm" title="Добавить объект">
                     <i class="fa-solid fa-plus text-sm"></i>
                 </button>
             </div>
@@ -134,7 +149,7 @@
     </div>
 </div>
 
-<!-- 🔥 КОНТЕЙНЕР ДЛЯ МОДАЛЬНЫХ ОКОН (СЮДА ОНИ ЗАГРУЖАЮТСЯ АВТОМАТИЧЕСКИ) -->
+<!-- КОНТЕЙНЕР ДЛЯ МОДАЛЬНЫХ ОКОН -->
 <div id="modals-container"></div>
 
 <!-- ========================================== -->
@@ -143,17 +158,15 @@
 <script>
     async function initApp() {
         try {
-            // 1. Асинхронно скачиваем файл с модалками и вставляем его в документ
             const resp = await fetch('arsenal_modals.html');
             const html = await resp.text();
             document.getElementById('modals-container').innerHTML = html;
 
-            // 2. Только ПОСЛЕ того как HTML появился, загружаем JS файлы
             const scripts = [
                 'js/arsenal-core.js',
                 'js/arsenal-data.js',
-                'js/arsenal-docs-list.js', // <-- НОВЫЙ ФАЙЛ 1
-                'js/arsenal-docs-form.js', // <-- НОВЫЙ ФАЙЛ 2
+                'js/arsenal-docs-list.js',
+                'js/arsenal-docs-form.js',
                 'js/arsenal-app.js'
             ];
 
@@ -167,16 +180,28 @@
                 });
             }
 
-            // 3. Имитируем событие 'DOMContentLoaded', чтобы arsenal-app.js запустил bindAppEvents()
+            // Запускаем инициализацию приложения
+            // Сплэш убирается ВНУТРИ arsenal-app.js после загрузки данных
             document.dispatchEvent(new Event('DOMContentLoaded'));
 
         } catch (error) {
-            console.error("Ошибка инициализации приложения:", error);
-            alert("Ошибка загрузки интерфейса. Проверьте консоль.");
+            console.error("Ошибка инициализации:", error);
+            // Показываем ошибку прямо в сплэше
+            const splash = document.getElementById('appSplash');
+            if (splash) {
+                splash.innerHTML = `
+                    <div style="text-align:center;padding:32px;">
+                        <div style="font-size:40px;margin-bottom:16px;">⚠️</div>
+                        <div style="font-weight:700;color:#dc2626;font-size:16px;margin-bottom:8px;">Ошибка загрузки интерфейса</div>
+                        <div style="color:#64748b;font-size:13px;margin-bottom:20px;">${error.message || 'Проверьте консоль браузера'}</div>
+                        <button onclick="location.reload()" style="background:#1d4ed8;color:white;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-weight:600;">
+                            Перезагрузить
+                        </button>
+                    </div>`;
+            }
         }
     }
 
-    // Запускаем сборку интерфейса
     initApp();
 </script>
 

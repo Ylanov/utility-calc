@@ -5,11 +5,11 @@
 
 document.addEventListener('DOMContentLoaded', async () => {
     // 1. Проверка прав (UI Role Management)
-    if (AppState.userRole === 'unit_head') {
-        const hideElements = ['btnAddObject', 'menuNomenclature', 'menuUsers', 'btnImportExcel'];
-        hideElements.forEach(id => {
+    // Admin-only elements are hidden by default in HTML; reveal them only for admin
+    if (AppState.userRole === 'admin') {
+        ['btnAddObject', 'menuNomenclature', 'menuUsers', 'btnImportExcel'].forEach(id => {
             const el = document.getElementById(id);
-            if (el) el.style.display = 'none';
+            if (el) el.style.display = '';
         });
     }
 
@@ -37,7 +37,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Обновление состояния формы после загрузки объектов
     Documents.updateFormState();
-    Documents.loadList();
+    await Documents.loadList();
+
+    // Убираем сплэш после завершения инициализации
+    const splash = document.getElementById('appSplash');
+    if (splash) {
+        splash.style.transition = 'opacity 0.3s ease';
+        splash.style.opacity = '0';
+        setTimeout(() => splash.remove(), 300);
+    }
 });
 
 function bindAppEvents() {
