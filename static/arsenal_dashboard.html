@@ -158,16 +158,20 @@
 <script>
     async function initApp() {
         try {
-            const resp = await fetch('arsenal_modals.html');
+            // Генерируем уникальную метку времени, чтобы браузер ВСЕГДА качал свежие JS файлы
+            const version = new Date().getTime();
+
+            // Добавляем ?v= к файлам модалок
+            const resp = await fetch('arsenal_modals.html?v=' + version);
             const html = await resp.text();
             document.getElementById('modals-container').innerHTML = html;
 
             const scripts = [
-                'js/arsenal-core.js',
-                'js/arsenal-data.js',
-                'js/arsenal-docs-list.js',
-                'js/arsenal-docs-form.js',
-                'js/arsenal-app.js'
+                'js/arsenal-core.js?v=' + version,
+                'js/arsenal-data.js?v=' + version,
+                'js/arsenal-docs-list.js?v=' + version,
+                'js/arsenal-docs-form.js?v=' + version,
+                'js/arsenal-app.js?v=' + version
             ];
 
             for (const src of scripts) {
@@ -181,12 +185,10 @@
             }
 
             // Запускаем инициализацию приложения
-            // Сплэш убирается ВНУТРИ arsenal-app.js после загрузки данных
             document.dispatchEvent(new Event('DOMContentLoaded'));
 
         } catch (error) {
             console.error("Ошибка инициализации:", error);
-            // Показываем ошибку прямо в сплэше
             const splash = document.getElementById('appSplash');
             if (splash) {
                 splash.innerHTML = `
