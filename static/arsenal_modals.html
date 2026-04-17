@@ -86,6 +86,42 @@
     </div>
 </div>
 
+<!-- МОДАЛКА: Управление объектами (список) -->
+<div id="objectsModal" class="modal">
+    <div class="modal-content w-[800px] max-w-[95%]">
+        <div class="px-6 py-4 border-b bg-blue-800 text-white flex justify-between items-center shrink-0">
+            <span class="font-bold flex items-center gap-2 text-lg">
+                <i class="fa-solid fa-sitemap opacity-80"></i> Структура складов / Объекты учёта
+            </span>
+            <button class="modal-close-btn text-blue-200 hover:text-white text-2xl leading-none" onclick="document.getElementById('objectsModal').style.display='none'">&times;</button>
+        </div>
+        <div class="p-5">
+            <div class="flex justify-between items-center mb-4">
+                <span class="text-sm text-slate-500" id="objectsCountLabel">Загрузка...</span>
+                <button id="btnAddObjectFromModal" class="bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-bold shadow hover:bg-blue-800 transition flex items-center gap-2 admin-only">
+                    <i class="fa-solid fa-plus"></i> Добавить объект
+                </button>
+            </div>
+            <div class="border border-slate-200 rounded-xl overflow-hidden shadow-sm max-h-[420px] flex flex-col">
+                <div class="overflow-auto flex-1">
+                    <table class="w-full text-sm">
+                        <thead class="bg-slate-100 text-slate-600 text-xs uppercase tracking-wider sticky top-0 z-10 shadow-sm">
+                            <tr>
+                                <th class="p-3 text-left border-b border-slate-200 w-10">ID</th>
+                                <th class="p-3 text-left border-b border-slate-200">Наименование</th>
+                                <th class="p-3 text-left border-b border-slate-200 w-36">Тип</th>
+                                <th class="p-3 text-left border-b border-slate-200">МОЛ</th>
+                                <th class="p-3 text-center border-b border-slate-200 w-28">Действия</th>
+                            </tr>
+                        </thead>
+                        <tbody id="objectsTableBody" class="divide-y divide-slate-100"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- МОДАЛКА: Новый объект -->
 <div id="newObjectModal" class="modal">
     <div class="modal-content w-[450px]">
