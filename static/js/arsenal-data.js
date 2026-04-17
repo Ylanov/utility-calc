@@ -21,20 +21,35 @@ const Dictionaries = {
                 return;
             }
 
+            const isAdmin = AppState.userRole === 'admin';
+
             // Рендер дерева
-            container.innerHTML = AppState.objects.map(o => `
+            container.innerHTML = AppState.objects.map(o => {
+                const safeName = o.name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                const deleteBtn = isAdmin
+                    ? `<button onclick="event.stopPropagation(); Dictionaries.deleteObject(${o.id}, '${safeName}')"
+                           class="text-slate-300 hover:text-rose-600 px-1.5 opacity-0 group-hover:opacity-100 transition"
+                           title="Удалить объект">
+                           <i class="fa-solid fa-trash text-sm"></i>
+                       </button>`
+                    : '';
+                return `
                 <div class="tree-node pl-3 transition hover:bg-blue-50 flex justify-between items-center group py-1.5">
-                    <div class="flex-grow cursor-pointer flex flex-col" onclick="Balance.initModal(${o.id}, '${o.name}')">
+                    <div class="flex-grow cursor-pointer flex flex-col" onclick="Balance.initModal(${o.id}, '${safeName}')">
                         <div class="flex items-center">
                             <i class="fa-solid ${o.obj_type === 'Склад' ? 'fa-box text-blue-500' : 'fa-layer-group text-slate-400'} mr-2 w-5 text-center"></i>
                             <span class="text-slate-700 font-medium text-sm">${o.name}</span>
                         </div>
                         ${o.mol_name ? `<div class="text-[10px] text-slate-400 ml-7 mt-0.5"><i class="fa-solid fa-user-tag text-slate-300 mr-1"></i> ${o.mol_name}</div>` : ''}
                     </div>
-                    <button onclick="Balance.initModal(${o.id}, '${o.name}')" class="text-slate-300 hover:text-emerald-600 px-2 opacity-0 group-hover:opacity-100 transition" title="Открыть остатки">
-                        <i class="fa-solid fa-box-archive text-lg"></i>
-                    </button>
-                </div>`).join('');
+                    <div class="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition">
+                        <button onclick="Balance.initModal(${o.id}, '${safeName}')" class="text-slate-300 hover:text-emerald-600 px-1.5 transition" title="Открыть остатки">
+                            <i class="fa-solid fa-box-archive text-lg"></i>
+                        </button>
+                        ${deleteBtn}
+                    </div>
+                </div>`;
+            }).join('');
 
             // Обновление выпадающих списков в формах
             const optionsHtml = '<option value="">-- Выберите объект --</option>' +
@@ -89,6 +104,22 @@ const Dictionaries = {
                 UI.showToast("Ошибка: " + (err.detail || 'Не удалось создать объект'), "error");
             }
         } catch (e) { console.error(e); }
+    },
+
+    // Удаление объекта (только для администратора)
+    deleteObject: async (id, name) => {
+        if (!confirm(`Удалить объект "${name}"?\nВнимание: удаление возможно только если на объекте нет остатков и нет привязанных документов.`)) return;
+        try {
+            const res = await apiFetch(`/api/arsenal/objects/${id}`, { method: 'DELETE' });
+            if (res && res.ok) {
+                UI.showToast(`Объект "${name}" удалён.`, "success");
+                await Dictionaries.loadObjectsTree();
+                await Dashboard.loadKPIs();
+            } else {
+                const err = await res.json();
+                UI.showToast("Ошибка: " + (err.detail || 'Не удалось удалить объект'), "error");
+            }
+        } catch (e) { UI.showToast("Сетевая ошибка", "error"); }
     },
 
     // Загрузка номенклатуры (С поддержкой поиска и пагинации)

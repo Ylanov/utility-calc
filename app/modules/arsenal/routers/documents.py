@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Q
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
+from sqlalchemy import or_
 
 from app.core.database import get_arsenal_db
 from app.modules.arsenal.models import Document, DocumentItem, ArsenalUser
@@ -21,7 +22,8 @@ async def get_documents(
         db: AsyncSession = Depends(get_arsenal_db),
         current_user: ArsenalUser = Depends(get_current_arsenal_user),
         skip: int = Query(0, ge=0, description="Сколько записей пропустить"),
-        limit: int = Query(50, ge=1, le=500, description="Максимальное количество возвращаемых записей")
+        limit: int = Query(50, ge=1, le=500, description="Максимальное количество возвращаемых записей"),
+        q: Optional[str] = Query(None, description="Поиск по номеру документа, типу операции или объектам")
 ):
     stmt = (
         select(Document)
@@ -35,8 +37,16 @@ async def get_documents(
             (Document.target_id == current_user.object_id)
         )
 
-    # 🔥 ОПТИМИЗАЦИЯ: Применяем пагинацию (Limit / Offset) на уровне БД
-    # Это предотвратит выгрузку 1 миллиона записей в оперативную память.
+    if q:
+        search_term = f"%{q}%"
+        stmt = stmt.where(
+            or_(
+                Document.doc_number.ilike(search_term),
+                Document.operation_type.ilike(search_term),
+            )
+        )
+
+    # Применяем пагинацию на уровне БД
     stmt = stmt.offset(skip).limit(limit)
 
     result = await db.execute(stmt)

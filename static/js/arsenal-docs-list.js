@@ -10,11 +10,12 @@ Object.assign(window.Documents, {
     // Временное хранилище остатков склада-отправителя для автозаполнения
     currentSourceBalance: [],
 
-    // Состояние пагинации
+    // Состояние пагинации и поиска
     state: {
         skip: 0,
-        limit: 50, // Размер страницы
-        hasMore: true
+        limit: 50,
+        hasMore: true,
+        searchQuery: ''
     },
 
     // Инициализация (вызывается при старте)
@@ -33,8 +34,11 @@ Object.assign(window.Documents, {
         UI.setLoading('docsTableBody', 'Загрузка журнала операций...', 7);
 
         try {
-            // Формируем URL с параметрами пагинации
-            const url = `/api/arsenal/documents?skip=${Documents.state.skip}&limit=${Documents.state.limit}`;
+            // Формируем URL с параметрами пагинации и поиска
+            const qParam = Documents.state.searchQuery
+                ? `&q=${encodeURIComponent(Documents.state.searchQuery)}`
+                : '';
+            const url = `/api/arsenal/documents?skip=${Documents.state.skip}&limit=${Documents.state.limit}${qParam}`;
 
             const response = await apiFetch(url);
             if (!response || !response.ok) throw new Error('API Error');

@@ -13,6 +13,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
+    // Показываем имя пользователя из сессии
+    const usernameEl = document.getElementById('headerUsername');
+    if (usernameEl) {
+        const username = sessionStorage.getItem('arsenal_username');
+        const role = AppState.userRole;
+        usernameEl.textContent = username || (role === 'admin' ? 'Администратор' : 'Пользователь');
+    }
+
     // 2. Установка текущей даты
     const dateInput = document.getElementById('newDocDate');
     if (dateInput) dateInput.valueAsDate = new Date();
@@ -43,7 +51,24 @@ function bindAppEvents() {
     // --- Основные кнопки ---
     document.getElementById('btnAddObject')?.addEventListener('click', () => UI.openModal('newObjectModal'));
     document.getElementById('btnOpenCreateModal')?.addEventListener('click', Documents.openCreateModal);
-    document.getElementById('btnRefreshDocs')?.addEventListener('click', Documents.loadList);
+    document.getElementById('btnRefreshDocs')?.addEventListener('click', () => {
+        Documents.state.skip = 0;
+        Documents.state.searchQuery = '';
+        const searchInput = document.getElementById('docSearchInput');
+        if (searchInput) searchInput.value = '';
+        Documents.loadList();
+    });
+
+    // --- Поиск по журналу документов ---
+    let docSearchTimer = null;
+    document.getElementById('docSearchInput')?.addEventListener('input', (e) => {
+        clearTimeout(docSearchTimer);
+        docSearchTimer = setTimeout(() => {
+            Documents.state.skip = 0;
+            Documents.state.searchQuery = e.target.value.trim();
+            Documents.loadList();
+        }, 400);
+    });
 
     // --- Формы ---
     document.getElementById('newDocType')?.addEventListener('change', Documents.updateFormState);

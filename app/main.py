@@ -256,14 +256,15 @@ async def security_headers(request: Request, call_next):
         "frame-ancestors 'none';"
     )
 
-    # Разрешающая политика для модуля Арсенал (разрешаем CDN Tailwind)
+    # Политика для модуля Арсенал (разрешаем CDN Tailwind Play)
+    # connect-src нужен т.к. Tailwind Play CDN делает fetch-запросы в runtime
     arsenal_csp = (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline' cdnjs.cloudflare.com https://cdn.tailwindcss.com; "
-        "style-src 'self' 'unsafe-inline' fonts.googleapis.com cdnjs.cloudflare.com; "
+        "style-src 'self' 'unsafe-inline' fonts.googleapis.com cdnjs.cloudflare.com https://cdn.tailwindcss.com; "
         "font-src 'self' fonts.gstatic.com cdnjs.cloudflare.com data:; "
         "img-src 'self' data: blob:; "
-        "connect-src 'self'; "
+        "connect-src 'self' https://cdn.tailwindcss.com; "
         "frame-ancestors 'none';"
     )
 

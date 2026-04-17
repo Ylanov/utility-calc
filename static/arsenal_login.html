@@ -1,36 +1,66 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-<meta charset="UTF-8">
-<title>Вход в СТРОБ Арсенал</title>
-<link rel="stylesheet" href="style.css">
-<style>
-body{background:#1f2937;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;font-family:'Segoe UI',sans-serif}
-.login-box{background:white;padding:40px;border-radius:4px;width:400px;box-shadow:0 20px 25px -5px rgba(0,0,0,0.5);border-top:5px solid #ef4444}
-.logo-area{text-align:center;margin-bottom:20px;color:#1f2937}
-.logo-area h1{margin:0;font-size:24px;text-transform:uppercase;letter-spacing:1px}
-.logo-area p{color:#6b7280;font-size:14px;margin-top:5px}
-input{width:100%;padding:10px;margin-bottom:15px;border:1px solid #d1d5db;border-radius:4px;background:#f9fafb;box-sizing:border-box}
-button{width:100%;padding:12px;background:#1f2937;color:white;border:none;font-weight:bold;cursor:pointer;text-transform:uppercase;letter-spacing:1px;border-radius:4px;transition:background 0.2s}
-button:hover{background:#111827}
-button:disabled{background:#6b7280;cursor:not-allowed}
-.back-link{display:block;text-align:center;margin-top:15px;color:#6b7280;font-size:13px;text-decoration:none}
-.error-msg{color:#dc2626;background:#fee2e2;padding:10px;border-radius:4px;margin-bottom:15px;text-align:center;font-size:13px;display:none}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Вход — СТРОБ.Арсенал</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+        .fade-in { animation: fadeIn 0.4s ease-out forwards; }
+    </style>
 </head>
-<body>
-<div class="login-box">
-<div class="logo-area">
-    <h1>СТРОБ.Арсенал</h1>
-    <p>Система номерного учета ВВСТ</p>
-</div>
-<div id="errorMsg" class="error-msg"></div>
-<form id="arsenalLoginForm">
-    <input type="text" id="username" placeholder="Имя пользователя" required autocomplete="username">
-    <input type="password" id="password" placeholder="Пароль" required autocomplete="current-password">
-    <button type="submit" id="loginBtn">Войти в систему</button>
-</form>
-<a href="portal.html" class="back-link">← Вернуться на портал</a>
+<body class="bg-slate-900 flex items-center justify-center min-h-screen p-4">
+
+<div class="w-full max-w-sm fade-in">
+    <!-- Логотип -->
+    <div class="text-center mb-8">
+        <div class="w-16 h-16 bg-blue-700 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-blue-900/50">
+            <i class="fa-solid fa-shield-halved text-white text-2xl"></i>
+        </div>
+        <h1 class="text-2xl font-black text-white tracking-wide uppercase">СТРОБ.Арсенал</h1>
+        <p class="text-slate-400 text-sm mt-1">Система номерного учёта ВВСТ</p>
+    </div>
+
+    <!-- Карточка входа -->
+    <div class="bg-slate-800 rounded-2xl shadow-2xl border border-slate-700/50 p-8">
+        <div id="errorMsg" class="hidden mb-5 bg-rose-900/50 border border-rose-700/50 text-rose-300 text-sm px-4 py-3 rounded-xl flex items-center gap-3">
+            <i class="fa-solid fa-circle-exclamation text-rose-400 shrink-0"></i>
+            <span id="errorText">Ошибка</span>
+        </div>
+
+        <form id="arsenalLoginForm" class="space-y-4">
+            <div>
+                <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">Имя пользователя</label>
+                <div class="relative">
+                    <i class="fa-solid fa-user absolute left-3 top-3 text-slate-500 text-sm"></i>
+                    <input type="text" id="username" placeholder="Введите логин" required autocomplete="username"
+                        class="w-full bg-slate-700 border border-slate-600 text-white placeholder-slate-500 rounded-xl pl-9 pr-4 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition">
+                </div>
+            </div>
+            <div>
+                <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">Пароль</label>
+                <div class="relative">
+                    <i class="fa-solid fa-lock absolute left-3 top-3 text-slate-500 text-sm"></i>
+                    <input type="password" id="password" placeholder="Введите пароль" required autocomplete="current-password"
+                        class="w-full bg-slate-700 border border-slate-600 text-white placeholder-slate-500 rounded-xl pl-9 pr-4 py-2.5 text-sm outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition">
+                </div>
+            </div>
+            <button type="submit" id="loginBtn"
+                class="w-full bg-blue-700 hover:bg-blue-600 text-white font-bold py-2.5 rounded-xl transition shadow-sm flex items-center justify-center gap-2 mt-2">
+                <i class="fa-solid fa-right-to-bracket"></i>
+                <span id="loginBtnText">Войти в систему</span>
+            </button>
+        </form>
+    </div>
+
+    <div class="text-center mt-5">
+        <a href="portal.html" class="text-slate-500 hover:text-slate-300 text-sm transition">
+            <i class="fa-solid fa-arrow-left mr-1.5"></i> Вернуться на портал
+        </a>
+    </div>
 </div>
 
 <script>
@@ -40,12 +70,14 @@ document.getElementById('arsenalLoginForm').addEventListener('submit', async (e)
     const userInp = document.getElementById('username');
     const passInp = document.getElementById('password');
     const btn = document.getElementById('loginBtn');
+    const btnText = document.getElementById('loginBtnText');
     const errDiv = document.getElementById('errorMsg');
+    const errText = document.getElementById('errorText');
 
-    errDiv.style.display = 'none';
+    errDiv.classList.add('hidden');
     btn.disabled = true;
-    const originalText = btn.innerText;
-    btn.innerText = 'ВХОД...';
+    btnText.textContent = 'Вход...';
+    btn.querySelector('i').className = 'fa-solid fa-spinner fa-spin';
 
     try {
         const formData = new URLSearchParams();
@@ -60,28 +92,24 @@ document.getElementById('arsenalLoginForm').addEventListener('submit', async (e)
 
         if (response.ok) {
             const data = await response.json();
-
-            // ИСПРАВЛЕНИЕ: сохраняем токен в sessionStorage текущей вкладки.
-            // sessionStorage изолирован на вкладку — разные пользователи
-            // в разных вкладках не будут смешиваться.
             sessionStorage.setItem('access_token', data.access_token);
             sessionStorage.setItem('arsenal_role', data.role);
             sessionStorage.setItem('arsenal_username', userInp.value);
-
             window.location.href = data.redirect_url || 'arsenal_dashboard.html';
         } else {
             const errorData = await response.json().catch(() => ({}));
-            errDiv.innerText = errorData.detail || 'Неверные имя пользователя или пароль';
-            errDiv.style.display = 'block';
+            errText.textContent = errorData.detail || 'Неверное имя пользователя или пароль';
+            errDiv.classList.remove('hidden');
             btn.disabled = false;
-            btn.innerText = originalText;
+            btnText.textContent = 'Войти в систему';
+            btn.querySelector('i').className = 'fa-solid fa-right-to-bracket';
         }
     } catch (error) {
-        console.error(error);
-        errDiv.innerText = 'Ошибка подключения к серверу';
-        errDiv.style.display = 'block';
+        errText.textContent = 'Ошибка подключения к серверу';
+        errDiv.classList.remove('hidden');
         btn.disabled = false;
-        btn.innerText = originalText;
+        btnText.textContent = 'Войти в систему';
+        btn.querySelector('i').className = 'fa-solid fa-right-to-bracket';
     }
 });
 </script>
