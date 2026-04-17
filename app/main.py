@@ -242,7 +242,11 @@ async def security_headers(request: Request, call_next):
     if IS_PRODUCTION:
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
 
-    response.headers["Content-Security-Policy"] = (
+    # ===============================================================
+    # НАСТРОЙКА CSP (CONTENT SECURITY POLICY)
+    # ===============================================================
+    # Строгая политика для всей системы (по умолчанию)
+    base_csp = (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline' cdnjs.cloudflare.com; "
         "style-src 'self' 'unsafe-inline' fonts.googleapis.com cdnjs.cloudflare.com; "
@@ -251,6 +255,23 @@ async def security_headers(request: Request, call_next):
         "connect-src 'self'; "
         "frame-ancestors 'none';"
     )
+
+    # Разрешающая политика для модуля Арсенал (разрешаем CDN Tailwind)
+    arsenal_csp = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' cdnjs.cloudflare.com https://cdn.tailwindcss.com; "
+        "style-src 'self' 'unsafe-inline' fonts.googleapis.com cdnjs.cloudflare.com; "
+        "font-src 'self' fonts.gstatic.com cdnjs.cloudflare.com data:; "
+        "img-src 'self' data: blob:; "
+        "connect-src 'self'; "
+        "frame-ancestors 'none';"
+    )
+
+    # Проверяем, обращается ли пользователь к файлам Арсенала
+    if "arsenal" in request.url.path.lower():
+        response.headers["Content-Security-Policy"] = arsenal_csp
+    else:
+        response.headers["Content-Security-Policy"] = base_csp
 
     return response
 
