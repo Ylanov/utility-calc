@@ -2,10 +2,13 @@
 
 import asyncio
 import logging
+import os
 from decimal import Decimal
 from datetime import datetime
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -312,6 +315,64 @@ async def save_reading(
 
 
 # =========================
+# FINANCE / DEBT (client)
+# =========================
+@router.get("/api/client/finance")
+async def get_client_finance(
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+):
+    """
+    Возвращает финансовый статус текущего жильца:
+    суммарные долги/переплаты по счетам 209 и 205 и текущий total_cost.
+
+    Это облегчённая версия /api/financier/users-status (которая только для admin/financier).
+    Каждый жилец видит только свои данные.
+    """
+    # Активный период — для current_total_cost.
+    active_period = (await db.execute(
+        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
+    )).scalars().first()
+    active_period_id = active_period.id if active_period else None
+
+    agg_stmt = select(
+        func.coalesce(func.sum(MeterReading.debt_209), 0).label("debt_209"),
+        func.coalesce(func.sum(MeterReading.overpayment_209), 0).label("overpayment_209"),
+        func.coalesce(func.sum(MeterReading.debt_205), 0).label("debt_205"),
+        func.coalesce(func.sum(MeterReading.overpayment_205), 0).label("overpayment_205"),
+    ).where(
+        MeterReading.user_id == current_user.id,
+        MeterReading.is_approved.is_(True),
+    )
+
+    agg_row = (await db.execute(agg_stmt)).first()
+    debt_209, overpay_209, debt_205, overpay_205 = agg_row
+
+    # Текущая ожидаемая сумма к оплате за активный период (draft или утверждённая).
+    current_total = Decimal("0.00")
+    if active_period_id is not None:
+        current_reading = (await db.execute(
+            select(MeterReading).where(
+                MeterReading.user_id == current_user.id,
+                MeterReading.period_id == active_period_id,
+            ).order_by(MeterReading.created_at.desc()).limit(1)
+        )).scalars().first()
+        if current_reading and current_reading.total_cost is not None:
+            current_total = Decimal(current_reading.total_cost)
+
+    return {
+        "debt_209": Decimal(debt_209 or 0),
+        "overpayment_209": Decimal(overpay_209 or 0),
+        "debt_205": Decimal(debt_205 or 0),
+        "overpayment_205": Decimal(overpay_205 or 0),
+        "total_debt": Decimal(debt_209 or 0) + Decimal(debt_205 or 0),
+        "total_overpayment": Decimal(overpay_209 or 0) + Decimal(overpay_205 or 0),
+        "current_period_total": current_total,
+        "current_period_name": active_period.name if active_period else None,
+    }
+
+
+# =========================
 # HISTORY
 # =========================
 @router.get("/api/readings/history")
@@ -347,12 +408,16 @@ async def get_client_history(
 # =========================
 # RECEIPT
 # =========================
-@router.get("/api/client/receipts/{reading_id}")
-async def download_client_receipt(
+
+async def _prepare_client_receipt_context(
         reading_id: int,
-        current_user: User = Depends(get_current_user),
-        db: AsyncSession = Depends(get_db)
+        current_user: User,
+        db: AsyncSession,
 ):
+    """
+    Подготавливает данные для генерации PDF квитанции клиента.
+    Выполняет все проверки доступа и возвращает (reading, tariff, prev_reading, adjustments).
+    """
     reading = (await db.execute(
         select(MeterReading)
         .options(
@@ -366,6 +431,7 @@ async def download_client_receipt(
     if not reading:
         raise HTTPException(404, "Квитанция не найдена")
 
+    # ВАЖНО: клиент может скачать только свою квитанцию.
     if reading.user_id != current_user.id:
         raise HTTPException(404, "Квитанция не найдена")
 
@@ -399,8 +465,27 @@ async def download_client_receipt(
         )
     )).scalars().all()
 
+    return reading, tariff, prev, adjustments
+
+
+@router.get("/api/client/receipts/{reading_id}")
+async def download_client_receipt(
+        reading_id: int,
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db)
+):
+    """
+    Возвращает presigned S3 URL на PDF квитанции.
+    Используется мобильным клиентом (он сам скачивает файл по URL).
+
+    Для web-интерфейса используй /api/client/receipts/{id}/download,
+    который стримит PDF напрямую с правильными заголовками.
+    """
+    reading, tariff, prev, adjustments = await _prepare_client_receipt_context(
+        reading_id, current_user, db
+    )
+
     try:
-        # ИСПРАВЛЕНИЕ: Выносим CPU-intensive генерацию PDF в отдельный поток
         pdf_path = await asyncio.to_thread(
             generate_receipt_pdf,
             reading=reading,
@@ -413,18 +498,77 @@ async def download_client_receipt(
         )
 
         s3_key = f"receipts/{reading.id}.pdf"
-
-        # ИСПРАВЛЕНИЕ: Выносим Network I/O вызов в S3 в отдельный поток
         upload_success = await asyncio.to_thread(s3_service.upload_file, pdf_path, s3_key)
 
         if not upload_success:
-            raise HTTPException(500, "Ошибка генерации квитанции. Не удалось загрузить файл в хранилище.")
+            # S3 недоступен — вернём стабильную ссылку на streaming-эндпоинт.
+            # Мобильный клиент по ней сможет скачать PDF с Bearer-токеном.
+            return {"url": f"/api/client/receipts/{reading.id}/download"}
 
-        # ИСПРАВЛЕНИЕ: Выносим Network I/O вызов presigned_url в отдельный поток
         url = await asyncio.to_thread(s3_service.get_presigned_url, s3_key, 300)
+        if not url:
+            return {"url": f"/api/client/receipts/{reading.id}/download"}
 
         return {"url": url}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error generating receipt for reading_id={reading_id}: {e}", exc_info=True)
         raise HTTPException(500, "Ошибка генерации квитанции. Попробуйте позже.")
+
+
+@router.get("/api/client/receipts/{reading_id}/download")
+async def stream_client_receipt(
+        reading_id: int,
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db)
+):
+    """
+    Стримит PDF квитанции напрямую через FastAPI с заголовком Content-Disposition: attachment.
+    Используется web-интерфейсом (через api.download()) — не требует S3, не зависит
+    от presigned URL и не делает лишних редиректов.
+
+    Этот эндпоинт решает баг «при клике на PDF платформа перекидывает на portal.html»,
+    т.к. ответ всегда приходит напрямую в рамках текущей авторизованной сессии.
+    """
+    reading, tariff, prev, adjustments = await _prepare_client_receipt_context(
+        reading_id, current_user, db
+    )
+
+    try:
+        pdf_path = await asyncio.to_thread(
+            generate_receipt_pdf,
+            reading=reading,
+            user=reading.user,
+            room=reading.room,
+            period=reading.period,
+            tariff=tariff,
+            prev_reading=prev,
+            adjustments=adjustments,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating receipt for reading_id={reading_id}: {e}", exc_info=True)
+        raise HTTPException(500, "Ошибка генерации квитанции. Попробуйте позже.")
+
+    if not os.path.exists(pdf_path):
+        raise HTTPException(500, "Не удалось получить файл квитанции на сервере")
+
+    # Имя файла в русском формате с поддержкой UTF-8 (RFC 5987)
+    period_label = (reading.period.name or "period").replace(" ", "_")
+    room_label = (reading.room.room_number or "room").replace(" ", "_")
+    filename = f"Kvitanciya_{room_label}_{period_label}.pdf"
+    encoded_filename = quote(filename)
+
+    return FileResponse(
+        path=pdf_path,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition":
+                f"attachment; filename*=utf-8''{encoded_filename}",
+            # no-store, чтобы при повторной подаче квитанция пересобиралась всегда
+            "Cache-Control": "no-store, must-revalidate",
+        },
+    )

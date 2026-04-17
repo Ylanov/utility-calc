@@ -54,13 +54,13 @@ export const ClientHistory = {
     },
 
     async downloadReceipt(id) {
+        // ИСПРАВЛЕНО: скачивание через авторизованный fetch (api.download).
+        // Старая схема (GET JSON → window.open) ломалась, когда у пользователя
+        // истекал токен или S3 возвращал недоступный URL — браузер открывал вкладку,
+        // которая падала на общий перехватчик и редиректила на portal.html.
         toast('Генерация квитанции...', 'info');
         try {
-            const res = await api.get(`/client/receipts/${id}`);
-            if (res.url) {
-                // Открываем PDF в новой вкладке (браузер сам скачает/покажет файл)
-                window.open(res.url, '_blank');
-            }
+            await api.download(`/client/receipts/${id}/download`, `Kvitanciya_${id}.pdf`);
         } catch (e) {
             toast('Ошибка скачивания: ' + e.message, 'error');
         }

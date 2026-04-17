@@ -4,9 +4,10 @@ import io
 import os
 import uuid
 import asyncio
+import logging
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -21,6 +22,8 @@ from app.core.dependencies import get_current_user
 from app.modules.utility.services.pdf_generator import generate_receipt_pdf
 from app.modules.utility.services.s3_client import s3_service
 from app.modules.utility.tasks import generate_receipt_task, start_bulk_receipt_generation
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Admin Reports"])
 ZERO = Decimal("0.00")
@@ -90,6 +93,96 @@ async def get_receipt_pdf(
         raise
     except Exception as e:
         raise HTTPException(500, f"Ошибка генерации PDF: {e}")
+
+
+@router.get(
+    "/api/admin/receipts/{reading_id}/download",
+    summary="Скачать PDF квитанции (streaming, без S3)",
+)
+async def stream_admin_receipt(
+        reading_id: int,
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+):
+    """
+    Стримит PDF квитанции конкретного жильца напрямую через FastAPI с правильными
+    заголовками Content-Disposition.
+
+    Этот эндпоинт заменяет старый двухшаговый процесс (GET JSON с url → window.open),
+    в котором происходил редирект на portal.html при сбое S3/протухшем токене.
+    Вызывается фронтендом через api.download(...) — всё идёт одним авторизованным
+    запросом, без посредников.
+    """
+    if current_user.role not in ("accountant", "admin", "financier"):
+        raise HTTPException(status_code=403, detail="Доступ запрещен")
+
+    stmt = (
+        select(MeterReading)
+        .options(
+            selectinload(MeterReading.user).selectinload(User.room),
+            selectinload(MeterReading.period),
+        )
+        .where(MeterReading.id == reading_id)
+    )
+    reading = (await db.execute(stmt)).scalars().first()
+
+    if not reading or not reading.user or not reading.period or not reading.user.room:
+        raise HTTPException(404, "Данные не найдены или жилец не привязан к помещению")
+
+    user, room = reading.user, reading.user.room
+
+    tariff = (
+        await db.execute(select(Tariff).where(Tariff.id == (getattr(user, 'tariff_id', None) or 1)))
+    ).scalars().first()
+    if not tariff:
+        tariff = (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().first()
+        if not tariff:
+            raise HTTPException(404, "Активный тариф не найден")
+
+    prev = (await db.execute(
+        select(MeterReading).where(
+            MeterReading.room_id == room.id,
+            MeterReading.is_approved.is_(True),
+            MeterReading.created_at < reading.created_at,
+        ).order_by(MeterReading.created_at.desc()).limit(1)
+    )).scalars().first()
+
+    adjustments = (await db.execute(
+        select(Adjustment).where(
+            Adjustment.user_id == user.id,
+            Adjustment.period_id == reading.period_id,
+        )
+    )).scalars().all()
+
+    try:
+        pdf_path = await asyncio.to_thread(
+            generate_receipt_pdf,
+            user=user, room=room, reading=reading, period=reading.period,
+            tariff=tariff, prev_reading=prev, adjustments=adjustments, output_dir="/tmp",
+        )
+    except Exception as e:
+        logger.error(f"PDF generation failed for reading_id={reading_id}: {e}", exc_info=True)
+        raise HTTPException(500, "Ошибка генерации квитанции. Попробуйте позже.")
+
+    if not os.path.exists(pdf_path):
+        raise HTTPException(500, "Не удалось получить файл квитанции на сервере")
+
+    username_safe = (user.username.split("_deleted_")[0] if user.is_deleted else user.username)
+    username_safe = username_safe.replace(" ", "_")
+    room_label = (room.room_number or "room").replace(" ", "_")
+    period_label = (reading.period.name or "period").replace(" ", "_")
+    filename = f"Kvitanciya_{room_label}_{username_safe}_{period_label}.pdf"
+    encoded_filename = quote(filename)
+
+    return FileResponse(
+        path=pdf_path,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition":
+                f"attachment; filename*=utf-8''{encoded_filename}",
+            "Cache-Control": "no-store, must-revalidate",
+        },
+    )
 
 
 @router.get("/api/admin/export_report", summary="Скачать отчет Excel (XLSX)")

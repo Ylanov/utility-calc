@@ -150,9 +150,8 @@ async function downloadReceipt() {
     tg.showAlert('Генерация квитанции... Пожалуйста, подождите.');
 
     try {
-        // Делаем запрос напрямую через fetch, чтобы вытащить Blob (файл)
-        // Так как эндпоинт отдает редирект на S3, браузер скачает файл автоматически
-        const response = await fetch(`/api/client/receipts/${currentReadingId}`, {
+        // Используем /download endpoint — он стримит PDF напрямую (без S3-посредника).
+        const response = await fetch(`/api/client/receipts/${currentReadingId}/download`, {
             method: 'GET',
             headers: { 'Authorization': `Bearer ${jwtToken}` }
         });

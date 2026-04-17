@@ -402,14 +402,13 @@ export const SummaryModule = {
     },
 
     async downloadReceipt(id) {
+        // ИСПРАВЛЕНО: скачиваем PDF напрямую через авторизованный fetch (api.download).
+        // Раньше код получал JSON с url и делал window.open — это ломалось,
+        // когда presigned S3 URL указывал на внутренний docker-хост, или когда
+        // токен истекал между двумя запросами (что приводило к редиректу на portal.html).
         toast('Подготовка PDF...', 'info');
         try {
-            const res = await api.get(`/admin/receipts/${id}`);
-            if (res.url) {
-                window.open(res.url, '_blank');
-            } else {
-                throw new Error('Сервер не вернул ссылку на файл.');
-            }
+            await api.download(`/admin/receipts/${id}/download`, `Kvitanciya_${id}.pdf`);
         } catch (e) {
             toast('Ошибка скачивания: ' + e.message, 'error');
         }
