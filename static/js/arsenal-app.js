@@ -4,8 +4,19 @@
  */
 
 document.addEventListener('DOMContentLoaded', async () => {
-    // 1. Проверка прав (UI Role Management)
-    // Admin-only elements are hidden by default in HTML; reveal them only for admin
+    // 1. ПОЛУЧАЕМ АКТУАЛЬНУЮ РОЛЬ И ДАННЫЕ С СЕРВЕРА
+    const userRes = await apiFetch('/api/arsenal/me');
+    if (!userRes || !userRes.ok) return; // Токен недействителен - apiFetch сам сделает редирект
+
+    const userData = await userRes.json();
+    AppState.userRole = userData.role;
+
+    // Страхуем локальную сессию
+    sessionStorage.setItem('arsenal_role', userData.role);
+    sessionStorage.setItem('arsenal_username', userData.username);
+
+    // 2. Проверка прав (UI Role Management)
+    // Разблокируем админские кнопки, если сервер подтвердил права
     if (AppState.userRole === 'admin') {
         ['btnAddObject', 'menuNomenclature', 'menuUsers', 'btnImportExcel'].forEach(id => {
             const el = document.getElementById(id);
@@ -13,22 +24,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    // Показываем имя пользователя из сессии
+    // Показываем актуальное имя пользователя
     const usernameEl = document.getElementById('headerUsername');
     if (usernameEl) {
-        const username = sessionStorage.getItem('arsenal_username');
-        const role = AppState.userRole;
-        usernameEl.textContent = username || (role === 'admin' ? 'Администратор' : 'Пользователь');
+        usernameEl.textContent = userData.username || (userData.role === 'admin' ? 'Администратор' : 'Пользователь');
     }
 
-    // 2. Установка текущей даты
+    // 3. Установка текущей даты
     const dateInput = document.getElementById('newDocDate');
     if (dateInput) dateInput.valueAsDate = new Date();
 
-    // 3. Привязка всех событий
+    // 4. Привязка всех событий
     bindAppEvents();
 
-    // 4. Загрузка данных
+    // 5. Загрузка данных
     await Promise.all([
         Dictionaries.loadNomenclature(),
         Dictionaries.loadObjectsTree(),
@@ -39,7 +48,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     Documents.updateFormState();
     await Documents.loadList();
 
-    // Убираем сплэш после завершения инициализации
+    // Убираем сплэш загрузки только после полной готовности интерфейса
     const splash = document.getElementById('appSplash');
     if (splash) {
         splash.style.transition = 'opacity 0.3s ease';

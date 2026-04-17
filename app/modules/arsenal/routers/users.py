@@ -59,3 +59,18 @@ async def reset_user_password(
         "username": user.username,
         "new_password": new_password
     }
+
+@router.get("/me")
+async def get_current_user_info(
+        current_user: ArsenalUser = Depends(get_current_arsenal_user)
+):
+    """
+    Возвращает информацию о текущем авторизованном пользователе.
+    Используется фронтендом для надежного определения прав (Role-Based UI).
+    """
+    return {
+        "id": current_user.id,
+        "username": current_user.username,
+        "role": current_user.role,
+        "object_id": current_user.object_id
+    }

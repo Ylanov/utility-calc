@@ -6,9 +6,8 @@
 const AppState = {
     nomenclatures: [],
     objects: [],
-    // Читаем роль из sessionStorage (изолирован на вкладку)
-    // вместо localStorage (общий для всех вкладок)
-    userRole: sessionStorage.getItem('arsenal_role') || 'unit_head'
+    // Больше не доверяем кэшу, всегда ждем подтверждения с сервера
+    userRole: null
 };
 
 /**
