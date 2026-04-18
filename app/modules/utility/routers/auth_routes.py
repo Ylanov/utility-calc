@@ -1,9 +1,11 @@
 import base64
 import io
+import logging
 import pyotp
 import qrcode
 import random
 import string
+from datetime import datetime, timedelta
 from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.security import OAuth2PasswordRequestForm
@@ -24,6 +26,12 @@ from app.core.config import settings
 from app.modules.utility.schemas import TotpSetupResponse, TotpVerify
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+# Параметры защиты от brute-force
+MAX_FAILED_LOGINS = 3
+LOCK_DURATION_MINUTES = 15
+PRE_AUTH_TOKEN_EXPIRE_MINUTES = 5  # Короткий временный токен для ввода 2FA
 
 
 class PasswordResetRequest(BaseModel):
@@ -46,7 +54,23 @@ def set_auth_cookie(response: Response, token: str):
     )
 
 
-# --- 1. ЛОГИН (Без изменений) ---
+# =====================================================================
+# 1. ЛОГИН
+#
+# ИСПРАВЛЕНИЕ: здесь было сразу два критичных бага.
+#
+# (A) 2FA bypass: метод сразу выдавал scope="full" даже тем, у кого
+#     включена TOTP. Украденный пароль = полный доступ, 2FA была фикцией.
+# (B) Отсутствие account lockout: рейтлимитер 5 попыток/60 сек позволял
+#     перебирать пароль бесконечно (чередованием пауз).
+#
+# Теперь:
+# - Если у юзера заполнен totp_secret → выдаём временный pre-auth токен
+#   (живёт 5 минут, scope="pre-auth") и требуем /api/auth/verify-2fa.
+# - Неверный пароль увеличивает failed_login_count.
+# - После 3 неудач выставляется locked_until = now + 15 мин.
+# - Успешный вход сбрасывает счётчик.
+# =====================================================================
 @router.post(
     "/api/token",
     dependencies=[Depends(RateLimiter(times=5, seconds=60))]
@@ -64,15 +88,60 @@ async def login(
     )
     user = result.scalars().first()
 
+    # Проверяем блокировку ДО того как обрабатываем пароль —
+    # чтобы заблокированные попытки не приводили к лишнему хешу argon2.
+    now = datetime.utcnow()
+    if user and user.locked_until and user.locked_until > now:
+        remaining = int((user.locked_until - now).total_seconds() / 60) + 1
+        raise HTTPException(
+            status_code=423,
+            detail=f"Учётная запись временно заблокирована из-за нескольких неудачных попыток. "
+                   f"Повторите через {remaining} мин."
+        )
+
     if not user or not verify_password(form_data.password, user.hashed_password):
+        # Неверный пароль — инкрементируем счётчик.
+        if user is not None:
+            user.failed_login_count = (user.failed_login_count or 0) + 1
+            if user.failed_login_count >= MAX_FAILED_LOGINS:
+                user.locked_until = now + timedelta(minutes=LOCK_DURATION_MINUTES)
+                user.failed_login_count = 0  # обнуляем для следующей серии
+                logger.warning(
+                    "Account %s locked for %d min (brute-force protection)",
+                    user.username, LOCK_DURATION_MINUTES,
+                )
+            db.add(user)
+            await db.commit()
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
 
-    if not user.hashed_password.startswith("$argon2"):
-        new_hash = get_password_hash(form_data.password)
-        user.hashed_password = new_hash
-        db.add(user)
-        await db.commit()
+    # Пароль верен. Сбрасываем счётчик и блокировку.
+    user.failed_login_count = 0
+    user.locked_until = None
 
+    # Миграция старых паролей на argon2 (один раз за сессию).
+    if not user.hashed_password.startswith("$argon2"):
+        user.hashed_password = get_password_hash(form_data.password)
+
+    # =====================================================================
+    # 2FA PATH: у юзера включён TOTP — выдаём временный токен с pre-auth scope.
+    # Полный доступ юзер получит только после /api/auth/verify-2fa.
+    # =====================================================================
+    if user.totp_secret:
+        temp_token = create_access_token(
+            data={"sub": user.username, "scope": "pre-auth"},
+            expires_delta=timedelta(minutes=PRE_AUTH_TOKEN_EXPIRE_MINUTES),
+        )
+        await db.commit()
+        return {
+            "access_token": temp_token,
+            "requires_2fa": True,
+            "status": "requires_2fa",
+        }
+
+    # =====================================================================
+    # Обычный путь: 2FA не настроена — выдаём полный токен.
+    # =====================================================================
+    user.last_login_at = now
     access_token = create_access_token(
         data={"sub": user.username, "role": user.role, "scope": "full"}
     )
@@ -85,11 +154,22 @@ async def login(
     )
     await db.commit()
 
-    return {"access_token": access_token, "role": user.role, "status": "success"}
+    return {
+        "access_token": access_token,
+        "role": user.role,
+        "status": "success",
+        "requires_2fa": False,
+    }
 
 
-# --- 2. ПОДТВЕРЖДЕНИЕ ВХОДА 2FA (Без изменений) ---
-@router.post("/api/auth/verify-2fa")
+# --- 2. ПОДТВЕРЖДЕНИЕ ВХОДА 2FA ---
+# Вторая стадия логина: юзер показал пароль → получил pre-auth-токен →
+# теперь вводит 6-значный код из Яндекс.Ключа/Google Authenticator.
+# Только после этого получает полноценный access_token с scope="full".
+@router.post(
+    "/api/auth/verify-2fa",
+    dependencies=[Depends(RateLimiter(times=5, seconds=60))],
+)
 async def verify_2fa_login(
         response: Response,
         data: TotpVerify,
@@ -104,21 +184,51 @@ async def verify_2fa_login(
         if scope != "pre-auth":
             raise HTTPException(status_code=401, detail="Неверный тип токена")
     except JWTError:
-        raise HTTPException(status_code=401, detail="Токен истек или неверен")
+        raise HTTPException(status_code=401, detail="Временный токен истёк или некорректен")
 
     result = await db.execute(select(User).where(User.username == username))
     user = result.scalars().first()
     if not user or not user.totp_secret:
         raise HTTPException(status_code=400, detail="2FA не настроена или пользователь не найден")
 
+    # Блокировка от brute-force по TOTP-коду (помимо рейтлимитера).
+    now = datetime.utcnow()
+    if user.locked_until and user.locked_until > now:
+        remaining = int((user.locked_until - now).total_seconds() / 60) + 1
+        raise HTTPException(
+            status_code=423,
+            detail=f"Учётная запись заблокирована. Повторите через {remaining} мин."
+        )
+
     decrypted_secret = decrypt_totp_secret(user.totp_secret)
     totp = pyotp.TOTP(decrypted_secret)
     if not totp.verify(data.code, valid_window=1):
+        # Неверный код 2FA — такой же счётчик, как у пароля.
+        user.failed_login_count = (user.failed_login_count or 0) + 1
+        if user.failed_login_count >= MAX_FAILED_LOGINS:
+            user.locked_until = now + timedelta(minutes=LOCK_DURATION_MINUTES)
+            user.failed_login_count = 0
+            logger.warning("Account %s locked (2FA brute-force)", user.username)
+        db.add(user)
+        await db.commit()
         raise HTTPException(status_code=400, detail="Неверный код из приложения")
+
+    # Код верен — выдаём полный токен, сбрасываем счётчик, логируем вход.
+    user.failed_login_count = 0
+    user.locked_until = None
+    user.last_login_at = now
 
     access_token = create_access_token(data={"sub": user.username, "role": user.role, "scope": "full"})
     set_auth_cookie(response, access_token)
-    return {"status": "success", "role": user.role}
+
+    await write_audit_log(
+        db, user.id, user.username,
+        action="login", entity_type="system",
+        details={"role": user.role, "mfa": True}
+    )
+    await db.commit()
+
+    return {"access_token": access_token, "status": "success", "role": user.role}
 
 
 # --- 3. НАСТРОЙКА 2FA (Без изменений) ---
@@ -133,8 +243,14 @@ async def setup_2fa(current_user: User = Depends(get_current_user)):
     return {"secret": secret, "qr_code": qr_b64}
 
 
-# --- 4. АКТИВАЦИЯ 2FA (Без изменений) ---
-@router.post("/api/auth/activate-2fa")
+# --- 4. АКТИВАЦИЯ 2FA ---
+# RateLimiter защищает от brute-force ПЕРВОГО корректного кода во время
+# привязки 2FA (атакующий мог бы запустить перебор по свежему QR-секрету
+# жертвы при MITM-атаке).
+@router.post(
+    "/api/auth/activate-2fa",
+    dependencies=[Depends(RateLimiter(times=10, seconds=60))],
+)
 async def activate_2fa(
         data: TotpVerify,
         current_user: User = Depends(get_current_user),
@@ -157,8 +273,13 @@ async def logout(response: Response):
     return {"status": "success", "message": "Успешный выход"}
 
 
-# --- 6. СБРОС ПАРОЛЯ (КЛЮЧЕВЫЕ ИЗМЕНЕНИЯ) ---
-@router.post("/api/auth/reset-password")
+# --- 6. СБРОС ПАРОЛЯ ---
+# RateLimiter: 3 попытки в час с одного IP — защита от перебора
+# "контрольного вопроса" (площадь помещения).
+@router.post(
+    "/api/auth/reset-password",
+    dependencies=[Depends(RateLimiter(times=3, seconds=3600))],
+)
 async def reset_password(data: PasswordResetRequest, db: AsyncSession = Depends(get_db)):
     # ИЗМЕНЕНИЕ: Загружаем пользователя вместе с его комнатой
     result = await db.execute(

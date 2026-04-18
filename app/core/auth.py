@@ -70,12 +70,23 @@ class OAuth2PasswordBearerWithCookie(OAuth2PasswordBearer):
 oauth2_scheme = OAuth2PasswordBearerWithCookie(tokenUrl="/api/token")
 
 
-def create_access_token(data: dict) -> str:
+def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
+    """
+    Создаёт JWT-токен.
+
+    Аргументы:
+        data: payload (ожидается sub, role, scope).
+        expires_delta: если передан — переопределяет дефолтный срок жизни.
+            Нужно для pre-auth-токенов 2FA (короткие, ~5 минут).
+    """
     to_encode = data.copy()
 
-    expire = datetime.now(timezone.utc) + timedelta(
-        minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
-    )
+    if expires_delta is not None:
+        expire = datetime.now(timezone.utc) + expires_delta
+    else:
+        expire = datetime.now(timezone.utc) + timedelta(
+            minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
+        )
 
     to_encode.update({"exp": expire})
 
@@ -120,8 +131,16 @@ async def get_current_user(
         )
 
         username: Optional[str] = payload.get("sub")
+        token_role: Optional[str] = payload.get("role")
+        token_scope: Optional[str] = payload.get("scope", "full")
 
         if username is None:
+            raise credentials_exception
+
+        # pre-auth токены выдаются после ввода пароля, но ДО 2FA —
+        # они дают доступ только к /api/auth/verify-2fa. На все остальные
+        # защищённые endpoints они не должны работать.
+        if token_scope != "full":
             raise credentials_exception
 
     except JWTError:
@@ -139,6 +158,12 @@ async def get_current_user(
     user = result.scalars().first()
 
     if user is None:
+        raise credentials_exception
+
+    # Проверка, что роль в токене совпадает с ролью в БД.
+    # Если админу понизили права (admin → user), его старый токен с role="admin"
+    # до сих пор работал бы — теперь такой токен будет отклонён.
+    if token_role and token_role != user.role:
         raise credentials_exception
 
     return user

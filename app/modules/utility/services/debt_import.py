@@ -80,6 +80,10 @@ def sync_import_debts_process(file_path: str, db: Session, account_type: str) ->
     """
     Функция массового импорта долгов.
     Долг из 1С привязывается к КОМНАТЕ жильца. Долги соседей по комнате суммируются.
+
+    Важно: ВСЁ делается одной транзакцией. Если на 5000-й строке случится
+    ошибка — откатываются все 4999 предыдущих, файл не удаляется (пусть
+    админ исправит и перезапустит).
     """
     logger.info(f"Starting debts import from {file_path} for Account {account_type}")
 
@@ -88,7 +92,8 @@ def sync_import_debts_process(file_path: str, db: Session, account_type: str) ->
         worksheet = workbook.active
     except Exception as error:
         logger.exception("Failed to open Excel file")
-        return {"status": "error", "message": f"Ошибка чтения файла: {str(error)}"}
+        # Бросаем — Celery должен увидеть падение и ретраить.
+        raise RuntimeError(f"Ошибка чтения файла: {error}") from error
 
     try:
         active_period = db.execute(
@@ -238,14 +243,24 @@ def sync_import_debts_process(file_path: str, db: Session, account_type: str) ->
             db.bulk_update_mappings(MeterReading, updates_list)
 
         db.commit()
-        workbook.close()
 
         stats["not_found_users"] = list(set(stats["not_found_users"]))
         logger.info(
-            f"Import finished. Processed: {stats['processed']}, Updated: {stats['updated']}, Created: {stats['created']}")
+            "Import finished. Processed: %s, Updated: %s, Created: %s",
+            stats["processed"], stats["updated"], stats["created"],
+        )
         return stats
 
     except Exception as error:
+        # Полный откат: ни одна строка не должна остаться полузакоммиченной.
         db.rollback()
-        logger.exception("Import failed")
-        return {"status": "error", "message": f"Ошибка во время импорта: {str(error)}"}
+        logger.exception("Import failed — full rollback applied")
+        # Пробрасываем — Celery отправит в retry (см. retry_kwargs у задачи).
+        raise RuntimeError(f"Ошибка во время импорта: {error}") from error
+
+    finally:
+        # workbook.close() — даже при исключении. Иначе файл-дескриптор висит.
+        try:
+            workbook.close()
+        except Exception:
+            pass

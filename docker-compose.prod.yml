@@ -18,32 +18,144 @@ x-app-base: &app-base
     - utility_net
 
 services:
+  # =========================================================================
+  # Init-контейнер: прогоняет миграции и посев данных ДО старта web-воркеров.
+  # Раньше миграции выполнялись внутри web.command — 4 воркера стартовали
+  # параллельно и блокировали друг друга на alembic-lock (downtime 30+ сек).
+  # Теперь web дожидается завершения этого контейнера (service_completed_successfully).
+  # =========================================================================
+  migrate:
+    image: ghcr.io/Ylanov/utility-calc:latest
+    container_name: utility_calc_migrate
+    restart: "no"
+    env_file: ./.env
+    environment:
+      - DB_HOST=pgbouncer
+      - DB_PORT=5432
+    depends_on:
+      db:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_started
+    networks:
+      - utility_net
+    command: >
+      sh -c "
+      echo '---> Running Utility DB migrations...' && alembic upgrade head &&
+      echo '---> Running Arsenal/GSM DB migrations...' && alembic -c alembic_arsenal.ini upgrade head &&
+      echo '---> Seeding initial data...' && python -m app.core.initial_data &&
+      echo '---> Migrations complete'
+      "
+
   web:
     <<: *app-base
     container_name: utility_calc_web
     volumes:
       - shared_data:/app/static/generated_files
+    depends_on:
+      db:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_started
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+    # Gunicorn/Uvicorn конфигурация для 5-10к пользователей:
+    # -w: количество воркеров. По умолчанию 16 (cpu_count × 2 + 1 для 8 ядер);
+    #     можно переопределить через WEB_CONCURRENCY=N в .env.
+    # --timeout 120: дольше default-30s, чтобы PDF/Excel генерация успела.
+    # --graceful-timeout 60: даём активным запросам минуту на завершение при SIGTERM.
+    # --max-requests 10000 + jitter: периодический рестарт воркеров — лечит утечки памяти.
+    # --keep-alive 15: переиспользование TCP — меньше CPU на handshake.
     command: >
       sh -c "
-      sleep 5 &&
-      echo '---> Running Utility DB migrations...' && alembic upgrade head &&
-      echo '---> Running Arsenal/GSM DB migrations...' && alembic -c alembic_arsenal.ini upgrade head &&
-      echo '---> Seeding initial data...' && python -m app.core.initial_data &&
-      echo '---> Starting Gunicorn...' &&
-      gunicorn app.main:app -k uvicorn.workers.UvicornWorker -w $${WEB_CONCURRENCY:-4} -b 0.0.0.0:8000
+      echo '---> Starting Gunicorn (workers=$${WEB_CONCURRENCY:-16})...' &&
+      gunicorn app.main:app
+      -k uvicorn.workers.UvicornWorker
+      -w $${WEB_CONCURRENCY:-16}
+      -b 0.0.0.0:8000
+      --timeout 120
+      --graceful-timeout 60
+      --max-requests 10000
+      --max-requests-jitter 1000
+      --keep-alive 15
+      --access-logfile -
+      --error-logfile -
       "
+    # Healthcheck использует python вместо curl (curl не установлен в slim-образе).
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; r=urllib.request.urlopen('http://localhost:8000/health',timeout=3); sys.exit(0 if r.status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 1G
 
   worker_default:
     <<: *app-base
     container_name: utility_calc_worker_default
-    command: celery -A app.worker worker --loglevel=info --queues=default --hostname=default@%h --concurrency=$${CELERY_WORKER_CONCURRENCY:-4}
+    depends_on:
+      db:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_started
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+    command: >
+      celery -A app.worker worker
+      --loglevel=info
+      --queues=default
+      --hostname=default@%h
+      --concurrency=$${CELERY_WORKER_CONCURRENCY:-4}
+      --max-tasks-per-child=500
+      --time-limit=300
+      --soft-time-limit=240
+    deploy:
+      resources:
+        limits:
+          memory: 2G
 
   worker_heavy:
     <<: *app-base
     container_name: utility_calc_worker_heavy
     volumes:
       - shared_data:/app/static/generated_files
-    command: celery -A app.worker worker --loglevel=info --queues=heavy --hostname=heavy@%h --concurrency=2
+    depends_on:
+      db:
+        condition: service_healthy
+      pgbouncer:
+        condition: service_started
+      redis:
+        condition: service_started
+      minio:
+        condition: service_started
+      migrate:
+        condition: service_completed_successfully
+    command: >
+      celery -A app.worker worker
+      --loglevel=info
+      --queues=heavy
+      --hostname=heavy@%h
+      --concurrency=2
+      --max-tasks-per-child=100
+      --time-limit=1800
+      --soft-time-limit=1500
+    deploy:
+      resources:
+        limits:
+          memory: 3G
 
   watchtower:
     image: containrrr/watchtower
@@ -71,6 +183,10 @@ services:
       - minio_data:/data
     networks:
       - utility_net
+    deploy:
+      resources:
+        limits:
+          memory: 1G
 
   pgbouncer:
     image: edoburu/pgbouncer:latest
@@ -93,6 +209,10 @@ services:
       - db
     networks:
       - utility_net
+    deploy:
+      resources:
+        limits:
+          memory: 512M
 
   db:
     image: postgres:15-alpine
@@ -113,6 +233,10 @@ services:
       retries: 5
     networks:
       - utility_net
+    deploy:
+      resources:
+        limits:
+          memory: 4G
 
   redis:
     image: redis:7-alpine
@@ -123,9 +247,13 @@ services:
       - redis_data:/data
     networks:
       - utility_net
+    deploy:
+      resources:
+        limits:
+          memory: 768M
 
   nginx:
-     # ИСПОЛЬЗУЕМ ВАШ ЖЕ ОБРАЗ (он содержит папку static из Dockerfile)
+    # ИСПОЛЬЗУЕМ ВАШ ЖЕ ОБРАЗ (он содержит папку static из Dockerfile)
     image: ghcr.io/Ylanov/utility-calc:latest
     container_name: utility_calc_nginx
     restart: always
@@ -138,9 +266,14 @@ services:
       - ./static:/usr/share/nginx/html/static
       - shared_data:/usr/share/nginx/html/static/generated_files
     depends_on:
-      - web
+      web:
+        condition: service_healthy
     networks:
       - utility_net
+    deploy:
+      resources:
+        limits:
+          memory: 256M
 
   backup:
     image: postgres:15-alpine

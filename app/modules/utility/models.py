@@ -88,6 +88,13 @@ class User(Base):
     is_initial_setup_done = Column(Boolean, default=False)
     telegram_id = Column(String, unique=True, nullable=True, index=True)
 
+    # Brute-force защита. Инкрементируется при неверном пароле;
+    # при достижении порога (3) выставляется locked_until = now + 15 мин.
+    # Сбрасывается на 0 при успешном входе.
+    failed_login_count = Column(Integer, default=0, nullable=False)
+    locked_until = Column(DateTime, nullable=True)
+    last_login_at = Column(DateTime, nullable=True)
+
     # НОВОЕ: Отслеживание последнего изменения
     updated_at = Column(DateTime, nullable=True, onupdate=_utcnow)
 
@@ -185,6 +192,11 @@ class MeterReading(Base):
         Index("idx_reading_room_period", "room_id", "period_id"),
         Index("idx_reading_approved_period", "is_approved", "period_id"),
         Index("idx_reading_room_approved", "room_id", "is_approved"),
+        # Добавлено миграцией perf_001_scaling_indexes для масштаба 5-10к пользователей.
+        Index("idx_reading_user_approved", "user_id", "is_approved"),
+        Index("idx_reading_user_created", "user_id", "created_at"),
+        Index("idx_reading_period_approved_created",
+              "period_id", "is_approved", "created_at"),
         {
             "postgresql_partition_by": "RANGE (created_at)"
         }
@@ -299,4 +311,8 @@ class AuditLog(Base):
         Index("idx_audit_entity", "entity_type", "entity_id"),
         Index("idx_audit_action", "action"),
         Index("idx_audit_created", "created_at"),
+        # Добавлено миграцией perf_001_scaling_indexes: ускоряют фильтрацию
+        # журнала по action/entity с сортировкой по created_at (самый частый запрос).
+        Index("idx_audit_action_created", "action", "created_at"),
+        Index("idx_audit_entity_created", "entity_type", "created_at"),
     )

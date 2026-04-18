@@ -288,13 +288,22 @@ async def replace_meter(room_id: int, data: ReplaceMeterSchema, db: AsyncSession
 
         costs = calculate_utilities(user, room, t, d_hot, d_cold, d_hot + d_cold, elect_share)
 
-        # Запись 1: Закрытие старого счетчика (с начислением суммы)
+        # Запись 1: Закрытие старого счетчика (с начислением суммы).
+        #
+        # ВАЖНО: переносим непогашенный долг (debt_209/205) и переплаты
+        # (overpayment_209/205) из предыдущего утверждённого показания.
+        # Раньше они обнулялись — жилец видел, что "долг исчез", но в БД
+        # он висел на закрытом показании и при следующем расчёте не учитывался.
         closing_reading = MeterReading(
             user_id=user.id, room_id=room.id, period_id=active_period.id,
             hot_water=c_hot, cold_water=c_cold, electricity=c_elect,
             is_approved=True, anomaly_flags="METER_CLOSED", anomaly_score=0,
             total_209=costs['total_cost'] - costs['cost_social_rent'],
-            total_205=costs['cost_social_rent'], total_cost=costs['total_cost']
+            total_205=costs['cost_social_rent'], total_cost=costs['total_cost'],
+            debt_209=(prev_reading.debt_209 if prev_reading else ZERO) or ZERO,
+            overpayment_209=(prev_reading.overpayment_209 if prev_reading else ZERO) or ZERO,
+            debt_205=(prev_reading.debt_205 if prev_reading else ZERO) or ZERO,
+            overpayment_205=(prev_reading.overpayment_205 if prev_reading else ZERO) or ZERO,
         )
         for k, v in costs.items(): setattr(closing_reading, k, v)
         db.add(closing_reading)

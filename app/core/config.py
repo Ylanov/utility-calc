@@ -24,17 +24,24 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: Optional[str] = None
 
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
+    # Раньше было 1440 минут (24 часа) — украденный токен работал сутки.
+    # Снизили до 2 часов. Для мобильного клиента этого достаточно: он всё
+    # равно каждые ~10 минут обращается к /api/readings/state и при 401
+    # редиректит на логин.
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 120
 
     REDIS_URL: str = "redis://redis:6379/0"
 
     ENVIRONMENT: Literal["development", "staging", "production"] = "development"
     DEBUG: bool = False
 
-    # Настройки пула SQLAlchemy
-    # При использовании PgBouncer можно уменьшить, так как пулингом занимается PgBouncer.
-    DB_POOL_SIZE: int = 10
-    DB_MAX_OVERFLOW: int = 5
+    # Настройки пула SQLAlchemy.
+    # При использовании PgBouncer значения можно уменьшить — пулингом занимается PgBouncer,
+    # SQLAlchemy работает через NullPool. Без PgBouncer эти значения применяются напрямую.
+    # При 5-10к активных пользователей и пике подачи показаний 20-25 числа значения
+    # ниже 30/20 приводили к "QueuePool limit of size X overflow Y reached" и 500-ошибкам.
+    DB_POOL_SIZE: int = 30
+    DB_MAX_OVERFLOW: int = 20
     DB_POOL_TIMEOUT: int = 30
     DB_POOL_RECYCLE: int = 1800
 
@@ -124,10 +131,48 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# Проверки для production
+# =====================================================================
+# ВАЛИДАЦИЯ НА СТАРТЕ (production)
+#
+# Раньше значения ENCRYPTION_KEY, S3_ACCESS_KEY, S3_SECRET_KEY имели default'ы
+# прямо в коде ("gR8g_...", "minioadmin"). Если админ забывал переопределить
+# их в .env — production поднимался со встроенными значениями, и любой,
+# кто видел исходный код репозитория, мог расшифровать все TOTP-секреты
+# и логиниться в MinIO.
+#
+# Теперь приложение отказывается стартовать в production, если ключевые
+# секреты совпадают со значениями по умолчанию.
+# =====================================================================
+_DEFAULT_ENCRYPTION_KEY = "gR8g_2t9R2YwO9yZ0qEa7L_M4-c8Kx2mJ1rYvW4PZ7o="
+_DEFAULT_S3_ACCESS = "minioadmin"
+_DEFAULT_S3_SECRET = "minioadmin"
+
 if settings.ENVIRONMENT == "production":
     if not settings.SECRET_KEY or len(settings.SECRET_KEY) < 32:
-        raise RuntimeError("В production требуется безопасный SECRET_KEY (не менее 32 символов)")
+        raise RuntimeError(
+            "В production требуется безопасный SECRET_KEY (не менее 32 символов)"
+        )
 
     if not settings.ENCRYPTION_KEY:
         raise RuntimeError("В production требуется ENCRYPTION_KEY.")
+
+    if settings.ENCRYPTION_KEY == _DEFAULT_ENCRYPTION_KEY:
+        raise RuntimeError(
+            "В production ENCRYPTION_KEY не должен равняться значению по умолчанию. "
+            "Сгенерируйте новый: `python -c 'from cryptography.fernet import Fernet;"
+            " print(Fernet.generate_key().decode())'`"
+        )
+
+    if (
+        settings.S3_ACCESS_KEY == _DEFAULT_S3_ACCESS
+        or settings.S3_SECRET_KEY == _DEFAULT_S3_SECRET
+    ):
+        raise RuntimeError(
+            "В production S3_ACCESS_KEY/S3_SECRET_KEY не должны равняться 'minioadmin'. "
+            "Задайте уникальные значения в .env."
+        )
+
+    if not settings.DB_PASS or settings.DB_PASS == "postgres":
+        raise RuntimeError(
+            "В production DB_PASS не может быть пустым или 'postgres'."
+        )

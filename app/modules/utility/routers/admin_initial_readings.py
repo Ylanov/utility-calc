@@ -185,39 +185,88 @@ async def import_initial_readings(
 
     ws = wb.active
 
-    # Загружаем все комнаты в память для быстрого поиска
-    rooms_result = await db.execute(select(Room))
-    rooms_map = {
-        f"{r.dormitory_name}_{r.room_number}": r
-        for r in rooms_result.scalars().all()
-    }
+    # ============================================================
+    # Шаг 1: Сначала пробегаем по Excel и собираем все уникальные
+    # (dormitory, room_number) — это позволит одним запросом достать
+    # только нужные комнаты, не загружая всю таблицу (~10к записей) в RAM.
+    # ============================================================
+    raw_rows = []
+    room_keys = set()
+    for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+        if not row or not any(row):
+            continue
+        dormitory = str(row[0]).strip() if row[0] else None
+        room_number = str(row[1]).strip() if len(row) > 1 and row[1] else None
+        if dormitory and room_number:
+            room_keys.add((dormitory, room_number))
+        raw_rows.append((row_idx, row, dormitory, room_number))
+
+    # ============================================================
+    # Шаг 2: batch-запрос только тех комнат, что есть в файле.
+    # WHERE (dormitory_name, room_number) IN (...) — один проход по индексу.
+    # ============================================================
+    rooms_map: dict[tuple[str, str], Room] = {}
+    if room_keys:
+        rooms_list = list(room_keys)
+        # tuple_() для PostgreSQL IN по составному ключу
+        from sqlalchemy import tuple_ as _tuple
+        query = select(Room).where(
+            _tuple(Room.dormitory_name, Room.room_number).in_(rooms_list)
+        )
+        rooms_result = await db.execute(query)
+        for r in rooms_result.scalars():
+            rooms_map[(r.dormitory_name, r.room_number)] = r
+
+    # ============================================================
+    # Шаг 3: batch-запрос существующих INITIAL_SETUP readings
+    # для всех комнат сразу — один запрос вместо N.
+    # ============================================================
+    existing_readings: dict[int, MeterReading] = {}
+    room_ids = [r.id for r in rooms_map.values()]
+    if room_ids:
+        existing_result = await db.execute(
+            select(MeterReading).where(
+                MeterReading.room_id.in_(room_ids),
+                MeterReading.anomaly_flags == "INITIAL_SETUP"
+            )
+        )
+        for mr in existing_result.scalars():
+            existing_readings[mr.room_id] = mr
+
+    # ============================================================
+    # Шаг 4: batch-запрос первого юзера для каждой комнаты.
+    # DISTINCT ON: первый не-удалённый юзер на комнату.
+    # ============================================================
+    users_map: dict[int, int] = {}  # room_id -> user_id
+    if room_ids:
+        users_result = await db.execute(
+            select(User.id, User.room_id)
+            .where(User.room_id.in_(room_ids), User.is_deleted.is_(False))
+            .order_by(User.room_id, User.id)
+        )
+        for uid, rid in users_result.all():
+            users_map.setdefault(rid, uid)
 
     updated = 0
     skipped = 0
     errors = []
 
-    for row_idx, row in enumerate(ws.iter_rows(min_row=2, values_only=True), start=2):
+    # ============================================================
+    # Шаг 5: основной проход без БД-запросов — только ORM-операции.
+    # ============================================================
+    for row_idx, row, dormitory, room_number in raw_rows:
         try:
-            if not row or not any(row):
-                continue
-
-            dormitory = str(row[0]).strip() if row[0] else None
-            room_number = str(row[1]).strip() if len(row) > 1 and row[1] else None
-
             if not dormitory or not room_number:
                 errors.append(f"Строка {row_idx}: не указано общежитие или номер комнаты")
                 skipped += 1
                 continue
 
-            room_key = f"{dormitory}_{room_number}"
-            room = rooms_map.get(room_key)
-
+            room = rooms_map.get((dormitory, room_number))
             if not room:
                 errors.append(f"Строка {row_idx}: комната '{dormitory}, {room_number}' не найдена в базе")
                 skipped += 1
                 continue
 
-            # Читаем показания
             hot = Decimal(str(row[2]).replace(',', '.')) if len(row) > 2 and row[2] else ZERO
             cold = Decimal(str(row[3]).replace(',', '.')) if len(row) > 3 and row[3] else ZERO
             elect = Decimal(str(row[4]).replace(',', '.')) if len(row) > 4 and row[4] else ZERO
@@ -227,26 +276,16 @@ async def import_initial_readings(
                 skipped += 1
                 continue
 
-            # Ищем существующую начальную запись
-            existing = (await db.execute(
-                select(MeterReading).where(
-                    MeterReading.room_id == room.id,
-                    MeterReading.anomaly_flags == "INITIAL_SETUP"
-                )
-            )).scalars().first()
-
+            existing = existing_readings.get(room.id)
             if existing:
                 existing.hot_water = hot
                 existing.cold_water = cold
                 existing.electricity = elect
             else:
-                user_result = await db.execute(
-                    select(User.id).where(User.room_id == room.id, User.is_deleted.is_(False)).limit(1)
-                )
-                user_id = user_result.scalar_one_or_none()
-
                 db.add(MeterReading(
-                    room_id=room.id, user_id=user_id, period_id=None,
+                    room_id=room.id,
+                    user_id=users_map.get(room.id),
+                    period_id=None,
                     hot_water=hot, cold_water=cold, electricity=elect,
                     is_approved=True, anomaly_flags="INITIAL_SETUP", anomaly_score=0,
                     total_cost=ZERO, total_209=ZERO, total_205=ZERO,

@@ -169,17 +169,29 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
 
 
 async def approve_single(db: AsyncSession, reading_id: int, correction_data: ApproveRequest, current_user=None):
-    """Ручное утверждение бухгалтером с возможными корректировками объема."""
+    """Ручное утверждение бухгалтером с возможными корректировками объема.
+
+    ИСПРАВЛЕНИЕ: при одновременном approve двумя админами одного reading_id
+    раньше не было блокировки — оба успевали пройти проверку `is_approved=False`
+    и сделать commit. В итоге финансовая сумма записывалась дважды, пуш-уведомление
+    уходило дважды, а в журнал шли два события approve.
+
+    SELECT ... FOR UPDATE заставляет второго админа ждать первого;
+    когда он получит контроль, проверка `if reading.is_approved` уже сработает
+    и второе утверждение будет отклонено с 409.
+    """
     reading = (await db.execute(
         select(MeterReading)
         .options(selectinload(MeterReading.user).selectinload(User.room))
         .where(MeterReading.id == reading_id)
+        .with_for_update()
     )).scalars().first()
 
     if not reading:
         raise HTTPException(status_code=404, detail="Показания не найдены")
     if reading.is_approved:
-        raise HTTPException(status_code=400, detail="Уже утверждены")
+        # 409 Conflict точнее отражает «уже утверждено другим админом».
+        raise HTTPException(status_code=409, detail="Показание уже утверждено другим администратором")
 
     user = reading.user
     room = user.room

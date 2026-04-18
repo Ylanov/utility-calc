@@ -64,13 +64,16 @@ async def create_adjustment(
         )
         db.add(adj)
 
-        # 4. Обновляем черновик показания если он уже есть — пересчитываем итог
+        # 4. Обновляем черновик показания если он уже есть — пересчитываем итог.
+        # FOR UPDATE защищает от lost update: если два финансиста одновременно
+        # создают корректировки для одного жильца, второй дождётся первого
+        # и получит уже обновлённый total_209/total_205.
         draft = (await db.execute(
             select(MeterReading).where(
                 MeterReading.room_id == target_user.room_id,
                 MeterReading.period_id == active_period.id,
                 MeterReading.is_approved.is_(False)
-            )
+            ).with_for_update()
         )).scalars().first()
 
         if draft:

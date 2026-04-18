@@ -222,14 +222,23 @@ export const HousingModule = {
     async loadDormitories() {
         try {
             const dorms = await api.get('/rooms/dormitories');
-            let filterHtml = '<option value="">Все объекты</option>';
-            let datalistHtml = '';
+            // ИСПРАВЛЕНО: XSS через название общежития.
+            // Раньше подстановка `${d}` в innerHTML была уязвима: если в БД
+            // попадёт общежитие с HTML-тегами, любой админ схлопнёт на onerror.
+            // Заменили на DOM-конструирование через createElement — браузер
+            // сам экранирует текст через textContent.
+            const sel = this.dom.dormFilterSelect;
+            sel.innerHTML = '';
+            sel.appendChild(new Option('Все объекты', ''));
+            dorms.forEach(d => sel.appendChild(new Option(String(d), String(d))));
+
+            const list = this.dom.dormList;
+            list.innerHTML = '';
             dorms.forEach(d => {
-                filterHtml += `<option value="${d}">${d}</option>`;
-                datalistHtml += `<option value="${d}">`;
+                const opt = document.createElement('option');
+                opt.value = String(d);
+                list.appendChild(opt);
             });
-            this.dom.dormFilterSelect.innerHTML = filterHtml;
-            this.dom.dormList.innerHTML = datalistHtml;
         } catch (e) {
             toast('Ошибка загрузки списка общежитий', 'error');
         }

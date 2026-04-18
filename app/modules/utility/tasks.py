@@ -27,7 +27,34 @@ logger = logging.getLogger(__name__)
 
 
 def get_sync_db():
+    # Сохранён для обратной совместимости. В новом коде используй sync_db_session().
     return SessionLocalSync()
+
+
+from contextlib import contextmanager
+
+
+@contextmanager
+def sync_db_session():
+    """
+    Контекст-менеджер для sync-сессии внутри Celery-задач.
+
+    Гарантирует:
+    - rollback при любом исключении (SQLAlchemy session leak не возникнет);
+    - close в finally (возврат соединения в пул/закрытие).
+
+    Раньше в задачах был паттерн `db = None; try: db = get_sync_db(); ...`
+    — при redeploy или неожиданном исключении в get_sync_db() сессия не
+    закрывалась, и через 2-3 часа пиковой нагрузки pool исчерпывался.
+    """
+    session = SessionLocalSync()
+    try:
+        yield session
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 @celery.task(
@@ -42,66 +69,67 @@ def generate_receipt_task(reading_id: int) -> dict:
     Используется администратором при ручном запросе конкретной квитанции.
     """
     logger.info(f"[PDF] Start generation reading_id={reading_id}")
-    db = None
     try:
-        db = get_sync_db()
-        reading = (
-            db.query(MeterReading)
-            .options(
-                selectinload(MeterReading.user).selectinload(User.room),
-                selectinload(MeterReading.period)
+        with sync_db_session() as db:
+            reading = (
+                db.query(MeterReading)
+                .options(
+                    selectinload(MeterReading.user).selectinload(User.room),
+                    selectinload(MeterReading.period)
+                )
+                .filter(MeterReading.id == reading_id)
+                .first()
             )
-            .filter(MeterReading.id == reading_id)
-            .first()
-        )
-        if not reading or not reading.user or not reading.period or not reading.user.room:
-            raise ValueError("Incomplete data: reading, user, room, or period is missing.")
+            if not reading or not reading.user or not reading.period or not reading.user.room:
+                raise ValueError("Incomplete data: reading, user, room, or period is missing.")
 
-        user = reading.user
-        room = user.room
-        period = reading.period
+            user = reading.user
+            room = user.room
+            period = reading.period
 
-        user_tariff_id = getattr(user, 'tariff_id', None)
-        tariff = None
-        if user_tariff_id:
-            tariff = db.query(Tariff).filter(Tariff.id == user_tariff_id).first()
-        if not tariff:
-            tariff = db.query(Tariff).filter(Tariff.is_active).order_by(Tariff.id).first()
-        if not tariff:
-            raise ValueError("No active tariffs found in the system for receipt generation.")
+            user_tariff_id = getattr(user, 'tariff_id', None)
+            tariff = None
+            if user_tariff_id:
+                tariff = db.query(Tariff).filter(Tariff.id == user_tariff_id).first()
+            if not tariff:
+                tariff = db.query(Tariff).filter(Tariff.is_active).order_by(Tariff.id).first()
+            if not tariff:
+                raise ValueError("No active tariffs found in the system for receipt generation.")
 
-        prev_reading = (
-            db.query(MeterReading)
-            .filter(
-                MeterReading.room_id == room.id,
-                MeterReading.is_approved.is_(True),
-                MeterReading.created_at < reading.created_at
+            prev_reading = (
+                db.query(MeterReading)
+                .filter(
+                    MeterReading.room_id == room.id,
+                    MeterReading.is_approved.is_(True),
+                    MeterReading.created_at < reading.created_at
+                )
+                .order_by(MeterReading.created_at.desc())
+                .first()
             )
-            .order_by(MeterReading.created_at.desc())
-            .first()
-        )
 
-        adjustments = (
-            db.query(Adjustment)
-            .filter(
-                Adjustment.user_id == user.id,
-                Adjustment.period_id == period.id
+            adjustments = (
+                db.query(Adjustment)
+                .filter(
+                    Adjustment.user_id == user.id,
+                    Adjustment.period_id == period.id
+                )
+                .all()
             )
-            .all()
-        )
 
-        temp_dir = "/tmp"
-        final_path = generate_receipt_pdf(
-            user=user,
-            room=room,
-            reading=reading,
-            period=period,
-            tariff=tariff,
-            prev_reading=prev_reading,
-            adjustments=adjustments,
-            output_dir=temp_dir
-        )
+            temp_dir = "/tmp"
+            final_path = generate_receipt_pdf(
+                user=user,
+                room=room,
+                reading=reading,
+                period=period,
+                tariff=tariff,
+                prev_reading=prev_reading,
+                adjustments=adjustments,
+                output_dir=temp_dir
+            )
 
+        # S3-upload делаем ВНЕ транзакции — чтобы не держать соединение
+        # с БД во время сетевого I/O.
         filename = os.path.basename(final_path)
         object_name = f"receipts/{period.id}/{filename}"
 
@@ -111,7 +139,6 @@ def generate_receipt_task(reading_id: int) -> dict:
             url = s3_service.get_presigned_url(object_name, expiration=600)
             return {"status": "ok", "s3_key": object_name, "download_url": url, "filename": filename}
         else:
-            # S3 недоступен — перекладываем файл в статику, отдаём прямую ссылку
             logger.warning(f"[PDF] S3 unavailable, falling back to static dir for reading_id={reading_id}")
             static_dir = "/app/static/generated_files"
             os.makedirs(static_dir, exist_ok=True)
@@ -120,14 +147,9 @@ def generate_receipt_task(reading_id: int) -> dict:
             local_url = f"/generated_files/{filename}"
             return {"status": "ok", "s3_key": None, "download_url": local_url, "filename": filename}
 
-    except Exception as error:
+    except Exception:
         logger.exception(f"[PDF] Generation failed for reading_id={reading_id}")
-        if db:
-            db.rollback()
         raise
-    finally:
-        if db:
-            db.close()
 
 
 @celery.task(name="start_bulk_receipt_generation", queue="heavy")
@@ -137,9 +159,8 @@ def start_bulk_receipt_generation(period_id: int):
     отправляет в S3 одним файлом. Решает проблему DDoS базы, Redis и S3.
     """
     logger.info(f"[ZIP] Start bulk generation period={period_id}")
-    db = None
     try:
-        db = get_sync_db()
+      with sync_db_session() as db:
         period = db.query(BillingPeriod).filter(BillingPeriod.id == period_id).first()
         if not period:
             return {"status": "error", "message": "Период не найден"}
@@ -232,12 +253,7 @@ def start_bulk_receipt_generation(period_id: int):
 
     except Exception as error:
         logger.exception("[ZIP] Generation failed")
-        if db:
-            db.rollback()
         return {"status": "error", "message": str(error)}
-    finally:
-        if db:
-            db.close()
 
 
 @celery.task(
@@ -247,26 +263,29 @@ def start_bulk_receipt_generation(period_id: int):
     retry_backoff=True
 )
 def import_debts_task(file_path: str, account_type: str) -> dict:
-    """Фоновая задача импорта долгов."""
+    """Фоновая задача импорта долгов.
+
+    Транзакционность: sync_import_debts_process делает ОДИН commit в конце
+    и полный rollback при любом исключении. Тасак ретраится до 2 раз
+    (см. retry_kwargs) — временные сбои БД/Redis не приведут к частичному
+    импорту.
+
+    Файл удаляется ТОЛЬКО при успешном завершении. Если задача падает и
+    будет ретрайнутся — файл остаётся на диске, чтобы ретрай мог его снова
+    прочитать. Если все ретраи исчерпаны — файл остаётся (админ увидит
+    ошибку и загрузит заново).
+    """
     logger.info(f"[IMPORT] Start {file_path} for Account {account_type}")
-    db = None
-    try:
-        db = get_sync_db()
+    with sync_db_session() as db:
         result = sync_import_debts_process(file_path, db, account_type)
-        return result
-    except Exception:
-        logger.exception("[IMPORT] Failed")
-        if db:
-            db.rollback()
-        raise
-    finally:
-        try:
-            if os.path.exists(file_path):
-                os.remove(file_path)
-        except Exception as error:
-            logger.warning(f"[IMPORT] File cleanup failed: {error}")
-        if db:
-            db.close()
+
+    # Сюда доходим только при успехе (ошибка пробрасывается из with).
+    try:
+        if os.path.exists(file_path):
+            os.remove(file_path)
+    except Exception as error:
+        logger.warning(f"[IMPORT] File cleanup failed: {error}")
+    return result
 
 
 async def run_async_close_period(admin_user_id: int):
@@ -327,49 +346,43 @@ def close_period_task(admin_user_id: int):
 def check_auto_period_task():
     """Ежедневная задача (Beat): автоматическое управление периодами."""
     logger.info("[AUTO] Checking period automation...")
-    db = None
     try:
-        db = get_sync_db()
-        start_setting = db.query(SystemSetting).filter_by(key="submission_start_day").first()
-        end_setting = db.query(SystemSetting).filter_by(key="submission_end_day").first()
-        start_day = int(start_setting.value) if start_setting else 20
-        end_day = int(end_setting.value) if end_setting else 25
-        today = datetime.now()
-        current_day = today.day
-        active = db.query(BillingPeriod).filter_by(is_active=True).first()
+        with sync_db_session() as db:
+            start_setting = db.query(SystemSetting).filter_by(key="submission_start_day").first()
+            end_setting = db.query(SystemSetting).filter_by(key="submission_end_day").first()
+            start_day = int(start_setting.value) if start_setting else 20
+            end_day = int(end_setting.value) if end_setting else 25
+            today = datetime.now()
+            current_day = today.day
+            active = db.query(BillingPeriod).filter_by(is_active=True).first()
 
-        if start_day <= current_day <= end_day:
-            if not active:
-                month_names = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь",
-                               "Октябрь", "Ноябрь", "Декабрь"]
-                period_name = f"{month_names[today.month]} {today.year}"
-                exists = db.query(BillingPeriod).filter_by(name=period_name).first()
-                if not exists:
-                    new_period = BillingPeriod(name=period_name, is_active=True)
-                    db.add(new_period)
-                    db.commit()
-                    logger.info(f"[AUTO] Opened new period: {period_name}")
-        elif active:
-            is_after_end = current_day > end_day
-            is_new_month = current_day < start_day
-            if is_after_end or is_new_month:
-                redis_client = Redis.from_url(settings.REDIS_URL)
-                lock_key = "lock:close_period"
-                lock_acquired = redis_client.set(lock_key, "1", nx=True, ex=1800)
-                if lock_acquired:
-                    admin = db.query(User).filter_by(username="admin").first()
-                    if admin:
-                        close_period_task.delay(admin.id)
-                        logger.info(f"[AUTO] Triggered closing task for period '{active.name}'")
-                else:
-                    logger.info("[AUTO] Close already running, skip duplicate")
+            if start_day <= current_day <= end_day:
+                if not active:
+                    month_names = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь",
+                                   "Октябрь", "Ноябрь", "Декабрь"]
+                    period_name = f"{month_names[today.month]} {today.year}"
+                    exists = db.query(BillingPeriod).filter_by(name=period_name).first()
+                    if not exists:
+                        new_period = BillingPeriod(name=period_name, is_active=True)
+                        db.add(new_period)
+                        db.commit()
+                        logger.info(f"[AUTO] Opened new period: {period_name}")
+            elif active:
+                is_after_end = current_day > end_day
+                is_new_month = current_day < start_day
+                if is_after_end or is_new_month:
+                    redis_client = Redis.from_url(settings.REDIS_URL)
+                    lock_key = "lock:close_period"
+                    lock_acquired = redis_client.set(lock_key, "1", nx=True, ex=1800)
+                    if lock_acquired:
+                        admin = db.query(User).filter_by(username="admin").first()
+                        if admin:
+                            close_period_task.delay(admin.id)
+                            logger.info(f"[AUTO] Triggered closing task for period '{active.name}'")
+                    else:
+                        logger.info("[AUTO] Close already running, skip duplicate")
     except Exception:
         logger.exception("[AUTO] Automation failed")
-        if db:
-            db.rollback()
-    finally:
-        if db:
-            db.close()
 
 
 @celery.task(name="activate_scheduled_tariffs_task", queue="default")
@@ -379,37 +392,33 @@ def activate_scheduled_tariffs_task():
     Находит тарифы с effective_from <= сейчас и is_active=False → устанавливает is_active=True.
     """
     logger.info("[TARIFF] Checking scheduled tariffs for activation...")
-    db = None
     try:
-        db = get_sync_db()
-        from app.modules.utility.models import Tariff
-        now = datetime.now(timezone.utc).replace(tzinfo=None)
-        tariffs_to_activate = db.query(Tariff).filter(
-            Tariff.effective_from.is_not(None),
-            Tariff.effective_from <= now,
-            Tariff.is_active.is_(False)
-        ).all()
+        with sync_db_session() as db:
+            from app.modules.utility.models import Tariff
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            tariffs_to_activate = db.query(Tariff).filter(
+                Tariff.effective_from.is_not(None),
+                Tariff.effective_from <= now,
+                Tariff.is_active.is_(False)
+            ).all()
 
-        if not tariffs_to_activate:
-            logger.info("[TARIFF] No scheduled tariffs to activate.")
-            return {"activated": 0}
+            if not tariffs_to_activate:
+                logger.info("[TARIFF] No scheduled tariffs to activate.")
+                return {"activated": 0}
 
-        for t in tariffs_to_activate:
-            t.is_active = True
-            logger.info(f"[TARIFF] Activated tariff '{t.name}' (id={t.id}), effective_from={t.effective_from}")
+            activated_ids = []
+            for t in tariffs_to_activate:
+                t.is_active = True
+                activated_ids.append(t.id)
+                logger.info(f"[TARIFF] Activated tariff '{t.name}' (id={t.id}), effective_from={t.effective_from}")
 
-        db.commit()
-        logger.info(f"[TARIFF] Activated {len(tariffs_to_activate)} tariff(s).")
-        return {"activated": len(tariffs_to_activate), "ids": [t.id for t in tariffs_to_activate]}
+            db.commit()
+            logger.info(f"[TARIFF] Activated {len(activated_ids)} tariff(s).")
+            return {"activated": len(activated_ids), "ids": activated_ids}
 
     except Exception:
         logger.exception("[TARIFF] activate_scheduled_tariffs_task failed")
-        if db:
-            db.rollback()
         return {"activated": 0, "error": "task failed"}
-    finally:
-        if db:
-            db.close()
 
 
 @celery.task(name="detect_anomalies_task", queue="default")
@@ -418,31 +427,25 @@ def detect_anomalies_task(reading_id: int):
     Анализ аномалий для одного показания.
     Безопасное управление DB-сессиями.
     """
-    db = None
     try:
-        db = get_sync_db()
-        reading = db.query(MeterReading).options(
-            selectinload(MeterReading.user).selectinload(User.room)
-        ).filter(MeterReading.id == reading_id).first()
+        with sync_db_session() as db:
+            reading = db.query(MeterReading).options(
+                selectinload(MeterReading.user).selectinload(User.room)
+            ).filter(MeterReading.id == reading_id).first()
 
-        if not reading or reading.is_approved or not reading.room_id:
-            return
+            if not reading or reading.is_approved or not reading.room_id:
+                return
 
-        history = db.query(MeterReading).filter(
-            MeterReading.room_id == reading.room_id,
-            MeterReading.is_approved.is_(True)
-        ).order_by(MeterReading.created_at.desc()).limit(6).all()
+            history = db.query(MeterReading).filter(
+                MeterReading.room_id == reading.room_id,
+                MeterReading.is_approved.is_(True)
+            ).order_by(MeterReading.created_at.desc()).limit(6).all()
 
-        from app.modules.utility.services.anomaly_detector import check_reading_for_anomalies_v2
-        flags, score = check_reading_for_anomalies_v2(reading, history, user=reading.user)
+            from app.modules.utility.services.anomaly_detector import check_reading_for_anomalies_v2
+            flags, score = check_reading_for_anomalies_v2(reading, history, user=reading.user)
 
-        reading.anomaly_flags = flags if flags else None
-        reading.anomaly_score = score
-        db.commit()
+            reading.anomaly_flags = flags if flags else None
+            reading.anomaly_score = score
+            db.commit()
     except Exception as e:
         logger.exception(f"Anomaly detection failed for reading_id={reading_id}: {e}")
-        if db:
-            db.rollback()
-    finally:
-        if db:
-            db.close()
