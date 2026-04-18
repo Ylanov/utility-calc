@@ -5,6 +5,7 @@ import zipfile
 import logging
 import tempfile
 import asyncio
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
@@ -29,9 +30,6 @@ logger = logging.getLogger(__name__)
 def get_sync_db():
     # Сохранён для обратной совместимости. В новом коде используй sync_db_session().
     return SessionLocalSync()
-
-
-from contextlib import contextmanager
 
 
 @contextmanager
