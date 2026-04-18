@@ -230,9 +230,11 @@ function handleRoute() {
     // Дашборд — первое что видит администратор при входе: KPI, метрики, журнал.
     const defaultTab = 'dashboard';
 
-    // ИСПРАВЛЕНИЕ: dashboard добавлен в список валидных вкладок.
-    const validTabs = ['dashboard', 'readings', 'housing', 'users', 'tariffs', 'accountant', 'debts', 'manual'];
-    const tabToLoad = validTabs.includes(hash) ? hash : defaultTab;
+    // Дашборд теперь объединён со сверкой показаний — старые ссылки вида
+    // #readings перенаправляем на #dashboard для обратной совместимости.
+    const validTabs = ['dashboard', 'housing', 'users', 'tariffs', 'accountant', 'debts', 'manual'];
+    let tabToLoad = validTabs.includes(hash) ? hash : defaultTab;
+    if (hash === 'readings') tabToLoad = 'dashboard';
 
     switchTab(tabToLoad);
 }
@@ -307,19 +309,18 @@ async function switchTab(tabId) {
 async function initModule(tabId) {
     try {
         switch (tabId) {
-            // НОВОЕ: Модуль дашборда с KPI и журналом действий
+            // Дашборд — объединённый экран: KPI + журнал действий + реестр показаний.
+            // Инициализируем оба модуля: DashboardModule (KPI, audit) и ReadingsModule (таблица, фильтры, импорт).
             case 'dashboard':
                 if (!loadedModules.dashboard) {
                     const { DashboardModule } = await import('./modules/dashboard.js');
                     loadedModules.dashboard = DashboardModule;
                 }
-                loadedModules.dashboard.init();
-                break;
-            case 'readings':
                 if (!loadedModules.readings) {
                     const { ReadingsModule } = await import('./modules/readings.js');
                     loadedModules.readings = ReadingsModule;
                 }
+                loadedModules.dashboard.init();
                 loadedModules.readings.init();
                 break;
             case 'housing':
@@ -379,11 +380,14 @@ function refreshModuleData(tabId) {
     if (!mod || !mod.isInitialized) return;
 
     switch (tabId) {
-        // НОВОЕ: При возврате на дашборд — обновляем KPI (лёгкий запрос)
-        case 'dashboard':
+        // При возврате на дашборд — обновляем KPI и таблицу реестра показаний.
+        case 'dashboard': {
             if (typeof mod.loadKPI === 'function') mod.loadKPI();
+            // Реестр показаний встроен в дашборд, обновим и его таблицу.
+            const readingsMod = loadedModules.readings;
+            if (readingsMod?.table) readingsMod.table.refresh();
             break;
-        case 'readings':
+        }
         case 'housing':
         case 'users':
             if (mod.table) mod.table.refresh();

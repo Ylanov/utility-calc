@@ -1,87 +1,197 @@
-<!-- static/components/admin/tab_dashboard.html -->
+<!-- static/components/admin/tab_dashboard.html
+     Объединённый экран: KPI + сверка показаний + журнал действий (правая колонка).
+     Верстка: dashboard-layout — CSS grid "основная зона" / "боковая панель".
+     При ширине ≤1200px журнал переходит под основной контент. -->
 <div id="dashboard" class="tab-content">
 
-    <!-- KPI КАРТОЧКИ -->
-    <div id="kpiContainer" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:16px; margin-bottom:24px;">
-        <div class="card" style="padding:20px; text-align:center;">
-            <div style="width:48px; height:48px; border-radius:50%; background:var(--primary-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
-                <i class="fa-solid fa-users" style="color:var(--primary-color); font-size:20px;"></i>
-            </div>
-            <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Жильцы</div>
-            <div id="kpiUsers" style="font-size:32px; font-weight:700; color:var(--text-main); margin:4px 0;">—</div>
-            <div id="kpiUsersDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
-        </div>
-        <div class="card" style="padding:20px; text-align:center;">
-            <div style="width:48px; height:48px; border-radius:50%; background:var(--primary-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
-                <i class="fa-solid fa-door-open" style="color:var(--primary-color); font-size:20px;"></i>
-            </div>
-            <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Комнаты</div>
-            <div id="kpiRooms" style="font-size:32px; font-weight:700; color:var(--text-main); margin:4px 0;">—</div>
-            <div id="kpiRoomsDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
-        </div>
-        <div class="card" style="padding:20px; text-align:center;">
-            <div style="width:48px; height:48px; border-radius:50%; background:var(--success-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
-                <i class="fa-solid fa-circle-check" style="color:var(--success-color); font-size:20px;"></i>
-            </div>
-            <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Сдали показания</div>
-            <div id="kpiSubmitted" style="font-size:32px; font-weight:700; color:#10b981; margin:4px 0;">—</div>
-            <div id="kpiSubmittedDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
-        </div>
-        <div class="card" style="padding:20px; text-align:center;">
-            <div style="width:48px; height:48px; border-radius:50%; background:var(--warning-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
-                <i class="fa-solid fa-triangle-exclamation" style="color:#f59e0b; font-size:20px;"></i>
-            </div>
-            <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Аномалии</div>
-            <div id="kpiAnomalies" style="font-size:32px; font-weight:700; color:#f59e0b; margin:4px 0;">—</div>
-            <div id="kpiAnomaliesDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
-        </div>
-        <div class="card" style="padding:20px; text-align:center;">
-            <div style="width:48px; height:48px; border-radius:50%; background:var(--success-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
-                <i class="fa-solid fa-ruble-sign" style="color:#059669; font-size:20px;"></i>
-            </div>
-            <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Начислено</div>
-            <div id="kpiRevenue" style="font-size:28px; font-weight:700; color:#059669; margin:4px 0;">—</div>
-            <div id="kpiRevenueDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
-        </div>
-    </div>
+    <div class="dashboard-layout">
 
-    <!-- СРАВНЕНИЕ С ПРОШЛЫМ МЕСЯЦЕМ -->
-    <div id="comparisonBanner" class="card" style="display:none; padding:16px 24px; margin-bottom:24px; border-left:4px solid #3b82f6;">
-        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
-            <div>
-                <div style="font-size:13px; color:var(--text-secondary);">Сравнение с предыдущим периодом</div>
-                <div id="comparisonText" style="font-size:14px; margin-top:4px;">—</div>
-            </div>
-            <div id="comparisonDelta" style="text-align:right; font-size:22px; font-weight:700;">—</div>
-        </div>
-    </div>
+        <!-- =========================================
+             ОСНОВНАЯ ЗОНА (слева)
+             ========================================= -->
+        <section class="dashboard-main">
 
-    <!-- ЖУРНАЛ ДЕЙСТВИЙ -->
-    <div class="card">
-        <div class="card-header" style="flex-direction:column; align-items:stretch; gap:12px;">
-            <div style="display:flex; justify-content:space-between; align-items:center;">
-                <h3 style="margin:0;"><i class="fa-solid fa-scroll" style="color:#6366f1; margin-right:8px;"></i> Журнал действий</h3>
-                <button id="btnRefreshAudit" class="icon-btn" title="Обновить"><i class="fa-solid fa-rotate-right"></i></button>
+            <!-- KPI КАРТОЧКИ -->
+            <div id="kpiContainer" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:16px;">
+                <div class="card" style="padding:20px; text-align:center; margin-bottom:0;">
+                    <div style="width:48px; height:48px; border-radius:50%; background:var(--primary-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
+                        <i class="fa-solid fa-users" style="color:var(--primary-color); font-size:20px;"></i>
+                    </div>
+                    <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Жильцы</div>
+                    <div id="kpiUsers" style="font-size:32px; font-weight:700; color:var(--text-main); margin:4px 0;">—</div>
+                    <div id="kpiUsersDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
+                </div>
+                <div class="card" style="padding:20px; text-align:center; margin-bottom:0;">
+                    <div style="width:48px; height:48px; border-radius:50%; background:var(--primary-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
+                        <i class="fa-solid fa-door-open" style="color:var(--primary-color); font-size:20px;"></i>
+                    </div>
+                    <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Комнаты</div>
+                    <div id="kpiRooms" style="font-size:32px; font-weight:700; color:var(--text-main); margin:4px 0;">—</div>
+                    <div id="kpiRoomsDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
+                </div>
+                <div class="card" style="padding:20px; text-align:center; margin-bottom:0;">
+                    <div style="width:48px; height:48px; border-radius:50%; background:var(--success-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
+                        <i class="fa-solid fa-circle-check" style="color:var(--success-color); font-size:20px;"></i>
+                    </div>
+                    <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Сдали показания</div>
+                    <div id="kpiSubmitted" style="font-size:32px; font-weight:700; color:#10b981; margin:4px 0;">—</div>
+                    <div id="kpiSubmittedDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
+                </div>
+                <div class="card" style="padding:20px; text-align:center; margin-bottom:0;">
+                    <div style="width:48px; height:48px; border-radius:50%; background:var(--warning-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
+                        <i class="fa-solid fa-triangle-exclamation" style="color:#f59e0b; font-size:20px;"></i>
+                    </div>
+                    <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Аномалии</div>
+                    <div id="kpiAnomalies" style="font-size:32px; font-weight:700; color:#f59e0b; margin:4px 0;">—</div>
+                    <div id="kpiAnomaliesDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
+                </div>
+                <div class="card" style="padding:20px; text-align:center; margin-bottom:0;">
+                    <div style="width:48px; height:48px; border-radius:50%; background:var(--success-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
+                        <i class="fa-solid fa-ruble-sign" style="color:#059669; font-size:20px;"></i>
+                    </div>
+                    <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Начислено</div>
+                    <div id="kpiRevenue" style="font-size:28px; font-weight:700; color:#059669; margin:4px 0;">—</div>
+                    <div id="kpiRevenueDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
+                </div>
             </div>
-            <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center;">
-                <select id="auditFilterAction" style="min-width:140px;">
-                    <option value="">Все действия</option>
-                </select>
-                <select id="auditFilterEntity" style="min-width:140px;">
-                    <option value="">Все объекты</option>
-                </select>
-                <span id="auditTotal" style="margin-left:auto; font-size:12px; color:var(--text-secondary);"></span>
+
+            <!-- СРАВНЕНИЕ С ПРОШЛЫМ МЕСЯЦЕМ -->
+            <div id="comparisonBanner" class="card" style="display:none; padding:16px 24px; margin-bottom:0; border-left:4px solid #3b82f6;">
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                    <div>
+                        <div style="font-size:13px; color:var(--text-secondary);">Сравнение с предыдущим периодом</div>
+                        <div id="comparisonText" style="font-size:14px; margin-top:4px;">—</div>
+                    </div>
+                    <div id="comparisonDelta" style="text-align:right; font-size:22px; font-weight:700;">—</div>
+                </div>
             </div>
-        </div>
 
-        <div id="auditLogContainer">
-            <p style="text-align:center; padding:40px; color:var(--text-secondary);">Загрузка журнала...</p>
-        </div>
+            <!-- ========================================
+                 РЕЕСТР ПОКАЗАНИЙ (ранее отдельная вкладка)
+                 Переехал сюда под alias readings — модуль ReadingsModule
+                 инициализируется вместе с дашбордом.
+                 ======================================== -->
 
-        <div style="display:flex; justify-content:center; align-items:center; gap:12px; padding:12px 16px; border-top:1px solid var(--border-color);">
-            <button id="btnAuditPrev" class="page-btn" disabled><i class="fa-solid fa-chevron-left"></i> Назад</button>
-            <span id="auditPageInfo" style="font-size:13px; font-weight:500; color:var(--text-secondary);">Стр. 1</span>
-            <button id="btnAuditNext" class="page-btn">Вперед <i class="fa-solid fa-chevron-right"></i></button>
-        </div>
+            <!-- Статусы периода -->
+            <div class="status-card">
+                <div id="periodActiveState" class="period-state open" style="display: none;">
+                    <div style="display: flex; align-items: center; gap: 15px;">
+                        <span class="state-icon"><i class="fa-regular fa-circle-check" style="color:var(--success-color);"></i></span>
+                        <div class="state-info">
+                            <h2>Прием показаний открыт</h2>
+                            <p>Текущий период: <strong id="activePeriodLabel">...</strong></p>
+                        </div>
+                    </div>
+                </div>
+                <div id="periodClosedState" class="period-state closed" style="display: flex;">
+                    <div style="display: flex; align-items: center; gap: 15px;">
+                        <span class="state-icon"><i class="fa-solid fa-lock" style="color:var(--danger-color);"></i></span>
+                        <div class="state-info">
+                            <h2>Прием показаний закрыт</h2>
+                            <p>Ожидание открытия нового периода бухгалтерией</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Управление и таблица -->
+            <div class="card" style="margin-bottom: 0;">
+                <div class="card-header">
+                    <h3><i class="fa-solid fa-chart-line" style="color:var(--primary-color); margin-right:8px;"></i> Реестр показаний</h3>
+                    <div class="header-controls">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 500; font-size: 13px; color: var(--text-secondary);">
+                            <input type="checkbox" id="filterAnomalies" style="width: 16px; height: 16px; margin: 0; box-shadow: none;">
+                            Только аномалии
+                        </label>
+                        <div class="compact-upload">
+                            <input type="file" id="importReadingsFile" accept=".xlsx, .xls">
+                            <button id="btnImportReadings" class="action-btn secondary-btn" style="height: 30px; font-size: 12px; padding: 0 10px;">
+                                <i class="fa-solid fa-file-arrow-down"></i> Загрузить Excel
+                            </button>
+                        </div>
+                        <button id="btnBulkApprove" class="action-btn success-btn">
+                            <i class="fa-solid fa-check-double"></i> Утвердить все
+                        </button>
+                        <button id="btnRefreshReadings" class="icon-btn" title="Обновить таблицу">
+                            <i class="fa-solid fa-rotate-right"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="sticky-header-table">
+                        <thead>
+                            <tr>
+                                <th>Жилец / Объект</th>
+                                <th>Статус / Риск</th>
+                                <th class="text-right">ГВС (м³)</th>
+                                <th class="text-right">ХВС (м³)</th>
+                                <th class="text-right">Свет (кВт)</th>
+                                <th class="text-right">Сумма (₽)</th>
+                                <th class="text-center">Действия</th>
+                            </tr>
+                        </thead>
+                        <tbody id="readingsTableBody">
+                            <tr>
+                                <td colspan="7" class="text-center" style="padding: 40px;">
+                                    <i class="fa-solid fa-spinner fa-spin text-primary"></i> Загрузка данных...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="modal-footer" style="background: transparent; border: none; padding: 16px 0 0 0;">
+                    <div class="pagination">
+                        <button id="btnPrev" class="page-btn"><i class="fa-solid fa-chevron-left"></i> Назад</button>
+                        <span id="pageIndicator" style="font-size: 13px; font-weight: 500; color: var(--text-secondary);">Стр. 1</span>
+                        <button id="btnNext" class="page-btn">Вперед <i class="fa-solid fa-chevron-right"></i></button>
+                    </div>
+                </div>
+            </div>
+
+        </section>
+
+        <!-- =========================================
+             БОКОВАЯ ПАНЕЛЬ: ЖУРНАЛ ДЕЙСТВИЙ (справа)
+             ========================================= -->
+        <aside class="dashboard-side">
+            <div class="card">
+                <div class="card-header" style="flex-direction:column; align-items:stretch; gap:12px; padding-bottom:14px; margin-bottom:14px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <h3 style="margin:0; font-size:15px;">
+                            <i class="fa-solid fa-scroll" style="color:#6366f1; margin-right:8px;"></i> Журнал действий
+                        </h3>
+                        <button id="btnRefreshAudit" class="icon-btn" title="Обновить"><i class="fa-solid fa-rotate-right"></i></button>
+                    </div>
+                    <div style="display:flex; flex-direction:column; gap:8px;">
+                        <select id="auditFilterAction" style="width:100%; font-size:12px;">
+                            <option value="">Все действия</option>
+                        </select>
+                        <select id="auditFilterEntity" style="width:100%; font-size:12px;">
+                            <option value="">Все объекты</option>
+                        </select>
+                        <span id="auditTotal" style="font-size:11px; color:var(--text-secondary); text-align:right;"></span>
+                    </div>
+                </div>
+
+                <div id="auditLogContainer">
+                    <p style="text-align:center; padding:40px 20px; color:var(--text-secondary); font-size:13px;">
+                        Загрузка журнала...
+                    </p>
+                </div>
+
+                <div style="display:flex; justify-content:center; align-items:center; gap:8px; padding:12px 0 0 0; border-top:1px solid var(--border-color); margin-top:10px;">
+                    <button id="btnAuditPrev" class="page-btn" disabled style="padding:6px 10px; font-size:12px;">
+                        <i class="fa-solid fa-chevron-left"></i>
+                    </button>
+                    <span id="auditPageInfo" style="font-size:12px; font-weight:500; color:var(--text-secondary);">Стр. 1</span>
+                    <button id="btnAuditNext" class="page-btn" style="padding:6px 10px; font-size:12px;">
+                        <i class="fa-solid fa-chevron-right"></i>
+                    </button>
+                </div>
+            </div>
+        </aside>
+
     </div>
 </div>

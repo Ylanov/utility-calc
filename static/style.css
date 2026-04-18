@@ -38,8 +38,13 @@
     --shadow-md: 0 1px 3px 0 rgba(60,64,67,0.3), 0 4px 8px 3px rgba(60,64,67,0.15);
     --shadow-lg: 0 4px 6px 0 rgba(60,64,67,0.3), 0 8px 24px 8px rgba(60,64,67,0.15);
 
-    --container-width: 1400px;
+    /* Ширина контейнера: адаптивная до максимума в 1920, но с гибким «воздухом» на 4K */
+    --container-width: 1920px;
+    --container-padding: 24px;
     --transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+
+    /* Боковая колонка журнала действий (правая панель дашборда) */
+    --side-panel-width: 380px;
 }
 
 /* =========================================
@@ -139,8 +144,13 @@ a:hover {
 .app-container {
     max-width: var(--container-width);
     margin: 0 auto;
-    padding: 24px;
+    padding: var(--container-padding);
     width: 100%;
+}
+
+/* На больших экранах даём чуть больше воздуха по краям, но не ограничиваем рабочую область */
+@media (min-width: 1600px) {
+    .app-container { padding: 28px 32px; }
 }
 
 /* Двухколоночная сетка для страниц */
@@ -148,6 +158,85 @@ a:hover {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 24px;
+}
+
+/* =========================================
+   ЛЕЙАУТ ДАШБОРДА: основная зона + журнал справа
+   ========================================= */
+.dashboard-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--side-panel-width);
+    gap: 24px;
+    align-items: start;
+}
+
+.dashboard-main {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    min-width: 0; /* фикс переполнения вложенных table-responsive */
+}
+
+.dashboard-side {
+    position: sticky;
+    top: 16px;
+    /* Журнал не должен быть выше вьюпорта, внутри — свой скролл */
+    max-height: calc(100vh - 32px);
+    display: flex;
+    flex-direction: column;
+}
+
+.dashboard-side > .card {
+    margin-bottom: 0;
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.dashboard-side #auditLogContainer {
+    flex: 1 1 auto;
+    overflow-y: auto;
+    min-height: 0;
+    margin: 0 -8px;
+}
+
+/* Компактный вид элементов журнала в боковой панели — узкая колонка
+   плохо переваривает 14px отступы из базового .card-body */
+.dashboard-side #auditLogContainer > div > div {
+    padding: 10px 12px !important;
+    gap: 10px !important;
+}
+
+.dashboard-side #auditLogContainer > div > div > div:first-child {
+    width: 28px !important;
+    height: 28px !important;
+    font-size: 12px !important;
+}
+
+/* Стилизованный thin scrollbar для журнала */
+.dashboard-side #auditLogContainer::-webkit-scrollbar { width: 6px; }
+.dashboard-side #auditLogContainer::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 3px;
+}
+.dashboard-side #auditLogContainer::-webkit-scrollbar-thumb:hover {
+    background: var(--text-secondary);
+}
+
+/* На планшетах и ниже — журнал под основным контентом */
+@media (max-width: 1200px) {
+    .dashboard-layout {
+        grid-template-columns: 1fr;
+    }
+    .dashboard-side {
+        position: static;
+        max-height: none;
+    }
+    .dashboard-side #auditLogContainer {
+        max-height: 600px;
+    }
 }
 
 /* =========================================
@@ -1149,9 +1238,9 @@ textarea { resize: vertical; min-height: 80px; }
     .period-state { flex-direction: column; text-align: center; }
 }
 
-/* Ultrawide 2K/4K */
+/* Ultrawide 2K/4K — используем почти всю ширину, но ограничиваем слишком
+   растянутые строки таблиц лимитом в --container-width (1920px). */
 @media (min-width: 1600px) {
-    .app-container { max-width: 1536px; }
     body { font-size: 15px; }
     .app-header h1 { font-size: clamp(1.125rem, 1vw + 0.6rem, 1.5rem); }
 }

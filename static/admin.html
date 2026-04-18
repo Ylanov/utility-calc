@@ -54,11 +54,9 @@
         <!-- NAV TABS -->
         <div class="nav-tabs-container">
             <div class="tabs">
-                <!-- ИСПРАВЛЕНИЕ: Дашборд — единственная вкладка с active.
-                     Ранее и dashboard, и readings имели active одновременно,
-                     что приводило к визуальному глитчу (две подсвеченные кнопки). -->
+                <!-- Дашборд совмещён со сверкой показаний: KPI+реестр+журнал действий в одном экране.
+                     Ранее вкладка "Сверка показаний" была отдельной — теперь её UI встроен в tab_dashboard. -->
                 <button class="tab-btn active" data-tab="dashboard"><i class="fa-solid fa-gauge-high"></i> Дашборд</button>
-                <button class="tab-btn" data-tab="readings"><i class="fa-solid fa-chart-line"></i> Сверка показаний</button>
                 <button class="tab-btn" data-tab="manual"><i class="fa-solid fa-pen-to-square"></i> Ручной ввод</button>
                 <button class="tab-btn" data-tab="debts"><i class="fa-solid fa-file-invoice-dollar"></i> Долги 1С</button>
                 <button class="tab-btn" data-tab="housing"><i class="fa-solid fa-city"></i> Жилфонд</button>
@@ -68,85 +66,10 @@
             </div>
         </div>
 
-        <!-- CONTENT AREA -->
-        <main class="content-area" id="content-area">
-
-            <!-- ВСТРОЕННАЯ ВКЛАДКА: Сверка показаний
-                 ИСПРАВЛЕНИЕ: убран class="active" — теперь дефолтная вкладка dashboard,
-                 а readings загрузится при переключении через роутинг.
-                 Встроенный HTML остаётся в DOM для мгновенного отображения без fetch. -->
-            <div id="readings" class="tab-content">
-                <!-- Статусы периода -->
-                <div class="status-card">
-                    <div id="periodActiveState" class="period-state open" style="display: none;">
-                        <div style="display: flex; align-items: center; gap: 15px;">
-                            <span class="state-icon"><i class="fa-regular fa-circle-check" style="color:var(--success-color);"></i></span>
-                            <div class="state-info">
-                                <h2>Прием показаний открыт</h2>
-                                <p>Текущий период: <strong id="activePeriodLabel">...</strong></p>
-                            </div>
-                        </div>
-                    </div>
-                    <div id="periodClosedState" class="period-state closed" style="display: flex;">
-                        <div style="display: flex; align-items: center; gap: 15px;">
-                            <span class="state-icon"><i class="fa-solid fa-lock" style="color:var(--danger-color);"></i></span>
-                            <div class="state-info">
-                                <h2>Прием показаний закрыт</h2>
-                                <p>Ожидание открытия нового периода бухгалтерией</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Управление и таблица -->
-                <div class="card" style="margin-bottom: 0;">
-                    <div class="card-header">
-                        <h3>Реестр показаний</h3>
-                        <div class="header-controls">
-                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: 500; font-size: 13px; color: var(--text-secondary);">
-                                <input type="checkbox" id="filterAnomalies" style="width: 16px; height: 16px; margin: 0; box-shadow: none;">
-                                Только аномалии
-                            </label>
-                            <div class="compact-upload">
-                                <input type="file" id="importReadingsFile" accept=".xlsx, .xls">
-                                <button id="btnImportReadings" class="action-btn secondary-btn" style="height: 30px; font-size: 12px; padding: 0 10px;"><i class="fa-solid fa-file-arrow-down"></i> Загрузить Excel</button>
-                            </div>
-                            <button id="btnBulkApprove" class="action-btn success-btn"><i class="fa-solid fa-check-double"></i> Утвердить все</button>
-                            <button id="btnRefreshReadings" class="icon-btn" title="Обновить таблицу"><i class="fa-solid fa-rotate-right"></i></button>
-                        </div>
-                    </div>
-
-                    <div class="table-responsive">
-                        <table class="sticky-header-table">
-                            <thead>
-                                <tr>
-                                    <th>Жилец / Объект</th>
-                                    <th>Статус / Риск</th>
-                                    <th class="text-right">ГВС (м³)</th>
-                                    <th class="text-right">ХВС (м³)</th>
-                                    <th class="text-right">Свет (кВт)</th>
-                                    <th class="text-right">Сумма (₽)</th>
-                                    <th class="text-center">Действия</th>
-                                </tr>
-                            </thead>
-                            <tbody id="readingsTableBody">
-                                <tr><td colspan="7" class="text-center" style="padding: 40px;"><i class="fa-solid fa-spinner fa-spin text-primary"></i> Загрузка данных...</td></tr>
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <div class="modal-footer" style="background: transparent; border: none; padding: 16px 0 0 0;">
-                        <div class="pagination">
-                            <button id="btnPrev" class="page-btn"><i class="fa-solid fa-chevron-left"></i> Назад</button>
-                            <span id="pageIndicator" style="font-size: 13px; font-weight: 500; color: var(--text-secondary);">Стр. 1</span>
-                            <button id="btnNext" class="page-btn">Вперед <i class="fa-solid fa-chevron-right"></i></button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <!-- Конец встроенной вкладки -->
-
-        </main>
+        <!-- CONTENT AREA.
+             Дашборд и все остальные вкладки теперь подгружаются динамически через
+             /components/admin/tab_*.html — встроенной вкладки больше нет. -->
+        <main class="content-area" id="content-area"></main>
     </div>
 
     <!-- ============================================================== -->
