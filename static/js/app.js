@@ -230,12 +230,13 @@ function handleRoute() {
     // Дашборд — первое что видит администратор при входе: KPI, метрики, журнал.
     const defaultTab = 'dashboard';
 
-    // Дашборд объединён со сверкой показаний; ручной ввод и тарифы объединены
-    // в секцию "Операции" (tools). Старые ссылки перенаправляем для обратной совместимости.
-    const validTabs = ['dashboard', 'tools', 'housing', 'users', 'accountant', 'debts'];
+    // Дашборд объединён со сверкой показаний; ручной ввод, тарифы и сводка
+    // объединены в секцию "Операции" (tools). Старые ссылки перенаправляем
+    // для обратной совместимости.
+    const validTabs = ['dashboard', 'tools', 'housing', 'users', 'debts'];
     let tabToLoad = validTabs.includes(hash) ? hash : defaultTab;
     if (hash === 'readings') tabToLoad = 'dashboard';
-    if (hash === 'manual' || hash === 'tariffs') tabToLoad = 'tools';
+    if (hash === 'manual' || hash === 'tariffs' || hash === 'accountant') tabToLoad = 'tools';
 
     switchTab(tabToLoad);
 }
@@ -338,13 +339,6 @@ async function initModule(tabId) {
                 }
                 loadedModules.users.init();
                 break;
-            case 'accountant':
-                if (!loadedModules.accountant) {
-                    const { SummaryModule } = await import('./modules/summary.js');
-                    loadedModules.accountant = SummaryModule;
-                }
-                loadedModules.accountant.init();
-                break;
             case 'debts':
                 if (!loadedModules.debts) {
                     const { DebtsModule } = await import('./modules/debts.js');
@@ -352,9 +346,12 @@ async function initModule(tabId) {
                 }
                 loadedModules.debts.init();
                 break;
-            // Операции — объединяет Ручной ввод и Тарифы в accordion-секциях.
-            // Инициализируются оба модуля (ManualModule, TariffsModule) + ToolsModule
-            // отвечает только за раскрытие/сворачивание секций.
+            // Операции — объединяет Ручной ввод, Тарифы и Сводку в accordion-секциях.
+            // Инициализируются 4 модуля:
+            //  - ManualModule (ввод показаний за жильца)
+            //  - TariffsModule (профили + график)
+            //  - SummaryModule (сравнение, предпросмотр закрытия, финансовый отчёт)
+            //  - ToolsModule — только раскрытие/сворачивание секций.
             case 'tools':
                 if (!loadedModules.manual) {
                     const { ManualModule } = await import('./modules/manual.js');
@@ -364,12 +361,17 @@ async function initModule(tabId) {
                     const { TariffsModule } = await import('./modules/tariffs.js');
                     loadedModules.tariffs = TariffsModule;
                 }
+                if (!loadedModules.summary) {
+                    const { SummaryModule } = await import('./modules/summary.js');
+                    loadedModules.summary = SummaryModule;
+                }
                 if (!loadedModules.tools) {
                     const { ToolsModule } = await import('./modules/tools.js');
                     loadedModules.tools = ToolsModule;
                 }
                 loadedModules.manual.init();
                 loadedModules.tariffs.init();
+                loadedModules.summary.init();
                 loadedModules.tools.init();
                 break;
             default:
@@ -398,9 +400,6 @@ function refreshModuleData(tabId) {
         case 'housing':
         case 'users':
             if (mod.table) mod.table.refresh();
-            break;
-        case 'accountant':
-            // Сводку не обновляем автоматически, так как это тяжелый запрос
             break;
         case 'debts':
             if (typeof mod.reload === 'function') mod.reload();

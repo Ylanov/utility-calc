@@ -1,52 +1,12 @@
+<!-- УСТАРЕЛО: "Сводка" объединена с "Операциями" (accordion-секции
+     "Сравнение периодов", "Предпросмотр закрытия периода", "Финансовая отчётность").
+     app.js редиректит #accountant → #tools?section=summary, поэтому этот компонент
+     больше не загружается через fetch. Оставлено для обратной совместимости. -->
 <div id="accountant" class="tab-content">
-
-    <!-- БЛОК: Предпросмотр закрытия периода -->
-    <div id="closePreviewCard" class="card" style="display:none; margin-bottom: 20px; border-left: 4px solid #f59e0b;">
-        <div class="card-header">
-            <h3><i class="fa-solid fa-clipboard-check" style="color:#f59e0b; margin-right:8px;"></i> Предпросмотр закрытия периода</h3>
-            <div class="header-controls">
-                <button id="btnLoadPreview" class="action-btn warning-btn" style="padding: 6px 14px; font-size: 13px;">
-                    <i class="fa-solid fa-eye"></i> Загрузить отчёт
-                </button>
-            </div>
-        </div>
-        <div id="closePreviewContainer" style="padding: 0 16px 16px 16px;">
-            <p style="color: var(--text-secondary); font-size: 13px;">Нажмите «Загрузить отчёт» чтобы увидеть что произойдёт при закрытии текущего периода.</p>
-        </div>
-    </div>
-
-    <!-- БЛОК: Сравнительная аналитика (ИСПРАВЛЕНА ВЕРСТКА) -->
-    <div class="card" style="margin-bottom: 20px;">
-        <div class="card-header" style="flex-direction: column; align-items: stretch; gap: 12px;">
-            <h3 style="margin: 0;"><i class="fa-solid fa-chart-column" style="color:#3b82f6; margin-right:8px;"></i> Сравнение периодов</h3>
-            <!-- Селекторы и кнопка вынесены в отдельную строку -->
-            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px;">
-                <select id="comparePeriodA" style="flex: 1; min-width: 160px; max-width: 280px;">
-                    <option value="">Период A...</option>
-                </select>
-                <span style="color: var(--text-secondary); font-weight: 600; font-size: 14px;">vs</span>
-                <select id="comparePeriodB" style="flex: 1; min-width: 160px; max-width: 280px;">
-                    <option value="">Период B...</option>
-                </select>
-                <button id="btnCompare" class="action-btn primary-btn" style="padding: 8px 20px; font-size: 13px; white-space: nowrap;">
-                    <i class="fa-solid fa-scale-balanced"></i> Сравнить
-                </button>
-            </div>
-        </div>
-        <div id="compareContainer"></div>
-    </div>
-
-    <!-- СУЩЕСТВУЮЩИЙ БЛОК: Финансовая отчётность -->
-    <div class="card">
-        <div class="card-header">
-            <h3>Финансовая отчетность</h3>
-            <div class="header-controls">
-                <div id="summaryPeriodSelector"></div>
-                <button id="btnDownloadZip" class="action-btn primary-btn"><i class="fa-solid fa-file-zipper"></i> Скачать всё (ZIP)</button>
-                <button id="btnDownloadExcel" class="action-btn success-btn"><i class="fa-solid fa-file-excel"></i> Отчет (Excel)</button>
-                <button id="btnRefreshSummary" class="icon-btn" title="Обновить"><i class="fa-solid fa-rotate-right"></i></button>
-            </div>
-        </div>
-        <div id="summaryContainer" class="summary-wrapper"></div>
+    <div class="card" style="text-align:center; padding:40px;">
+        <p style="color:var(--text-secondary); font-size:14px;">
+            Финансовая сводка теперь в разделе «Операции».
+            <a href="#tools?section=summary" style="color:var(--primary-color); font-weight:600;">Перейти →</a>
+        </p>
     </div>
 </div>
