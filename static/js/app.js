@@ -230,11 +230,12 @@ function handleRoute() {
     // Дашборд — первое что видит администратор при входе: KPI, метрики, журнал.
     const defaultTab = 'dashboard';
 
-    // Дашборд теперь объединён со сверкой показаний — старые ссылки вида
-    // #readings перенаправляем на #dashboard для обратной совместимости.
-    const validTabs = ['dashboard', 'housing', 'users', 'tariffs', 'accountant', 'debts', 'manual'];
+    // Дашборд объединён со сверкой показаний; ручной ввод и тарифы объединены
+    // в секцию "Операции" (tools). Старые ссылки перенаправляем для обратной совместимости.
+    const validTabs = ['dashboard', 'tools', 'housing', 'users', 'accountant', 'debts'];
     let tabToLoad = validTabs.includes(hash) ? hash : defaultTab;
     if (hash === 'readings') tabToLoad = 'dashboard';
+    if (hash === 'manual' || hash === 'tariffs') tabToLoad = 'tools';
 
     switchTab(tabToLoad);
 }
@@ -337,13 +338,6 @@ async function initModule(tabId) {
                 }
                 loadedModules.users.init();
                 break;
-            case 'tariffs':
-                if (!loadedModules.tariffs) {
-                    const { TariffsModule } = await import('./modules/tariffs.js');
-                    loadedModules.tariffs = TariffsModule;
-                }
-                loadedModules.tariffs.init();
-                break;
             case 'accountant':
                 if (!loadedModules.accountant) {
                     const { SummaryModule } = await import('./modules/summary.js');
@@ -358,12 +352,25 @@ async function initModule(tabId) {
                 }
                 loadedModules.debts.init();
                 break;
-            case 'manual':
+            // Операции — объединяет Ручной ввод и Тарифы в accordion-секциях.
+            // Инициализируются оба модуля (ManualModule, TariffsModule) + ToolsModule
+            // отвечает только за раскрытие/сворачивание секций.
+            case 'tools':
                 if (!loadedModules.manual) {
                     const { ManualModule } = await import('./modules/manual.js');
                     loadedModules.manual = ManualModule;
                 }
+                if (!loadedModules.tariffs) {
+                    const { TariffsModule } = await import('./modules/tariffs.js');
+                    loadedModules.tariffs = TariffsModule;
+                }
+                if (!loadedModules.tools) {
+                    const { ToolsModule } = await import('./modules/tools.js');
+                    loadedModules.tools = ToolsModule;
+                }
                 loadedModules.manual.init();
+                loadedModules.tariffs.init();
+                loadedModules.tools.init();
                 break;
             default:
                 console.warn(`Модуль для вкладки "${tabId}" не найден.`);
@@ -392,17 +399,21 @@ function refreshModuleData(tabId) {
         case 'users':
             if (mod.table) mod.table.refresh();
             break;
-        case 'tariffs':
-            mod.load();
-            break;
         case 'accountant':
             // Сводку не обновляем автоматически, так как это тяжелый запрос
             break;
         case 'debts':
             if (typeof mod.reload === 'function') mod.reload();
             break;
-        case 'manual':
-            if (typeof mod.searchUsers === 'function') mod.searchUsers('');
+        // Операции: перезагружаем тарифы (lightweight) + очищаем поиск жильца
+        case 'tools': {
+            const tariffsMod = loadedModules.tariffs;
+            if (tariffsMod && typeof tariffsMod.load === 'function') tariffsMod.load();
+            const manualMod = loadedModules.manual;
+            if (manualMod && typeof manualMod.searchUsers === 'function') {
+                manualMod.searchUsers('');
+            }
             break;
+        }
     }
 }

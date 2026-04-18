@@ -1,0 +1,269 @@
+<!-- static/components/admin/tab_tools.html
+     Объединяет "Ручной ввод" и "Тарифы" в один экран с accordion-секциями.
+     Раскрытие/сворачивание — по клику на заголовок секции (см. ToolsModule).
+
+     ID всех input/button/form сохранены из tab_manual.html и tab_tariffs.html,
+     поэтому ManualModule и TariffsModule работают без правок. -->
+<div id="tools" class="tab-content">
+
+    <div class="accordion-group" id="toolsAccordion">
+
+        <!-- ==========================================
+             СЕКЦИЯ 1: РУЧНОЙ ВВОД ПОКАЗАНИЙ
+             ========================================== -->
+        <section class="accordion-section open" data-section="manual">
+            <button class="accordion-header" type="button" aria-expanded="true">
+                <span class="accordion-title">
+                    <span class="accordion-icon"><i class="fa-solid fa-pen-to-square"></i></span>
+                    <span class="accordion-title-text">
+                        <strong>Ручной ввод показаний</strong>
+                        <span class="subtitle">Ввод за жильца, если он не подал показания сам</span>
+                    </span>
+                </span>
+                <i class="fa-solid fa-chevron-down accordion-chevron"></i>
+            </button>
+            <div class="accordion-body">
+                <div class="accordion-content">
+                    <div class="inner">
+                        <div class="grid-2-col">
+                            <!-- 1. Поиск жильца -->
+                            <div class="card" style="display: flex; flex-direction: column; height: 100%; margin-bottom: 0;">
+                                <div class="card-header">
+                                    <h3>1. Выбор жильца</h3>
+                                </div>
+                                <div class="form-group" style="margin-bottom: 12px;">
+                                    <label style="display:flex; align-items:center; gap:6px;">
+                                        <i class="fa-solid fa-magnifying-glass" style="color:var(--text-secondary);"></i> Поиск жильца
+                                    </label>
+                                    <input type="text" id="manualSearchInput" placeholder="Логин, ФИО или номер комнаты...">
+                                </div>
+                                <div style="flex: 1; border: 1px solid var(--border-color); border-radius: 8px; overflow-y: auto; max-height: 400px; background: var(--bg-page);">
+                                    <ul id="manualUserList" style="list-style: none; padding: 0; margin: 0;">
+                                        <li style="padding: 20px; text-align: center; color: var(--text-secondary);">Введите ФИО или комнату для поиска</li>
+                                    </ul>
+                                </div>
+                            </div>
+
+                            <!-- 2. Форма ввода -->
+                            <div class="card" id="manualFormCard" style="opacity: 0.5; pointer-events: none; transition: all 0.3s; margin-bottom: 0;">
+                                <div class="card-header">
+                                    <h3>2. Ввод показаний</h3>
+                                    <span id="manualSelectedUser" style="font-size: 13px; font-weight: 600; color: var(--primary-color); background: var(--primary-bg); padding: 4px 8px; border-radius: 4px;">Не выбран</span>
+                                </div>
+
+                                <div id="manualDraftAlert" style="display:none; padding:12px 15px; background:#fef3c7; color:#92400e; border-radius:6px; margin-bottom:20px; font-size:13px; border: 1px solid #fde68a;">
+                                    ⚠️ У этого жильца уже есть сохраненный черновик. Вы можете обновить его показания.
+                                </div>
+
+                                <form id="manualReadingForm" class="styled-form">
+                                    <input type="hidden" id="manualUserId">
+
+                                    <div class="form-group mb-4">
+                                        <label style="display:flex; justify-content:space-between; font-size:14px;">
+                                            <span><span style="color:#dc2626;">🔥</span> Горячая вода (м³)</span>
+                                            <span style="color:var(--text-secondary);">Пред: <b id="manPrevHot">0.000</b></span>
+                                        </label>
+                                        <input type="number" step="0.001" id="manHot" required placeholder="Текущее значение" style="font-size: 18px; font-weight: bold;">
+                                    </div>
+
+                                    <div class="form-group mb-4">
+                                        <label style="display:flex; justify-content:space-between; font-size:14px;">
+                                            <span><span style="color:#2563eb;">💧</span> Холодная вода (м³)</span>
+                                            <span style="color:var(--text-secondary);">Пред: <b id="manPrevCold">0.000</b></span>
+                                        </label>
+                                        <input type="number" step="0.001" id="manCold" required placeholder="Текущее значение" style="font-size: 18px; font-weight: bold;">
+                                    </div>
+
+                                    <div class="form-group mb-4">
+                                        <label style="display:flex; justify-content:space-between; font-size:14px;">
+                                            <span><span style="color:#d97706;">⚡</span> Электричество (кВт⋅ч)</span>
+                                            <span style="color:var(--text-secondary);">Пред: <b id="manPrevElect">0.000</b></span>
+                                        </label>
+                                        <input type="number" step="0.001" id="manElect" required placeholder="Текущее значение" style="font-size: 18px; font-weight: bold;">
+                                    </div>
+
+                                    <button type="submit" class="action-btn success-btn full-width" id="btnSaveManual" style="padding: 12px; font-size: 15px;"><i class="fa-solid fa-floppy-disk"></i> Сохранить показания (Черновик)</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==========================================
+             СЕКЦИЯ 2: ГРАФИК ПОДАЧИ ПОКАЗАНИЙ
+             ========================================== -->
+        <section class="accordion-section" data-section="schedule">
+            <button class="accordion-header" type="button" aria-expanded="false">
+                <span class="accordion-title">
+                    <span class="accordion-icon" style="background:var(--primary-bg); color:var(--primary-color);">
+                        <i class="fa-regular fa-calendar-days"></i>
+                    </span>
+                    <span class="accordion-title-text">
+                        <strong>График подачи показаний</strong>
+                        <span class="subtitle">Автоматическое открытие/закрытие периода по расписанию</span>
+                    </span>
+                </span>
+                <i class="fa-solid fa-chevron-down accordion-chevron"></i>
+            </button>
+            <div class="accordion-body">
+                <div class="accordion-content">
+                    <div class="inner">
+                        <div class="toolbar-controls styled-form" style="margin-bottom: 0;">
+                            <div class="form-group" style="flex: 0 1 auto; margin: 0;">
+                                <label>День начала (вкл.)</label>
+                                <input type="number" id="setStartDay" min="1" max="28" style="width: 160px;" placeholder="Например: 20">
+                            </div>
+                            <div class="form-group" style="flex: 0 1 auto; margin: 0;">
+                                <label>День окончания (вкл.)</label>
+                                <input type="number" id="setEndDay" min="1" max="28" style="width: 160px;" placeholder="Например: 25">
+                            </div>
+                            <button id="btnSaveSchedule" class="action-btn primary-btn" style="align-self: flex-end; height: 44px;"><i class="fa-solid fa-floppy-disk"></i> Сохранить график</button>
+                        </div>
+                        <p class="hint-text" style="margin-top: 12px;">
+                            * Система будет <b>автоматически</b> открывать период в день начала и закрывать его на следующий день после окончания.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==========================================
+             СЕКЦИЯ 3: ПРОФИЛИ ТАРИФИКАЦИИ
+             ========================================== -->
+        <section class="accordion-section" data-section="tariffs">
+            <button class="accordion-header" type="button" aria-expanded="false">
+                <span class="accordion-title">
+                    <span class="accordion-icon" style="background:rgba(139,92,246,0.1); color:#7c3aed;">
+                        <i class="fa-solid fa-sliders"></i>
+                    </span>
+                    <span class="accordion-title-text">
+                        <strong>Профили тарификации</strong>
+                        <span class="subtitle">Стоимости ресурсов и услуг для разных общежитий</span>
+                    </span>
+                </span>
+                <i class="fa-solid fa-chevron-down accordion-chevron"></i>
+            </button>
+            <div class="accordion-body">
+                <div class="accordion-content">
+                    <div class="inner">
+                        <div class="card-header" style="flex-direction: column; align-items: flex-start; gap: 16px; margin-bottom: 20px; padding-bottom: 16px;">
+                            <div style="display: flex; justify-content: space-between; width: 100%; align-items: center; flex-wrap: wrap; gap: 12px;">
+                                <span class="hint-text" style="margin: 0;">Создавайте разные тарифы для разных общежитий</span>
+                                <button id="btnCreateNewTariff" class="action-btn primary-btn"><i class="fa-solid fa-plus"></i> Создать профиль</button>
+                            </div>
+
+                            <div class="toolbar-controls" style="background: var(--primary-bg); padding: 12px 16px; border-radius: var(--radius-sm); width: 100%; margin-bottom: 0;">
+                                <label style="font-weight: 500; color: var(--primary-hover); margin-right: 8px;">Редактировать тариф:</label>
+                                <select id="tariffSelector" style="width: 300px;"></select>
+                                <button id="btnDeleteTariff" class="action-btn danger-btn" style="display: none;"><i class="fa-regular fa-trash-can"></i> Удалить профиль</button>
+                            </div>
+                        </div>
+
+                        <form id="tariffsForm" class="styled-form">
+                            <input type="hidden" id="t_id">
+
+                            <div style="display: grid; grid-template-columns: 1fr auto; gap: 16px; margin-bottom: 24px; align-items: end;">
+                                <div class="form-group" style="margin: 0;">
+                                    <label>Название профиля (например: ЦСООР Лидер)</label>
+                                    <input type="text" id="t_name" required style="font-size: 16px; font-weight: 500;">
+                                </div>
+                                <div class="form-group" style="margin: 0; min-width: 220px;">
+                                    <label style="display: flex; align-items: center; gap: 6px;">
+                                        <i class="fa-regular fa-calendar-check" style="color: var(--primary-color);"></i>
+                                        Вступает в силу с (необязательно)
+                                    </label>
+                                    <input type="datetime-local" id="t_effective_from"
+                                           title="Оставьте пустым — тариф активен сразу. Укажите дату — тариф станет активным автоматически в эту дату.">
+                                </div>
+                            </div>
+                            <div id="tariffScheduledAlert" style="display:none; padding:10px 14px; background:#fef3c7; color:#92400e; border-radius:6px; margin-bottom:16px; font-size:13px; border:1px solid #fde68a;">
+                                <i class="fa-solid fa-clock"></i> <strong>Запланированный тариф:</strong> будет автоматически активирован в указанную дату. До этого момента он <b>не применяется</b> в расчётах.
+                            </div>
+
+                            <h4 style="margin-bottom: 16px; font-size: 15px; color: var(--text-main); border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">Стоимость ресурсов и услуг (₽)</h4>
+
+                            <div class="grid-auto-fit">
+                                <div class="form-group" style="margin: 0;">
+                                    <label>Содержание и ремонт (м²)</label>
+                                    <input type="number" step="0.01" id="t_main" required>
+                                </div>
+                                <div class="form-group" style="margin: 0;">
+                                    <label>Наем жилья (м²)</label>
+                                    <input type="number" step="0.01" id="t_rent" required>
+                                </div>
+                                <div class="form-group" style="margin: 0;">
+                                    <label>ТКО / Мусор (чел)</label>
+                                    <input type="number" step="0.01" id="t_waste" required>
+                                </div>
+                                <div class="form-group" style="margin: 0;">
+                                    <label>Отопление (м²)</label>
+                                    <input type="number" step="0.01" id="t_heat" required>
+                                </div>
+                                <div class="form-group" style="margin: 0;">
+                                    <label style="color: var(--danger-color);"><i class="fa-solid fa-fire"></i> Подогрев ГВС (м³)</label>
+                                    <input type="number" step="0.01" id="t_w_heat" required>
+                                </div>
+                                <div class="form-group" style="margin: 0;">
+                                    <label style="color: var(--primary-color);"><i class="fa-solid fa-droplet"></i> Подача воды (м³)</label>
+                                    <input type="number" step="0.01" id="t_w_sup" required>
+                                </div>
+                                <div class="form-group" style="margin: 0;">
+                                    <label style="color: var(--text-secondary);"><i class="fa-solid fa-sink"></i> Водоотведение (м³)</label>
+                                    <input type="number" step="0.01" id="t_sew" required>
+                                </div>
+                                <div class="form-group" style="margin: 0;">
+                                    <label style="color: #d97706;"><i class="fa-solid fa-bolt"></i> Эл. Энергия (кВт)</label>
+                                    <input type="number" step="0.01" id="t_el_rate" required>
+                                </div>
+                                <div class="form-group" style="margin: 0;">
+                                    <label>Эл. энергия ОДН (м²)</label>
+                                    <input type="number" step="0.01" id="t_el_sqm" required>
+                                </div>
+                            </div>
+
+                            <div style="margin-top: 32px; text-align: right;">
+                                <button type="submit" class="action-btn success-btn" style="padding: 12px 24px; font-size: 15px;"><i class="fa-solid fa-check"></i> Сохранить изменения тарифа</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==========================================
+             СЕКЦИЯ 4: ЗАПЛАНИРОВАННЫЕ ТАРИФЫ
+             ========================================== -->
+        <section class="accordion-section" data-section="scheduled" id="scheduledTariffsCard" style="display: none;">
+            <button class="accordion-header" type="button" aria-expanded="false">
+                <span class="accordion-title">
+                    <span class="accordion-icon" style="background:rgba(245,158,11,0.12); color:#f59e0b;">
+                        <i class="fa-solid fa-clock"></i>
+                    </span>
+                    <span class="accordion-title-text">
+                        <strong>Запланированные тарифы</strong>
+                        <span class="subtitle">Вступят в силу автоматически в указанную дату</span>
+                    </span>
+                </span>
+                <i class="fa-solid fa-chevron-down accordion-chevron"></i>
+            </button>
+            <div class="accordion-body">
+                <div class="accordion-content">
+                    <div class="inner">
+                        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                            <p style="font-size: 13px; color: var(--text-secondary); margin: 0;">
+                                Эти тарифы ещё не активны — они автоматически вступят в силу в указанную дату.
+                            </p>
+                            <button id="btnRefreshScheduled" class="icon-btn" title="Обновить">
+                                <i class="fa-solid fa-rotate-right"></i>
+                            </button>
+                        </div>
+                        <div id="scheduledTariffsList"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+    </div>
+</div>

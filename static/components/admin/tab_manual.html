@@ -1,63 +1,12 @@
+<!-- УСТАРЕЛО: "Ручной ввод" объединён со вкладкой "Тарифы" в секцию "Операции".
+     app.js редиректит #manual → #tools?section=manual, поэтому этот компонент
+     больше не загружается через fetch. Оставлено для обратной совместимости
+     при прямом вводе пути. -->
 <div id="manual" class="tab-content">
-    <div class="grid-2-col">
-        <!-- 1. Поиск жильца -->
-        <div class="card" style="display: flex; flex-direction: column; height: 100%;">
-            <div class="card-header">
-                <h3>1. Выбор жильца</h3>
-            </div>
-            <div class="form-group" style="margin-bottom: 12px;">
-                <label style="display:flex; align-items:center; gap:6px;">
-                    <i class="fa-solid fa-magnifying-glass" style="color:var(--text-secondary);"></i> Поиск жильца
-                </label>
-                <input type="text" id="manualSearchInput" placeholder="Логин, ФИО или номер комнаты...">
-            </div>
-            <div style="flex: 1; border: 1px solid var(--border-color); border-radius: 8px; overflow-y: auto; max-height: 400px; background: #f9fafb;">
-                <ul id="manualUserList" style="list-style: none; padding: 0; margin: 0;">
-                    <li style="padding: 20px; text-align: center; color: var(--text-secondary);">Введите ФИО или комнату для поиска</li>
-                </ul>
-            </div>
-        </div>
-
-        <!-- 2. Форма ввода -->
-        <div class="card" id="manualFormCard" style="opacity: 0.5; pointer-events: none; transition: all 0.3s;">
-            <div class="card-header">
-                <h3>2. Ввод показаний</h3>
-                <span id="manualSelectedUser" style="font-size: 13px; font-weight: 600; color: var(--primary-color); background: #eff6ff; padding: 4px 8px; border-radius: 4px;">Не выбран</span>
-            </div>
-
-            <div id="manualDraftAlert" style="display:none; padding:12px 15px; background:#fef3c7; color:#92400e; border-radius:6px; margin-bottom:20px; font-size:13px; border: 1px solid #fde68a;">
-                ⚠️ У этого жильца уже есть сохраненный черновик. Вы можете обновить его показания.
-            </div>
-
-            <form id="manualReadingForm" class="styled-form">
-                <input type="hidden" id="manualUserId">
-
-                <div class="form-group mb-4">
-                    <label style="display:flex; justify-content:space-between; font-size:14px;">
-                        <span><span style="color:#dc2626;">🔥</span> Горячая вода (м³)</span>
-                        <span style="color:var(--text-secondary);">Пред: <b id="manPrevHot">0.000</b></span>
-                    </label>
-                    <input type="number" step="0.001" id="manHot" required placeholder="Текущее значение" style="font-size: 18px; font-weight: bold; color: #1f2937;">
-                </div>
-
-                <div class="form-group mb-4">
-                    <label style="display:flex; justify-content:space-between; font-size:14px;">
-                        <span><span style="color:#2563eb;">💧</span> Холодная вода (м³)</span>
-                        <span style="color:var(--text-secondary);">Пред: <b id="manPrevCold">0.000</b></span>
-                    </label>
-                    <input type="number" step="0.001" id="manCold" required placeholder="Текущее значение" style="font-size: 18px; font-weight: bold; color: #1f2937;">
-                </div>
-
-                <div class="form-group mb-4">
-                    <label style="display:flex; justify-content:space-between; font-size:14px;">
-                        <span><span style="color:#d97706;">⚡</span> Электричество (кВт⋅ч)</span>
-                        <span style="color:var(--text-secondary);">Пред: <b id="manPrevElect">0.000</b></span>
-                    </label>
-                    <input type="number" step="0.001" id="manElect" required placeholder="Текущее значение" style="font-size: 18px; font-weight: bold; color: #1f2937;">
-                </div>
-
-                <button type="submit" class="action-btn success-btn full-width" id="btnSaveManual" style="padding: 12px; font-size: 15px;"><i class="fa-solid fa-floppy-disk"></i> Сохранить показания (Черновик)</button>
-            </form>
-        </div>
+    <div class="card" style="text-align:center; padding:40px;">
+        <p style="color:var(--text-secondary); font-size:14px;">
+            Ручной ввод теперь в разделе «Операции».
+            <a href="#tools?section=manual" style="color:var(--primary-color); font-weight:600;">Перейти →</a>
+        </p>
     </div>
 </div>
