@@ -159,10 +159,12 @@ def compute_row_hash(ts: Optional[datetime], fio: str, room: str,
 # Fuzzy-matcher
 # =======================================================================
 
-def build_users_index(db: Session) -> tuple[dict[str, dict], list[str]]:
+def build_users_index(db: Session) -> tuple[dict[str, dict], list[str], dict[int, dict]]:
     """
-    Строит индекс users_map: normalized_fio -> {id, username, room_id, room_number}.
-    Возвращает (map, list_of_keys) для rapidfuzz.extractOne.
+    Строит индексы для матчинга:
+      - by_name: normalized_fio -> {id, username, room_id, room_number} (для fuzzy)
+      - keys:    list[normalized_fio] (для rapidfuzz.extract)
+      - by_id:   user_id -> {...} (для резолва alias→user_info)
     """
     users = db.execute(
         select(User, Room)
@@ -170,18 +172,29 @@ def build_users_index(db: Session) -> tuple[dict[str, dict], list[str]]:
         .where(User.is_deleted.is_(False))
     ).all()
 
-    index: dict[str, dict] = {}
+    by_name: dict[str, dict] = {}
+    by_id: dict[int, dict] = {}
     for user, room in users:
-        key = normalize_fio(user.username)
-        if not key:
-            continue
-        index[key] = {
+        info = {
             "id": user.id,
             "username": user.username,
             "room_id": room.id if room else None,
             "room_number": room.room_number if room else None,
         }
-    return index, list(index.keys())
+        by_id[user.id] = info
+        key = normalize_fio(user.username)
+        if key:
+            by_name[key] = info
+    return by_name, list(by_name.keys()), by_id
+
+
+def build_aliases_index(db: Session) -> dict[str, int]:
+    """Загружает все алиасы: normalized_fio -> user_id.
+    Используется sync для мгновенного матча подач от родственников
+    без обращения к fuzzy-логике."""
+    from app.modules.utility.models import GSheetsAlias
+    rows = db.execute(select(GSheetsAlias.alias_fio_normalized, GSheetsAlias.user_id)).all()
+    return {norm: uid for norm, uid in rows}
 
 
 def match_user(
@@ -189,19 +202,31 @@ def match_user(
     raw_room: Optional[str],
     users_map: dict[str, dict],
     users_keys: list[str],
+    users_by_id: Optional[dict[int, dict]] = None,
+    aliases_map: Optional[dict[str, int]] = None,
 ) -> tuple[Optional[dict], int, Optional[str]]:
     """
     Возвращает (user_info | None, score 0..100, conflict_reason | None).
 
-    - Сначала пытаемся token_sort_ratio (устойчив к перестановке слов "Иванов Иван" vs "Иван Иванов").
-    - Если score ≥ FUZZY_THRESHOLD, проверяем совпадение комнаты.
-    - Если несколько кандидатов с одинаковым максимальным score (≥95) —
-      возвращаем conflict с перечислением кандидатов: админ выбирает вручную.
-      Это спасает от ситуации "Иванов И." матчится на 3 разных Ивановых.
+    Порядок попыток:
+    0) Если ФИО есть в `aliases_map` — берём оттуда (это запомненная админом
+       связка «жена X подаёт за мужа X»). Score=100, conflict не проверяем
+       по комнате — алиас намеренно нарушает соответствие комнаты.
+    1) Точное совпадение нормализованного ФИО.
+    2) Fuzzy token_sort_ratio (устойчив к перестановке слов).
+    3) Если несколько кандидатов с почти равным максимальным score (≥95) —
+       conflict, админ выбирает вручную.
     """
     norm = normalize_fio(raw_fio)
     if not norm:
         return None, 0, None
+
+    # 0. Запомненный alias (родственник). Самый сильный сигнал.
+    if aliases_map and users_by_id and norm in aliases_map:
+        uid = aliases_map[norm]
+        info = users_by_id.get(uid)
+        if info:
+            return info, 100, None
 
     # Точное совпадение по нормализованной строке
     if norm in users_map:
@@ -384,7 +409,11 @@ def sync_gsheets(
     if limit:
         raw_rows = raw_rows[:limit]
 
-    users_map, users_keys = build_users_index(db)
+    users_map, users_keys, users_by_id = build_users_index(db)
+    aliases_map = build_aliases_index(db)
+    logger.info(
+        f"[GSHEETS] Index ready: {len(users_map)} users, {len(aliases_map)} aliases"
+    )
 
     stats = {
         "total_rows": len(raw_rows),
@@ -407,6 +436,7 @@ def sync_gsheets(
 
             user_info, score, conflict = match_user(
                 row["fio"], row["room"], users_map, users_keys,
+                users_by_id=users_by_id, aliases_map=aliases_map,
             )
 
             # Определяем статус

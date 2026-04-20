@@ -198,6 +198,11 @@ export const GSheetsModule = {
                     this.showUserHistory(Number(btn.dataset.userId));
                     return;
                 }
+                if (action === 'group-find-relative') {
+                    // То же что reassign, но из шапки unmatched-группы.
+                    this.reassignPrompt(Number(btn.dataset.rowId));
+                    return;
+                }
                 const rowId = Number(btn.dataset.rowId);
                 if (action === 'approve') this.approveRow(rowId);
                 else if (action === 'reject') this.rejectRow(rowId);
@@ -537,12 +542,25 @@ export const GSheetsModule = {
             ? `<span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600;">${g.pendingCount} ждут</span>`
             : `<span style="background:#d1fae5; color:#065f46; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600;">все обработаны</span>`;
 
-        const bulkBtn = g.pendingCount > 0 && g.userId
-            ? `<button class="action-btn success-btn" data-action="group-approve-all" data-user-key="${escapeHtml(g.key)}"
-                       style="padding:4px 10px; font-size:12px;" title="Утвердить все pending этого жильца">
-                  <i class="fa-solid fa-check-double"></i> Утв. все (${g.pendingCount})
-              </button>`
-            : '';
+        // Для unmatched-группы (нет привязки к жильцу) показываем заметную
+        // кнопку «Кто это?» — открывает reassign-модалку с подсказками
+        // родственников. Для matched-группы — обычная «Утв. все».
+        let bulkBtn = '';
+        if (!g.userId && g.rows.length) {
+            // Берём id первой строки группы — модалка покажет кандидатов
+            // именно для этой подачи. После подтверждения alias автоматически
+            // подцепится для всех остальных подач этого ФИО.
+            const firstRowId = g.rows[0].id;
+            bulkBtn = `<button class="action-btn warning-btn" data-action="group-find-relative" data-row-id="${firstRowId}"
+                               style="padding:4px 10px; font-size:12px;" title="Анализатор покажет возможных родственников">
+                          <i class="fa-solid fa-user-magnifying-glass"></i> Кто это?
+                      </button>`;
+        } else if (g.pendingCount > 0 && g.userId) {
+            bulkBtn = `<button class="action-btn success-btn" data-action="group-approve-all" data-user-key="${escapeHtml(g.key)}"
+                               style="padding:4px 10px; font-size:12px;" title="Утвердить все pending этого жильца">
+                          <i class="fa-solid fa-check-double"></i> Утв. все (${g.pendingCount})
+                      </button>`;
+        }
 
         const chain = isOpen ? this._renderUserChain(g) : '';
 
@@ -776,23 +794,216 @@ export const GSheetsModule = {
     },
 
     async reassignPrompt(rowId) {
-        const answer = prompt(
-            'Введите ID жильца, которому принадлежит это показание.\n'
-            + 'Найти ID можно на вкладке «Жильцы».'
-        );
-        if (!answer) return;
-        const userId = Number(answer.trim());
-        if (!userId || isNaN(userId)) {
-            toast('Некорректный ID', 'error');
-            return;
-        }
+        const row = this.state.rows.find(r => r.id === rowId);
+        const initialQuery = row?.raw_fio || '';
+        const candidatesPromise = row && row.matched_user_id == null
+            ? api.get(`/admin/gsheets/rows/${rowId}/relative-candidates`)
+                .catch(() => ({ candidates: [] }))
+            : Promise.resolve({ candidates: [] });
+
+        const result = await this._showReassignModal({
+            rowId,
+            rawFio: row?.raw_fio || '',
+            rawRoom: row?.raw_room_number || '',
+            initialQuery,
+            candidatesPromise,
+        });
+        if (!result) return;
+
         try {
-            await api.post(`/admin/gsheets/rows/${rowId}/reassign`, { user_id: userId });
-            toast('Жилец переназначен', 'success');
+            const endpoint = result.asRelative
+                ? `/admin/gsheets/rows/${rowId}/confirm-relative`
+                : `/admin/gsheets/rows/${rowId}/reassign`;
+            const payload = result.asRelative
+                ? { user_id: result.userId, note: result.note || 'Родственник' }
+                : { user_id: result.userId, remember: result.remember, note: result.note || null };
+            const resp = await api.post(endpoint, payload);
+            const msg = result.asRelative
+                ? `Подтверждено: подача от родственника ${result.username}. ФИО запомнено.`
+                : (resp?.alias_created
+                    ? `Жилец переназначен. ФИО «${row?.raw_fio || ''}» запомнено за ${result.username}.`
+                    : `Жилец переназначен на ${result.username}.`);
+            toast(msg, 'success');
             this.refresh();
         } catch (e) {
             toast('Ошибка: ' + e.message, 'error');
         }
+    },
+
+    /**
+     * Показывает модалку с поиском жильца по ФИО и блоком «возможные
+     * родственники». Возвращает {userId, username, asRelative, remember, note}
+     * или null если пользователь закрыл окно.
+     */
+    _showReassignModal({ rowId, rawFio, rawRoom, initialQuery, candidatesPromise }) {
+        return new Promise((resolve) => {
+            // Удаляем старую модалку если осталась.
+            document.getElementById('gsheetsReassignModal')?.remove();
+
+            const modal = document.createElement('div');
+            modal.id = 'gsheetsReassignModal';
+            modal.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.5); display:flex; align-items:center; justify-content:center; z-index:9999;';
+            modal.innerHTML = `
+                <div style="background:var(--bg-card); border-radius:14px; max-width:680px; width:92%; max-height:88vh; overflow:hidden; display:flex; flex-direction:column; box-shadow:0 24px 64px rgba(0,0,0,0.35);">
+                    <div style="padding:18px 22px; border-bottom:1px solid var(--border-color); display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
+                        <div>
+                            <h3 style="margin:0 0 4px 0; font-size:16px;">Переназначить жильца</h3>
+                            <div style="font-size:12px; color:var(--text-secondary);">
+                                Подача: <b>${escapeHtml(rawFio)}</b>${rawRoom ? ` · комн. ${escapeHtml(rawRoom)}` : ''}
+                            </div>
+                        </div>
+                        <button class="icon-btn" data-close="1" title="Закрыть" style="font-size:18px;">
+                            <i class="fa-solid fa-xmark"></i>
+                        </button>
+                    </div>
+
+                    <div id="reassignSuggestions" style="padding:14px 22px 0;"></div>
+
+                    <div style="padding:14px 22px 4px;">
+                        <label style="font-size:12px; color:var(--text-secondary); display:block; margin-bottom:6px;">
+                            Поиск жильца по ФИО или номеру комнаты
+                        </label>
+                        <input type="text" id="reassignSearch" autocomplete="off"
+                               placeholder="Начните вводить фамилию или номер комнаты…"
+                               style="width:100%; padding:10px 12px; font-size:14px; border:1px solid var(--border-color); border-radius:8px;">
+                    </div>
+
+                    <div id="reassignResults" style="flex:1; overflow:auto; padding:6px 12px 12px;">
+                        <div style="padding:30px; text-align:center; color:var(--text-secondary); font-size:13px;">
+                            Введите 2+ символа для поиска
+                        </div>
+                    </div>
+
+                    <div style="padding:12px 22px; border-top:1px solid var(--border-color); display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
+                        <label style="display:inline-flex; align-items:center; gap:8px; font-size:12px; color:var(--text-secondary); cursor:pointer; user-select:none;">
+                            <input type="checkbox" id="reassignRemember" checked>
+                            Запомнить «${escapeHtml(rawFio)}» за этим жильцом (auto-match впредь)
+                        </label>
+                        <button class="action-btn secondary-btn" data-close="1" style="padding:8px 16px;">Отмена</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(modal);
+
+            const close = (value) => {
+                modal.remove();
+                resolve(value);
+            };
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal || e.target.closest('[data-close]')) close(null);
+            });
+
+            const input = modal.querySelector('#reassignSearch');
+            const results = modal.querySelector('#reassignResults');
+            const suggestionsBlock = modal.querySelector('#reassignSuggestions');
+            const remember = modal.querySelector('#reassignRemember');
+
+            // Карточка кандидата (используется и в подсказках, и в результатах поиска).
+            const renderCandidate = (c, opts = {}) => {
+                const reasonHtml = opts.reason
+                    ? `<div style="font-size:11px; color:#92400e; margin-top:4px;">
+                          <i class="fa-solid fa-circle-info"></i> ${escapeHtml(opts.reason)}
+                          ${opts.score != null ? `<span style="margin-left:6px; opacity:0.7;">${opts.score}%</span>` : ''}
+                       </div>`
+                    : '';
+                const buttonLabel = opts.asRelative
+                    ? '<i class="fa-solid fa-people-roof"></i> Это родственник'
+                    : '<i class="fa-solid fa-check"></i> Выбрать';
+                const buttonClass = opts.asRelative ? 'success-btn' : 'primary-btn';
+                return `
+                    <div class="reassign-candidate" data-user-id="${c.id}" data-username="${escapeHtml(c.username)}"
+                         data-as-relative="${opts.asRelative ? '1' : '0'}"
+                         style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px 12px; border:1px solid var(--border-color); border-radius:8px; margin-bottom:6px; background:var(--bg-card);">
+                        <div style="flex:1; min-width:0;">
+                            <div style="font-weight:600; font-size:13px;">${escapeHtml(c.username)}</div>
+                            <div style="color:var(--text-secondary); font-size:11px;">
+                                ${escapeHtml(c.room || 'без комнаты')} · ${c.residents_count || 1} чел.
+                            </div>
+                            ${reasonHtml}
+                        </div>
+                        <button class="action-btn ${buttonClass}" data-pick="1" style="padding:5px 10px; font-size:12px; white-space:nowrap;">
+                            ${buttonLabel}
+                        </button>
+                    </div>`;
+            };
+
+            // Делегирование клика на кнопку «Выбрать»/«Это родственник»
+            modal.addEventListener('click', (e) => {
+                const btn = e.target.closest('[data-pick="1"]');
+                if (!btn) return;
+                const card = btn.closest('.reassign-candidate');
+                if (!card) return;
+                const asRelative = card.dataset.asRelative === '1';
+                let note = null;
+                if (asRelative) {
+                    note = prompt(
+                        'Кем является «' + rawFio + '» жильцу «' + card.dataset.username + '»?\n'
+                        + 'Например: жена, муж, дочь, сын, мать, отец',
+                        'Жена',
+                    );
+                    if (note === null) return;  // отмена
+                }
+                close({
+                    userId: Number(card.dataset.userId),
+                    username: card.dataset.username,
+                    asRelative,
+                    remember: asRelative ? true : remember.checked,
+                    note,
+                });
+            });
+
+            // Подгружаем подсказки родственников (если есть rowId)
+            candidatesPromise.then(data => {
+                const cands = data?.candidates || [];
+                if (!cands.length) {
+                    suggestionsBlock.innerHTML = '';
+                    return;
+                }
+                suggestionsBlock.innerHTML = `
+                    <div style="background:#fef9c3; border:1px solid #fde68a; border-radius:10px; padding:12px 14px; margin-bottom:8px;">
+                        <div style="font-size:13px; font-weight:600; color:#92400e; margin-bottom:8px;">
+                            <i class="fa-solid fa-lightbulb"></i> Возможные кандидаты — анализатор нашёл связи
+                        </div>
+                        ${cands.map(c => renderCandidate(c, {
+                            reason: c.reason,
+                            score: c.score,
+                            asRelative: true,
+                        })).join('')}
+                    </div>`;
+            }).catch(() => { suggestionsBlock.innerHTML = ''; });
+
+            // Живой поиск с debounce
+            let searchTimer = null;
+            const doSearch = async (query) => {
+                if (query.length < 2) {
+                    results.innerHTML = `<div style="padding:30px; text-align:center; color:var(--text-secondary); font-size:13px;">Введите 2+ символа для поиска</div>`;
+                    return;
+                }
+                results.innerHTML = `<div style="padding:20px; text-align:center; color:var(--text-secondary); font-size:13px;"><i class="fa-solid fa-spinner fa-spin"></i> Поиск…</div>`;
+                try {
+                    const data = await api.get(`/admin/gsheets/search-users?q=${encodeURIComponent(query)}&limit=20`);
+                    const items = data?.items || [];
+                    if (!items.length) {
+                        results.innerHTML = `<div style="padding:30px; text-align:center; color:var(--text-secondary); font-size:13px;">Ничего не найдено по запросу «${escapeHtml(query)}»</div>`;
+                        return;
+                    }
+                    results.innerHTML = items.map(c => renderCandidate(c)).join('');
+                } catch (e) {
+                    results.innerHTML = `<div style="padding:20px; color:var(--danger-color); font-size:12px;">Ошибка поиска: ${escapeHtml(e.message)}</div>`;
+                }
+            };
+
+            input.addEventListener('input', () => {
+                clearTimeout(searchTimer);
+                searchTimer = setTimeout(() => doSearch(input.value.trim()), 300);
+            });
+
+            // Автостарт: подставляем raw_fio в инпут и сразу ищем — часто
+            // совпадение почти точное, и админу остаётся только нажать «Выбрать».
+            input.value = initialQuery;
+            doSearch(initialQuery);
+            input.focus();
+            input.select();
+        });
     },
 
     async bulkApprove() {

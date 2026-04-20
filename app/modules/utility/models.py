@@ -394,6 +394,47 @@ class GSheetsImportRow(Base):
 
 
 # ======================================================
+# GSHEETS ALIAS — запомненные соответствия «стороннее ФИО → реальный жилец»
+# ======================================================
+# Жильцы часто подают показания за родственников (жёны за мужей, дети за
+# родителей). В базе числится только один зарегистрированный жилец, но ФИО
+# в Google Sheets может быть супруга/родственника. Fuzzy-match такие случаи
+# не ловит — ФИО совсем другое.
+#
+# Админ в UI подтверждает «да, это подача Иванова И.И. (его супругой)» →
+# создаётся запись в gsheets_aliases. При следующем импорте эта запись
+# подцепится АВТОМАТИЧЕСКИ без участия админа.
+#
+# Ключ alias_fio_normalized — ФИО в lower-case с коллапсом пробелов. Чтобы
+# «Иванова Мария Петровна» и «ИВАНОВА  МАРИЯ ПЕТРОВНА» матчили одно и то же.
+class GSheetsAlias(Base):
+    __tablename__ = "gsheets_aliases"
+
+    id = Column(Integer, primary_key=True, index=True)
+    alias_fio = Column(String, nullable=False)  # оригинальное написание — для UI
+    alias_fio_normalized = Column(String, nullable=False, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    # 'manual'   — админ вручную переназначил в UI,
+    # 'relative' — подтвердил подсказку «возможно, это супруга/родственник».
+    kind = Column(String, default="manual", nullable=False)
+    note = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=_utcnow, index=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    user = relationship("User", foreign_keys=[user_id])
+    created_by = relationship("User", foreign_keys=[created_by_id])
+
+    __table_args__ = (
+        # Одно ФИО → один жилец. Если админ хочет перепривязать — сначала
+        # удалит старый алиас, иначе 409 Conflict. Это сознательное ограничение:
+        # двусмысленные ФИО должны всплывать как проблема, а не тихо матчиться
+        # «то в одно, то в другое» в зависимости от того, какой алиас создан первым.
+        Index("uq_gsheets_alias_fio", "alias_fio_normalized", unique=True),
+    )
+
+
+# ======================================================
 # APP RELEASE — версии мобильного приложения
 # ======================================================
 # Хранит метаданные APK-релизов, выложенных через админку.
