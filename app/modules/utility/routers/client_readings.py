@@ -378,20 +378,45 @@ async def get_client_finance(
 @router.get("/api/readings/history")
 async def get_client_history(
         current_user: User = Depends(get_current_user),
-        db: AsyncSession = Depends(get_db)
+        db: AsyncSession = Depends(get_db),
+        page: int = 1,
+        limit: int = 24,
+        paginated: bool = False,
 ):
+    """
+    История подачи показаний.
+
+    Обратно-совместимо: если `paginated=false` (по-умолчанию), возвращаем
+    плоский массив [...] как раньше — для старых клиентов (web, tg).
+
+    Если `paginated=true` — возвращаем расширенный формат с метаданными:
+        {
+          "items": [...],
+          "page": 1, "limit": 24,
+          "total": N, "has_more": bool
+        }
+    Этот формат использует новый мобильный клиент (для InfiniteScroll).
+    """
+    # Защита от плохих параметров
+    if page < 1:
+        page = 1
+    if limit < 1 or limit > 100:
+        limit = 24
+
+    offset = (page - 1) * limit
     readings = (await db.execute(
         select(MeterReading)
         .options(selectinload(MeterReading.period))
         .where(
             MeterReading.user_id == current_user.id,
-            MeterReading.is_approved.is_(True)
+            MeterReading.is_approved.is_(True),
         )
         .order_by(MeterReading.created_at.desc())
-        .limit(24)
+        .offset(offset)
+        .limit(limit)
     )).scalars().all()
 
-    return [
+    items = [
         {
             "id": r.id,
             "period": r.period.name if r.period else "Неизвестно",
@@ -399,10 +424,30 @@ async def get_client_history(
             "cold": r.cold_water,
             "electric": r.electricity,
             "total": r.total_cost,
-            "date": r.created_at
+            "date": r.created_at,
         }
         for r in readings
     ]
+
+    if not paginated:
+        # Старый формат — массив. Для совместимости с web/tg клиентами.
+        return items
+
+    # Новый формат — для мобильного и любых пагинированных клиентов.
+    total = (await db.execute(
+        select(func.count(MeterReading.id)).where(
+            MeterReading.user_id == current_user.id,
+            MeterReading.is_approved.is_(True),
+        )
+    )).scalar_one()
+
+    return {
+        "items": items,
+        "page": page,
+        "limit": limit,
+        "total": total,
+        "has_more": (offset + len(items)) < total,
+    }
 
 
 # =========================
