@@ -1,6 +1,6 @@
 // static/js/modules/tariffs.js
 import { api } from '../core/api.js';
-import { setLoading, toast } from '../core/dom.js';
+import { setLoading, toast, escapeHtml } from '../core/dom.js';
 
 export const TariffsModule = {
     isInitialized: false,
@@ -251,14 +251,16 @@ export const TariffsModule = {
             }
             this.dom.scheduledCard.style.display = 'block';
 
+            // ИСПРАВЛЕНО: t.name приходит из БД и может содержать символы вроде <,>,",
+            // которые сломают HTML или дадут XSS. Экранируем перед вставкой.
             const rows = list.map(t => {
                 const dateStr = this._formatDate(t.effective_from);
                 return `
                     <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 16px; border-bottom:1px solid var(--border-color); flex-wrap:wrap; gap:8px;">
                         <div>
-                            <span style="font-weight:600; font-size:14px;">${t.name}</span>
+                            <span style="font-weight:600; font-size:14px;">${escapeHtml(t.name)}</span>
                             <span style="margin-left:10px; font-size:12px; background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:12px;">
-                                <i class="fa-solid fa-clock"></i> вступает ${dateStr}
+                                <i class="fa-solid fa-clock"></i> вступает ${escapeHtml(dateStr)}
                             </span>
                         </div>
                         <div style="font-size:12px; color:var(--text-secondary);">

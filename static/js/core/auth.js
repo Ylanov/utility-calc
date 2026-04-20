@@ -1,5 +1,38 @@
 // static/js/core/auth.js
 
+// =============================================================================
+// MULTI-TAB SESSION SYNC через BroadcastChannel.
+//
+// Раньше: пользователь делал logout в одной вкладке → sessionStorage чистился
+// только в ней. В других открытых вкладках токен оставался, юзер мог продолжать
+// работать — но при первом 401-ответе получал loading/redirect.
+//
+// Теперь: при logout в любой вкладке отправляем событие 'logout' через
+// BroadcastChannel. Все остальные вкладки приёмника тоже чистят sessionStorage
+// и редиректят на portal.html. Аналогично при login — рассылаем 'login',
+// чтобы вкладки на login.html сразу подхватили сессию.
+// =============================================================================
+const _bc = (typeof BroadcastChannel !== 'undefined')
+    ? new BroadcastChannel('jkh-auth-sync')
+    : null;
+
+if (_bc) {
+    _bc.addEventListener('message', (event) => {
+        if (!event?.data?.type) return;
+
+        if (event.data.type === 'logout') {
+            // Чистим состояние и идём на логин — но БЕЗ повторной отправки
+            // в канал, иначе будет бесконечный цикл.
+            sessionStorage.clear();
+            localStorage.clear();
+            if (!window.location.pathname.includes('portal.html') &&
+                !window.location.pathname.includes('login.html')) {
+                window.location.replace('portal.html');
+            }
+        }
+    });
+}
+
 export const Auth = {
     /**
      * Сохраняет данные сессии в sessionStorage.
@@ -54,6 +87,12 @@ export const Auth = {
 
         sessionStorage.clear();
         localStorage.clear();
+
+        // Уведомляем другие вкладки об logout — синхронная очистка во всех.
+        if (_bc) {
+            try { _bc.postMessage({ type: 'logout' }); } catch (e) { /* ignore */ }
+        }
+
         window.location.replace('portal.html');
     }
 };

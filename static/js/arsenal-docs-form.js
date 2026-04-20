@@ -4,6 +4,19 @@
  * Умный поиск по остаткам склада (для перемещений) или справочнику (для ввода).
  */
 
+// Локальный escape — это не ESM-модуль, поэтому нельзя импортировать из dom.js.
+// Используется чтобы предотвратить XSS через названия номенклатуры,
+// серийники, инвентарные номера, которые подставляются в innerHTML autocomplete.
+function _escAd(value) {
+    if (value === null || value === undefined) return '';
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
 window.Documents = window.Documents || {};
 
 Object.assign(window.Documents, {
@@ -160,32 +173,33 @@ Object.assign(window.Documents, {
                         return;
                     }
 
-                    // Рендерим результаты
+                    // ИСПРАВЛЕНО XSS: данные из БД (nomenclature, serial_number,
+                    // inventory_number, name, code) пробрасывались в innerHTML без
+                    // экранирования. Если в номенклатуру попадёт строка с тегами —
+                    // получим выполнение JS у любого пользователя в autocomplete.
+                    // Все ${...} от item.* теперь идут через _escAd().
                     resultsDiv.innerHTML = data.map(item => {
-                        // Экранируем данные
                         const safeData = encodeURIComponent(JSON.stringify(item));
 
                         if (isBalanceSearch) {
-                            // Рендер для найденных остатков на складе
                             const price = (item.price || 0).toLocaleString('ru-RU', { style: 'currency', currency: 'RUB' });
                             return `
-                                <div class="p-2 hover:bg-blue-50 cursor-pointer border-b border-slate-100 last:border-0 transition" 
+                                <div class="p-2 hover:bg-blue-50 cursor-pointer border-b border-slate-100 last:border-0 transition"
                                      onclick="Documents.selectItem(this, '${safeData}', true)">
-                                    <div class="font-bold text-slate-800 text-xs">${item.nomenclature}</div>
+                                    <div class="font-bold text-slate-800 text-xs">${_escAd(item.nomenclature)}</div>
                                     <div class="flex justify-between items-center mt-1">
-                                        <span class="text-[10px] text-slate-500 font-mono bg-slate-100 px-1.5 py-0.5 rounded">Серия: ${item.serial_number}</span>
-                                        <span class="text-[10px] font-bold ${item.quantity > 0 ? 'text-emerald-600' : 'text-rose-500'}">Доступно: ${item.quantity} шт.</span>
+                                        <span class="text-[10px] text-slate-500 font-mono bg-slate-100 px-1.5 py-0.5 rounded">Серия: ${_escAd(item.serial_number)}</span>
+                                        <span class="text-[10px] font-bold ${item.quantity > 0 ? 'text-emerald-600' : 'text-rose-500'}">Доступно: ${Number(item.quantity)} шт.</span>
                                     </div>
-                                    <div class="text-[10px] text-slate-400 font-mono mt-0.5">Инв: ${item.inventory_number || 'Б/Н'} | ${price}</div>
+                                    <div class="text-[10px] text-slate-400 font-mono mt-0.5">Инв: ${_escAd(item.inventory_number || 'Б/Н')} | ${_escAd(price)}</div>
                                 </div>
                             `;
                         } else {
-                            // Рендер для справочника номенклатуры
                             return `
-                                <div class="p-2 hover:bg-blue-50 cursor-pointer border-b border-slate-100 last:border-0 transition" 
+                                <div class="p-2 hover:bg-blue-50 cursor-pointer border-b border-slate-100 last:border-0 transition"
                                      onclick="Documents.selectItem(this, '${safeData}', false)">
-                                    <div class="font-bold text-slate-800 text-xs">${item.name}</div>
-                                    <div class="text-[10px] text-slate-400 font-mono mt-0.5">ГРАУ: ${item.code || '-'}</div>
+                                    <div class="font-bold text-slate-800 text-xs">${_escAd(item.name)}</div>
+                                    <div class="text-[10px] text-slate-400 font-mono mt-0.5">ГРАУ: ${_escAd(item.code || '-')}</div>
                                 </div>
                             `;
                         }

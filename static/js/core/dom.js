@@ -1,6 +1,26 @@
 // static/js/core/dom.js
 
 /**
+ * Экранирование строк для безопасной вставки в innerHTML / template-literal.
+ *
+ * Используется ВСЕГДА когда имя жильца, адрес, ФИО, название тарифа,
+ * любая строка из API подставляется в HTML через template literal.
+ * Без этого название общежития "<img src=x onerror=alert(1)>" даст XSS.
+ *
+ * Лучше предпочесть `el(...)` — он автоматически безопасен через textContent.
+ * escapeHtml оставлен как fallback для мест, где переписать на el() слишком дорого.
+ */
+export function escapeHtml(value) {
+    if (value === null || value === undefined) return '';
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+/**
  * Создает HTML элемент безопасным способом (защита от XSS).
  */
 export function el(tag, attributes = {}, ...children) {

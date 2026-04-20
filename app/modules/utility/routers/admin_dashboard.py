@@ -10,6 +10,7 @@ from sqlalchemy.future import select
 from sqlalchemy import func, desc, case
 
 from app.core.database import get_db
+from app.core.request_context import current_request_id
 from app.modules.utility.models import (
     User, Room, MeterReading, BillingPeriod, Adjustment, AuditLog
 )
@@ -42,13 +43,20 @@ async def write_audit_log(
         await write_audit_log(db, user.id, user.username, "approve", "reading", reading.id, {"total": 1234})
     """
     try:
+        # Включаем request_id в детали — связка action ↔ HTTP-запрос ↔ логи.
+        # Если детали уже заданы, не перезаписываем (детали важнее).
+        merged_details = dict(details or {})
+        rid = current_request_id.get()
+        if rid and rid != "-" and "request_id" not in merged_details:
+            merged_details["request_id"] = rid
+
         log_entry = AuditLog(
             user_id=user_id,
             username=username,
             action=action,
             entity_type=entity_type,
             entity_id=entity_id,
-            details=details
+            details=merged_details or None,
         )
         db.add(log_entry)
         # НЕ делаем commit — он произойдёт в вызывающей транзакции.

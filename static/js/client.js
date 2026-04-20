@@ -34,12 +34,16 @@ document.addEventListener('DOMContentLoaded', async () => {
         // Загружаем основные модули динамически, чтобы не блокировать рендер HTML
         const { ClientDashboard } = await import('./modules/client-dashboard.js');
         const { TotpSetup } = await import('./core/totp.js');
+        const { ClientAppDownload } = await import('./modules/client-app-download.js');
 
         // Запускаем основной модуль личного кабинета
         ClientDashboard.init();
 
         // Инициализируем логику 2FA
         TotpSetup.init();
+
+        // Подгружаем карточку «Скачать приложение» (если опубликован APK)
+        ClientAppDownload.init();
 
     } catch (error) {
         console.error('Ошибка загрузки модулей клиента:', error);

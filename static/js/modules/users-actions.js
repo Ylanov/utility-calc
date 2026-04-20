@@ -60,11 +60,14 @@ export async function openRelocateModal(user, rel, dormsCache) {
     rel.cold.placeholder = `Загрузка...`;
     rel.elect.placeholder = `Загрузка...`;
 
-    // Сброс блока переселения
+    // Сброс блока переселения.
+    // ИСПРАВЛЕНО XSS: название общежития подставлялось через ${d} без escape —
+    // если в БД попадёт общежитие с HTML-тегами, любой админ получит выполнение JS.
+    // Заменили на безопасный new Option() — браузер сам экранирует через textContent.
     rel.destinationBlock.style.display = 'none';
-    const options = '<option value="">-- Выберите здание --</option>' +
-                    dormsCache.map(d => `<option value="${d}">${d}</option>`).join('');
-    rel.dormSelect.innerHTML = options;
+    rel.dormSelect.innerHTML = '';
+    rel.dormSelect.appendChild(new Option('-- Выберите здание --', ''));
+    dormsCache.forEach(d => rel.dormSelect.appendChild(new Option(String(d), String(d))));
     rel.roomSelect.innerHTML = '<option value="">Сначала выберите здание</option>';
     rel.roomSelect.disabled = true;
 

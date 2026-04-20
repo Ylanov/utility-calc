@@ -445,6 +445,103 @@
         </section>
 
         <!-- ==========================================
+             СЕКЦИЯ: МОБИЛЬНОЕ ПРИЛОЖЕНИЕ (APK)
+             ========================================== -->
+        <section class="accordion-section" data-section="app-releases">
+            <button class="accordion-header" type="button" aria-expanded="false">
+                <span class="accordion-title">
+                    <span class="accordion-icon" style="background:rgba(99,102,241,0.12); color:#6366f1;">
+                        <i class="fa-solid fa-mobile-screen-button"></i>
+                    </span>
+                    <span class="accordion-title-text">
+                        <strong>Мобильное приложение (APK)</strong>
+                        <span class="subtitle">Загрузка и управление версиями приложения для жильцов</span>
+                    </span>
+                </span>
+                <i class="fa-solid fa-chevron-down accordion-chevron"></i>
+            </button>
+            <div class="accordion-body">
+                <div class="accordion-content">
+                    <div class="inner">
+
+                        <!-- Загрузка нового APK -->
+                        <div class="card" style="margin-bottom: 16px; padding: 16px; border-left: 4px solid #6366f1;">
+                            <h4 style="margin: 0 0 12px 0;">
+                                <i class="fa-solid fa-cloud-arrow-up"></i> Загрузить новую версию
+                            </h4>
+                            <form id="appReleaseForm" enctype="multipart/form-data">
+                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                                    <div class="form-group" style="margin: 0;">
+                                        <label>Версия (semver)</label>
+                                        <input type="text" id="releaseVersion" required pattern="\d+\.\d+\.\d+" placeholder="1.2.3">
+                                    </div>
+                                    <div class="form-group" style="margin: 0;">
+                                        <label>Version Code <span style="color:var(--text-secondary); font-size:11px;">(целое число)</span></label>
+                                        <input type="number" id="releaseVersionCode" required min="1" placeholder="10203">
+                                    </div>
+                                    <div class="form-group" style="margin: 0;">
+                                        <label>Min. для force-update <span style="color:var(--text-secondary); font-size:11px;">(опционально)</span></label>
+                                        <input type="number" id="releaseMinRequired" min="0" placeholder="напр. 10100">
+                                    </div>
+                                </div>
+                                <div class="form-group" style="margin-bottom: 12px;">
+                                    <label>Что нового (release notes)</label>
+                                    <textarea id="releaseNotes" rows="3" placeholder="• Исправлена ошибка ввода показаний&#10;• Добавлена поддержка тёмной темы"></textarea>
+                                </div>
+                                <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                                    <input type="file" id="releaseFile" accept=".apk" required
+                                           style="flex: 1; min-width: 200px;">
+                                    <label style="display:inline-flex; align-items:center; gap:6px; font-size:13px; cursor:pointer; user-select:none;">
+                                        <input type="checkbox" id="releasePublished" checked>
+                                        Сразу опубликовать
+                                    </label>
+                                    <button type="submit" class="action-btn primary-btn" id="btnReleaseUpload">
+                                        <i class="fa-solid fa-upload"></i> Загрузить
+                                    </button>
+                                </div>
+                                <div id="releaseUploadProgress" style="display:none; margin-top: 12px; padding: 10px; background: var(--primary-bg); border-radius: 6px; font-size: 13px;">
+                                    <div id="releaseUploadProgressText">Загрузка...</div>
+                                </div>
+                            </form>
+                            <p class="hint-text" style="margin-top: 12px;">
+                                <i class="fa-solid fa-circle-info"></i>
+                                version_code должен расти с каждым релизом. Если задан min_required_version_code,
+                                все клиенты с меньшей версией получат принудительный диалог обновления.
+                            </p>
+                        </div>
+
+                        <!-- Список релизов -->
+                        <h4 style="margin: 0 0 12px 0;">
+                            <i class="fa-solid fa-list"></i> Загруженные версии
+                            <button id="btnReleasesRefresh" class="icon-btn" title="Обновить" style="margin-left: 6px;">
+                                <i class="fa-solid fa-rotate-right"></i>
+                            </button>
+                        </h4>
+                        <div style="overflow-x:auto; border:1px solid var(--border-color); border-radius:var(--radius-sm);">
+                            <table style="width:100%; min-width:800px;" class="sticky-header-table">
+                                <thead>
+                                    <tr>
+                                        <th>Версия</th>
+                                        <th>Code</th>
+                                        <th>Min req</th>
+                                        <th>Размер</th>
+                                        <th>Загружен</th>
+                                        <th>Статус</th>
+                                        <th>Release notes</th>
+                                        <th style="text-align:right;">Действия</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="appReleasesTableBody">
+                                    <tr><td colspan="8" style="text-align:center; padding: 30px; color: var(--text-secondary);">Загрузка…</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==========================================
              СЕКЦИЯ: ЗАПЛАНИРОВАННЫЕ ТАРИФЫ
              ========================================== -->
         <section class="accordion-section" data-section="scheduled" id="scheduledTariffsCard" style="display: none;">

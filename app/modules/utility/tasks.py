@@ -320,21 +320,59 @@ async def run_async_close_period(admin_user_id: int):
         await async_engine.dispose()
 
 
-@celery.task(name="close_period_task", queue="heavy")
+@celery.task(
+    name="close_period_task",
+    queue="heavy",
+    autoretry_for=(Exception,),
+    retry_kwargs={"max_retries": 2, "countdown": 60},
+)
 def close_period_task(admin_user_id: int):
-    """Celery-задача с Redis Lock (защита от двойного запуска)"""
+    """
+    Celery-задача закрытия расчётного периода с защитой от двойного запуска.
+
+    ИСПРАВЛЕНИЯ:
+    1. Раньше Redis lock НЕ ставился — был только delete() в finally. Это значит
+       что два админа одновременно могли запустить close → двойная авто-генерация
+       показаний → двойные суммы. Теперь используем SET NX EX (атомарно).
+    2. Раньше при ошибке возвращали {"status": "error"} — Celery считал задачу
+       успешной, retry не работал. Теперь raise — autoretry_for сделает 2 попытки.
+    3. Lock освобождаем по тому же значению (атомарно через Lua-скрипт), чтобы
+       ретрай не убил чужой lock.
+
+    Сама `close_current_period` уже атомарна: вся работа в одной транзакции,
+    при exception — rollback. Период «полузакрытым» не останется.
+    """
     logger.info(f"Starting close_period_task for admin {admin_user_id}")
     redis_client = Redis.from_url(settings.REDIS_URL)
     lock_key = "lock:close_period"
+    lock_value = f"task-{admin_user_id}-{datetime.now(timezone.utc).timestamp()}"
+    lock_ttl = 1800  # 30 минут — заведомо больше любого реального close_period
+
+    # Атомарный SET NX EX — если ключа нет, ставим и возвращаем True.
+    acquired = redis_client.set(lock_key, lock_value, nx=True, ex=lock_ttl)
+    if not acquired:
+        logger.warning("[LOCK] close_period уже выполняется другой задачей — пропускаем")
+        return {"status": "skipped", "reason": "already_running"}
+
     try:
         result = asyncio.run(run_async_close_period(admin_user_id))
+        logger.info(f"[CLOSE_PERIOD] Success: {result}")
         return result
-    except Exception as e:
-        logger.exception("Error in close_period_task")
-        return {"status": "error", "message": str(e)}
+    except Exception:
+        logger.exception("[CLOSE_PERIOD] Failed — будет retry автоматически")
+        raise  # пусть Celery увидит ошибку и сделает retry
     finally:
+        # Освобождаем lock только если он наш (Lua-скрипт для атомарности).
+        # Иначе после retry мы могли бы стереть чужой lock.
         try:
-            redis_client.delete(lock_key)
+            release_script = """
+            if redis.call('GET', KEYS[1]) == ARGV[1] then
+                return redis.call('DEL', KEYS[1])
+            else
+                return 0
+            end
+            """
+            redis_client.eval(release_script, 1, lock_key, lock_value)
             logger.info("[LOCK] Released close_period lock")
         except Exception as e:
             logger.warning(f"[LOCK] Failed to release: {e}")
@@ -458,8 +496,11 @@ def detect_anomalies_task(reading_id: int):
     autoretry_for=(Exception,),
     retry_kwargs={"max_retries": 3, "countdown": 60},
     retry_backoff=True,
-    time_limit=300,
-    soft_time_limit=240,
+    # Первый импорт исторических данных за 2 года — это 50k+ строк с
+    # rapidfuzz token_sort_ratio для каждой. На сервере с CPU средней мощности
+    # это занимает 8-15 минут. Поэтому ставим time_limit с большим запасом.
+    time_limit=1500,        # 25 минут жёсткий
+    soft_time_limit=1200,   # 20 минут мягкий — сначала прилетит SoftTimeLimitExceeded
 )
 def sync_gsheets_task(sheet_id: str = "", gid: str = "", limit: int | None = None):
     """

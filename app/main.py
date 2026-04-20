@@ -49,6 +49,7 @@ from app.modules.utility.routers import (
     admin_dashboard,
     admin_initial_readings,
     admin_gsheets,
+    app_releases,
 )
 
 from app.modules.telegram import telegram_app
@@ -76,8 +77,35 @@ from app.modules.gsm import (
 
 # =====================================================================
 # LOGGING
+#
+# Структурированный формат с request_id из contextvars. RequestIdFilter
+# подкладывает request_id в каждый LogRecord; форматтер показывает его
+# в каждой строке. Это даёт сквозную трассировку HTTP-запроса по логам:
+# можно `grep <request_id>` и увидеть всю цепочку обработки.
 # =====================================================================
-logging.basicConfig(level=logging.INFO)
+from app.core.request_context import RequestIdFilter
+from app.core.middleware.request_id import RequestIdMiddleware
+
+_LOG_FORMAT = "%(asctime)s %(levelname)s [%(name)s] [req:%(request_id)s] %(message)s"
+_root_handler = logging.StreamHandler()
+_root_handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+_root_handler.addFilter(RequestIdFilter())
+
+# Заменяем дефолтные хендлеры root-логгера на наш с фильтром.
+logging.basicConfig(
+    level=logging.INFO,
+    handlers=[_root_handler],
+    force=True,  # перебиваем basicConfig, который мог поставить uvicorn
+)
+
+# Прикрепляем фильтр к uvicorn-логгерам (access/error) — иначе их строки
+# будут без request_id, и трассировка частично теряется.
+for _name in ("uvicorn", "uvicorn.access", "uvicorn.error", "fastapi"):
+    _lg = logging.getLogger(_name)
+    _lg.addFilter(RequestIdFilter())
+    for _h in _lg.handlers:
+        _h.addFilter(RequestIdFilter())
+
 logger = logging.getLogger(__name__)
 
 # =====================================================================
@@ -207,6 +235,11 @@ async def health_check():
 # =====================================================================
 # MIDDLEWARES
 # =====================================================================
+# RequestIdMiddleware регистрируется ПЕРВЫМ (значит выполнится последним
+# на пути запроса вверх и первым вниз), чтобы request_id был доступен
+# во всём остальном middleware-стеке и хендлерах.
+app.add_middleware(RequestIdMiddleware)
+
 app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=["asy-tk.ru", "www.asy-tk.ru", "localhost", "127.0.0.1"],
@@ -310,6 +343,7 @@ app.include_router(admin_dashboard.router)
 
 app.include_router(admin_initial_readings.router)
 app.include_router(admin_gsheets.router)
+app.include_router(app_releases.router)
 
 # =====================================================================
 # ROUTES — АРСЕНАЛ

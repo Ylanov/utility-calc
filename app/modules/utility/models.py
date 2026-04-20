@@ -391,3 +391,48 @@ class GSheetsImportRow(Base):
         Index("idx_gsheets_matched_user", "matched_user_id"),
         Index("idx_gsheets_timestamp", "sheet_timestamp"),
     )
+
+
+# ======================================================
+# APP RELEASE — версии мобильного приложения
+# ======================================================
+# Хранит метаданные APK-релизов, выложенных через админку.
+# Сами файлы лежат в static/apps/<filename> — отдаются nginx'ом напрямую.
+#
+# Модель публикации:
+# - Админ загружает APK с указанием версии и release notes.
+# - is_published управляется админом — недопубликованные не видны клиенту.
+# - "Текущая" версия для клиента — последний is_published=True по version_code DESC.
+# - Если задано min_required_version_code, и у клиента version_code меньше —
+#   приложение покажет force-update диалог без возможности отложить.
+# ======================================================
+class AppRelease(Base):
+    __tablename__ = "app_releases"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # Семантическая версия (отображаемая) — "1.2.3"
+    version = Column(String, nullable=False)
+    # Числовое представление для сравнения — 10203 (1*10000+2*100+3)
+    # Удобно использовать как Android versionCode.
+    version_code = Column(Integer, nullable=False)
+
+    # Если у клиента version_code < этой — force-update.
+    min_required_version_code = Column(Integer, nullable=True)
+
+    # Файл
+    platform = Column(String, default="android", nullable=False, index=True)
+    file_name = Column(String, nullable=False)        # имя файла в static/apps/
+    file_size = Column(Integer, nullable=False)       # байты
+    file_hash = Column(String, nullable=True)         # SHA-256 для проверки целостности
+
+    release_notes = Column(Text, nullable=True)
+    is_published = Column(Boolean, default=False, nullable=False, index=True)
+
+    created_at = Column(DateTime, default=_utcnow, index=True)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_by = relationship("User", foreign_keys=[created_by_id])
+
+    __table_args__ = (
+        Index("idx_app_release_platform_published", "platform", "is_published", "version_code"),
+    )

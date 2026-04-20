@@ -331,7 +331,14 @@ async def approve_row(
     db: AsyncSession = Depends(get_db),
 ):
     require_admin(current_user)
-    row = await db.get(GSheetsImportRow, row_id)
+    # SELECT FOR UPDATE — защита от race condition:
+    # без него два админа могли одновременно нажать «утвердить» одну строку,
+    # оба пройти проверку status != approved и создать дубль MeterReading.
+    row = (await db.execute(
+        select(GSheetsImportRow)
+        .where(GSheetsImportRow.id == row_id)
+        .with_for_update()
+    )).scalars().first()
     if not row:
         raise HTTPException(status_code=404, detail="Строка не найдена")
     reading = await _apply_approve(db, row, current_user)

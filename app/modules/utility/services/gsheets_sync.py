@@ -195,29 +195,60 @@ def match_user(
 
     - Сначала пытаемся token_sort_ratio (устойчив к перестановке слов "Иванов Иван" vs "Иван Иванов").
     - Если score ≥ FUZZY_THRESHOLD, проверяем совпадение комнаты.
+    - Если несколько кандидатов с одинаковым максимальным score (≥95) —
+      возвращаем conflict с перечислением кандидатов: админ выбирает вручную.
+      Это спасает от ситуации "Иванов И." матчится на 3 разных Ивановых.
     """
     norm = normalize_fio(raw_fio)
     if not norm:
         return None, 0, None
 
-    # Точное совпадение
+    # Точное совпадение по нормализованной строке
     if norm in users_map:
         user = users_map[norm]
-        conflict = _check_room_conflict(user, raw_room)
-        return user, 100, conflict
+        # Если в БД несколько юзеров после нормализации совпали —
+        # users_map хранит только последнего; это уже сигнал конфликта,
+        # но проверим: одинаковых ключей быть не должно (token_sort_ratio
+        # для двух одинаковых строк = 100). Если нужно — вытаскиваем все.
+        return user, 100, _check_room_conflict(user, raw_room)
 
-    # Fuzzy
-    match = process.extractOne(norm, users_keys, scorer=fuzz.token_sort_ratio)
-    if not match:
+    # Fuzzy: extract топ-5 кандидатов
+    candidates = process.extract(
+        norm, users_keys,
+        scorer=fuzz.token_sort_ratio,
+        limit=5,
+    )
+    if not candidates:
         return None, 0, None
 
-    best_name, score, _idx = match
-    if score < FUZZY_THRESHOLD:
-        return None, int(score), None
+    best_name, best_score, _ = candidates[0]
+    best_score = int(best_score)
+
+    if best_score < FUZZY_THRESHOLD:
+        return None, best_score, None
+
+    # Проверяем: есть ли ДРУГИЕ кандидаты с тем же или почти тем же score?
+    # Если несколько ≥95 — это амбигуация, нужно решение админа.
+    near_top = [
+        (name, int(s)) for name, s, _ in candidates
+        if int(s) >= 95 and int(s) >= best_score - 2
+    ]
+
+    if len(near_top) >= 2:
+        # Несколько одинаково "хороших" вариантов → conflict
+        names_preview = ", ".join(
+            users_map[n]["username"] for n, _ in near_top[:3]
+        )
+        conflict = (
+            f"Найдено несколько похожих жильцов ({len(near_top)}): {names_preview}. "
+            "Выберите нужного через «Переназначить»."
+        )
+        # Возвращаем первого как "догадку", но статус conflict.
+        return users_map[best_name], best_score, conflict
 
     user = users_map[best_name]
     conflict = _check_room_conflict(user, raw_room)
-    return user, int(score), conflict
+    return user, best_score, conflict
 
 
 def _check_room_conflict(user: dict, raw_room: Optional[str]) -> Optional[str]:

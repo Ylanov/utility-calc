@@ -6,6 +6,7 @@ import hmac
 import logging
 from urllib.parse import unquote
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi_limiter.depends import RateLimiter
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -71,7 +72,12 @@ def validate_telegram_data(init_data: str) -> dict:
         )
 
 
-@router.post("/auto-login")
+@router.post(
+    "/auto-login",
+    # Rate limit: 10 попыток/мин с одного IP. Защита от перебора telegram_id —
+    # без неё атакующий мог бы перебрать ID пользователей и понять, кто привязан.
+    dependencies=[Depends(RateLimiter(times=10, seconds=60))],
+)
 async def tg_auto_login(data: TgAutoLoginRequest, db: AsyncSession = Depends(get_db)):
     """Попытка войти автоматически по Telegram ID."""
     tg_user = validate_telegram_data(data.initData)
@@ -93,7 +99,12 @@ async def tg_auto_login(data: TgAutoLoginRequest, db: AsyncSession = Depends(get
     return {"access_token": access_token, "role": user.role, "username": user.username}
 
 
-@router.post("/login-and-link")
+@router.post(
+    "/login-and-link",
+    # Rate limit на привязку: 5 попыток/мин — защита от brute-force паролей
+    # через Telegram Mini App (тот же атакующий вектор что у /api/token).
+    dependencies=[Depends(RateLimiter(times=5, seconds=60))],
+)
 async def tg_login_and_link(data: TgLoginRequest, db: AsyncSession = Depends(get_db)):
     """Первый вход по логину/паролю с привязкой Telegram ID."""
     tg_user = validate_telegram_data(data.initData)
