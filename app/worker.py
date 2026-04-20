@@ -91,6 +91,17 @@ celery.conf.beat_schedule = {
         "task": "activate_scheduled_tariffs_task",
         "schedule": crontab(minute=1, hour=0),
     },
+    # Синхронизация показаний из Google Sheets — каждые N минут.
+    # Если GSHEETS_SHEET_ID не задан в .env, задача внутри выйдет сразу.
+    # Интервал настраивается через GSHEETS_SYNC_INTERVAL_MINUTES.
+    "sync-gsheets-periodic": {
+        "task": "sync_gsheets_task",
+        "schedule": (
+            crontab(minute=f"*/{settings.GSHEETS_SYNC_INTERVAL_MINUTES}")
+            if settings.GSHEETS_SYNC_INTERVAL_MINUTES and settings.GSHEETS_SYNC_INTERVAL_MINUTES > 0
+            else crontab(minute=0, hour=0, day_of_month="31", month_of_year="2")  # никогда
+        ),
+    },
 }
 
 # ИМПОРТЫ ЗАДАЧ

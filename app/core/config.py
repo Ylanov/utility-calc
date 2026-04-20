@@ -65,6 +65,17 @@ class Settings(BaseSettings):
     S3_BUCKET_NAME: str = "utility-receipts"
     S3_PUBLIC_URL: str = "https://asy-tk.ru"
 
+    # =========================================
+    # Google Sheets integration
+    # =========================================
+    # ID таблицы (или полный URL — парсер извлечёт ID). Если пусто —
+    # эндпоинты возвращают 400, Celery-задача пропускается.
+    GSHEETS_SHEET_ID: str = ""
+    # gid листа (0 по умолчанию — первый лист).
+    GSHEETS_GID: str = "0"
+    # Интервал автосинка в минутах (0 = отключить автосинхронизацию).
+    GSHEETS_SYNC_INTERVAL_MINUTES: int = 15
+
     @property
     def DATABASE_URL_ASYNC(self) -> str:
         return (

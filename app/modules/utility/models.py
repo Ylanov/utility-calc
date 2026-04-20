@@ -316,3 +316,78 @@ class AuditLog(Base):
         Index("idx_audit_action_created", "action", "created_at"),
         Index("idx_audit_entity_created", "entity_type", "created_at"),
     )
+
+
+# ======================================================
+# GOOGLE SHEETS IMPORT (интеграция с внешней таблицей)
+# ======================================================
+# Показания подаются жильцами в стороннюю Google-таблицу с колонками:
+#   A: timestamp (dd.mm.yyyy HH:MM:SS)
+#   B: ФИО жильца (разные форматы: полное, сокращённое, с опечатками)
+#   C: общежитие (свободный текст — "4", "Общежитие № 2", "УТК", "дмвл. 4, с. 15")
+#   D: номер комнаты
+#   E: ГВС (м³, decimal — "91,778" или "1085.07")
+#   F: ХВС (м³)
+#
+# Наша фоновая задача читает CSV-экспорт таблицы раз в N минут и складывает
+# каждую строку в этот импорт-буфер со статусом. Админ из UI решает:
+# - pending → approved (создаётся MeterReading + привязывается к пользователю)
+# - pending → rejected (строка отброшена, в БД показаний не появится)
+# - conflict → resolved_reassign (админ переопределяет user_id/room_id)
+#
+# row_hash (unique): MD5 от кортежа (дата, ФИО, комната, ГВС, ХВС). Гарантирует
+# идемпотентность импорта — повторная синхронизация не создаст дубль.
+# ======================================================
+class GSheetsImportRow(Base):
+    __tablename__ = "gsheets_import_rows"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # Сырые данные из таблицы
+    sheet_timestamp = Column(DateTime, nullable=True, index=True)
+    raw_fio = Column(String, nullable=False)
+    raw_dormitory = Column(String, nullable=True)
+    raw_room_number = Column(String, nullable=True)
+    raw_hot_water = Column(String, nullable=True)
+    raw_cold_water = Column(String, nullable=True)
+
+    # Разобранные значения (после парсинга decimal и очистки)
+    hot_water = Column(Numeric(12, 3), nullable=True)
+    cold_water = Column(Numeric(12, 3), nullable=True)
+
+    # Результат сопоставления с БД
+    matched_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    matched_room_id = Column(Integer, ForeignKey("rooms.id"), nullable=True)
+    match_score = Column(Integer, default=0)  # 0..100 — уверенность fuzzy-матча
+
+    # Статусы:
+    # - pending: импортировано, ждёт решения админа (fuzzy matched, но не approved)
+    # - unmatched: ФИО не найдено ни с каким жильцом
+    # - conflict: ФИО нашлось, но номер комнаты не совпадает с привязанной
+    # - approved: админ утвердил, создан MeterReading
+    # - rejected: админ отклонил
+    # - auto_approved: высокий score (≥95) + комната совпала — импорт без ручного утверждения
+    status = Column(String, default="pending", index=True)
+    conflict_reason = Column(Text, nullable=True)
+
+    # Ссылка на созданный MeterReading (если approved)
+    reading_id = Column(Integer, ForeignKey("readings.id"), nullable=True)
+
+    # Уникальный хэш строки — защита от дублей при повторном импорте
+    row_hash = Column(String(32), unique=True, nullable=False, index=True)
+
+    # Метаданные
+    created_at = Column(DateTime, default=_utcnow, index=True)
+    processed_at = Column(DateTime, nullable=True)
+    processed_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    notes = Column(Text, nullable=True)
+
+    matched_user = relationship("User", foreign_keys=[matched_user_id])
+    matched_room = relationship("Room", foreign_keys=[matched_room_id])
+    processed_by = relationship("User", foreign_keys=[processed_by_id])
+
+    __table_args__ = (
+        Index("idx_gsheets_status_created", "status", "created_at"),
+        Index("idx_gsheets_matched_user", "matched_user_id"),
+        Index("idx_gsheets_timestamp", "sheet_timestamp"),
+    )

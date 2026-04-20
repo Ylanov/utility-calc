@@ -346,11 +346,12 @@ async function initModule(tabId) {
                 }
                 loadedModules.debts.init();
                 break;
-            // Операции — объединяет Ручной ввод, Тарифы и Сводку в accordion-секциях.
-            // Инициализируются 4 модуля:
+            // Операции — объединяет Ручной ввод, Тарифы, Сводку и GSheets
+            // в accordion-секциях. Инициализируются 5 модулей:
             //  - ManualModule (ввод показаний за жильца)
             //  - TariffsModule (профили + график)
             //  - SummaryModule (сравнение, предпросмотр закрытия, финансовый отчёт)
+            //  - GSheetsModule (импорт из Google Sheets с fuzzy-match и утверждением)
             //  - ToolsModule — только раскрытие/сворачивание секций.
             case 'tools':
                 if (!loadedModules.manual) {
@@ -365,6 +366,10 @@ async function initModule(tabId) {
                     const { SummaryModule } = await import('./modules/summary.js');
                     loadedModules.summary = SummaryModule;
                 }
+                if (!loadedModules.gsheets) {
+                    const { GSheetsModule } = await import('./modules/gsheets.js');
+                    loadedModules.gsheets = GSheetsModule;
+                }
                 if (!loadedModules.tools) {
                     const { ToolsModule } = await import('./modules/tools.js');
                     loadedModules.tools = ToolsModule;
@@ -372,6 +377,7 @@ async function initModule(tabId) {
                 loadedModules.manual.init();
                 loadedModules.tariffs.init();
                 loadedModules.summary.init();
+                loadedModules.gsheets.init();
                 loadedModules.tools.init();
                 break;
             default:
@@ -404,13 +410,17 @@ function refreshModuleData(tabId) {
         case 'debts':
             if (typeof mod.reload === 'function') mod.reload();
             break;
-        // Операции: перезагружаем тарифы (lightweight) + очищаем поиск жильца
+        // Операции: перезагружаем тарифы (lightweight), gsheets, очищаем поиск жильца
         case 'tools': {
             const tariffsMod = loadedModules.tariffs;
             if (tariffsMod && typeof tariffsMod.load === 'function') tariffsMod.load();
             const manualMod = loadedModules.manual;
             if (manualMod && typeof manualMod.searchUsers === 'function') {
                 manualMod.searchUsers('');
+            }
+            const gsheetsMod = loadedModules.gsheets;
+            if (gsheetsMod && typeof gsheetsMod.refresh === 'function') {
+                gsheetsMod.refresh();
             }
             break;
         }

@@ -48,6 +48,7 @@ from app.modules.utility.routers import (
     settings as settings_router,
     admin_dashboard,
     admin_initial_readings,
+    admin_gsheets,
 )
 
 from app.modules.telegram import telegram_app
@@ -308,6 +309,7 @@ app.include_router(telegram_app.router)
 app.include_router(admin_dashboard.router)
 
 app.include_router(admin_initial_readings.router)
+app.include_router(admin_gsheets.router)
 
 # =====================================================================
 # ROUTES — АРСЕНАЛ
