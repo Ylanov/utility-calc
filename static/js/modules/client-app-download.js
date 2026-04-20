@@ -11,15 +11,13 @@
 import { api } from '../core/api.js';
 
 /**
- * Простейший QR-код через публичный сервис quickchart.io.
- * Не требует JS-библиотеки и тяжёлых зависимостей.
- *
- * Альтернативно можно подключить qrcode.js — но для статичной ссылки
- * это overkill: QR один на всю карточку, генерится раз при загрузке.
+ * QR через наш собственный endpoint /api/qr (Python qrcode библиотека).
+ * Раньше использовался quickchart.io — он нарушал CSP (img-src 'self' data: blob:)
+ * и создавал внешнюю зависимость. Теперь самодостаточно.
  */
-function buildQrUrl(text, size = 160) {
+function buildQrUrl(text, boxSize = 8) {
     const encoded = encodeURIComponent(text);
-    return `https://quickchart.io/qr?text=${encoded}&size=${size}&margin=1`;
+    return `/api/qr?text=${encoded}&box_size=${boxSize}&border=2`;
 }
 
 function fmtSize(bytes) {
@@ -71,11 +69,15 @@ export const ClientAppDownload = {
 
         const qrContainer = document.getElementById('appDownloadQR');
         if (qrContainer) {
+            // box_size=7 даёт результирующий PNG ~200x200px при 25-30 квадратах,
+            // что хорошо смотрится в контейнере 160x160px (image-rendering crisp).
             const img = document.createElement('img');
-            img.src = buildQrUrl(fullUrl, 160);
+            img.src = buildQrUrl(fullUrl, 7);
             img.alt = 'QR-код для скачивания APK';
             img.style.width = '100%';
             img.style.height = '100%';
+            img.style.display = 'block';
+            img.style.imageRendering = 'pixelated';  // QR должен быть резким
             img.loading = 'lazy';
             qrContainer.innerHTML = '';
             qrContainer.appendChild(img);

@@ -55,26 +55,45 @@
              Видна всем (даже до логина) — заполняется JS только если на сервере
              есть опубликованный APK. Иначе блок скрыт.
              ======================================== -->
-        <div id="portalAppBlock" style="display:none; margin-top: 60px; padding: 20px 24px; background: rgba(255,255,255,0.06); border-radius: 16px; backdrop-filter: blur(8px); max-width: 640px; margin-left:auto; margin-right:auto;">
-            <div style="display:flex; gap:20px; align-items:center; flex-wrap:wrap; justify-content:space-between;">
-                <div style="flex:1; min-width:240px;">
-                    <h3 style="margin:0 0 8px 0; color:#fff; font-size:18px; display:flex; align-items:center; gap:10px;">
-                        <i class="fa-solid fa-mobile-screen-button" style="color:#a5b4fc;"></i>
+        <!-- Карточка «Мобильное приложение». Стилизована как остальные portal-card:
+             белый фон, лёгкая тень, тёмный текст. По умолчанию display:none —
+             показывается JS только если на сервере есть опубликованный APK. -->
+        <div id="portalAppBlock" style="
+            display:none;
+            margin: 60px auto 0;
+            padding: 24px 28px;
+            background: #fff;
+            border-radius: 16px;
+            box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+            max-width: 720px;
+            border: 1px solid rgba(0,0,0,0.06);
+        ">
+            <div style="display:flex; gap:24px; align-items:center; flex-wrap:wrap; justify-content:space-between;">
+                <div style="flex:1; min-width:260px;">
+                    <h3 style="margin:0 0 10px 0; color:#1a202c; font-size:20px; font-weight:600; display:flex; align-items:center; gap:12px;">
+                        <span style="display:inline-flex; align-items:center; justify-content:center; width:40px; height:40px; background:#eef2ff; color:#6366f1; border-radius:10px;">
+                            <i class="fa-solid fa-mobile-screen-button" style="font-size:18px;"></i>
+                        </span>
                         Мобильное приложение «ЖКХ Лидер»
                     </h3>
-                    <p style="margin:0 0 14px 0; color:rgba(255,255,255,0.75); font-size:13px;">
+                    <p style="margin:0 0 18px 0; color:#4a5568; font-size:14px; line-height:1.5;">
                         Подавайте показания и смотрите квитанции в один тап со смартфона.
+                        Установите APK напрямую — без Google Play.
                     </p>
                     <a id="portalAppDownloadLink" href="#" download
-                       style="display:inline-flex; align-items:center; gap:8px; padding:10px 18px; background:#fff; color:#1a73e8; border-radius:10px; text-decoration:none; font-weight:600; font-size:14px;">
+                       style="display:inline-flex; align-items:center; gap:8px; padding:11px 20px; background:#1a73e8; color:#fff; border-radius:10px; text-decoration:none; font-weight:600; font-size:14px; transition:background 0.15s;"
+                       onmouseover="this.style.background='#1557b0'"
+                       onmouseout="this.style.background='#1a73e8'">
                         <i class="fa-brands fa-android"></i>
                         <span id="portalAppVersionLabel">Скачать APK</span>
                     </a>
                 </div>
-                <div style="text-align:center;">
-                    <div id="portalAppQR" style="width:120px; height:120px; padding:6px; background:#fff; border-radius:8px;"></div>
-                    <p style="margin:6px 0 0 0; font-size:11px; color:rgba(255,255,255,0.7);">
-                        Отсканируйте с телефона
+                <div style="text-align:center; flex-shrink:0;">
+                    <div id="portalAppQR" style="width:140px; height:140px; padding:8px; background:#fff; border:1px solid #e2e8f0; border-radius:10px; display:flex; align-items:center; justify-content:center;">
+                        <span style="color:#a0aec0; font-size:11px;">QR-код</span>
+                    </div>
+                    <p style="margin:8px 0 0 0; font-size:11px; color:#718096;">
+                        <i class="fa-solid fa-qrcode"></i> Отсканируйте с телефона
                     </p>
                 </div>
             </div>
@@ -102,15 +121,20 @@
             document.getElementById('portalAppVersionLabel').textContent =
                 'Скачать APK · v' + info.version;
 
+            // QR генерится нашим бэком — не нарушает CSP (img-src 'self')
+            // и не зависит от внешних сервисов вроде quickchart.io.
             const fullUrl = window.location.origin + info.download_url;
-            const qrSrc = 'https://quickchart.io/qr?text=' + encodeURIComponent(fullUrl) + '&size=120&margin=1';
+            const qrSrc = '/api/qr?text=' + encodeURIComponent(fullUrl) + '&box_size=6&border=2';
             const img = document.createElement('img');
             img.src = qrSrc;
             img.alt = 'QR-код для скачивания APK';
             img.style.width = '100%';
             img.style.height = '100%';
+            img.style.display = 'block';
             img.loading = 'lazy';
-            document.getElementById('portalAppQR').appendChild(img);
+            const qrBlock = document.getElementById('portalAppQR');
+            qrBlock.innerHTML = '';  // убираем placeholder «QR-код»
+            qrBlock.appendChild(img);
 
             document.getElementById('portalAppBlock').style.display = 'block';
         } catch (e) {
