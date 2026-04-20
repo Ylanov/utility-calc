@@ -294,13 +294,28 @@ async def _apply_approve(
                 ),
             )
 
+    # ЭЛЕКТРИЧЕСТВО: жильцы не подают электроэнергию через таблицу — колонки нет.
+    # Берём последнее утверждённое значение этого жильца (показание счётчика
+    # монотонно растёт, так что повтор предыдущего = «расход 0», что корректно
+    # пока новой подачи нет). Если истории нет — ставим 0.
+    prev_electricity = (await db.execute(
+        select(MeterReading.electricity)
+        .where(
+            MeterReading.user_id == user.id,
+            MeterReading.is_approved.is_(True),
+        )
+        .order_by(MeterReading.created_at.desc())
+        .limit(1)
+    )).scalar_one_or_none()
+    electricity_value = prev_electricity if prev_electricity is not None else Decimal("0")
+
     reading = MeterReading(
         user_id=user.id,
         room_id=user.room_id,
         period_id=active_period.id if active_period else None,
         hot_water=row.hot_water,
         cold_water=row.cold_water,
-        electricity=Decimal("0"),  # В Google Sheets нет электричества
+        electricity=electricity_value,
         is_approved=True,
         anomaly_flags="GSHEETS_IMPORT",
         anomaly_score=0,

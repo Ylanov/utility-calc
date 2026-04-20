@@ -64,6 +64,11 @@ export const GSheetsModule = {
         search: '',
         rows: [],
         stats: null,
+        viewMode: 'grouped', // 'grouped' (по жильцам) или 'flat' (плоско)
+        // В grouped-режиме поднимаем лимит — в одном жильце может быть много подач,
+        // 50 строк = ~10-15 жильцов. 200 строк = почти все активные за раз.
+        groupedLimit: 200,
+        expandedUserIds: new Set(),  // какие карточки жильцов раскрыты
     },
 
     _intervalId: null,
@@ -101,6 +106,11 @@ export const GSheetsModule = {
             pageLabel: document.getElementById('gsheetsPageLabel'),
             totalInfo: document.getElementById('gsheetsTotalInfo'),
             archiveToggle: document.getElementById('gsheetsArchiveToggle'),
+            flatView: document.getElementById('gsheetsFlatView'),
+            groupedView: document.getElementById('gsheetsGroupedView'),
+            groupedBody: document.getElementById('gsheetsGroupedBody'),
+            btnViewGrouped: document.getElementById('gsheetsViewGrouped'),
+            btnViewFlat: document.getElementById('gsheetsViewFlat'),
         };
     },
 
@@ -108,6 +118,10 @@ export const GSheetsModule = {
         this.dom.btnSync?.addEventListener('click', () => this.triggerSync());
         this.dom.btnRefresh?.addEventListener('click', () => this.refresh());
         this.dom.btnBulkApprove?.addEventListener('click', () => this.bulkApprove());
+
+        this.dom.btnViewGrouped?.addEventListener('click', () => this._setViewMode('grouped'));
+        this.dom.btnViewFlat?.addEventListener('click', () => this._setViewMode('flat'));
+        this._applyViewModeUI();  // выставляем начальное состояние кнопок и контейнеров
 
         this.dom.statusFilter?.addEventListener('change', () => {
             this.state.status = this.dom.statusFilter.value;
@@ -167,6 +181,33 @@ export const GSheetsModule = {
             if (userLink) {
                 e.preventDefault();
                 this.showUserHistory(Number(userLink.dataset.userId));
+            }
+        });
+
+        // Те же обработчики для grouped-вида + раскрытие/сворачивание карточки
+        this.dom.groupedBody?.addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-action]');
+            if (btn) {
+                e.stopPropagation();
+                const action = btn.dataset.action;
+                if (action === 'group-approve-all') {
+                    this.groupApproveAll(btn.dataset.userKey);
+                    return;
+                }
+                if (action === 'group-show-history') {
+                    this.showUserHistory(Number(btn.dataset.userId));
+                    return;
+                }
+                const rowId = Number(btn.dataset.rowId);
+                if (action === 'approve') this.approveRow(rowId);
+                else if (action === 'reject') this.rejectRow(rowId);
+                else if (action === 'reassign') this.reassignPrompt(rowId);
+                else if (action === 'delete') this.deleteRow(rowId);
+                return;
+            }
+            const header = e.target.closest('[data-toggle-user]');
+            if (header) {
+                this._toggleUserGroup(header.dataset.toggleUser);
             }
         });
 
@@ -257,9 +298,14 @@ export const GSheetsModule = {
     },
 
     async loadRows(options = {}) {
+        // В grouped-режиме поднимаем лимит, чтобы все подачи одного жильца
+        // оказались на одной странице (иначе "цепочка" разорвётся между страницами).
+        const limit = this.state.viewMode === 'grouped'
+            ? this.state.groupedLimit
+            : this.state.limit;
         const params = new URLSearchParams({
             page: this.state.page,
-            limit: this.state.limit,
+            limit: limit,
             active_only: this.state.activeOnly ? 'true' : 'false',
         });
         if (this.state.status) params.set('status', this.state.status);
@@ -273,13 +319,23 @@ export const GSheetsModule = {
             this.renderPagination();
         } catch (e) {
             if (!options.silent) {
+                const errHtml = `<div style="padding:20px; text-align:center; color:var(--danger-color);">${escapeHtml(e.message)}</div>`;
                 this.dom.tbody.innerHTML =
-                    `<tr><td colspan="9" style="padding:20px; text-align:center; color:var(--danger-color);">${escapeHtml(e.message)}</td></tr>`;
+                    `<tr><td colspan="9">${errHtml}</td></tr>`;
+                if (this.dom.groupedBody) this.dom.groupedBody.innerHTML = errHtml;
             }
         }
     },
 
     renderRows() {
+        if (this.state.viewMode === 'grouped') {
+            this._renderGrouped();
+        } else {
+            this._renderFlat();
+        }
+    },
+
+    _renderFlat() {
         if (!this.state.rows.length) {
             const emptyText = this.state.activeOnly
                 ? '🎉 Все актуальные строки обработаны! Переключите «показать архив» чтобы увидеть утверждённые/отклонённые.'
@@ -288,7 +344,6 @@ export const GSheetsModule = {
                 `<tr><td colspan="9" style="padding:30px; text-align:center; color:var(--text-secondary);">${escapeHtml(emptyText)}</td></tr>`;
             return;
         }
-
         this.dom.tbody.innerHTML = this.state.rows.map(row => this._renderRow(row)).join('');
     },
 
@@ -352,11 +407,289 @@ export const GSheetsModule = {
     },
 
     renderPagination() {
-        const max = Math.ceil(this.state.total / this.state.limit) || 1;
+        const limit = this.state.viewMode === 'grouped'
+            ? this.state.groupedLimit
+            : this.state.limit;
+        const max = Math.ceil(this.state.total / limit) || 1;
         this.dom.pageLabel.textContent = `${this.state.page} / ${max}`;
         this.dom.totalInfo.textContent = `Всего: ${this.state.total}`;
         this.dom.prev.disabled = this.state.page <= 1;
         this.dom.next.disabled = this.state.page >= max;
+    },
+
+    // ========================================================
+    // VIEW MODE — переключение «по жильцам» ↔ «плоско»
+    // ========================================================
+    _setViewMode(mode) {
+        if (this.state.viewMode === mode) return;
+        this.state.viewMode = mode;
+        this.state.page = 1;
+        this._applyViewModeUI();
+        this.loadRows();
+    },
+
+    _applyViewModeUI() {
+        const grouped = this.state.viewMode === 'grouped';
+        if (this.dom.flatView)    this.dom.flatView.style.display    = grouped ? 'none' : '';
+        if (this.dom.groupedView) this.dom.groupedView.style.display = grouped ? '' : 'none';
+
+        // Подсветка активной кнопки переключателя.
+        const setActive = (btn, active) => {
+            if (!btn) return;
+            btn.classList.toggle('primary-btn', active);
+            btn.classList.toggle('secondary-btn', !active);
+        };
+        setActive(this.dom.btnViewGrouped, grouped);
+        setActive(this.dom.btnViewFlat, !grouped);
+    },
+
+    // ========================================================
+    // GROUPED VIEW — карточки по жильцам с цепочкой подач
+    // ========================================================
+
+    /**
+     * Группирует строки по жильцу. Ключ:
+     *  - matched_user_id если есть (надёжный матч),
+     *  - "unmatched:<нормализованное ФИО>" — собирает в одну группу строки
+     *    с одинаковым ФИО, которые fuzzy не сопоставил (часто это один и тот же
+     *    человек, у которого ФИО написано иначе чем в БД).
+     */
+    _groupRowsByUser() {
+        const groups = new Map();
+        for (const row of this.state.rows) {
+            const key = row.matched_user_id
+                ? `u:${row.matched_user_id}`
+                : `n:${(row.raw_fio || '').trim().toLowerCase().replace(/\s+/g, ' ')}`;
+            if (!groups.has(key)) {
+                groups.set(key, {
+                    key,
+                    userId: row.matched_user_id || null,
+                    username: row.matched_username || null,
+                    matchedRoom: row.matched_room || null,
+                    fio: row.raw_fio,
+                    dormitory: row.raw_dormitory || '',
+                    roomNumber: row.raw_room_number || '',
+                    rows: [],
+                });
+            }
+            groups.get(key).rows.push(row);
+        }
+
+        // Сортируем подачи внутри каждой группы по дате (старые → новые),
+        // чтобы было видно как растут счётчики во времени.
+        for (const g of groups.values()) {
+            g.rows.sort((a, b) => {
+                const ta = a.sheet_timestamp ? Date.parse(a.sheet_timestamp) : 0;
+                const tb = b.sheet_timestamp ? Date.parse(b.sheet_timestamp) : 0;
+                return ta - tb;
+            });
+            g.pendingCount = g.rows.filter(
+                r => r.status === 'pending' || r.status === 'conflict'
+            ).length;
+            g.lastSubmission = g.rows.length
+                ? g.rows[g.rows.length - 1].sheet_timestamp
+                : null;
+        }
+
+        // Сортируем группы: сверху те, у кого больше необработанных подач.
+        return Array.from(groups.values()).sort((a, b) => {
+            if (b.pendingCount !== a.pendingCount) return b.pendingCount - a.pendingCount;
+            const ta = a.lastSubmission ? Date.parse(a.lastSubmission) : 0;
+            const tb = b.lastSubmission ? Date.parse(b.lastSubmission) : 0;
+            return tb - ta;
+        });
+    },
+
+    _renderGrouped() {
+        if (!this.state.rows.length) {
+            const emptyText = this.state.activeOnly
+                ? '🎉 Все актуальные подачи обработаны!'
+                : 'Нет подач' + (this.state.status ? ' с этим статусом' : '');
+            this.dom.groupedBody.innerHTML =
+                `<div style="padding:30px; text-align:center; color:var(--text-secondary);">${escapeHtml(emptyText)}</div>`;
+            return;
+        }
+        const groups = this._groupRowsByUser();
+        this.dom.groupedBody.innerHTML = groups.map(g => this._renderUserGroup(g)).join('');
+    },
+
+    _renderUserGroup(g) {
+        const expanded = this.state.expandedUserIds.has(g.key);
+        // Раскрываем по умолчанию, если в группе мало подач или есть требующие действий.
+        const autoExpand = g.rows.length <= 3 || g.pendingCount > 0;
+        const isOpen = expanded || (autoExpand && !this.state.expandedUserIds.has('__collapsed:' + g.key));
+
+        const headerColor = g.userId
+            ? 'var(--primary-color)'
+            : 'var(--danger-color)';
+        const userBadge = g.userId
+            ? `<a href="#" data-user-id="${g.userId}" data-action="group-show-history"
+                  style="color:var(--primary-color); text-decoration:none; font-weight:600;"
+                  title="Подробная история жильца">
+                  ${escapeHtml(g.username || g.fio)}
+              </a>`
+            : `<span style="color:var(--danger-color); font-weight:600;">
+                  <i class="fa-solid fa-user-xmark"></i> ${escapeHtml(g.fio)} (не сопоставлен)
+              </span>`;
+
+        const roomLabel = g.matchedRoom || (g.roomNumber ? `комн. ${g.roomNumber}` : '—');
+        const pendingBadge = g.pendingCount > 0
+            ? `<span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600;">${g.pendingCount} ждут</span>`
+            : `<span style="background:#d1fae5; color:#065f46; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600;">все обработаны</span>`;
+
+        const bulkBtn = g.pendingCount > 0 && g.userId
+            ? `<button class="action-btn success-btn" data-action="group-approve-all" data-user-key="${escapeHtml(g.key)}"
+                       style="padding:4px 10px; font-size:12px;" title="Утвердить все pending этого жильца">
+                  <i class="fa-solid fa-check-double"></i> Утв. все (${g.pendingCount})
+              </button>`
+            : '';
+
+        const chain = isOpen ? this._renderUserChain(g) : '';
+
+        return `
+        <div class="gsheets-group-card" style="border:1px solid ${g.pendingCount > 0 ? '#fde68a' : 'var(--border-color)'}; border-radius:10px; background:var(--bg-card); overflow:hidden;">
+            <div data-toggle-user="${escapeHtml(g.key)}"
+                 style="display:flex; align-items:center; gap:12px; padding:12px 16px; cursor:pointer; background:${g.pendingCount > 0 ? 'rgba(254,243,199,0.3)' : 'transparent'};">
+                <i class="fa-solid fa-chevron-${isOpen ? 'down' : 'right'}" style="color:var(--text-secondary); width:14px;"></i>
+                <div style="width:36px; height:36px; border-radius:50%; background:${headerColor}22; color:${headerColor}; display:flex; align-items:center; justify-content:center; font-weight:600; font-size:14px; flex-shrink:0;">
+                    ${escapeHtml((g.username || g.fio || '?').slice(0, 1).toUpperCase())}
+                </div>
+                <div style="flex:1; min-width:0;">
+                    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                        ${userBadge}
+                        ${pendingBadge}
+                    </div>
+                    <div style="color:var(--text-secondary); font-size:12px; margin-top:2px;">
+                        ${escapeHtml(roomLabel)} · ${g.rows.length} ${g.rows.length === 1 ? 'подача' : 'подач'} · последняя: ${escapeHtml(fmtDateTime(g.lastSubmission))}
+                    </div>
+                </div>
+                <div style="flex-shrink:0;">${bulkBtn}</div>
+            </div>
+            ${chain}
+        </div>`;
+    },
+
+    /**
+     * Цепочка подач: таблица отсортированная по дате, с дельтами относительно
+     * предыдущей подачи (видно растёт ли счётчик и на сколько).
+     */
+    _renderUserChain(g) {
+        const rowsHtml = g.rows.map((r, idx) => {
+            const prev = idx > 0 ? g.rows[idx - 1] : null;
+            const meta = STATUS_META[r.status] || { label: r.status, color: '#6b7280', bg: '#f3f4f6' };
+
+            // Дельты — насколько счётчик вырос относительно предыдущей подачи.
+            const fmtDelta = (cur, prv) => {
+                if (cur == null || prv == null) return '';
+                const d = Number(cur) - Number(prv);
+                if (isNaN(d)) return '';
+                if (d === 0) return `<span style="color:#9ca3af; font-size:10px;"> · 0</span>`;
+                if (d < 0)  return `<span style="color:#dc2626; font-size:10px; font-weight:600;" title="Счётчик уменьшился — возможна ошибка"> · ↓${fmtNum(Math.abs(d))}</span>`;
+                return `<span style="color:#16a34a; font-size:10px;"> · +${fmtNum(d)}</span>`;
+            };
+
+            const actions = this._renderActions(r);
+            const conflictNote = r.conflict_reason
+                ? `<div style="color:${STATUS_META.conflict.color}; font-size:11px; margin-top:2px;"><i class="fa-solid fa-triangle-exclamation"></i> ${escapeHtml(r.conflict_reason)}</div>`
+                : '';
+            const roomCell = r.raw_room_number
+                ? `<span style="font-size:11px; color:var(--text-secondary);">комн. ${escapeHtml(r.raw_room_number)}</span>`
+                : '';
+
+            return `
+            <tr data-row-id="${r.id}">
+                <td style="padding:8px 10px; font-size:12px; white-space:nowrap;">
+                    <div>${escapeHtml(fmtDateTime(r.sheet_timestamp))}</div>
+                    ${roomCell}
+                </td>
+                <td style="padding:8px 10px; text-align:right; font-family:monospace;">
+                    <span style="color:#dc2626;">🔥</span> ${fmtNum(r.hot_water)}${fmtDelta(r.hot_water, prev?.hot_water)}
+                </td>
+                <td style="padding:8px 10px; text-align:right; font-family:monospace;">
+                    <span style="color:#2563eb;">💧</span> ${fmtNum(r.cold_water)}${fmtDelta(r.cold_water, prev?.cold_water)}
+                </td>
+                <td style="padding:8px 10px;">
+                    <span style="display:inline-block; padding:2px 8px; border-radius:10px; background:${meta.bg}; color:${meta.color}; font-size:11px; font-weight:600;">${escapeHtml(meta.label)}</span>
+                    ${conflictNote}
+                </td>
+                <td style="padding:8px 10px; text-align:right; white-space:nowrap;">${actions}</td>
+            </tr>`;
+        }).join('');
+
+        return `
+        <div style="border-top:1px solid var(--border-color); background:var(--bg-page);">
+            <table style="width:100%; border-collapse:collapse;">
+                <thead>
+                    <tr style="background:var(--bg-page); color:var(--text-secondary); font-size:11px; text-transform:uppercase;">
+                        <th style="padding:6px 10px; text-align:left;">Дата</th>
+                        <th style="padding:6px 10px; text-align:right;">Гор. вода</th>
+                        <th style="padding:6px 10px; text-align:right;">Хол. вода</th>
+                        <th style="padding:6px 10px; text-align:left;">Статус</th>
+                        <th style="padding:6px 10px;"></th>
+                    </tr>
+                </thead>
+                <tbody>${rowsHtml}</tbody>
+            </table>
+        </div>`;
+    },
+
+    _toggleUserGroup(key) {
+        const collapsedFlag = '__collapsed:' + key;
+        if (this.state.expandedUserIds.has(key)) {
+            this.state.expandedUserIds.delete(key);
+            this.state.expandedUserIds.add(collapsedFlag);
+        } else if (this.state.expandedUserIds.has(collapsedFlag)) {
+            this.state.expandedUserIds.delete(collapsedFlag);
+        } else {
+            // Был не помечен — значит был в auto-expand состоянии. Сворачиваем.
+            this.state.expandedUserIds.add(collapsedFlag);
+        }
+        this._renderGrouped();
+    },
+
+    /**
+     * Утвердить все pending/conflict подачи одного жильца. Используем
+     * существующий /bulk-approve. После выполнения карточка пропадёт
+     * (если активный фильтр) либо обновится статус.
+     */
+    async groupApproveAll(userKey) {
+        const group = this._groupRowsByUser().find(g => g.key === userKey);
+        if (!group || !group.userId) return;
+
+        const ids = group.rows
+            .filter(r => r.status === 'pending' || r.status === 'conflict')
+            .map(r => r.id);
+        if (!ids.length) return;
+
+        const lastRow = group.rows[group.rows.length - 1];
+        const onlyLast = ids.length > 1 && confirm(
+            `У жильца «${group.username || group.fio}» ${ids.length} необработанных подач.\n\n` +
+            `OK — утвердить ТОЛЬКО последнюю (${fmtDateTime(lastRow.sheet_timestamp)}, ` +
+            `ГВС=${fmtNum(lastRow.hot_water)}, ХВС=${fmtNum(lastRow.cold_water)})\n` +
+            `Отмена — утвердить ВСЕ ${ids.length} по очереди`
+        );
+
+        const targetIds = onlyLast
+            ? [lastRow.id]
+            : ids;
+
+        // Оптимистичное удаление
+        const setIds = new Set(targetIds);
+        this.state.rows = this.state.rows.filter(r => !setIds.has(r.id));
+        this.renderRows();
+
+        try {
+            const data = await api.post('/admin/gsheets/rows/bulk-approve', { row_ids: targetIds });
+            const msg = `Утверждено: ${data.approved}${data.failed?.length ? `, ошибок: ${data.failed.length}` : ''}`;
+            toast(msg, data.failed?.length ? 'warning' : 'success');
+            if (data.failed?.length) {
+                data.failed.slice(0, 3).forEach(f => toast(`#${f.row_id}: ${f.reason}`, 'error'));
+            }
+            this.refresh();
+        } catch (e) {
+            toast('Ошибка: ' + e.message, 'error');
+            this.refresh();
+        }
     },
 
     // ========================================================
