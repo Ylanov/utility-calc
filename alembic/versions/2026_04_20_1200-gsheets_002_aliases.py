@@ -1,7 +1,7 @@
 """GSheets aliases — запомненные соответствия «стороннее ФИО → жилец»
 
 Revision ID: gsheets_002_aliases
-Revises: gsheets_001_import_rows
+Revises: app_001_releases
 Create Date: 2026-04-20 12:00:00.000000
 
 Жильцы часто подают через таблицу за родственников (жёны за мужей и т.д.).
@@ -10,13 +10,19 @@ Create Date: 2026-04-20 12:00:00.000000
 После того как админ подтвердил «эта подача от Иванова И.И. (его супругой
 Марией Петровной)», запись попадает сюда. На следующих синхронизациях
 подача от «Иванова Мария Петровна» подцепится автоматически.
+
+Note по DAG: эта миграция и `app_001_releases` создавались параллельно и
+обе указывали на `gsheets_001_import_rows` — alembic ругался "Multiple head
+revisions". Перенаправили на `app_001_releases` чтобы цепочка была линейной.
+Содержимое таблицы `app_releases` нашему `gsheets_aliases` не нужно, никаких
+кросс-зависимостей нет — порядок применения произвольный.
 """
 from alembic import op
 import sqlalchemy as sa
 
 
 revision = 'gsheets_002_aliases'
-down_revision = 'gsheets_001_import_rows'
+down_revision = 'app_001_releases'
 branch_labels = None
 depends_on = None
 
