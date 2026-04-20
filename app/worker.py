@@ -137,26 +137,35 @@ _task_start_time = {}
 # SIGNALS
 # =====================================================
 
+# Celery 5.x всегда передаёт в connect-обработчики аргументы как kwargs,
+# не как positional. Старая сигнатура `task_failure_handler(task_id, exception, task, ...)`
+# работала только пока Celery дублировал их в позиционные. После апгрейда стало:
+#   TypeError: task_failure_handler() missing 1 required positional argument: 'task'
+# Поэтому принимаем всё через kwargs с дефолтами.
+
 @task_prerun.connect
-def task_prerun_handler(task_id, task, *args, **kwargs):
-    _task_start_time[task_id] = time.time()
+def task_prerun_handler(sender=None, task_id=None, task=None, **kwargs):
+    if task_id:
+        _task_start_time[task_id] = time.time()
 
 
 @task_postrun.connect
-def task_postrun_handler(task_id, task, *args, **kwargs):
-    start_time = _task_start_time.pop(task_id, None)
-
-    if start_time:
+def task_postrun_handler(sender=None, task_id=None, task=None, **kwargs):
+    start_time = _task_start_time.pop(task_id, None) if task_id else None
+    if start_time and task is not None:
         duration = time.time() - start_time
         TASK_TIME.labels(task.name, HOSTNAME).observe(duration)
-
-    TASK_COUNT.labels(task.name, "success", HOSTNAME).inc()
+    if task is not None:
+        TASK_COUNT.labels(task.name, "success", HOSTNAME).inc()
 
 
 @task_failure.connect
-def task_failure_handler(task_id, exception, task, *args, **kwargs):
-    _task_start_time.pop(task_id, None)
-    TASK_COUNT.labels(task.name, "failure", HOSTNAME).inc()
+def task_failure_handler(sender=None, task_id=None, exception=None, **kwargs):
+    if task_id:
+        _task_start_time.pop(task_id, None)
+    # sender — это сам объект Task в Celery 5
+    if sender is not None:
+        TASK_COUNT.labels(sender.name, "failure", HOSTNAME).inc()
 
 
 # =====================================================

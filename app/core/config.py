@@ -159,6 +159,7 @@ _DEFAULT_S3_ACCESS = "minioadmin"
 _DEFAULT_S3_SECRET = "minioadmin"
 
 if settings.ENVIRONMENT == "production":
+    # CRITICAL — без них приложение реально небезопасно, отказываем в старте.
     if not settings.SECRET_KEY or len(settings.SECRET_KEY) < 32:
         raise RuntimeError(
             "В production требуется безопасный SECRET_KEY (не менее 32 символов)"
@@ -174,16 +175,22 @@ if settings.ENVIRONMENT == "production":
             " print(Fernet.generate_key().decode())'`"
         )
 
+    if not settings.DB_PASS or settings.DB_PASS == "postgres":
+        raise RuntimeError(
+            "В production DB_PASS не может быть пустым или 'postgres'."
+        )
+
+    # S3 — только WARNING. Смена MinIO-ключей — отдельная процедура:
+    # надо создать нового пользователя через MinIO Console, а не менять
+    # просто в .env (иначе MinIO упадёт с несовпадением root_password).
+    # Логируем и продолжаем — пусть админ смигрирует когда удобно.
     if (
         settings.S3_ACCESS_KEY == _DEFAULT_S3_ACCESS
         or settings.S3_SECRET_KEY == _DEFAULT_S3_SECRET
     ):
-        raise RuntimeError(
-            "В production S3_ACCESS_KEY/S3_SECRET_KEY не должны равняться 'minioadmin'. "
-            "Задайте уникальные значения в .env."
-        )
-
-    if not settings.DB_PASS or settings.DB_PASS == "postgres":
-        raise RuntimeError(
-            "В production DB_PASS не может быть пустым или 'postgres'."
+        import logging as _log
+        _log.getLogger(__name__).warning(
+            "SECURITY: S3_ACCESS_KEY/S3_SECRET_KEY используют значения по умолчанию "
+            "(minioadmin). Это безопасно только если MinIO не пробрасывается во "
+            "внешнюю сеть. Рекомендуется сменить через MinIO Console."
         )

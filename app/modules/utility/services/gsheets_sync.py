@@ -43,11 +43,27 @@ logger = logging.getLogger(__name__)
 # =======================================================================
 # Константы
 # =======================================================================
-# URL публичного CSV-экспорта (работает если таблица открыта «по ссылке»).
-#   https://docs.google.com/spreadsheets/d/{sheet_id}/export?format=csv&gid={gid}
+# Два URL для CSV-экспорта Google Sheets:
+#
+# 1) gviz endpoint (предпочтительный): не редиректит, не требует cookies,
+#    стабильно работает для публичных таблиц и таблиц "по ссылке".
+#    Минус — может слегка иначе кодировать спецсимволы.
+#
+# 2) export endpoint (fallback): официальный, но возвращает 307 → cookie-сессия
+#    → google ругается 400 без правильных headers. Поэтому пытаемся вторым.
+GSHEETS_GVIZ_URL = (
+    "https://docs.google.com/spreadsheets/d/{sheet_id}/gviz/tq"
+    "?tqx=out:csv&gid={gid}"
+)
 GSHEETS_EXPORT_URL = (
     "https://docs.google.com/spreadsheets/d/{sheet_id}/export"
     "?format=csv&gid={gid}"
+)
+
+# User-Agent — без него Google регулярно отвечает 400 на анонимные httpx-запросы.
+DEFAULT_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
 )
 
 FUZZY_THRESHOLD = 78   # Минимум для «подозрительного» матча (pending)
@@ -222,20 +238,61 @@ def _check_room_conflict(user: dict, raw_room: Optional[str]) -> Optional[str]:
 # =======================================================================
 
 def fetch_csv(sheet_id: str, gid: str = "0", timeout: int = 30) -> str:
-    """HTTP GET CSV-экспорта Google Sheets (синхронный — для Celery)."""
-    url = GSHEETS_EXPORT_URL.format(sheet_id=sheet_id, gid=gid)
-    # follow_redirects=True — Google может редиректить на auth-required страницу,
-    # если таблица приватна. Таким образом мы не упадём с RedirectError и увидим HTML.
-    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
-        resp = client.get(url)
-        resp.raise_for_status()
-    content_type = resp.headers.get("content-type", "")
-    if "text/csv" not in content_type and "text/plain" not in content_type:
-        raise RuntimeError(
-            f"Google Sheets вернул не CSV ({content_type}). "
-            "Проверьте, что таблица доступна «по ссылке — все, у кого есть ссылка»."
-        )
-    return resp.text
+    """
+    Скачивает CSV из Google Sheets (синхронно, для Celery).
+
+    Стратегия:
+      1. Пытаемся через /gviz/tq?tqx=out:csv — стабильный endpoint без редиректов,
+         работает для всех публичных таблиц.
+      2. Если упало — fallback на /export?format=csv с правильным User-Agent.
+
+    Без этого порядка получаем 307 → 400 от googleusercontent.com.
+    """
+    headers = {
+        "User-Agent": DEFAULT_USER_AGENT,
+        "Accept": "text/csv,text/plain,*/*",
+    }
+
+    urls = [
+        ("gviz", GSHEETS_GVIZ_URL.format(sheet_id=sheet_id, gid=gid)),
+        ("export", GSHEETS_EXPORT_URL.format(sheet_id=sheet_id, gid=gid)),
+    ]
+
+    last_err: Optional[Exception] = None
+    for label, url in urls:
+        try:
+            with httpx.Client(
+                timeout=timeout,
+                follow_redirects=True,
+                headers=headers,
+            ) as client:
+                resp = client.get(url)
+                resp.raise_for_status()
+
+            content_type = (resp.headers.get("content-type") or "").lower()
+            text = resp.text
+
+            # Если в ответе HTML — это страница логина Google (таблица закрыта).
+            if "html" in content_type or text.lstrip().lower().startswith("<!doctype"):
+                raise RuntimeError(
+                    "Google Sheets вернул HTML вместо CSV — скорее всего таблица "
+                    "закрыта от публики. Откройте «Поделиться → Все, у кого есть "
+                    "ссылка → Читатель»."
+                )
+
+            # gviz endpoint иногда возвращает application/octet-stream — это нормально.
+            # Главное чтобы не HTML.
+            logger.info(f"[GSHEETS] Successfully fetched via {label} endpoint")
+            return text
+
+        except (httpx.HTTPStatusError, httpx.RequestError) as e:
+            logger.warning(f"[GSHEETS] {label} endpoint failed: {e}")
+            last_err = e
+            continue
+
+    raise RuntimeError(
+        f"Не удалось скачать таблицу ни через один endpoint. Последняя ошибка: {last_err}"
+    )
 
 
 def parse_csv_rows(csv_text: str) -> list[dict]:
