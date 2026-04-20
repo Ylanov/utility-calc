@@ -33,12 +33,14 @@ export const ClientAppDownload = {
         const card = document.getElementById('appDownloadCard');
         if (!card) return;
 
+        // silentNotFound: для свежей установки сервера ещё не загружено ни одного APK,
+        // /api/app/latest корректно отвечает 404 — это не ошибка, не пишем в консоль.
+        // Карточка просто остаётся скрытой (display:none по умолчанию).
         let info;
         try {
-            info = await api.get('/app/latest?platform=android');
+            info = await api.get('/app/latest?platform=android', { silentNotFound: true });
         } catch (e) {
-            // 404 = нет опубликованных версий, это нормально для свежей установки
-            console.log('App release not available:', e.message);
+            // 5xx и прочие реальные ошибки — игнорируем тихо, портал должен работать.
             return;
         }
         if (!info || !info.download_url) return;

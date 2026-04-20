@@ -67,6 +67,13 @@ class ApiClient {
 
             // 3. Обработка ошибок сервера (400, 404, 500)
             if (!response.ok) {
+                // silentNotFound: для опциональных запросов (например /app/latest когда
+                // ещё не загружен ни один APK). 404 — не ошибка, а ожидаемый случай.
+                // Возвращаем null без шума в консоли вместо бросания exception.
+                if (options.silentNotFound && response.status === 404) {
+                    return null;
+                }
+
                 let errorMessage = `Ошибка ${response.status}`;
 
                 if (typeof data === 'object') {
@@ -105,7 +112,7 @@ class ApiClient {
     }
 
     // Методы-обертки
-    get(endpoint, options) { return this._request(endpoint, { ...options, method: 'GET' }); }
+    get(endpoint, options = {}) { return this._request(endpoint, { ...options, method: 'GET' }); }
     post(endpoint, body) { return this._request(endpoint, { method: 'POST', body }); }
     put(endpoint, body) { return this._request(endpoint, { method: 'PUT', body }); }
     delete(endpoint) { return this._request(endpoint, { method: 'DELETE' }); }

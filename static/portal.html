@@ -114,8 +114,8 @@
 
             document.getElementById('portalAppBlock').style.display = 'block';
         } catch (e) {
-            // Silently fail — портал должен работать даже если API недоступно
-            console.log('App release check skipped:', e);
+            // Сетевая ошибка / парсинг JSON — портал должен работать,
+            // блок «Скачать» просто останется скрытым. Без шума в консоли.
         }
     })();
     </script>
