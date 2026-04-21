@@ -28,6 +28,8 @@ export const UsersModule = {
         ]);
 
         this.initTable();
+        // Аналитика — параллельно с первым запросом таблицы, не блокирует
+        this.loadStats();
     },
 
     cacheDOM() {
@@ -37,7 +39,11 @@ export const UsersModule = {
             btnImport: document.getElementById('btnImportUsers'),
             btnRefresh: document.getElementById('btnRefreshUsers'),
             btnDownloadTemplate: document.getElementById('btnDownloadTemplate'),
+            btnExport: document.getElementById('btnExportUsers'),
             newTariffSelect: document.getElementById('newTariffId'),
+            // Новые поля формы создания
+            newResidentType: document.getElementById('newResidentType'),
+            newBillingMode: document.getElementById('newBillingMode'),
 
             newDormSelect: document.getElementById('newDormSelect'),
             newRoomSelect: document.getElementById('newRoomSelect'),
@@ -46,7 +52,14 @@ export const UsersModule = {
             infoCap: document.getElementById('infoCap'),
             infoHw: document.getElementById('infoHw'),
             infoCw: document.getElementById('infoCw'),
-            infoEl: document.getElementById('infoEl')
+            infoEl: document.getElementById('infoEl'),
+            // Фильтры в toolbar
+            filterResidentType: document.getElementById('filterResidentType'),
+            filterBillingMode: document.getElementById('filterBillingMode'),
+            filterDormitory: document.getElementById('filterDormitory'),
+            // KPI + распределение
+            statsHost: document.getElementById('usersStats'),
+            distributionHost: document.getElementById('usersDistribution'),
         };
 
         this.modal = {
@@ -100,11 +113,27 @@ export const UsersModule = {
 
     bindEvents() {
         // Таблица и экспорт
-        if (this.dom.btnRefresh) this.dom.btnRefresh.addEventListener('click', () => this.table?.refresh());
+        if (this.dom.btnRefresh) this.dom.btnRefresh.addEventListener('click', () => {
+            this.table?.refresh();
+            this.loadStats();
+        });
         if (this.dom.btnDownloadTemplate) {
             this.dom.btnDownloadTemplate.addEventListener('click', (e) => {
                 e.preventDefault();
                 api.download('/users/export/template', 'Import_Template.xlsx');
+            });
+        }
+        // Excel-экспорт видимого списка с учётом фильтров
+        if (this.dom.btnExport) {
+            this.dom.btnExport.addEventListener('click', (e) => {
+                e.preventDefault();
+                const qs = new URLSearchParams();
+                const search = document.getElementById('usersSearchInput')?.value.trim();
+                if (search) qs.set('search', search);
+                if (this.dom.filterResidentType?.value) qs.set('resident_type', this.dom.filterResidentType.value);
+                if (this.dom.filterBillingMode?.value) qs.set('billing_mode', this.dom.filterBillingMode.value);
+                if (this.dom.filterDormitory?.value) qs.set('dormitory', this.dom.filterDormitory.value);
+                api.download('/users/export/list?' + qs.toString(), 'residents_export.xlsx');
             });
         }
 
@@ -112,6 +141,20 @@ export const UsersModule = {
         if (this.dom.addForm) this.dom.addForm.addEventListener('submit', (e) => this.handleAdd(e));
         if (this.modal.form) this.modal.form.addEventListener('submit', (e) => this.handleEditSubmit(e));
         if (this.modal.btnClose) this.modal.btnClose.addEventListener('click', () => this.closeModal());
+
+        // Авто-синхронизация типа жильца ↔ режима оплаты в форме создания
+        // (single по умолчанию per_capita; family по умолчанию by_meter).
+        if (this.dom.newResidentType && this.dom.newBillingMode) {
+            this.dom.newResidentType.addEventListener('change', (e) => {
+                this.dom.newBillingMode.value =
+                    e.target.value === 'single' ? 'per_capita' : 'by_meter';
+            });
+        }
+
+        // Фильтры таблицы: резидент тип / режим / общежитие
+        [this.dom.filterResidentType, this.dom.filterBillingMode, this.dom.filterDormitory].forEach(el => {
+            el?.addEventListener('change', () => this.table?.refresh());
+        });
 
         // Экспорт логики действий в вынесенные модули
         if (this.dom.btnImport) this.dom.btnImport.addEventListener('click', (e) => {
@@ -213,6 +256,7 @@ export const UsersModule = {
     },
 
     initTable() {
+        const self = this;
         this.table = new TableController({
             endpoint: '/users',
             dom: {
@@ -224,15 +268,43 @@ export const UsersModule = {
                 pageInfo: 'usersPageInfo'
             },
 
+            // Передаём дополнительные фильтры в каждый запрос.
+            // TableController ожидает getExtraParams() — если в базовом
+            // контроллере этого нет, он будет вызван и проигнорирован.
+            getExtraParams: () => {
+                const p = {};
+                const rt = self.dom.filterResidentType?.value;
+                const bm = self.dom.filterBillingMode?.value;
+                const dn = self.dom.filterDormitory?.value;
+                if (rt) p.resident_type = rt;
+                if (bm) p.billing_mode = bm;
+                if (dn) p.dormitory = dn;
+                return p;
+            },
+
             renderRow: (user) => {
                 const address = user.room ? `${user.room.dormitory_name} / ком. ${user.room.room_number}` : '-';
                 const area = user.room && user.room.apartment_area ? Number(user.room.apartment_area).toFixed(1) : '-';
                 const totalResidents = user.room ? user.room.total_room_residents : 1;
 
+                // Бейджи нового доменного слоя: тип жильца + режим оплаты.
+                // family/single → иконка семьи или человека;
+                // by_meter/per_capita → счётчик или койко-место.
+                const rt = user.resident_type || 'family';
+                const bm = user.billing_mode || 'by_meter';
+                const typeChip = rt === 'single'
+                    ? el('span', { title: 'Холостяк', class: 'chip', style: { background: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '600' } }, '👤 Холост.')
+                    : el('span', { title: 'Семейный', class: 'chip', style: { background: '#dbeafe', color: '#1e40af', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '600' } }, '👨‍👩‍👧 Семья');
+                const modeChip = bm === 'per_capita'
+                    ? el('span', { title: 'Койко-место (фикс. сумма)', class: 'chip', style: { background: '#ede9fe', color: '#5b21b6', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '600' } }, '🛏 Койко')
+                    : el('span', { title: 'По счётчикам', class: 'chip', style: { background: '#d1fae5', color: '#065f46', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '600' } }, '📊 Счёт.');
+
                 return el('tr', { class: 'hover:bg-gray-50 transition-colors' },
                     el('td', { class: 'text-gray-500 text-sm' }, `#${user.id}`),
                     el('td', {}, el('div', { style: { fontWeight: '600' } }, user.username)),
                     el('td', {}, el('span', { class: `role-badge ${user.role}` }, user.role)),
+                    el('td', { class: 'text-center' }, typeChip),
+                    el('td', { class: 'text-center' }, modeChip),
                     el('td', {}, address),
                     el('td', {}, area),
                     el('td', { class: 'text-center text-sm' }, `${user.residents_count} / ${totalResidents}`),
@@ -264,6 +336,119 @@ export const UsersModule = {
         this.table.init();
     },
 
+    // ============ АНАЛИТИКА ============
+    /**
+     * Загружает /users/stats и рендерит KPI-карточки + распределения.
+     * Вызывается один раз при открытии вкладки и при refresh/создании.
+     */
+    async loadStats() {
+        if (!this.dom.statsHost) return;
+        try {
+            const s = await api.get('/users/stats');
+            this._renderStats(s);
+            this._renderDistribution(s);
+            // Заполняем фильтр общежитий (один раз)
+            if (this.dom.filterDormitory && this.dom.filterDormitory.options.length <= 1) {
+                const opts = (s.by_dormitory || [])
+                    .map(d => `<option value="${this._escape(d.name)}">${this._escape(d.name)} (${d.count})</option>`)
+                    .join('');
+                this.dom.filterDormitory.insertAdjacentHTML('beforeend', opts);
+            }
+        } catch (e) {
+            this.dom.statsHost.innerHTML = `<div style="color:var(--danger-color); padding:14px; grid-column: 1/-1;">Статистика недоступна: ${this._escape(e.message)}</div>`;
+        }
+    },
+
+    _escape(s) {
+        if (s == null) return '';
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    },
+
+    _fmtMoney(v) {
+        return Number(v || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽';
+    },
+
+    _renderStats(s) {
+        const card = (label, value, color, hint) => `
+            <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; padding:14px;">
+                <div style="font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.5px;">${this._escape(label)}</div>
+                <div style="font-size:22px; font-weight:700; color:${color}; margin:4px 0 2px;">${value}</div>
+                ${hint ? `<div style="font-size:11px; color:var(--text-tertiary);">${this._escape(hint)}</div>` : ''}
+            </div>`;
+
+        const types = s.by_resident_type || {};
+        const modes = s.by_billing_mode || {};
+        this.dom.statsHost.innerHTML = [
+            card('Всего жильцов', s.total_users || 0, '#2563eb', `${s.with_room} с комнатой · ${s.without_room} без`),
+            card('Семейных', types.family || 0, '#1e40af', 'платят по счётчикам'),
+            card('Холостяков', types.single || 0, '#92400e', 'койко-место'),
+            card('По счётчикам', modes.by_meter || 0, '#065f46', 'by_meter'),
+            card('За койко-место', modes.per_capita || 0, '#5b21b6', 'per_capita'),
+            card('Общий долг', this._fmtMoney(s.total_debt), s.total_debt > 0 ? '#dc2626' : '#10b981', 'из последних начислений'),
+            card('Переплаты', this._fmtMoney(s.total_overpayment), s.total_overpayment > 0 ? '#7c3aed' : '#9ca3af', 'авансы'),
+        ].join('');
+    },
+
+    _renderDistribution(s) {
+        if (!this.dom.distributionHost) return;
+
+        // Блок «По общежитиям» (горизонтальный прогресс-бар)
+        const dorms = (s.by_dormitory || []).slice(0, 8);
+        const dormTotal = dorms.reduce((a, d) => a + d.count, 0) || 1;
+        const dormRows = dorms.map(d => {
+            const pct = Math.round(d.count / dormTotal * 100);
+            return `
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px; font-size:12px;">
+                    <div style="width:140px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;" title="${this._escape(d.name)}">${this._escape(d.name)}</div>
+                    <div style="flex:1; background:#f3f4f6; border-radius:4px; height:14px; overflow:hidden;">
+                        <div style="width:${pct}%; height:100%; background:#3b82f6;"></div>
+                    </div>
+                    <div style="width:40px; text-align:right; font-weight:600;">${d.count}</div>
+                </div>`;
+        }).join('');
+
+        // Блок «Топ должников»
+        const debRows = (s.top_debtors || []).map(r => `
+            <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border-color); font-size:12px;">
+                <div>
+                    <div style="font-weight:600;">${this._escape(r.username)}</div>
+                    <div style="color:var(--text-secondary); font-size:11px;">${this._escape(r.room || '—')}</div>
+                </div>
+                <div style="color:#dc2626; font-weight:700; white-space:nowrap;">${this._fmtMoney(r.amount)}</div>
+            </div>`).join('') || '<div style="color:var(--text-secondary); font-size:12px; padding:8px 0;">— нет —</div>';
+
+        // Блок «Топ переплат»
+        const overRows = (s.top_overpaid || []).map(r => `
+            <div style="display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--border-color); font-size:12px;">
+                <div>
+                    <div style="font-weight:600;">${this._escape(r.username)}</div>
+                    <div style="color:var(--text-secondary); font-size:11px;">${this._escape(r.room || '—')}</div>
+                </div>
+                <div style="color:#7c3aed; font-weight:700; white-space:nowrap;">${this._fmtMoney(r.amount)}</div>
+            </div>`).join('') || '<div style="color:var(--text-secondary); font-size:12px; padding:8px 0;">— нет —</div>';
+
+        this.dom.distributionHost.innerHTML = `
+            <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; padding:14px;">
+                <h4 style="margin:0 0 10px 0; font-size:13px; color:var(--text-secondary); text-transform:uppercase;">
+                    <i class="fa-solid fa-building"></i> Распределение по общежитиям
+                </h4>
+                ${dormRows || '<div style="color:var(--text-secondary); font-size:12px;">Нет данных</div>'}
+            </div>
+            <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; padding:14px;">
+                <h4 style="margin:0 0 10px 0; font-size:13px; color:#991b1b; text-transform:uppercase;">
+                    <i class="fa-solid fa-arrow-trend-down"></i> Топ должников
+                </h4>
+                ${debRows}
+            </div>
+            <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; padding:14px;">
+                <h4 style="margin:0 0 10px 0; font-size:13px; color:#5b21b6; text-transform:uppercase;">
+                    <i class="fa-solid fa-coins"></i> Топ переплат
+                </h4>
+                ${overRows}
+            </div>`;
+    },
+
     async handleAdd(event) {
         event.preventDefault();
         const button = this.dom.addForm.querySelector('button');
@@ -277,7 +462,12 @@ export const UsersModule = {
             tariff_id: tariffIdVal ? parseInt(tariffIdVal) : null,
             room_id: roomIdVal ? parseInt(roomIdVal) : null,
             residents_count: parseInt(document.getElementById('residentsCount').value) || 1,
-            workplace: document.getElementById('workplace').value.trim()
+            workplace: document.getElementById('workplace').value.trim(),
+            // Новые поля: определяют способ расчёта (family/by_meter vs single/per_capita).
+            // При single валидатор в модели сам выставит residents_count=1 и billing_mode=per_capita,
+            // но мы всё равно шлём оба явно — чтобы не было сюрпризов если валидатор не сработает.
+            resident_type: this.dom.newResidentType?.value || 'family',
+            billing_mode: this.dom.newBillingMode?.value || 'by_meter',
         };
 
         setLoading(button, true, 'Создание...');
@@ -286,6 +476,8 @@ export const UsersModule = {
             await api.post('/users', data);
             toast('Пользователь успешно создан', 'success');
             this.dom.addForm.reset();
+            // Обновляем статистику после создания
+            this.loadStats();
 
             if (this.dom.newRoomSelect) {
                 this.dom.newRoomSelect.disabled = true;

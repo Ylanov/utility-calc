@@ -51,7 +51,7 @@
                     Счетчики: ГВС (<span id="infoHw" style="color: var(--danger-color); font-family: monospace;">-</span>), ХВС (<span id="infoCw" style="color: var(--primary-color); font-family: monospace;">-</span>), Электр. (<span id="infoEl" style="color: #d97706; font-family: monospace;">-</span>)
                 </div>
 
-                <div class="form-grid-2" style="margin-bottom: 24px;">
+                <div class="form-grid-2" style="margin-bottom: 16px;">
                     <div class="form-group">
                         <label>Сколько человек платит с этого Л/С</label>
                         <input type="number" id="residentsCount" value="1" min="1">
@@ -59,6 +59,30 @@
                     <div class="form-group">
                         <label>Место работы</label>
                         <input type="text" id="workplace">
+                    </div>
+                </div>
+
+                <!-- Тип жильца определяет способ расчёта (см. доменную модель):
+                     family → by_meter (по счётчикам), single → per_capita (койко-место).
+                     При выборе single поле residents_count автоматически станет 1
+                     (валидатор в модели User) и billing_mode → per_capita. -->
+                <div class="form-grid-2" style="margin-bottom: 24px;">
+                    <div class="form-group">
+                        <label>Тип жильца</label>
+                        <select id="newResidentType">
+                            <option value="family">Семейный (по счётчикам)</option>
+                            <option value="single">Холостяк (койко-место)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Режим оплаты</label>
+                        <select id="newBillingMode">
+                            <option value="by_meter">По счётчикам</option>
+                            <option value="per_capita">За койко-место</option>
+                        </select>
+                        <p class="hint-text" style="font-size:11px; margin:4px 0 0;">
+                            По умолчанию выводится из типа жильца. Можно переопределить вручную (редкий случай).
+                        </p>
                     </div>
                 </div>
 
@@ -86,18 +110,44 @@
         </div>
     </div>
 
+    <!-- ===== АНАЛИТИКА: KPI-карточки сверху таблицы ===== -->
+    <div id="usersStats" class="mt-20" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px;">
+        <div style="padding:18px; text-align:center; color:var(--text-secondary); grid-column: 1/-1;">
+            <i class="fa-solid fa-spinner fa-spin"></i> Загрузка аналитики…
+        </div>
+    </div>
+
+    <!-- Распределение: общежития / типы / долги-переплаты (3 колонки) -->
+    <div id="usersDistribution" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:14px; margin-bottom: 20px;"></div>
+
     <!-- Таблица -->
     <div class="card mt-20" style="margin-bottom: 0;">
         <div class="card-header">
             <h3>Список пользователей</h3>
-            <!-- ТУЛБАР В ОДНУ СТРОКУ -->
-            <div class="toolbar-controls">
-                <select id="usersLimitSelect">
+            <!-- ТУЛБАР -->
+            <div class="toolbar-controls" style="flex-wrap: wrap; gap: 8px;">
+                <select id="usersLimitSelect" style="min-width: 100px;">
                     <option value="25">25 строк</option>
                     <option value="50" selected>50 строк</option>
                     <option value="100">100 строк</option>
                 </select>
-                <input type="text" id="usersSearchInput" placeholder="Поиск по логину/комнате...">
+                <input type="text" id="usersSearchInput" placeholder="Поиск по логину/комнате..." style="flex:1; min-width:200px;">
+                <select id="filterResidentType" style="min-width:140px;" title="Тип жильца">
+                    <option value="">Все типы</option>
+                    <option value="family">Семейные</option>
+                    <option value="single">Холостяки</option>
+                </select>
+                <select id="filterBillingMode" style="min-width:160px;" title="Режим оплаты">
+                    <option value="">Все режимы оплаты</option>
+                    <option value="by_meter">По счётчикам</option>
+                    <option value="per_capita">За койко-место</option>
+                </select>
+                <select id="filterDormitory" style="min-width:160px;" title="Фильтр по общежитию">
+                    <option value="">Все общежития</option>
+                </select>
+                <button id="btnExportUsers" class="action-btn success-btn" title="Экспорт в Excel">
+                    <i class="fa-solid fa-file-excel"></i> Excel
+                </button>
                 <button id="btnRefreshUsers" class="icon-btn" title="Обновить"><i class="fa-solid fa-rotate-right"></i></button>
             </div>
         </div>
@@ -108,6 +158,8 @@
                         <th data-sort="id" class="sortable">ID</th>
                         <th data-sort="username" class="sortable">Логин</th>
                         <th data-sort="role" class="sortable">Роль</th>
+                        <th class="text-center" title="Тип жильца: семейный / холостяк">Тип</th>
+                        <th class="text-center" title="Режим оплаты: по счётчикам / за койко-место">Оплата</th>
                         <th data-sort="dormitory" class="sortable">Общ.</th>
                         <th data-sort="apartment_area" class="sortable">Площ.</th>
                         <th>Доля</th>
@@ -116,7 +168,7 @@
                     </tr>
                 </thead>
                 <tbody id="usersTableBody">
-                    <tr><td colspan="8" class="text-center" style="padding: 40px; color: var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка данных...</td></tr>
+                    <tr><td colspan="10" class="text-center" style="padding: 40px; color: var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка данных...</td></tr>
                 </tbody>
             </table>
         </div>
