@@ -749,10 +749,10 @@ export const GSheetsModule = {
         }
     },
 
-    async approveRow(rowId) {
+    async approveRow(rowId, { skipConfirm = false } = {}) {
         const row = this.state.rows.find(r => r.id === rowId);
         if (!row) return;
-        if (!confirm(`Утвердить показания жильца «${row.matched_username || row.raw_fio}»?\nБудет создан MeterReading.`)) return;
+        if (!skipConfirm && !confirm(`Утвердить показания жильца «${row.matched_username || row.raw_fio}»?\nБудет создан MeterReading.`)) return;
 
         // Оптимистичное удаление
         this._removeRowLocally(rowId, 'approved');
@@ -761,9 +761,127 @@ export const GSheetsModule = {
             toast('Показание утверждено', 'success');
             this.loadStats();
         } catch (e) {
+            // 409 с conflict-структурой — открываем сравнительную модалку.
+            // Старое показание уже утверждено, новое пришло из gsheets: даём
+            // админу увидеть разницу и решить — заменить или оставить старое.
+            if (e.status === 409 && e.data && e.data.conflict) {
+                this.refresh();  // возвращаем строку обратно в список
+                this._showConflictModal(rowId, e.data.conflict);
+                return;
+            }
             toast('Ошибка: ' + e.message, 'error');
             this.refresh();  // откатываемся на серверное состояние
         }
+    },
+
+    _showConflictModal(rowId, conflict) {
+        const ex = conflict.existing || {};
+        const inc = conflict.incoming || {};
+        const createdAt = ex.created_at ? new Date(ex.created_at).toLocaleString('ru-RU') : '—';
+
+        const dim = (v) => v === null || v === undefined ? '—' : Number(v).toFixed(3);
+        const diff = (a, b) => {
+            const d = Number(b) - Number(a);
+            if (!isFinite(d) || d === 0) return '<span style="color:#6b7280;">= совпадает</span>';
+            const sign = d > 0 ? '+' : '';
+            const color = d > 0 ? '#059669' : '#dc2626';
+            return `<span style="color:${color}; font-weight:600;">${sign}${d.toFixed(3)}</span>`;
+        };
+
+        // Удаляем прошлую конфликт-модалку, если вдруг осталась
+        document.getElementById('gsheetsConflictModal')?.remove();
+
+        const modal = document.createElement('div');
+        modal.id = 'gsheetsConflictModal';
+        modal.className = 'modal-overlay open';
+        modal.innerHTML = `
+            <div class="modal-window" style="width: 640px;">
+                <div class="modal-header" style="background:#fef3c7; border-bottom:1px solid #fde68a;">
+                    <h3 style="color:#b45309;">
+                        <i class="fa-solid fa-triangle-exclamation"></i>
+                        Конфликт показаний — жилец «${escapeHtml(conflict.user_username || '')}»
+                    </h3>
+                    <button class="close-btn close-icon" data-act="cancel">&times;</button>
+                </div>
+                <div class="modal-form" style="padding:18px 22px; background:var(--bg-page);">
+                    <p style="margin:0 0 14px; font-size:13px; color:var(--text-secondary);">
+                        За период <b>«${escapeHtml(conflict.period_name || '')}»</b> уже есть утверждённое показание.
+                        Сравните старое и новое — и выберите, заменять ли.
+                    </p>
+                    <table style="width:100%; border-collapse:collapse; font-size:13px; background:white; border:1px solid var(--border-color); border-radius:8px; overflow:hidden;">
+                        <thead>
+                            <tr style="background:#f3f4f6;">
+                                <th style="text-align:left; padding:10px 14px; border-bottom:1px solid var(--border-color);">Показатель</th>
+                                <th style="text-align:right; padding:10px 14px; border-bottom:1px solid var(--border-color); color:#6b7280;">Старое (id=${ex.id})</th>
+                                <th style="text-align:right; padding:10px 14px; border-bottom:1px solid var(--border-color); color:#1d4ed8;">Новое (из gsheets)</th>
+                                <th style="text-align:right; padding:10px 14px; border-bottom:1px solid var(--border-color);">Δ</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td style="padding:10px 14px; color:#dc2626; border-bottom:1px solid #f3f4f6;">🔥 ГВС, м³</td>
+                                <td style="padding:10px 14px; text-align:right; border-bottom:1px solid #f3f4f6; font-family:monospace;">${dim(ex.hot_water)}</td>
+                                <td style="padding:10px 14px; text-align:right; border-bottom:1px solid #f3f4f6; font-family:monospace; font-weight:600;">${dim(inc.hot_water)}</td>
+                                <td style="padding:10px 14px; text-align:right; border-bottom:1px solid #f3f4f6;">${diff(ex.hot_water, inc.hot_water)}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding:10px 14px; color:#2563eb; border-bottom:1px solid #f3f4f6;">💧 ХВС, м³</td>
+                                <td style="padding:10px 14px; text-align:right; border-bottom:1px solid #f3f4f6; font-family:monospace;">${dim(ex.cold_water)}</td>
+                                <td style="padding:10px 14px; text-align:right; border-bottom:1px solid #f3f4f6; font-family:monospace; font-weight:600;">${dim(inc.cold_water)}</td>
+                                <td style="padding:10px 14px; text-align:right; border-bottom:1px solid #f3f4f6;">${diff(ex.cold_water, inc.cold_water)}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding:10px 14px; color:#d97706;">⚡ Электр., кВт·ч</td>
+                                <td style="padding:10px 14px; text-align:right; font-family:monospace;">${dim(ex.electricity)}</td>
+                                <td style="padding:10px 14px; text-align:right; font-family:monospace; color:#9ca3af;">не подаётся в таблице</td>
+                                <td style="padding:10px 14px; text-align:right; color:#6b7280;">—</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <p style="margin:14px 0 0; font-size:12px; color:var(--text-secondary);">
+                        Дата создания старого показания: <b>${createdAt}</b>.
+                        При замене старое показание (id=${ex.id}) будет удалено, а из этой строки gsheets создастся новое.
+                        <br><b style="color:#b45309;">Действие необратимо.</b>
+                    </p>
+                </div>
+                <div class="modal-footer" style="display:flex; gap:10px; justify-content:flex-end;">
+                    <button class="action-btn secondary-btn" data-act="cancel">Отмена</button>
+                    <button class="action-btn danger-btn" data-act="reject">Отклонить эту строку</button>
+                    <button class="action-btn success-btn" data-act="replace">
+                        <i class="fa-solid fa-arrows-rotate"></i> Заменить старое
+                    </button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        const close = () => modal.remove();
+        modal.addEventListener('click', async (e) => {
+            const btn = e.target.closest('[data-act]');
+            if (!btn) return;
+            const act = btn.dataset.act;
+            if (act === 'cancel') { close(); return; }
+            if (act === 'reject') {
+                close();
+                await this.rejectRow(rowId);
+                return;
+            }
+            if (act === 'replace') {
+                if (!confirm(`Удалить старое показание (id=${ex.id}) и создать новое из этой строки? Действие необратимо.`)) return;
+                btn.disabled = true;
+                btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Заменяем…';
+                try {
+                    await api.delete(`/admin/readings/${ex.id}`);
+                    close();
+                    await this.approveRow(rowId, { skipConfirm: true });
+                    toast('Старое показание удалено, новое утверждено', 'success');
+                } catch (err) {
+                    toast('Ошибка замены: ' + err.message, 'error');
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="fa-solid fa-arrows-rotate"></i> Заменить старое';
+                }
+            }
+        });
     },
 
     async rejectRow(rowId) {

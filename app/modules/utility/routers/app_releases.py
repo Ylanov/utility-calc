@@ -184,8 +184,17 @@ async def download_apk(filename: str, db: AsyncSession = Depends(get_db)):
 
     full_path = os.path.join(APPS_DIR, safe)
     if not os.path.isfile(full_path):
-        logger.error(f"[APP] APK file missing on disk: {full_path}")
-        raise HTTPException(500, "Файл недоступен на сервере")
+        # 500 здесь неверный код — сервис жив, это ресурса нет на диске.
+        # Клиент (мобилка) на 500 показывает «ошибка сервера» и ретраит,
+        # а должен сразу понимать «этой сборки нет». Отдаём 404.
+        # Запись в БД об этом релизе остаётся — админ увидит её в админке
+        # и сможет перезалить файл.
+        logger.error(
+            f"[APP] APK file missing on disk: {full_path} "
+            f"(release_id={release.id}, file_name={safe}). "
+            "Перезалейте APK через админку или снимите is_published."
+        )
+        raise HTTPException(404, "Файл этой версии не найден — перезалейте APK в админке")
 
     return FileResponse(
         path=full_path,

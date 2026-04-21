@@ -50,6 +50,7 @@ from app.modules.utility.routers import (
     admin_initial_readings,
     admin_gsheets,
     admin_analyzer,
+    admin_recalc,
     app_releases,
     qr,
 )
@@ -139,17 +140,38 @@ async def ensure_admin_exists_safe(session_local, model, label: str):
     """
     Создаёт администратора если его нет. Не падает при ошибке.
 
-    ИСПРАВЛЕНИЕ: предыдущая версия делала SELECT → INSERT.
-    При 4 воркерах Gunicorn все они одновременно стартуют, делают SELECT
-    (все видят что нет admin), затем все пытаются INSERT →
-    UniqueViolationError у 3 из 4 воркеров при каждом деплое.
+    Раньше пароль был жёстко захардкожен как "admin" — что создавало
+    предсказуемую привилегированную учётку на каждом свежем деплое
+    Arsenal/GSM. Теперь пароль берётся из ENV ARSENAL_ADMIN_INITIAL_PASSWORD
+    (или GSM_ADMIN_INITIAL_PASSWORD для GSM). Если ENV не задан — сидирование
+    пропускается: админа создадут руками через db/утилиту миграции.
 
-    Решение: INSERT ... ON CONFLICT DO NOTHING — атомарная операция на уровне БД,
-    безопасна при параллельном выполнении любого числа воркеров.
+    Concurrency: INSERT ... ON CONFLICT DO NOTHING — атомарная операция,
+    безопасная при параллельном старте нескольких воркеров Gunicorn.
     """
+    # Label приходит "Arsenal" | "GSM" — берём env-переменную по шаблону.
+    env_key = f"{label.upper()}_ADMIN_INITIAL_PASSWORD"
+    initial_password = os.environ.get(env_key)
+
+    if not initial_password:
+        logger.warning(
+            f"{label}: {env_key} не задан — пропускаем автосоздание admin. "
+            "Создайте пользователя вручную или задайте ENV-переменную при деплое."
+        )
+        return
+
+    if len(initial_password) < 12:
+        # Защита от коротких паролей — чтобы нельзя было обойти жёсткий
+        # контроль случайно заданным "admin1234".
+        logger.error(
+            f"{label}: {env_key} слишком короткий (< 12 символов). "
+            "Автосоздание admin пропущено."
+        )
+        return
+
     try:
         async with session_local() as db:
-            hashed_pw = pwd_context.hash("admin")
+            hashed_pw = pwd_context.hash(initial_password)
 
             stmt = (
                 pg_insert(model)
@@ -230,8 +252,12 @@ async def health_check():
     """
     Healthcheck для Docker, CI/CD и Nginx.
     Всегда возвращает 200 если сервис поднят.
+
+    Раньше тело ответа раскрывало APP_MODE — это внутренний признак
+    развёртывания (jkh/arsenal_gsm/all), публиковать его внешним
+    сканерам и ботам не нужно.
     """
-    return {"status": "ok", "mode": APP_MODE}
+    return {"status": "ok"}
 
 
 # =====================================================================
@@ -346,6 +372,7 @@ app.include_router(admin_dashboard.router)
 app.include_router(admin_initial_readings.router)
 app.include_router(admin_gsheets.router)
 app.include_router(admin_analyzer.router)
+app.include_router(admin_recalc.router)
 app.include_router(app_releases.router)
 app.include_router(qr.router)
 

@@ -630,3 +630,55 @@ class AppRelease(Base):
     __table_args__ = (
         Index("idx_app_release_platform_published", "platform", "is_published", "version_code"),
     )
+
+
+# ======================================================
+# RECALC JOB — полный перерасчёт показаний за период
+# ======================================================
+class RecalcJob(Base):
+    """Задача «Перерасчёт периода» со статусом и агрегированным diff.
+
+    Жизненный цикл:
+        preview_pending → preview_ready → apply_pending → done
+                                       ↘ cancelled
+                                       ↘ failed
+
+    diff_summary хранит JSON-структуру для UI-модалки:
+        {
+            "total": 1234,
+            "unchanged": 40, "increased": 800, "decreased": 394,
+            "sum_old": "120000.00", "sum_new": "135000.00",
+            "delta": "+15000.00",
+            "top": [{"reading_id":..., "username":..., "old_total":..., "new_total":..., "delta":...}, ...]
+        }
+    """
+    __tablename__ = "recalc_jobs"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+
+    period_id = Column(Integer, ForeignKey("periods.id", ondelete="CASCADE"), nullable=False)
+    period = relationship("BillingPeriod")
+
+    # preview_pending | preview_ready | apply_pending | done | failed | cancelled
+    status = Column(String(24), nullable=False, default="preview_pending")
+
+    # 0-100
+    progress = Column(Integer, nullable=False, default=0)
+    total_readings = Column(Integer, nullable=False, default=0)
+    processed = Column(Integer, nullable=False, default=0)
+
+    diff_summary = Column(JSONB, nullable=True)
+
+    started_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    started_by_username = Column(String(128), nullable=True)
+    celery_task_id = Column(String(64), nullable=True)
+
+    error = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+    applied_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("idx_recalc_jobs_period_created", "period_id", "created_at"),
+        Index("idx_recalc_jobs_status", "status"),
+    )

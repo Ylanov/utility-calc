@@ -180,17 +180,31 @@ if settings.ENVIRONMENT == "production":
             "В production DB_PASS не может быть пустым или 'postgres'."
         )
 
-    # S3 — только WARNING. Смена MinIO-ключей — отдельная процедура:
-    # надо создать нового пользователя через MinIO Console, а не менять
-    # просто в .env (иначе MinIO упадёт с несовпадением root_password).
-    # Логируем и продолжаем — пусть админ смигрирует когда удобно.
+    # S3/MinIO: в production дефолты — это hard-fail.
+    #
+    # Раньше тут было только warning: мол, «MinIO не пробрасывается наружу,
+    # значит дефолтные ключи безопасны». На практике docker-compose.prod.yml
+    # публикует MinIO-порты 9000/9001, а watchtower с docker.sock расширяет
+    # blast radius — один дефолт превращается в полный захват storage.
+    #
+    # Выход — hard-fail с подсказкой. Это ломает только те деплои, где
+    # уже стоит minioadmin/minioadmin, и намеренно: такое нельзя оставлять.
+    # Эскейп-хатч: SKIP_S3_DEFAULT_CHECK=1 — на случай перехода или локального
+    # prod-like окружения без наружного MinIO.
     if (
         settings.S3_ACCESS_KEY == _DEFAULT_S3_ACCESS
         or settings.S3_SECRET_KEY == _DEFAULT_S3_SECRET
     ):
-        import logging as _log
-        _log.getLogger(__name__).warning(
-            "SECURITY: S3_ACCESS_KEY/S3_SECRET_KEY используют значения по умолчанию "
-            "(minioadmin). Это безопасно только если MinIO не пробрасывается во "
-            "внешнюю сеть. Рекомендуется сменить через MinIO Console."
-        )
+        import os as _os
+        if _os.environ.get("SKIP_S3_DEFAULT_CHECK") == "1":
+            import logging as _log
+            _log.getLogger(__name__).warning(
+                "SECURITY: используются дефолтные S3 ключи (minioadmin). "
+                "SKIP_S3_DEFAULT_CHECK=1 — проверка отключена вручную."
+            )
+        else:
+            raise RuntimeError(
+                "SECURITY: S3_ACCESS_KEY/S3_SECRET_KEY равны дефолту (minioadmin). "
+                "В production это недопустимо: MinIO Console + обновить .env, "
+                "иначе установите SKIP_S3_DEFAULT_CHECK=1 осознанно."
+            )

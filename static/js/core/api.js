@@ -92,7 +92,12 @@ class ApiClient {
                     }
                 }
 
-                throw new Error(errorMessage);
+                // Прикрепляем к Error http-статус и тело ответа, чтобы модули могли
+                // делать context-aware обработку (например, конфликт-модалка на 409).
+                const err = new Error(errorMessage);
+                err.status = response.status;
+                err.data = data;
+                throw err;
             }
 
             return data;

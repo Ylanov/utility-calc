@@ -378,6 +378,10 @@ async function initModule(tabId) {
                     const { AnalyzerModule } = await import('./modules/analyzer.js');
                     loadedModules.analyzer = AnalyzerModule;
                 }
+                if (!loadedModules.recalc) {
+                    const { RecalcModule } = await import('./modules/recalc.js');
+                    loadedModules.recalc = RecalcModule;
+                }
                 if (!loadedModules.tools) {
                     const { ToolsModule } = await import('./modules/tools.js');
                     loadedModules.tools = ToolsModule;
@@ -388,6 +392,7 @@ async function initModule(tabId) {
                 loadedModules.gsheets.init();
                 loadedModules.appReleases.init();
                 loadedModules.analyzer.init();
+                loadedModules.recalc.init();
                 loadedModules.tools.init();
                 break;
             default:

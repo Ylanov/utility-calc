@@ -130,6 +130,71 @@
         </section>
 
         <!-- ==========================================
+             СЕКЦИЯ 2.5: ПЕРЕРАСЧЁТ ПЕРИОДА
+             ========================================== -->
+        <section class="accordion-section" data-section="recalc">
+            <button class="accordion-header" type="button" aria-expanded="false">
+                <span class="accordion-title">
+                    <span class="accordion-icon" style="background:rgba(245,158,11,0.1); color:#d97706;">
+                        <i class="fa-solid fa-calculator"></i>
+                    </span>
+                    <span class="accordion-title-text">
+                        <strong>Перерасчёт периода</strong>
+                        <span class="subtitle">Пересчитать все утверждённые показания с актуальными тарифами — без риска, с предварительным отчётом</span>
+                    </span>
+                </span>
+                <i class="fa-solid fa-chevron-down accordion-chevron"></i>
+            </button>
+            <div class="accordion-body">
+                <div class="accordion-content">
+                    <div class="inner">
+                        <div class="toolbar-controls styled-form" style="margin-bottom: 12px;">
+                            <div class="form-group" style="flex: 1 1 auto; margin: 0; min-width: 280px;">
+                                <label>Период</label>
+                                <select id="recalcPeriodSelect">
+                                    <option value="">Загрузка…</option>
+                                </select>
+                            </div>
+                            <button id="btnRecalcStart" class="action-btn warning-btn" style="align-self:flex-end; height:44px;">
+                                <i class="fa-solid fa-magnifying-glass-chart"></i> Предпросчёт
+                            </button>
+                            <button id="btnRecalcHistory" class="action-btn secondary-btn" style="align-self:flex-end; height:44px;" title="История перерасчётов по периоду">
+                                <i class="fa-solid fa-clock-rotate-left"></i> История
+                            </button>
+                        </div>
+                        <p class="hint-text" style="margin: 0;">
+                            Пересчёт пройдёт в фоновой задаче. Сначала система соберёт сравнительный отчёт (сколько жильцов затронет и насколько изменится сумма) — применение к БД запускается отдельной кнопкой.
+                            <br><b>Не забудьте закрыть черновики показаний перед пересчётом.</b>
+                        </p>
+                        <div id="recalcActiveJob" style="margin-top:14px;"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- МОДАЛКА: ПРЕДПРОСЧЁТ И ПРИМЕНЕНИЕ -->
+        <div id="recalcModal" class="modal-overlay">
+            <div class="modal-window" style="width: 820px;">
+                <div class="modal-header" style="background:#fef3c7; border-bottom:1px solid #fde68a;">
+                    <h3 style="color:#b45309;">
+                        <i class="fa-solid fa-calculator"></i>
+                        <span id="recalcModalTitle">Перерасчёт периода</span>
+                    </h3>
+                    <button class="close-btn close-icon" data-recalc-close>&times;</button>
+                </div>
+                <div class="modal-form" id="recalcModalBody" style="padding:18px 22px; background:var(--bg-page); min-height:280px;">
+                    <div style="text-align:center; padding:40px; color:var(--text-secondary);">
+                        <i class="fa-solid fa-spinner fa-spin" style="font-size:24px;"></i>
+                        <div style="margin-top:10px;">Запускаем предпросчёт…</div>
+                    </div>
+                </div>
+                <div class="modal-footer" id="recalcModalFooter" style="display:flex; gap:10px; justify-content:flex-end;">
+                    <button class="action-btn secondary-btn" data-recalc-close>Закрыть</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ==========================================
              СЕКЦИЯ 3: ПРОФИЛИ ТАРИФИКАЦИИ
              ========================================== -->
         <section class="accordion-section" data-section="tariffs">

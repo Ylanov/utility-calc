@@ -4,6 +4,7 @@ import json
 import hashlib
 import hmac
 import logging
+import time
 from urllib.parse import unquote
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi_limiter.depends import RateLimiter
@@ -17,6 +18,12 @@ from app.core.auth import verify_password, create_access_token
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+# Защита от replay: initData подписан ключом, но без свежести подписи
+# любой перехват (прокси, расширение браузера) можно использовать часами.
+# Telegram рекомендует окно ~24 часа, но для авторизации 5 минут хватает —
+# пользователь обычно жмёт «Войти» сразу после открытия Mini App.
+TELEGRAM_INITDATA_MAX_AGE_SEC = 5 * 60
 
 router = APIRouter(prefix="/api/tg", tags=["Telegram Mini App"])
 
@@ -60,6 +67,17 @@ def validate_telegram_data(init_data: str) -> dict:
 
         if calculated_hash != hash_to_check:
             raise ValueError("Неверная подпись (возможно, попытка подделки данных)")
+
+        # Проверка свежести auth_date — защита от replay initData.
+        # Telegram кладёт unix-timestamp момента создания подписи; если он
+        # старше окна — отклоняем, даже если подпись валидна.
+        try:
+            auth_date = int(parsed_data.get("auth_date", "0"))
+        except (TypeError, ValueError):
+            raise ValueError("Некорректный auth_date")
+        now = int(time.time())
+        if auth_date <= 0 or now - auth_date > TELEGRAM_INITDATA_MAX_AGE_SEC:
+            raise ValueError("Данные Telegram устарели — обновите Mini App и попробуйте ещё раз")
 
         user_data = json.loads(parsed_data.get("user", "{}"))
         return user_data

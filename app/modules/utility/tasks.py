@@ -572,3 +572,290 @@ def sync_gsheets_task(sheet_id: str = "", gid: str = "", limit: int | None = Non
 
     with sync_db_session() as db:
         return sync_gsheets(db, effective_id, effective_gid, limit=limit)
+
+
+# ==========================================================================
+# ПОЛНЫЙ ПЕРЕРАСЧЁТ ПЕРИОДА
+# ==========================================================================
+# Контекст: показания утверждаются и сохраняют total_* значения, посчитанные
+# с тарифом на момент утверждения. Если админ потом поменял тариф (или раньше
+# его вообще не было), данные устарели — и 1С шлёт некорректные квитанции.
+#
+# Эта пара задач (_preview и _apply) пересчитывает ВСЕ approved MeterReading
+# за данный period_id с текущим эффективным тарифом (Room → User → default).
+# Работает поблочно по chunk_size — защита от OOM на 10k+ записях.
+# Progress сохраняется в recalc_jobs.progress/processed, чтобы UI мог показывать
+# живой progress-bar через polling.
+# ==========================================================================
+
+def _recalc_compute_one(db_session, reading, user, room, prev_reading, tariffs_by_active):
+    """Пересчитать одно approved-показание с актуальным тарифом.
+
+    Возвращает (new_totals_dict, new_costs_dict). НЕ пишет в БД.
+    prev_reading — последнее утверждённое показание по комнате СТРОГО ДО текущего
+    (для вычисления дельт; None если эта запись — первая по комнате).
+    """
+    from decimal import Decimal
+    from app.modules.utility.services.tariff_cache import tariff_cache
+    from app.modules.utility.services.calculations import calculate_utilities, D
+
+    ZERO = Decimal("0.000")
+
+    tariff = (
+        tariff_cache.get_effective_tariff(user=user, room=room)
+        or tariffs_by_active
+    )
+
+    p_hot = D(prev_reading.hot_water) if prev_reading else ZERO
+    p_cold = D(prev_reading.cold_water) if prev_reading else ZERO
+    p_elect = D(prev_reading.electricity) if prev_reading else ZERO
+
+    hot_corr = D(reading.hot_correction or 0)
+    cold_corr = D(reading.cold_correction or 0)
+    elect_corr = D(reading.electricity_correction or 0)
+    sewage_corr = D(reading.sewage_correction or 0)
+
+    d_hot = max(ZERO, (D(reading.hot_water) - p_hot) - hot_corr)
+    d_cold = max(ZERO, (D(reading.cold_water) - p_cold) - cold_corr)
+
+    residents = Decimal(user.residents_count or 1)
+    total_room = Decimal(room.total_room_residents if room.total_room_residents and room.total_room_residents > 0 else 1)
+    d_elect = max(ZERO, ((residents / total_room) * (D(reading.electricity) - p_elect)) - elect_corr)
+
+    costs = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=d_hot, volume_cold=d_cold,
+        volume_sewage=max(ZERO, (d_hot + d_cold) - sewage_corr),
+        volume_electricity_share=d_elect,
+    )
+
+    cost_205 = costs["cost_social_rent"]
+    cost_209 = costs["total_cost"] - cost_205
+
+    # При пересчёте debt_209/205 и overpayment_209/205 НЕ трогаем —
+    # они пришли из предыдущего периода и не зависят от текущего тарифа.
+    # Adjustments тоже не учитываем в total — они применяются в момент
+    # первичного approve. Если админ хочет «чистый» пересчёт по тарифу —
+    # ему важны именно cost_* поля и total_cost без корректировок долга.
+    total_209 = cost_209 + (reading.debt_209 or Decimal("0")) - (reading.overpayment_209 or Decimal("0"))
+    total_205 = cost_205 + (reading.debt_205 or Decimal("0")) - (reading.overpayment_205 or Decimal("0"))
+
+    new_fields = {
+        "total_209": total_209,
+        "total_205": total_205,
+        "total_cost": total_209 + total_205,
+    }
+    for k, v in costs.items():
+        new_fields[k] = v
+    return new_fields
+
+
+def _recalc_run(job_id: int, apply: bool):
+    """Общая логика для preview и apply. Разница — пишем ли результаты в БД.
+
+    Идея реализации:
+      * один проход по всем approved readings периода, батчами по 500;
+      * для каждой записи считаем новые поля, сравниваем total_cost;
+      * собираем агрегат: increased/decreased/unchanged + топ-30 по |delta|;
+      * при apply=True — обновляем записи чанком через bulk_update_mappings.
+    """
+    from decimal import Decimal
+    from sqlalchemy.orm import selectinload, load_only
+    from app.modules.utility.models import RecalcJob, MeterReading, BillingPeriod, Tariff, Room, User
+
+    CHUNK = 500
+
+    with sync_db_session() as db:
+        job = db.query(RecalcJob).filter(RecalcJob.id == job_id).first()
+        if not job:
+            logger.error(f"[RECALC] job_id={job_id} not found")
+            return {"status": "error", "error": "job_not_found"}
+
+        if job.status == "cancelled":
+            logger.info(f"[RECALC] job {job_id} cancelled before start")
+            return {"status": "cancelled"}
+
+        try:
+            # Фиксируем запущенный статус
+            job.status = "apply_pending" if apply else "preview_pending"
+            job.progress = 0
+            job.processed = 0
+            db.commit()
+
+            period = db.query(BillingPeriod).filter(BillingPeriod.id == job.period_id).first()
+            if not period:
+                raise ValueError(f"Период id={job.period_id} не найден")
+
+            # Берём любой активный тариф как fallback — вдруг ни user, ни room
+            # не указывают эффективный тариф.
+            fallback_tariff = (
+                db.query(Tariff).filter(Tariff.is_active).order_by(Tariff.id).first()
+            )
+            if not fallback_tariff:
+                raise ValueError("Нет ни одного активного тарифа — пересчёт невозможен")
+
+            total_q = db.query(MeterReading).filter(
+                MeterReading.period_id == period.id,
+                MeterReading.is_approved.is_(True),
+            )
+            total = total_q.count()
+            job.total_readings = total
+            db.commit()
+
+            if total == 0:
+                job.status = "preview_ready" if not apply else "done"
+                job.progress = 100
+                job.diff_summary = {
+                    "total": 0, "unchanged": 0, "increased": 0, "decreased": 0,
+                    "sum_old": "0.00", "sum_new": "0.00", "delta": "0.00", "top": [],
+                }
+                if apply:
+                    job.applied_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                db.commit()
+                return {"status": job.status, "total": 0}
+
+            unchanged = increased = decreased = 0
+            sum_old = Decimal("0")
+            sum_new = Decimal("0")
+            top_diffs = []  # [(abs_delta, dict_item)]
+
+            offset = 0
+            while offset < total:
+                # Важно: readings — это ORM-объекты, user+room подгружаем eager
+                # чтобы внутри чанка не было N+1.
+                chunk = (
+                    db.query(MeterReading)
+                    .options(
+                        selectinload(MeterReading.user).selectinload(User.room),
+                    )
+                    .filter(
+                        MeterReading.period_id == period.id,
+                        MeterReading.is_approved.is_(True),
+                    )
+                    .order_by(MeterReading.id)
+                    .offset(offset)
+                    .limit(CHUNK)
+                    .all()
+                )
+                if not chunk:
+                    break
+
+                # Соберём prev-reading для всех комнат в чанке одним запросом.
+                # Для пересчёта нужен последний approved reading по комнате
+                # строго ДО created_at текущего. Аккуратно — в рамках одного
+                # периода берём «предыдущий» по created_at в пределах комнаты.
+                updates = []
+                for r in chunk:
+                    user = r.user
+                    room = user.room if user else None
+                    if not user or not room:
+                        # ломаные данные — пропускаем
+                        continue
+
+                    prev = (
+                        db.query(MeterReading)
+                        .filter(
+                            MeterReading.room_id == room.id,
+                            MeterReading.is_approved.is_(True),
+                            MeterReading.created_at < r.created_at,
+                        )
+                        .order_by(MeterReading.created_at.desc())
+                        .first()
+                    )
+
+                    new_fields = _recalc_compute_one(db, r, user, room, prev, fallback_tariff)
+
+                    old_total = Decimal(str(r.total_cost or 0))
+                    new_total = Decimal(str(new_fields["total_cost"] or 0))
+                    delta = new_total - old_total
+                    sum_old += old_total
+                    sum_new += new_total
+
+                    if delta == 0:
+                        unchanged += 1
+                    elif delta > 0:
+                        increased += 1
+                    else:
+                        decreased += 1
+
+                    # Поддерживаем отсортированный топ по |delta|, размер <=30
+                    if delta != 0:
+                        item = {
+                            "reading_id": r.id,
+                            "user_id": user.id,
+                            "username": user.username,
+                            "room": f"{room.dormitory_name}, {room.room_number}" if room else "",
+                            "old_total": str(old_total),
+                            "new_total": str(new_total),
+                            "delta": str(delta),
+                        }
+                        top_diffs.append((abs(delta), item))
+                        # Каждые 100 сравнений уменьшаем хвост — экономия памяти.
+                        if len(top_diffs) > 200:
+                            top_diffs.sort(key=lambda x: x[0], reverse=True)
+                            top_diffs = top_diffs[:30]
+
+                    if apply:
+                        updates.append({"id": r.id, "created_at": r.created_at, **{k: v for k, v in new_fields.items()}})
+
+                if apply and updates:
+                    # Составной PK (id, created_at) требует передавать оба поля
+                    # в bulk_update_mappings. SQLAlchemy сам сопоставит записи.
+                    db.bulk_update_mappings(MeterReading, updates)
+
+                offset += CHUNK
+                job.processed = min(offset, total)
+                job.progress = int(job.processed / total * 100) if total else 100
+                db.commit()
+
+                # Повторная проверка: админ мог отменить
+                db.refresh(job)
+                if job.status == "cancelled":
+                    logger.info(f"[RECALC] job {job_id} cancelled mid-run")
+                    db.rollback()
+                    return {"status": "cancelled"}
+
+            top_diffs.sort(key=lambda x: x[0], reverse=True)
+            top_items = [item for _, item in top_diffs[:30]]
+
+            job.diff_summary = {
+                "total": total,
+                "unchanged": unchanged,
+                "increased": increased,
+                "decreased": decreased,
+                "sum_old": str(sum_old.quantize(Decimal("0.01"))),
+                "sum_new": str(sum_new.quantize(Decimal("0.01"))),
+                "delta": str((sum_new - sum_old).quantize(Decimal("0.01"))),
+                "top": top_items,
+            }
+            if apply:
+                job.status = "done"
+                job.applied_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            else:
+                job.status = "preview_ready"
+            job.progress = 100
+            db.commit()
+            logger.info(f"[RECALC] job {job_id} finished (apply={apply}) — {total} readings")
+            return {"status": job.status, "total": total}
+
+        except Exception as exc:
+            db.rollback()
+            logger.exception(f"[RECALC] job {job_id} failed")
+            job2 = db.query(RecalcJob).filter(RecalcJob.id == job_id).first()
+            if job2:
+                job2.status = "failed"
+                job2.error = str(exc)[:2000]
+                db.commit()
+            return {"status": "failed", "error": str(exc)}
+
+
+@celery.task(name="recalc_period_preview_task")
+def recalc_period_preview_task(job_id: int):
+    """Read-only прогон: собирает diff_summary без апдейтов MeterReading."""
+    return _recalc_run(job_id, apply=False)
+
+
+@celery.task(name="recalc_period_apply_task")
+def recalc_period_apply_task(job_id: int):
+    """Применяет пересчитанные значения к БД (bulk_update)."""
+    return _recalc_run(job_id, apply=True)

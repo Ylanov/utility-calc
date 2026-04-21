@@ -16,6 +16,7 @@ from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -299,10 +300,9 @@ async def _apply_approve(
     )).scalars().first()
 
     # ЗАЩИТА ОТ ДУБЛЕЙ: если в этом периоде у жильца уже есть утверждённое
-    # показание, не создаём второе. Админ увидит ошибку и может:
-    #   - отклонить строку (если дубль случайный),
-    #   - переназначить (если ошибка в матче),
-    #   - удалить старое показание вручную и повторить.
+    # показание, не создаём второе. Отдаём 409 со структурой conflict:
+    # фронт открывает сравнительную модалку (старое vs. новое) и предлагает
+    # «Заменить» (delete старое → retry approve) или отменить.
     if active_period:
         duplicate = (await db.execute(
             select(MeterReading).where(
@@ -312,13 +312,31 @@ async def _apply_approve(
             ).limit(1)
         )).scalars().first()
         if duplicate:
-            raise HTTPException(
+            return JSONResponse(
                 status_code=409,
-                detail=(
-                    f"У жильца уже есть утверждённое показание за период "
-                    f"«{active_period.name}» (id={duplicate.id}). "
-                    "Отклоните эту строку или удалите существующее показание."
-                ),
+                content={
+                    "detail": (
+                        f"У жильца уже есть утверждённое показание за период "
+                        f"«{active_period.name}» (id={duplicate.id}). "
+                        "Отклоните эту строку или удалите существующее показание."
+                    ),
+                    "conflict": {
+                        "user_username": user.username,
+                        "period_name": active_period.name,
+                        "row_id": row.id,
+                        "existing": {
+                            "id": duplicate.id,
+                            "hot_water": float(duplicate.hot_water or 0),
+                            "cold_water": float(duplicate.cold_water or 0),
+                            "electricity": float(duplicate.electricity or 0),
+                            "created_at": duplicate.created_at.isoformat() if duplicate.created_at else None,
+                        },
+                        "incoming": {
+                            "hot_water": float(row.hot_water or 0),
+                            "cold_water": float(row.cold_water or 0),
+                        },
+                    },
+                },
             )
 
     # ЭЛЕКТРИЧЕСТВО: жильцы не подают электроэнергию через таблицу — колонки нет.

@@ -17,6 +17,69 @@ from app.modules.utility.services.s3_client import s3_service
 router = APIRouter(tags=["Arsenal Documents"])
 
 
+# =====================================================================
+# ВАЛИДАЦИЯ ФАЙЛОВ — прикреплений к документам
+# =====================================================================
+# Подтверждения документов — это сканы/фото/PDF. Разрешаем только
+# канонический набор: если админ прикрепляет .exe или .html — это либо
+# ошибка, либо storage abuse (использование нашего MinIO как хостинга
+# вредоносных файлов). Проверяем расширение, MIME и размер.
+
+ALLOWED_DOC_EXT = {"pdf", "jpg", "jpeg", "png", "webp", "heic", "tif", "tiff"}
+ALLOWED_DOC_MIME = {
+    "application/pdf",
+    "image/jpeg", "image/png", "image/webp",
+    "image/heic", "image/heif", "image/tiff",
+    # iOS иногда шлёт generic octet-stream — MIME без расширения не
+    # принимаем, но octet-stream с валидным extension допустим.
+    "application/octet-stream",
+}
+MAX_DOC_SIZE_BYTES = 15 * 1024 * 1024  # 15 МБ — скан договора/акта точно влезет
+
+
+def _validate_upload(file: UploadFile) -> str:
+    """Проверяет extension + MIME + размер. Возвращает нормализованное ext.
+
+    Raises HTTPException(400) — всегда с конкретной причиной, чтобы админу
+    было понятно (не сервис же прячет валидные ошибки).
+    """
+    if not file.filename:
+        raise HTTPException(400, "У файла нет имени")
+    if "." not in file.filename:
+        raise HTTPException(400, "У файла нет расширения")
+
+    ext = file.filename.rsplit(".", 1)[-1].lower().strip()
+    if ext not in ALLOWED_DOC_EXT:
+        raise HTTPException(
+            400,
+            f"Недопустимый формат .{ext}. Разрешены: "
+            + ", ".join(sorted(ALLOWED_DOC_EXT)),
+        )
+
+    if file.content_type and file.content_type not in ALLOWED_DOC_MIME:
+        raise HTTPException(
+            400,
+            f"Недопустимый MIME-тип: {file.content_type}",
+        )
+
+    # Размер: ленивая проверка через seek. UploadFile хранит SpooledTemporaryFile,
+    # на котором seek/tell работают.
+    try:
+        file.file.seek(0, 2)  # 2 == os.SEEK_END
+        size = file.file.tell()
+        file.file.seek(0)
+    except Exception:
+        size = 0
+    if size and size > MAX_DOC_SIZE_BYTES:
+        raise HTTPException(
+            413,
+            f"Файл слишком большой: {size // 1024 // 1024} МБ. "
+            f"Максимум {MAX_DOC_SIZE_BYTES // 1024 // 1024} МБ.",
+        )
+
+    return ext
+
+
 @router.get("/documents")
 async def get_documents(
         db: AsyncSession = Depends(get_arsenal_db),
@@ -150,9 +213,10 @@ async def create_document(
     # 2. Обработка файла (загрузка в MinIO)
     file_path = None
     if file:
-        # Получаем расширение файла (по умолчанию .bin, если нет точки)
-        file_ext = file.filename.split('.')[-1] if '.' in file.filename else 'bin'
-        # Генерируем уникальное имя файла: arsenal_docs/uuid_filename.ext
+        # Валидируем extension / MIME / размер ДО попытки upload — чтобы
+        # не тратить квоту MinIO на заведомо мусорный файл и не давать
+        # storage abuse (загрузка .exe, больших бинарей).
+        file_ext = _validate_upload(file)
         unique_name = f"arsenal_docs/{uuid.uuid4().hex}.{file_ext}"
 
         is_uploaded = s3_service.upload_fileobj(file.file, unique_name)

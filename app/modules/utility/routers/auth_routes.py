@@ -281,7 +281,27 @@ async def logout(response: Response):
     dependencies=[Depends(RateLimiter(times=3, seconds=3600))],
 )
 async def reset_password(data: PasswordResetRequest, db: AsyncSession = Depends(get_db)):
-    # ИЗМЕНЕНИЕ: Загружаем пользователя вместе с его комнатой
+    """Сброс пароля по логину + площади квартиры.
+
+    Anti-enumeration: любой неверный вход (нет логина / нет комнаты /
+    не совпала площадь) отдаёт ОДИН И ТОТ ЖЕ ответ 400 с общим текстом.
+    Раньше мы возвращали 404 «логин не найден» vs 400 «данные не совпали»,
+    что позволяло перечислять живые учётки внешним сканером — это уже
+    подтверждено на asy-tk.ru.
+
+    Pлейн-текст temp_password пока остаётся в ответе: его читает фронт
+    (static/js/login.js:128) и показывает пользователю на экране сразу.
+    Убирать это — отдельная задача с изменением UX (показ через
+    одноразовую админ-страницу), попадёт в «жёлтый» список.
+    """
+    generic_fail = HTTPException(
+        status_code=400,
+        detail=(
+            "Не удалось сбросить пароль. Проверьте логин и площадь помещения "
+            "из квитанции. Если не получается — обратитесь в бухгалтерию."
+        ),
+    )
+
     result = await db.execute(
         select(User).options(selectinload(User.room)).where(
             func.lower(User.username) == data.username.lower(),
@@ -290,25 +310,15 @@ async def reset_password(data: PasswordResetRequest, db: AsyncSession = Depends(
     )
     user = result.scalars().first()
 
-    if not user:
-        raise HTTPException(status_code=404, detail="Пользователь с таким логином не найден")
+    # Все ветки отказа — одна и та же ошибка. Это ломает user enumeration,
+    # подтверждённый внешним сканированием (404 "логин не найден" vs 400).
+    if not user or not user.room:
+        raise generic_fail
 
-    # ИЗМЕНЕНИЕ: Проверяем, что пользователь привязан к комнате
-    if not user.room:
-        raise HTTPException(
-            status_code=400,
-            detail="Пользователь не привязан к помещению. Сброс пароля невозможен."
-        )
-
-    # ИЗМЕНЕНИЕ: Берем площадь из user.room.apartment_area
     db_area = round(float(user.room.apartment_area or 0), 1)
     input_area = round(float(data.apartment_area), 1)
-
     if db_area != input_area:
-        raise HTTPException(
-            status_code=400,
-            detail="Данные не совпадают. Проверьте площадь в квитанции или обратитесь в бухгалтерию."
-        )
+        raise generic_fail
 
     temp_password = ''.join(random.choices(string.digits, k=6))
 
@@ -320,5 +330,5 @@ async def reset_password(data: PasswordResetRequest, db: AsyncSession = Depends(
     return {
         "status": "success",
         "message": "Пароль успешно сброшен",
-        "temp_password": temp_password
+        "temp_password": temp_password,
     }
