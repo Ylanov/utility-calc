@@ -62,6 +62,7 @@ async def get_current_user(
     Декодирует JWT токен и возвращает пользователя из БД.
     Проверяет:
     - Валидность и подпись JWT
+    - scope == "full" (см. ниже — критично для 2FA)
     - Существование пользователя в БД
     - Что пользователь не удалён (is_deleted = False)
     """
@@ -75,6 +76,16 @@ async def get_current_user(
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         username: str = payload.get("sub")
         if username is None:
+            raise credentials_exception
+
+        # P0-фикс: раньше scope не проверялся. Pre-auth-токены (scope="pre-auth"),
+        # которые выдаются после ввода пароля ДО ввода TOTP, проходили как
+        # полноценные и открывали все защищённые роуты — 2FA фактически
+        # обходился. Симметрично с app/core/auth.py:143-145.
+        # Единственный валидный путь pre-auth — /api/auth/verify-2fa, и там
+        # свой отдельный jwt.decode с проверкой scope=="pre-auth" (auth_routes.py:184).
+        token_scope = payload.get("scope", "full")
+        if token_scope != "full":
             raise credentials_exception
     except JWTError as e:
         logger.debug(f"JWT decode error: {e}")

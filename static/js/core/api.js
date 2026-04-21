@@ -75,13 +75,19 @@ class ApiClient {
                 }
 
                 let errorMessage = `Ошибка ${response.status}`;
+                let errData = data;
 
                 if (typeof data === 'object') {
-                    // FastAPI возвращает ошибки в поле detail
-                    if (data.detail) {
-                        errorMessage = typeof data.detail === 'string'
-                            ? data.detail
-                            : JSON.stringify(data.detail);
+                    // FastAPI отдаёт ошибки в поле detail. Два варианта:
+                    //   - detail: строка → берём её как текст ошибки
+                    //   - detail: объект  → разворачиваем его в err.data,
+                    //     чтобы модули могли читать err.data.conflict и т.п.
+                    //     errorMessage берём из detail.message, либо JSON.stringify.
+                    if (typeof data.detail === 'string') {
+                        errorMessage = data.detail;
+                    } else if (data.detail && typeof data.detail === 'object') {
+                        errorMessage = data.detail.message || JSON.stringify(data.detail);
+                        errData = data.detail;
                     }
                 } else if (typeof data === 'string') {
                     // Защита от огромных HTML-ошибок серверов (Nginx/FastAPI)
@@ -96,7 +102,7 @@ class ApiClient {
                 // делать context-aware обработку (например, конфликт-модалка на 409).
                 const err = new Error(errorMessage);
                 err.status = response.status;
-                err.data = data;
+                err.data = errData;
                 throw err;
             }
 

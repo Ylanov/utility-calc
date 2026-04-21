@@ -391,6 +391,51 @@ app.include_router(gsm_routes.router)
 app.include_router(gsm_reports.router)
 
 # =====================================================================
+# CRAWLER / WELL-KNOWN 404 STUBS
+#
+# StaticFiles смонтирован ниже с html=True — это значит, что на любой
+# несуществующий путь Starlette отдаёт index.html с кодом 200. Для SPA
+# это правильно (deep-link роутер внутри JS берёт путь из location),
+# но для ботов-сканеров, crawler'ов и well-known-файлов это создаёт
+# путаницу: /robots.txt, /sitemap.xml, /.well-known/security.txt
+# возвращают HTML-портал, и любой сканер думает что контент есть.
+#
+# Регистрируем явные 404 ДО mount'а StaticFiles, чтобы эти пути
+# отбивались корректно, а SPA-deep-routing продолжал работать.
+# =====================================================================
+from fastapi.responses import FileResponse as _FileResponse
+
+
+async def _serve_or_404(filename: str, media_type: str):
+    """Отдаём реальный файл из static/ если он лежит на диске, иначе
+    честный 404. Смысл: StaticFiles(html=True) на несуществующий путь
+    возвращает index.html с 200 OK — crawler'ы видят HTML вместо
+    robots.txt/sitemap.xml. Этот хелпер ломает такое поведение."""
+    path = os.path.join("static", filename)
+    if os.path.isfile(path):
+        return _FileResponse(path, media_type=media_type)
+    raise HTTPException(status_code=404)
+
+
+@app.get("/robots.txt", include_in_schema=False)
+async def _robots_txt():
+    return await _serve_or_404("robots.txt", "text/plain")
+
+
+@app.get("/sitemap.xml", include_in_schema=False)
+async def _sitemap_xml():
+    return await _serve_or_404("sitemap.xml", "application/xml")
+
+
+@app.get("/.well-known/{path:path}", include_in_schema=False)
+async def _no_well_known(path: str):
+    # RFC 8615 пути. Пока никакой well-known инфраструктуры у нас нет
+    # (ни ACME-challenge, ни security.txt) — возвращаем 404, а не SPA-HTML.
+    # Когда понадобится — добавим конкретный хендлер для нужного пути.
+    raise HTTPException(status_code=404)
+
+
+# =====================================================================
 # STATIC FILES
 # Монтируется ПОСЛЕДНИМ — перехватывает все запросы которые не
 # совпали с роутами FastAPI выше. /health должен быть зарегистрирован

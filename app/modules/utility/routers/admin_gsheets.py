@@ -16,7 +16,6 @@ from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -300,9 +299,13 @@ async def _apply_approve(
     )).scalars().first()
 
     # ЗАЩИТА ОТ ДУБЛЕЙ: если в этом периоде у жильца уже есть утверждённое
-    # показание, не создаём второе. Отдаём 409 со структурой conflict:
-    # фронт открывает сравнительную модалку (старое vs. новое) и предлагает
-    # «Заменить» (delete старое → retry approve) или отменить.
+    # показание, не создаём второе. Отдаём 409 со структурой conflict.
+    #
+    # ВАЖНО: именно `raise HTTPException(detail=dict)`, а не `return JSONResponse(...)`.
+    # Раньше был второй вариант, но _apply_approve тогда возвращал Response
+    # вместо MeterReading, и внешний approve_row падал с AttributeError при
+    # попытке прочитать .id (и bulk_approve считал такой «возврат» как success).
+    # HTTPException корректно всплывает через любой вызывающий код.
     if active_period:
         duplicate = (await db.execute(
             select(MeterReading).where(
@@ -312,10 +315,10 @@ async def _apply_approve(
             ).limit(1)
         )).scalars().first()
         if duplicate:
-            return JSONResponse(
+            raise HTTPException(
                 status_code=409,
-                content={
-                    "detail": (
+                detail={
+                    "message": (
                         f"У жильца уже есть утверждённое показание за период "
                         f"«{active_period.name}» (id={duplicate.id}). "
                         "Отклоните эту строку или удалите существующее показание."

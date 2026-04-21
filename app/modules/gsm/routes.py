@@ -92,8 +92,11 @@ async def get_current_gsm_user(
         if not username:
             raise HTTPException(status_code=401, detail="Неверный токен: отсутствует sub")
 
-        # Проверяем scope — пользователь ЖКХ не должен попасть в ГСМ
-        if scope not in ("gsm_admin", "full"):
+        # P0-фикс: строгая изоляция между модулями.
+        # Раньше тут было `scope not in ("gsm_admin", "full")`, и утильный JWT
+        # с совпадающим username получал доступ в ГСМ. Теперь — только свой scope.
+        # ГСМ-логин выдаёт scope="gsm_admin" (см. gsm/auth.py:33).
+        if scope != "gsm_admin":
             raise HTTPException(status_code=403, detail="Недостаточно прав для доступа к ГСМ")
 
     except JWTError as e:

@@ -62,8 +62,12 @@ async def get_current_arsenal_user(
         if not username:
             raise HTTPException(status_code=401, detail="Неверный токен: отсутствует sub")
 
-        # Проверяем scope — пользователь ЖКХ не должен попасть в Арсенал
-        if scope not in ("arsenal_admin", "full"):
+        # P0-фикс: строгая изоляция между модулями.
+        # Раньше тут было `scope not in ("arsenal_admin", "full")` — но "full"
+        # выдаётся утильному пользователю, и любой утильный JWT с совпадающим
+        # username получал доступ в Арсенал. Теперь — только свой scope.
+        # Арсенал-логин выдаёт scope="arsenal_admin" (см. arsenal/auth.py:80).
+        if scope != "arsenal_admin":
             raise HTTPException(status_code=403, detail="Недостаточно прав для доступа к Арсеналу")
 
     except JWTError as e:
