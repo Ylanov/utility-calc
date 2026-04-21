@@ -438,15 +438,21 @@
         <!-- ==========================================
              СЕКЦИЯ: СРАВНЕНИЕ ПЕРИОДОВ
              ========================================== -->
-        <section class="accordion-section" data-section="compare">
+        <!-- ==========================================
+             СЕКЦИЯ: АНАЛИЗ ПЕРИОДОВ (объединяет «Сравнение» и «Предпросмотр закрытия»)
+             Раньше были две отдельные секции: они дёргали разные эндпоинты,
+             но обе работают с расчётными периодами. Теперь — одна секция с
+             табами, чтобы было меньше прокрутки в админке.
+             ========================================== -->
+        <section class="accordion-section" data-section="period-analysis" id="periodAnalysisCard">
             <button class="accordion-header" type="button" aria-expanded="false">
                 <span class="accordion-title">
                     <span class="accordion-icon" style="background:rgba(59,130,246,0.12); color:#3b82f6;">
                         <i class="fa-solid fa-chart-column"></i>
                     </span>
                     <span class="accordion-title-text">
-                        <strong>Сравнение периодов</strong>
-                        <span class="subtitle">Сопоставление сумм и метрик между двумя расчётными периодами</span>
+                        <strong>Анализ периодов</strong>
+                        <span class="subtitle">Предпросмотр закрытия и сравнение двух периодов в одном месте</span>
                     </span>
                 </span>
                 <i class="fa-solid fa-chevron-down accordion-chevron"></i>
@@ -454,60 +460,57 @@
             <div class="accordion-body">
                 <div class="accordion-content">
                     <div class="inner">
-                        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 16px;">
-                            <select id="comparePeriodA" style="flex: 1; min-width: 160px; max-width: 280px;">
-                                <option value="">Период A...</option>
-                            </select>
-                            <span style="color: var(--text-secondary); font-weight: 600; font-size: 14px;">vs</span>
-                            <select id="comparePeriodB" style="flex: 1; min-width: 160px; max-width: 280px;">
-                                <option value="">Период B...</option>
-                            </select>
-                            <button id="btnCompare" class="action-btn primary-btn" style="padding: 8px 20px; font-size: 13px; white-space: nowrap;">
-                                <i class="fa-solid fa-scale-balanced"></i> Сравнить
+                        <!-- Табы -->
+                        <div role="tablist" style="display:inline-flex; border:1px solid var(--border-color); border-radius:8px; overflow:hidden; margin-bottom:16px;">
+                            <button type="button" id="tabPreview" class="action-btn primary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
+                                <i class="fa-solid fa-clipboard-check"></i> Предпросмотр закрытия
+                            </button>
+                            <button type="button" id="tabCompare" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
+                                <i class="fa-solid fa-scale-balanced"></i> Сравнение периодов
                             </button>
                         </div>
-                        <div id="compareContainer"></div>
+
+                        <!-- Tab 1: Предпросмотр закрытия -->
+                        <div id="paneClosePreview">
+                            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap;">
+                                <p class="hint-text" style="margin:0; font-size:13px;">
+                                    Сколько комнат сдали показания, сколько черновиков, сколько аномалий — что произойдёт при закрытии текущего периода.
+                                </p>
+                                <button id="btnLoadPreview" class="action-btn warning-btn" style="padding: 6px 14px; font-size: 13px;">
+                                    <i class="fa-solid fa-eye"></i> Загрузить отчёт
+                                </button>
+                            </div>
+                            <div id="closePreviewContainer">
+                                <p style="color: var(--text-secondary); font-size: 13px;">Нажмите «Загрузить отчёт» — отобразится текущая картина по всем общежитиям.</p>
+                            </div>
+                        </div>
+
+                        <!-- Tab 2: Сравнение периодов -->
+                        <div id="paneCompare" style="display:none;">
+                            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 16px;">
+                                <select id="comparePeriodA" style="flex: 1; min-width: 160px; max-width: 280px;">
+                                    <option value="">Период A...</option>
+                                </select>
+                                <span style="color: var(--text-secondary); font-weight: 600; font-size: 14px;">vs</span>
+                                <select id="comparePeriodB" style="flex: 1; min-width: 160px; max-width: 280px;">
+                                    <option value="">Период B...</option>
+                                </select>
+                                <button id="btnCompare" class="action-btn primary-btn" style="padding: 8px 20px; font-size: 13px; white-space: nowrap;">
+                                    <i class="fa-solid fa-scale-balanced"></i> Сравнить
+                                </button>
+                            </div>
+                            <div id="compareContainer"></div>
+                        </div>
                     </div>
                 </div>
             </div>
         </section>
 
         <!-- ==========================================
-             СЕКЦИЯ: ПРЕДПРОСМОТР ЗАКРЫТИЯ ПЕРИОДА
-             Скрывается JS'ом если предпросмотр не нужен
-             (SummaryModule управляет display через closePreviewCard).
-             ========================================== -->
-        <section class="accordion-section" data-section="close-preview" id="closePreviewCard" style="display:none;">
-            <button class="accordion-header" type="button" aria-expanded="false">
-                <span class="accordion-title">
-                    <span class="accordion-icon" style="background:rgba(245,158,11,0.12); color:#f59e0b;">
-                        <i class="fa-solid fa-clipboard-check"></i>
-                    </span>
-                    <span class="accordion-title-text">
-                        <strong>Предпросмотр закрытия периода</strong>
-                        <span class="subtitle">Что произойдёт при закрытии текущего расчётного периода</span>
-                    </span>
-                </span>
-                <i class="fa-solid fa-chevron-down accordion-chevron"></i>
-            </button>
-            <div class="accordion-body">
-                <div class="accordion-content">
-                    <div class="inner">
-                        <div style="display:flex; justify-content:flex-end; margin-bottom:12px;">
-                            <button id="btnLoadPreview" class="action-btn warning-btn" style="padding: 6px 14px; font-size: 13px;">
-                                <i class="fa-solid fa-eye"></i> Загрузить отчёт
-                            </button>
-                        </div>
-                        <div id="closePreviewContainer">
-                            <p style="color: var(--text-secondary); font-size: 13px;">Нажмите «Загрузить отчёт» чтобы увидеть что произойдёт при закрытии текущего периода.</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
-
-        <!-- ==========================================
-             СЕКЦИЯ: ФИНАНСОВАЯ ОТЧЁТНОСТЬ (СВОДКА)
+             СЕКЦИЯ: ФИНАНСОВАЯ ОТЧЁТНОСТЬ (СВОДКА v2)
+             Полностью переделана: KPI, фильтры, поиск, карточки общежитий
+             с раскрытием, sparkline, финансовые анализаторы (DEBT_GROWING,
+             BILL_SPIKE и т.д.), быстрая загрузка квитанций PDF.
              ========================================== -->
         <section class="accordion-section" data-section="summary">
             <button class="accordion-header" type="button" aria-expanded="false">
@@ -517,7 +520,7 @@
                     </span>
                     <span class="accordion-title-text">
                         <strong>Финансовая отчётность</strong>
-                        <span class="subtitle">Сводка по общежитиям и комнатам, скачивание Excel и ZIP-квитанций</span>
+                        <span class="subtitle">История по жильцам, квитанции, должники, переплаты, аномалии начислений</span>
                     </span>
                 </span>
                 <i class="fa-solid fa-chevron-down accordion-chevron"></i>
@@ -525,20 +528,43 @@
             <div class="accordion-body">
                 <div class="accordion-content">
                     <div class="inner">
-                        <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; margin-bottom:16px;">
+                        <!-- Период + быстрые экспорты -->
+                        <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; margin-bottom:14px;">
                             <div id="summaryPeriodSelector"></div>
                             <div style="display:flex; gap:8px; flex-wrap:wrap;">
-                                <button id="btnDownloadZip" class="action-btn primary-btn">
-                                    <i class="fa-solid fa-file-zipper"></i> Скачать всё (ZIP)
+                                <button id="btnDownloadZip" class="action-btn primary-btn" title="Архив всех квитанций PDF">
+                                    <i class="fa-solid fa-file-zipper"></i> ZIP квитанций
                                 </button>
-                                <button id="btnDownloadExcel" class="action-btn success-btn">
-                                    <i class="fa-solid fa-file-excel"></i> Отчёт (Excel)
+                                <button id="btnDownloadExcel" class="action-btn success-btn" title="Excel со всеми начислениями">
+                                    <i class="fa-solid fa-file-excel"></i> Excel
                                 </button>
                                 <button id="btnRefreshSummary" class="icon-btn" title="Обновить">
                                     <i class="fa-solid fa-rotate-right"></i>
                                 </button>
                             </div>
                         </div>
+
+                        <!-- KPI карточки -->
+                        <div id="summaryKPIs" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; margin-bottom:14px;">
+                            <div style="padding:18px; text-align:center; color:var(--text-secondary);">Загрузка…</div>
+                        </div>
+
+                        <!-- Топ-должники / переплаты -->
+                        <div id="summaryTopRow" style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:18px;"></div>
+
+                        <!-- Фильтры + поиск -->
+                        <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:14px; padding:10px 12px; background:var(--bg-page); border-radius:8px;">
+                            <input type="text" id="summarySearch" placeholder="Поиск по ФИО или комнате…" style="flex:1; min-width:200px; padding:7px 10px; font-size:13px;">
+                            <div role="tablist" style="display:inline-flex; border:1px solid var(--border-color); border-radius:8px; overflow:hidden; background:var(--bg-card);">
+                                <button type="button" data-summary-filter="all" class="action-btn primary-btn" style="border-radius:0; padding:6px 12px; font-size:12px;">Все</button>
+                                <button type="button" data-summary-filter="debtors" class="action-btn secondary-btn" style="border-radius:0; padding:6px 12px; font-size:12px;">Должники</button>
+                                <button type="button" data-summary-filter="overpaid" class="action-btn secondary-btn" style="border-radius:0; padding:6px 12px; font-size:12px;">Переплаты</button>
+                                <button type="button" data-summary-filter="anomaly" class="action-btn secondary-btn" style="border-radius:0; padding:6px 12px; font-size:12px;">Аномалии</button>
+                                <button type="button" data-summary-filter="missing" class="action-btn secondary-btn" style="border-radius:0; padding:6px 12px; font-size:12px;" title="Жильцы без подачи в этом периоде">Нет квитанции</button>
+                            </div>
+                        </div>
+
+                        <!-- Контент: карточки общежитий с раскрытием -->
                         <div id="summaryContainer" class="summary-wrapper"></div>
                     </div>
                 </div>
