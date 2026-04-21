@@ -2,7 +2,7 @@ from fastapi import APIRouter
 
 # Импортируем все наши разделенные роутеры
 from app.modules.arsenal.routers import (
-    objects, nomenclature, documents, users, system, ops,
+    objects, nomenclature, documents, users, system, ops, audit_analyzer,
 )
 
 # Создаем главный роутер для модуля Арсенал
@@ -16,3 +16,5 @@ router.include_router(users.router)
 router.include_router(system.router)
 # НОВОЕ: rollback, disposal-reasons, low-stock alerts, inventory, password reset
 router.include_router(ops.router)
+# Журнал действий + Центр анализа (аномалии + настройки)
+router.include_router(audit_analyzer.router)

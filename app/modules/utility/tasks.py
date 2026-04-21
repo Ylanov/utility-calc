@@ -473,6 +473,28 @@ def activate_scheduled_tariffs_task():
         return {"activated": 0, "error": "task failed"}
 
 
+@celery.task(name="run_arsenal_analyzer_task", queue="default")
+def run_arsenal_analyzer_task():
+    """Периодическая проверка данных арсенала на нарушения / фрод-паттерны.
+    Запускается Celery Beat'ом (раз в час — настраивается в worker.py).
+
+    В Центре анализа появляются / обновляются записи ArsenalAnomalyFlag;
+    устранённые ситуации автоматически resolveятся."""
+    logger.info("[ARSENAL] Running analyzer...")
+    try:
+        from app.core.database import ArsenalSessionLocalSync
+        from app.modules.arsenal.services.arsenal_analyzer import run_arsenal_analyzer
+
+        with ArsenalSessionLocalSync() as db:
+            results = run_arsenal_analyzer(db)
+            db.commit()
+        logger.info(f"[ARSENAL] Analyzer results: {results}")
+        return results
+    except Exception:
+        logger.exception("[ARSENAL] analyzer task failed")
+        return {"error": "task failed"}
+
+
 @celery.task(name="detect_anomalies_task", queue="default")
 def detect_anomalies_task(reading_id: int):
     """

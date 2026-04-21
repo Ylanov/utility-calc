@@ -102,6 +102,12 @@ celery.conf.beat_schedule = {
             else crontab(minute=0, hour=0, day_of_month="31", month_of_year="2")  # никогда
         ),
     },
+    # Анализатор арсенала: раз в час проверяет данные на дубли / застой /
+    # фрод-паттерны. Результат попадает в arsenal_anomaly_flags.
+    "arsenal-analyzer-hourly": {
+        "task": "run_arsenal_analyzer_task",
+        "schedule": crontab(minute=15),
+    },
 }
 
 # ИМПОРТЫ ЗАДАЧ

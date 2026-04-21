@@ -200,6 +200,15 @@ async def start_inventory(
         note=data.note,
     )
     db.add(inv)
+    await db.flush()
+
+    from app.modules.arsenal.services.audit import write_arsenal_audit
+    await write_arsenal_audit(
+        db, user_id=current_user.id, username=current_user.username,
+        action="start_inventory", entity_type="inventory", entity_id=inv.id,
+        details={"object_id": data.object_id, "note": data.note},
+    )
+
     await db.commit()
     await db.refresh(inv)
     return {"id": inv.id, "object_id": inv.object_id, "status": inv.status,
@@ -735,6 +744,19 @@ async def close_inventory(
         inv.note = (inv.note or "") + ("\n" if inv.note else "") + p.note
     if correction_doc_id:
         inv.correction_document_id = correction_doc_id
+
+    from app.modules.arsenal.services.audit import write_arsenal_audit
+    await write_arsenal_audit(
+        db, user_id=current_user.id, username=current_user.username,
+        action="close_inventory", entity_type="inventory", entity_id=inv.id,
+        details={
+            "object_id": inv.object_id,
+            "auto_correct": p.auto_correct,
+            "correction_document_id": correction_doc_id,
+            "correction_summary": correction_summary,
+        },
+    )
+
     await db.commit()
 
     return {
@@ -760,6 +782,14 @@ async def cancel_inventory(
     inv.status = "cancelled"
     inv.closed_at = datetime.utcnow()
     inv.closed_by_id = current_user.id
+
+    from app.modules.arsenal.services.audit import write_arsenal_audit
+    await write_arsenal_audit(
+        db, user_id=current_user.id, username=current_user.username,
+        action="cancel_inventory", entity_type="inventory", entity_id=inv.id,
+        details={"object_id": inv.object_id},
+    )
+
     await db.commit()
     return {"status": "cancelled"}
 
@@ -930,6 +960,14 @@ async def create_password_reset_link(
         created_by_id=current_user.id,
     )
     db.add(record)
+
+    from app.modules.arsenal.services.audit import write_arsenal_audit
+    await write_arsenal_audit(
+        db, user_id=current_user.id, username=current_user.username,
+        action="create_reset_link", entity_type="user", entity_id=user_id,
+        details={"target_username": user.username, "expires_at": record.expires_at.isoformat()},
+    )
+
     await db.commit()
     # Отдаём токен ТОЛЬКО ОДИН РАЗ в ответе — админ должен сразу передать.
     return {
@@ -970,5 +1008,13 @@ async def submit_password_reset(
 
     user.hashed_password = get_password_hash(data.new_password)
     record.used_at = datetime.utcnow()
+
+    from app.modules.arsenal.services.audit import write_arsenal_audit
+    await write_arsenal_audit(
+        db, user_id=user.id, username=user.username,
+        action="password_reset_completed", entity_type="user", entity_id=user.id,
+        details={"via": "one_time_token"},
+    )
+
     await db.commit()
     return {"status": "ok", "username": user.username}

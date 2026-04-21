@@ -147,6 +147,26 @@ async def close_arsenal_engine():
     await arsenal_engine.dispose()
 
 
+# Sync-движок и session — для Celery-задач (run_arsenal_analyzer и т.д.),
+# где async-сессия не нужна / мешает. Ленивая инициализация через factory,
+# чтобы не дергать лишний коннект пул при старте процесса.
+from sqlalchemy import create_engine as _create_engine_arsenal  # noqa: E402
+
+arsenal_engine_sync = _create_engine_arsenal(
+    settings.ARSENAL_DATABASE_URL_SYNC,
+    echo=False,
+    future=True,
+    isolation_level=ISOLATION_LEVEL,
+    **_get_sync_pool_kwargs(),
+)
+
+ArsenalSessionLocalSync = sessionmaker(
+    bind=arsenal_engine_sync,
+    autocommit=False,
+    autoflush=False,
+)
+
+
 # =========================================================================
 # 3. GSM DB
 #

@@ -746,6 +746,29 @@ const Dashboard = {
         }
         // Отдельный запрос на alerts — не критичный, не блокирует основные KPI
         Dashboard.loadLowStock();
+        Dashboard.loadAnomalyCount();
+    },
+
+    /**
+     * Счётчик активных аномалий (в виджете «Проверки»).
+     * Число найденных правилами нарушений, которые ещё не dismissed / resolved.
+     */
+    loadAnomalyCount: async () => {
+        const el = document.getElementById('kpiAnomalies');
+        if (!el) return;
+        try {
+            const res = await apiFetch('/api/arsenal/analyzer/anomalies?limit=1');
+            if (!res || !res.ok) {
+                el.innerText = '—';
+                return;
+            }
+            const data = await res.json();
+            const n = data.total || 0;
+            el.innerText = n;
+            el.className = 'text-2xl font-bold ' + (n === 0 ? 'text-emerald-600' : 'text-amber-600');
+        } catch (e) {
+            el.innerText = '—';
+        }
     },
 
     /**

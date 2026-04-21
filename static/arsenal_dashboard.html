@@ -85,8 +85,8 @@
 
     <!-- РАБОЧАЯ ОБЛАСТЬ -->
     <div class="flex-1 flex flex-col p-6 overflow-hidden bg-slate-100/50">
-        <!-- Виджеты KPI + новые (низкие остатки, инвентаризация) -->
-        <div class="grid grid-cols-6 gap-4 mb-5 shrink-0">
+        <!-- Виджеты KPI + новые (низкие остатки, инвентаризация, проверки) -->
+        <div class="grid grid-cols-7 gap-4 mb-5 shrink-0">
             <div class="bg-white rounded-xl shadow-sm p-4 border border-slate-200 flex flex-col justify-center">
                 <div class="text-xs font-bold text-slate-400 uppercase mb-1">Всего единиц на балансе</div>
                 <div id="kpiTotalQty" class="text-2xl font-bold text-slate-800">---</div>
@@ -110,6 +110,14 @@
                 </div>
                 <div id="kpiLowStock" class="text-2xl font-bold text-rose-600">---</div>
             </button>
+            <!-- Линк на «Проверки»: журнал действий + найденные аномалии -->
+            <a href="arsenal_audit.html" class="bg-white hover:border-amber-400 rounded-xl shadow-sm p-4 border border-slate-200 flex flex-col justify-center transition">
+                <div class="text-xs font-bold text-slate-400 uppercase mb-1">
+                    <i class="fa-solid fa-shield-halved text-amber-600"></i> Проверки
+                </div>
+                <div class="text-2xl font-bold text-amber-600" id="kpiAnomalies">---</div>
+            </a>
+
             <!-- Линк на страницу инвентаризации -->
             <a href="arsenal_inventory.html" class="bg-rose-600 hover:bg-rose-700 text-white rounded-xl shadow-sm p-4 flex flex-col justify-center transition">
                 <div class="text-xs font-bold uppercase mb-1 opacity-80">

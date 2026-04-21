@@ -122,6 +122,30 @@ class WeaponService:
             )
             db.add(doc_item)
 
+        # Аудит: запись о проведении документа попадает в ту же транзакцию,
+        # что и сам документ. Если проведение упадёт — лог тоже откатится.
+        if author_id:
+            from app.modules.arsenal.models import ArsenalUser
+            from app.modules.arsenal.services.audit import write_arsenal_audit
+            user = await db.get(ArsenalUser, author_id)
+            action = "rollback_document" if reverses_document_id else "create_document"
+            await write_arsenal_audit(
+                db,
+                user_id=author_id,
+                username=user.username if user else "unknown",
+                action=action,
+                entity_type="document",
+                entity_id=new_doc.id,
+                details={
+                    "doc_number": new_doc.doc_number,
+                    "operation_type": new_doc.operation_type,
+                    "source_id": new_doc.source_id,
+                    "target_id": new_doc.target_id,
+                    "items_count": len(items_data),
+                    "reverses_document_id": reverses_document_id,
+                },
+            )
+
         # Фиксируем транзакцию
         await db.commit()
         await db.refresh(new_doc)

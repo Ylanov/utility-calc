@@ -10,6 +10,7 @@ from sqlalchemy import (
     Numeric,
     Index
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.database import ArsenalBase
@@ -309,3 +310,105 @@ class ArsenalPasswordResetToken(ArsenalBase):
     used_at = Column(DateTime, nullable=True)
     created_by_id = Column(Integer, ForeignKey(ARSENAL_USER_FK), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+# =====================================================================
+# AUDIT LOG — кто, что и когда сделал
+# =====================================================================
+# Обязательно для военного учёта: по любому документу / движению должно быть
+# ясно, кто и когда его провёл. Создание / откат / утверждение / правка
+# номенклатуры / запуск инвентаризации — всё фиксируется.
+#
+# user_id SET NULL on delete — лог НЕ теряется даже если пользователь
+# впоследствии удалён (что в арсенале не должно случаться, но защитный слой).
+class ArsenalAuditLog(ArsenalBase):
+    __tablename__ = "arsenal_audit_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey(ARSENAL_USER_FK, ondelete="SET NULL"), nullable=True)
+    username = Column(String, nullable=False)   # на случай если user_id обнулился
+
+    action = Column(String, nullable=False)      # create_doc, rollback_doc, approve_doc, login, reset_password, etc.
+    entity_type = Column(String, nullable=False) # document, object, nomenclature, user, inventory
+    entity_id = Column(Integer, nullable=True)
+
+    details = Column(JSONB, nullable=True)       # произвольный контекст (номер документа, diff и т.д.)
+    ip_address = Column(String(45), nullable=True)  # IPv4/IPv6 — для расследования инцидентов
+
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    __table_args__ = (
+        # Поиск по пользователю — «что делал конкретный МОЛ»
+        Index("ix_arsenal_audit_user_time", "user_id", "created_at"),
+        # Поиск по сущности — «все операции над конкретным документом»
+        Index("ix_arsenal_audit_entity", "entity_type", "entity_id"),
+    )
+
+
+# =====================================================================
+# ANALYZER SETTINGS — пороги и флаги правил «Центра анализа Арсенала»
+# =====================================================================
+# Аналог utility.analyzer_settings. Админ через UI меняет пороги без релиза.
+# Примеры ключей:
+#   rule.duplicate_serial.enabled = true/false
+#   rule.stale_stock.months = 24
+#   rule.suspicious_burst.threshold_per_day = 20
+class ArsenalAnalyzerSetting(ArsenalBase):
+    __tablename__ = "arsenal_analyzer_settings"
+
+    key = Column(String(64), primary_key=True)
+    value = Column(String, nullable=False)
+    value_type = Column(String(16), nullable=False)   # 'int' | 'float' | 'bool' | 'str'
+    category = Column(String(32), nullable=False)     # 'duplicate' | 'stock' | 'fraud' | ...
+    description = Column(Text, nullable=True)
+    min_value = Column(String, nullable=True)
+    max_value = Column(String, nullable=True)
+    is_enabled = Column(Boolean, default=True, nullable=False)
+
+    updated_at = Column(DateTime, nullable=True, onupdate=datetime.utcnow)
+    updated_by_id = Column(Integer, ForeignKey(ARSENAL_USER_FK), nullable=True)
+
+    __table_args__ = (
+        Index("ix_arsenal_analyzer_category", "category"),
+    )
+
+
+# =====================================================================
+# ANOMALY FLAG — результат работы анализатора (найденные нарушения)
+# =====================================================================
+# Celery-задача раз в час проходит по правилам → создаёт / обновляет записи.
+# Уникальность: (rule_code, entity_type, entity_id) — один флаг на ситуацию,
+# чтобы не плодить дубли при повторных прогонах. При повторном detect
+# обновляется last_seen_at.
+#
+# Админ может пометить как dismissed (отложить / false-positive).
+# resolved — автоматически когда проблема больше не находится.
+class ArsenalAnomalyFlag(ArsenalBase):
+    __tablename__ = "arsenal_anomaly_flags"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+
+    rule_code = Column(String(48), nullable=False, index=True)   # DUPLICATE_SERIAL, STALE_STOCK...
+    severity = Column(String(16), nullable=False, default="warning")  # info | warning | critical
+    title = Column(String, nullable=False)
+    details = Column(JSONB, nullable=True)
+
+    # На что указывает аномалия (тип+id для deeplink в UI).
+    entity_type = Column(String(32), nullable=True)   # 'weapon' | 'document' | 'user' | 'nomenclature'
+    entity_id = Column(Integer, nullable=True)
+
+    # Жизненный цикл
+    first_seen_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    last_seen_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    dismissed_at = Column(DateTime, nullable=True)
+    dismissed_by_id = Column(Integer, ForeignKey(ARSENAL_USER_FK), nullable=True)
+    dismiss_reason = Column(Text, nullable=True)
+    resolved_at = Column(DateTime, nullable=True)  # выставляется автоматически когда правило больше не срабатывает
+
+    __table_args__ = (
+        UniqueConstraint(
+            "rule_code", "entity_type", "entity_id",
+            name="uix_anomaly_rule_entity"
+        ),
+        Index("ix_anomaly_active", "rule_code", "dismissed_at", "resolved_at"),
+    )

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Журнал и Проверки · СТРОБ Арсенал</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; }
+  .tab-btn.active { background:#1e293b; color:#fff; }
+  .sev-critical { background:#fee2e2; color:#991b1b; }
+  .sev-warning  { background:#fef3c7; color:#92400e; }
+  .sev-info     { background:#dbeafe; color:#1e40af; }
+</style>
+</head>
+<body class="bg-slate-100 min-h-screen">
+
+<div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
+
+<div class="max-w-7xl mx-auto p-5">
+  <header class="mb-6 flex items-center justify-between">
+    <div>
+      <a href="arsenal_dashboard.html" class="text-xs text-slate-500 hover:text-slate-700">
+        <i class="fa-solid fa-arrow-left"></i> Дашборд
+      </a>
+      <h1 class="text-2xl font-bold text-slate-800 mt-1 flex items-center gap-3">
+        <i class="fa-solid fa-shield-halved text-rose-600"></i>
+        Проверки и журнал
+      </h1>
+    </div>
+    <div class="flex gap-2">
+      <button id="btnRunAnalyzer" class="bg-rose-600 hover:bg-rose-700 text-white px-4 py-2 rounded-lg text-sm">
+        <i class="fa-solid fa-play"></i> Запустить анализатор
+      </button>
+    </div>
+  </header>
+
+  <!-- Табы -->
+  <div class="flex gap-1 mb-5 bg-white p-1 rounded-lg shadow-sm w-fit">
+    <button data-tab="anomalies" class="tab-btn active px-4 py-2 rounded-md text-sm font-medium transition">
+      <i class="fa-solid fa-triangle-exclamation"></i> Аномалии
+      <span id="tabBadgeAnomalies" class="ml-1 bg-rose-600 text-white text-xs px-1.5 rounded">0</span>
+    </button>
+    <button data-tab="audit" class="tab-btn px-4 py-2 rounded-md text-sm font-medium hover:bg-slate-100 transition">
+      <i class="fa-solid fa-clock-rotate-left"></i> Журнал действий
+    </button>
+    <button data-tab="settings" class="tab-btn px-4 py-2 rounded-md text-sm font-medium hover:bg-slate-100 transition">
+      <i class="fa-solid fa-sliders"></i> Настройки правил
+    </button>
+  </div>
+
+  <!-- ==================== ВКЛАДКА: АНОМАЛИИ ==================== -->
+  <div id="pane-anomalies" class="tab-pane">
+    <!-- Карточки по правилам -->
+    <div id="ruleCards" class="grid grid-cols-2 md:grid-cols-3 gap-3 mb-5"></div>
+
+    <div class="bg-white rounded-xl shadow-sm">
+      <div class="flex items-center justify-between border-b border-slate-200 p-4">
+        <div class="flex gap-2 text-sm">
+          <label class="flex items-center gap-1">
+            <input type="checkbox" id="showDismissed"> <span class="text-slate-600">Показать отложенные</span>
+          </label>
+          <label class="flex items-center gap-1">
+            <input type="checkbox" id="showResolved"> <span class="text-slate-600">Показать исправленные</span>
+          </label>
+        </div>
+        <span id="anomaliesCount" class="text-xs text-slate-500">загрузка…</span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-slate-50 text-slate-500 text-xs uppercase">
+            <tr>
+              <th class="px-3 py-2 text-left">Правило</th>
+              <th class="px-3 py-2 text-left">Описание</th>
+              <th class="px-3 py-2 text-left">Впервые</th>
+              <th class="px-3 py-2 text-left">Последнее</th>
+              <th class="px-3 py-2"></th>
+            </tr>
+          </thead>
+          <tbody id="anomaliesBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== ВКЛАДКА: ЖУРНАЛ ==================== -->
+  <div id="pane-audit" class="tab-pane hidden">
+    <div class="bg-white rounded-xl shadow-sm p-4 mb-4 grid grid-cols-1 md:grid-cols-4 gap-3">
+      <input id="auditAction" placeholder="Действие (фильтр)" class="border border-slate-300 rounded px-3 py-2 text-sm">
+      <input id="auditEntity" placeholder="Тип сущности" class="border border-slate-300 rounded px-3 py-2 text-sm">
+      <input id="auditDateFrom" type="date" class="border border-slate-300 rounded px-3 py-2 text-sm">
+      <input id="auditDateTo" type="date" class="border border-slate-300 rounded px-3 py-2 text-sm">
+    </div>
+    <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+      <table class="w-full text-sm">
+        <thead class="bg-slate-50 text-slate-500 text-xs uppercase">
+          <tr>
+            <th class="px-3 py-2 text-left">Когда</th>
+            <th class="px-3 py-2 text-left">Кто</th>
+            <th class="px-3 py-2 text-left">Действие</th>
+            <th class="px-3 py-2 text-left">Объект</th>
+            <th class="px-3 py-2 text-left">Детали</th>
+          </tr>
+        </thead>
+        <tbody id="auditBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ==================== ВКЛАДКА: НАСТРОЙКИ ==================== -->
+  <div id="pane-settings" class="tab-pane hidden">
+    <div id="settingsBody" class="space-y-4"></div>
+  </div>
+</div>
+
+<script src="js/arsenal-core.js"></script>
+<script src="js/arsenal-audit.js"></script>
+</body>
+</html>
