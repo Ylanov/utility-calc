@@ -8,8 +8,8 @@ from typing import List
 import sentry_sdk
 import redis.asyncio as redis
 
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -403,9 +403,6 @@ app.include_router(gsm_reports.router)
 # Регистрируем явные 404 ДО mount'а StaticFiles, чтобы эти пути
 # отбивались корректно, а SPA-deep-routing продолжал работать.
 # =====================================================================
-from fastapi.responses import FileResponse as _FileResponse
-
-
 async def _serve_or_404(filename: str, media_type: str):
     """Отдаём реальный файл из static/ если он лежит на диске, иначе
     честный 404. Смысл: StaticFiles(html=True) на несуществующий путь
@@ -413,7 +410,7 @@ async def _serve_or_404(filename: str, media_type: str):
     robots.txt/sitemap.xml. Этот хелпер ломает такое поведение."""
     path = os.path.join("static", filename)
     if os.path.isfile(path):
-        return _FileResponse(path, media_type=media_type)
+        return FileResponse(path, media_type=media_type)
     raise HTTPException(status_code=404)
 
 
