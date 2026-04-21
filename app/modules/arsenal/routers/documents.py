@@ -60,7 +60,12 @@ async def get_documents(
             "date": d.operation_date.strftime("%d.%m.%Y") if d.operation_date else "-",
             "type": d.operation_type,
             "source": d.source.name if d.source else "-",
-            "target": d.target.name if d.target else "-"
+            "target": d.target.name if d.target else "-",
+            # Для UI-подсветки «отменён»/«отменяющий» — без этих полей
+            # невозможно правильно показать статус документа в списке.
+            "is_reversed": bool(d.is_reversed),
+            "reversed_by_document_id": d.reversed_by_document_id,
+            "reverses_document_id": d.reverses_document_id,
         })
 
     return response_data
@@ -162,7 +167,8 @@ async def create_document(
             db=db,
             doc_data=doc_obj,
             items_data=doc_obj.items,
-            attached_file_path=file_path
+            attached_file_path=file_path,
+            author_id=current_user.id,  # теперь аудируемо: видно кто провёл
         )
         return {"status": "created", "id": new_doc.id}
     except HTTPException as he:
@@ -178,6 +184,15 @@ async def delete_document(
         db: AsyncSession = Depends(get_arsenal_db),
         current_user: ArsenalUser = Depends(get_current_arsenal_user)
 ):
+    """Физическое удаление документа.
+
+    ВНИМАНИЕ: по умолчанию это запрещено, если документ УЖЕ ПРОВЁЛ ДВИЖЕНИЕ
+    (есть DocumentItem-ы). Корректный путь — использовать POST .../rollback,
+    который создаёт обратный документ и оставляет аудируемый след.
+
+    Этот endpoint теперь разрешает только удаление документов-«заготовок»
+    (без items) — чисто «ошибка ввода, не прошёл ещё».
+    """
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Только администратор может удалять документы")
 
@@ -185,9 +200,47 @@ async def delete_document(
     if not doc:
         raise HTTPException(status_code=404, detail="Документ не найден")
 
-    # Удаляем документ (строки удалятся каскадно, если настроено, но сами остатки на складе не откатятся автоматически).
-    # *Примечание: в текущей логике реализовано удаление документа, но не откат регистра WeaponRegistry.
-    # В будущем здесь можно добавить логику отката.
+    # Блокируем удаление документов с движением — требуем rollback.
+    items_count = (await db.execute(
+        select(DocumentItem.id).where(DocumentItem.document_id == doc_id).limit(1)
+    )).scalars().first()
+    if items_count:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Документ #{doc.doc_number} уже провёл движение остатков. "
+                "Для отмены используйте POST /arsenal/documents/{id}/rollback — "
+                "создаётся обратный документ и остаётся аудируемый след."
+            ),
+        )
+
     await db.delete(doc)
     await db.commit()
     return {"status": "deleted"}
+
+
+@router.post("/documents/{doc_id}/rollback")
+async def rollback_document(
+        doc_id: int,
+        reason: Optional[str] = Form(None),
+        db: AsyncSession = Depends(get_arsenal_db),
+        current_user: ArsenalUser = Depends(get_current_arsenal_user),
+):
+    """Создать обратный документ (reversal) по ранее проведённому.
+
+    Исходный документ не удаляется — помечается `is_reversed=True` и
+    получает ссылку на reversal (`reversed_by_document_id`). Новый reversal
+    имеет ссылку `reverses_document_id` на оригинал. История полностью
+    сохраняется, остатки на складе возвращаются в состояние «как до документа».
+    """
+    if current_user.role != "admin":
+        raise HTTPException(403, "Только администратор может отменять документы")
+
+    new_doc = await WeaponService.rollback_document(
+        db, document_id=doc_id, author_id=current_user.id, reason=reason,
+    )
+    return {
+        "status": "reversed",
+        "reversal_document_id": new_doc.id,
+        "reversal_doc_number": new_doc.doc_number,
+    }

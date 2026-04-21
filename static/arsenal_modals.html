@@ -25,7 +25,21 @@
                         <option value="Прием">Прием (Из другого полка)</option>
                         <option value="Отправка">Отправка (В другой полк/Ремонт)</option>
                         <option value="Списание">Списание (Расход)</option>
+                        <option value="Утилизация">Утилизация (Поломка/Износ)</option>
                     </select>
+                </div>
+
+                <!-- Причина списания/утилизации. Показывается только для этих операций. -->
+                <div id="disposalReasonContainer" class="col-span-2" style="display:none;">
+                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1.5">
+                        Причина <span class="text-rose-600">*</span>
+                    </label>
+                    <select id="newDocDisposalReason" class="w-full border border-slate-300 p-2.5 rounded-lg bg-white focus:border-blue-500 outline-none">
+                        <option value="">Выберите причину…</option>
+                    </select>
+                    <div class="text-[11px] text-slate-400 mt-1">
+                        Обязательно для операций «Списание» и «Утилизация» — нужно для отчётности и аудита.
+                    </div>
                 </div>
 
                 <!-- НОВЫЙ БЛОК: Отправитель (источник) -->
@@ -41,6 +55,13 @@
                     <select id="newDocTarget" class="w-full border border-slate-300 p-2.5 rounded-lg bg-white focus:border-blue-500 outline-none">
                         <option value="">Загрузка...</option>
                     </select>
+                </div>
+
+                <!-- Комментарий (опционально). Удобно для контекста: «замена ствола», «по акту №...» -->
+                <div class="col-span-2">
+                    <label class="block text-xs font-bold text-slate-500 uppercase mb-1.5">Комментарий (опционально)</label>
+                    <textarea id="newDocComment" rows="2" class="w-full border border-slate-300 p-2.5 rounded-lg bg-white focus:border-blue-500 outline-none text-sm"
+                              placeholder="Дополнительные сведения по операции..."></textarea>
                 </div>
 
                 <!-- Поле для загрузки скана в MinIO -->

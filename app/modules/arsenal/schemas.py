@@ -14,6 +14,8 @@ class NomenclatureCreate(BaseModel):
     category: Optional[str] = None
     is_numbered: bool = True
     default_account: Optional[str] = None
+    # Порог низкого остатка для alerts (только для партионного учёта).
+    min_quantity: int = 0
 
 class DocItemCreate(BaseModel):
     nomenclature_id: int
@@ -28,6 +30,9 @@ class DocCreate(BaseModel):
     source_id: Optional[int] = None
     target_id: Optional[int] = None
     operation_date: Optional[datetime] = None
+    # Для «Списание» / «Утилизация» — причина. Валидируется в process_document.
+    disposal_reason_id: Optional[int] = None
+    comment: Optional[str] = None
     items: List[DocItemCreate]
 
     @validator("operation_date", pre=True, always=True)

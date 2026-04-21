@@ -85,8 +85,8 @@
 
     <!-- РАБОЧАЯ ОБЛАСТЬ -->
     <div class="flex-1 flex flex-col p-6 overflow-hidden bg-slate-100/50">
-        <!-- Виджеты KPI -->
-        <div class="grid grid-cols-4 gap-4 mb-5 shrink-0">
+        <!-- Виджеты KPI + новые (низкие остатки, инвентаризация) -->
+        <div class="grid grid-cols-6 gap-4 mb-5 shrink-0">
             <div class="bg-white rounded-xl shadow-sm p-4 border border-slate-200 flex flex-col justify-center">
                 <div class="text-xs font-bold text-slate-400 uppercase mb-1">Всего единиц на балансе</div>
                 <div id="kpiTotalQty" class="text-2xl font-bold text-slate-800">---</div>
@@ -102,6 +102,35 @@
             <div class="bg-white rounded-xl shadow-sm p-4 border border-slate-200 flex flex-col justify-center">
                 <div class="text-xs font-bold text-slate-400 uppercase mb-1">На ремонте / В пути</div>
                 <div id="kpiTransit" class="text-2xl font-bold text-amber-500">---</div>
+            </div>
+            <!-- Новый виджет: низкие остатки (кликабельный, открывает всплывашку со списком) -->
+            <button id="kpiLowStockCard" class="bg-white rounded-xl shadow-sm p-4 border border-slate-200 flex flex-col justify-center text-left hover:border-rose-400 transition" title="Партии, где остаток ниже заданного порога">
+                <div class="text-xs font-bold text-slate-400 uppercase mb-1">
+                    <i class="fa-solid fa-triangle-exclamation text-rose-500"></i> Низкие остатки
+                </div>
+                <div id="kpiLowStock" class="text-2xl font-bold text-rose-600">---</div>
+            </button>
+            <!-- Линк на страницу инвентаризации -->
+            <a href="arsenal_inventory.html" class="bg-rose-600 hover:bg-rose-700 text-white rounded-xl shadow-sm p-4 flex flex-col justify-center transition">
+                <div class="text-xs font-bold uppercase mb-1 opacity-80">
+                    <i class="fa-solid fa-clipboard-check"></i> Инвентаризация
+                </div>
+                <div class="text-base font-bold">Провести сверку →</div>
+            </a>
+        </div>
+
+        <!-- Popup со списком низких остатков -->
+        <div id="lowStockPopup" class="hidden fixed top-24 right-6 z-40 w-96 bg-white rounded-xl shadow-2xl border border-slate-200 overflow-hidden">
+            <div class="flex items-center justify-between px-4 py-3 bg-rose-50 border-b border-rose-200">
+                <div class="font-semibold text-rose-900">
+                    <i class="fa-solid fa-triangle-exclamation"></i> Низкие остатки
+                </div>
+                <button onclick="document.getElementById('lowStockPopup').classList.add('hidden')" class="text-slate-400 hover:text-slate-600">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div id="lowStockBody" class="max-h-96 overflow-auto">
+                <div class="p-4 text-sm text-slate-500">Загрузка…</div>
             </div>
         </div>
 

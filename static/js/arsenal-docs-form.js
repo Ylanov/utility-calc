@@ -63,6 +63,7 @@ Object.assign(window.Documents, {
         const type = document.getElementById('newDocType').value;
         const sourceContainer = document.getElementById('sourceSelectContainer');
         const targetContainer = document.getElementById('targetSelectContainer');
+        const disposalContainer = document.getElementById('disposalReasonContainer');
 
         if (sourceContainer && targetContainer) {
             sourceContainer.style.display = 'block';
@@ -71,15 +72,61 @@ Object.assign(window.Documents, {
             if (type === 'Первичный ввод') {
                 sourceContainer.style.display = 'none';
                 document.getElementById('newDocSource').value = "";
-            } else if (type === 'Списание') {
+            } else if (type === 'Списание' || type === 'Утилизация') {
                 targetContainer.style.display = 'none';
                 document.getElementById('newDocTarget').value = "";
+            }
+        }
+
+        // Блок «Причина» виден только для операций, для которых backend
+        // требует disposal_reason_id. Это сразу даёт форме самоочевидный вид:
+        // выбрал «Списание» — появилось поле причины; выбрал «Перемещение» — пропало.
+        if (disposalContainer) {
+            const needsReason = (type === 'Списание' || type === 'Утилизация');
+            disposalContainer.style.display = needsReason ? 'block' : 'none';
+            if (needsReason && !disposalContainer.dataset.loaded) {
+                Documents.loadDisposalReasons();
             }
         }
 
         // При смене типа операции очищаем таблицу, чтобы не отправить "приходные" данные как "расходные"
         document.querySelector('#docItemsTable tbody').innerHTML = '';
         Documents.addRow();
+    },
+
+    loadDisposalReasons: async () => {
+        const container = document.getElementById('disposalReasonContainer');
+        const select = document.getElementById('newDocDisposalReason');
+        if (!select) return;
+        try {
+            const res = await apiFetch('/api/arsenal/disposal-reasons');
+            if (!res || !res.ok) return;
+            const reasons = await res.json();
+            // Группировка по kind для удобства чтения (утилизация / утрата / внешние)
+            const KIND_LABEL = {
+                disposal: 'Списание',
+                lost: 'Утрата',
+                external: 'Передача во вне',
+                other: 'Прочее',
+            };
+            const byKind = {};
+            (reasons || []).forEach(r => {
+                const k = KIND_LABEL[r.kind] || r.kind;
+                (byKind[k] = byKind[k] || []).push(r);
+            });
+            let html = '<option value="">Выберите причину…</option>';
+            Object.keys(byKind).forEach(group => {
+                html += `<optgroup label="${group}">`;
+                byKind[group].forEach(r => {
+                    html += `<option value="${r.id}">${r.name}</option>`;
+                });
+                html += '</optgroup>';
+            });
+            select.innerHTML = html;
+            if (container) container.dataset.loaded = '1';
+        } catch (e) {
+            // fallback без подгрузки — пользователь увидит пустой селект
+        }
     },
 
     addRow: () => {
@@ -293,6 +340,14 @@ Object.assign(window.Documents, {
         if (docType === 'Списание' && !sourceId) return UI.showToast('Укажите источник.', "error");
         if (['Перемещение', 'Отправка', 'Прием'].includes(docType) && (!sourceId || !targetId)) return UI.showToast('Укажите и отправителя, и получателя.', "error");
 
+        // Причина списания обязательна для «Списание» и «Утилизация» (backend вернёт 400).
+        // Ловим ошибку заранее в UI, чтобы не ходить зря на сервер.
+        const disposalReasonId = document.getElementById('newDocDisposalReason')?.value || null;
+        if ((docType === 'Списание' || docType === 'Утилизация') && !disposalReasonId) {
+            return UI.showToast('Укажите причину списания.', "error");
+        }
+        const comment = document.getElementById('newDocComment')?.value?.trim() || null;
+
         const items = [];
         let valid = true;
         let errorMessage = '';
@@ -340,6 +395,8 @@ Object.assign(window.Documents, {
                 operation_type: docType,
                 source_id: sourceId ? parseInt(sourceId) : null,
                 target_id: targetId ? parseInt(targetId) : null,
+                disposal_reason_id: disposalReasonId ? parseInt(disposalReasonId) : null,
+                comment: comment,
                 items: items
             };
 

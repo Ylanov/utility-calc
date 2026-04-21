@@ -100,6 +100,8 @@ async def update_nomenclature(
     nom.code = data.code
     nom.default_account = data.default_account
     nom.is_numbered = data.is_numbered
+    nom.category = data.category
+    nom.min_quantity = max(0, data.min_quantity or 0)
 
     db.add(nom)
     await db.commit()

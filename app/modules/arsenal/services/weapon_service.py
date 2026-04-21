@@ -21,11 +21,35 @@ class WeaponService:
         return f"{year}{suffix}"
 
     @staticmethod
-    async def process_document(db: AsyncSession, doc_data, items_data, attached_file_path: str = None):
+    async def process_document(
+        db: AsyncSession, doc_data, items_data,
+        attached_file_path: str = None, author_id: int = None,
+        reverses_document_id: int = None,
+    ):
         """
         Главный метод проводки документа.
         Атомарно создает документ и обновляет положение имущества в Реестре.
+
+        Параметры:
+            author_id — id ArsenalUser, который провёл документ (для аудита).
+            reverses_document_id — если передан, создаётся «reversal» документа
+                (внутри rollback_document). Исходник помечается is_reversed=True.
         """
+        # Списание / Утилизация — обязательно с причиной.
+        # Raw-создание без причины больше не допускается: иначе невозможно
+        # ответить на вопрос «почему списано». Для reversal — не требуем
+        # (это системная операция).
+        if (
+            doc_data.operation_type in ("Списание", "Утилизация")
+            and not getattr(doc_data, "disposal_reason_id", None)
+            and not reverses_document_id
+        ):
+            raise HTTPException(
+                400,
+                "Для операции «Списание»/«Утилизация» обязательна причина "
+                "(disposal_reason_id). Справочник: GET /api/arsenal/disposal-reasons.",
+            )
+
         # --- ГЕНЕРАЦИЯ НОМЕРА (АВТОМАТИЧЕСКИ) ---
         if not doc_data.doc_number or doc_data.doc_number == "АВТО":
             for _ in range(10): # 10 попыток на случай коллизии
@@ -44,10 +68,22 @@ class WeaponService:
             source_id=doc_data.source_id,
             target_id=doc_data.target_id,
             operation_date=doc_data.operation_date,
-            attached_file_path=attached_file_path  # <-- ПОЛЕ ДЛЯ ПУТИ В S3 MINIO
+            attached_file_path=attached_file_path,
+            author_id=author_id,
+            reverses_document_id=reverses_document_id,
+            disposal_reason_id=getattr(doc_data, "disposal_reason_id", None),
+            comment=getattr(doc_data, "comment", None),
         )
         db.add(new_doc)
         await db.flush()  # Получаем ID документа, чтобы привязывать строки
+
+        # Если это reversal — отмечаем исходный документ.
+        if reverses_document_id:
+            orig = await db.get(Document, reverses_document_id)
+            if orig and not orig.is_reversed:
+                orig.is_reversed = True
+                orig.reversed_by_document_id = new_doc.id
+                db.add(orig)
 
         # 2. Обрабатываем каждую строку спецификации
         for item in items_data:
@@ -247,3 +283,95 @@ class WeaponService:
             return source_reg
 
         return None
+
+    # =========================================================================
+    # ROLLBACK — создание обратного документа
+    # =========================================================================
+    @staticmethod
+    async def rollback_document(
+        db: AsyncSession, document_id: int, author_id: int, reason: str = None
+    ):
+        """Отменяет ранее проведённый документ созданием reversal-документа.
+
+        Принцип: исходный документ остаётся в истории (военный учёт требует
+        аудируемости). Создаётся новый документ с инвертированной логикой:
+          * Перемещение A → B  ⇒  B → A
+          * Отправка / Прием  ⇒  обратная пара
+          * Первичный ввод    ⇒  Списание той же позиции
+          * Списание          ⇒  Первичный ввод (возврат на source)
+
+        После reversal исходный документ помечается is_reversed=True.
+        """
+        from sqlalchemy.orm import selectinload
+
+        orig = (await db.execute(
+            select(Document)
+            .options(
+                selectinload(Document.items).selectinload(DocumentItem.nomenclature),
+                selectinload(Document.items).selectinload(DocumentItem.weapon),
+            )
+            .where(Document.id == document_id)
+        )).scalars().first()
+
+        if not orig:
+            raise HTTPException(404, "Документ не найден")
+        if orig.is_reversed:
+            raise HTTPException(409, "Документ уже отменён (reversal существует)")
+        if orig.reverses_document_id is not None:
+            raise HTTPException(
+                400,
+                "Нельзя отменять reversal-документ. "
+                "Для корректировки создайте прямой документ вручную.",
+            )
+
+        # Инвертируем операцию
+        inverse_map = {
+            "Первичный ввод": "Списание",
+            "Списание":       "Первичный ввод",
+            "Перемещение":    "Перемещение",
+            "Отправка":       "Прием",
+            "Прием":          "Отправка",
+            "Утилизация":     "Первичный ввод",
+        }
+        new_op = inverse_map.get(orig.operation_type)
+        if not new_op:
+            raise HTTPException(
+                400,
+                f"Отмена операции '{orig.operation_type}' не поддерживается.",
+            )
+
+        # Для reversal меняем местами source и target (кроме first-input/disposal).
+        if orig.operation_type == "Первичный ввод":
+            rev_source_id, rev_target_id = orig.target_id, None  # списать оттуда, куда ввели
+        elif orig.operation_type in ("Списание", "Утилизация"):
+            rev_source_id, rev_target_id = None, orig.source_id   # вернуть на исходный склад
+        else:
+            rev_source_id, rev_target_id = orig.target_id, orig.source_id
+
+        # Конструируем «псевдо-doc_data» для process_document
+        class _RevDoc:
+            doc_number = "АВТО"
+            operation_type = new_op
+            source_id = rev_source_id
+            target_id = rev_target_id
+            operation_date = datetime.utcnow()
+            comment = f"Отмена документа #{orig.doc_number}" + (f": {reason}" if reason else "")
+            disposal_reason_id = None
+
+        # Строим items: копируем из оригинала. Для номерного учёта восстанавливаем
+        # тот же серийник, для партионного — те же qty/nomenclature.
+        class _RevItem:
+            def __init__(self, src):
+                self.nomenclature_id = src.nomenclature_id
+                self.serial_number = src.serial_number
+                self.quantity = src.quantity or 1
+                self.price = float(src.price) if src.price is not None else None
+                self.inventory_number = src.inventory_number
+
+        rev_items = [_RevItem(i) for i in orig.items]
+        return await WeaponService.process_document(
+            db, _RevDoc, rev_items,
+            attached_file_path=None,
+            author_id=author_id,
+            reverses_document_id=orig.id,
+        )

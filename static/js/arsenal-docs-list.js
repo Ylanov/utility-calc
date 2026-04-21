@@ -60,16 +60,36 @@ Object.assign(window.Documents, {
                 else if (['Отправка', 'Перемещение', 'Прием'].includes(doc.type)) icon = '<i class="fa-solid fa-truck-arrow-right text-blue-500"></i>';
                 else if (doc.type === 'Списание') icon = '<i class="fa-solid fa-ban text-rose-500"></i>';
 
+                // is_reversed / reverses_document_id приходят из бэкенда (Document model).
+                // «Отменённые» и «отменяющие» подсвечиваем чтобы не перепутать с активными.
+                const isReversed = !!doc.is_reversed;
+                const isReversal = !!doc.reverses_document_id;
+                const rowExtra = isReversed
+                    ? 'opacity-60 line-through decoration-rose-400'
+                    : (isReversal ? 'bg-amber-50/40' : '');
+                const extraBadge = isReversed
+                    ? '<span class="ml-1 text-xs text-rose-500"><i class="fa-solid fa-ban"></i> отменён</span>'
+                    : (isReversal ? '<span class="ml-1 text-xs text-amber-700"><i class="fa-solid fa-rotate-left"></i> отмена</span>' : '');
+
+                // Rollback: только для проведённых, нереверснутых документов и не-reversal самих.
+                const canRollback = !isReversed && !isReversal;
+                const rollbackBtn = canRollback
+                    ? `<button class="rollback-btn text-slate-300 hover:text-amber-600 p-2 rounded-lg hover:bg-amber-50 transition" data-id="${doc.id}" data-num="${doc.doc_number}" title="Отменить (создать обратный документ)">
+                        <i class="fa-solid fa-rotate-left"></i>
+                      </button>`
+                    : '';
+
                 return `
-                    <tr class="doc-row cursor-pointer hover:bg-slate-50 transition border-b border-slate-100 last:border-0 group" data-id="${doc.id}">
+                    <tr class="doc-row cursor-pointer hover:bg-slate-50 transition border-b border-slate-100 last:border-0 group ${rowExtra}" data-id="${doc.id}">
                         <td class="text-center text-lg py-3">${icon}</td>
                         <td class="p-4 text-slate-600 font-mono text-xs">${doc.date}</td>
-                        <td class="p-4 font-bold text-blue-800 text-sm font-mono group-hover:text-blue-600 transition">${doc.doc_number}</td>
+                        <td class="p-4 font-bold text-blue-800 text-sm font-mono group-hover:text-blue-600 transition">${doc.doc_number}${extraBadge}</td>
                         <td class="p-4">${Documents.getTypeBadge(doc.type)}</td>
                         <td class="p-4 text-slate-600 text-sm truncate max-w-[150px]" title="${doc.source || ''}">${doc.source || '<span class="text-slate-300">-</span>'}</td>
                         <td class="p-4 text-slate-600 text-sm truncate max-w-[150px]" title="${doc.target || ''}">${doc.target || '<span class="text-slate-300">-</span>'}</td>
-                        <td class="p-4 text-center">
-                            <button class="delete-btn text-slate-300 hover:text-rose-600 p-2 rounded-lg hover:bg-rose-50 transition" data-id="${doc.id}" title="Удалить">
+                        <td class="p-4 text-center whitespace-nowrap">
+                            ${rollbackBtn}
+                            <button class="delete-btn text-slate-300 hover:text-rose-600 p-2 rounded-lg hover:bg-rose-50 transition" data-id="${doc.id}" title="Удалить (только для пустых документов)">
                                 <i class="fa-solid fa-trash"></i>
                             </button>
                         </td>
@@ -92,6 +112,41 @@ Object.assign(window.Documents, {
                 btn.addEventListener('click', function(e) {
                     e.stopPropagation();
                     Documents.delete(this.dataset.id);
+                });
+            });
+
+            // Обратный документ: создаёт reversal, исходный помечается is_reversed.
+            // Реальная работа — POST /arsenal/documents/{id}/rollback.
+            document.querySelectorAll('.rollback-btn').forEach(btn => {
+                btn.addEventListener('click', async function(e) {
+                    e.stopPropagation();
+                    const id = this.dataset.id;
+                    const num = this.dataset.num || id;
+                    const reason = prompt(
+                        `Отменить документ #${num}?\n\n` +
+                        'Будет создан обратный документ, исходник останется в истории ' +
+                        'с отметкой «отменён». Укажите причину (необязательно):',
+                        ''
+                    );
+                    if (reason === null) return;
+                    try {
+                        const formData = new FormData();
+                        if (reason) formData.append('reason', reason);
+                        const res = await apiFetch(`/api/arsenal/documents/${id}/rollback`, {
+                            method: 'POST',
+                            body: formData,
+                            headers: {}, // multipart — не ставим Content-Type руками
+                        });
+                        if (!res || !res.ok) {
+                            const err = res ? await res.json().catch(() => ({ detail: `HTTP ${res.status}` })) : { detail: 'Нет ответа' };
+                            throw new Error(err.detail || 'Не удалось отменить');
+                        }
+                        const data = await res.json();
+                        UI.showToast(`Создан обратный документ ${data.reversal_doc_number}`, 'success');
+                        Documents.load();
+                    } catch (err) {
+                        UI.showToast(err.message || 'Ошибка', 'error');
+                    }
                 });
             });
 

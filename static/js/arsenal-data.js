@@ -744,5 +744,73 @@ const Dashboard = {
         } catch (e) {
             console.error("Ошибка загрузки KPI:", e);
         }
+        // Отдельный запрос на alerts — не критичный, не блокирует основные KPI
+        Dashboard.loadLowStock();
+    },
+
+    /**
+     * Загружает алерты «низкие остатки» (партионные позиции, где qty < min_quantity).
+     * Рисует счётчик в виджете, по клику показывает всплывашку со списком.
+     */
+    loadLowStock: async () => {
+        const el = document.getElementById('kpiLowStock');
+        const card = document.getElementById('kpiLowStockCard');
+        if (!el || !card) return;
+        try {
+            const res = await apiFetch('/api/arsenal/alerts/low-stock');
+            if (!res || !res.ok) {
+                el.innerText = '—';
+                return;
+            }
+            const data = await res.json();
+            const n = data.total || 0;
+            el.innerText = n;
+            el.className = 'text-2xl font-bold ' + (n === 0 ? 'text-emerald-600' : 'text-rose-600');
+
+            if (!card.dataset.bound) {
+                card.dataset.bound = '1';
+                card.addEventListener('click', () => Dashboard.toggleLowStockPopup());
+            }
+            Dashboard._lowStockData = data.items || [];
+        } catch (e) {
+            el.innerText = '—';
+        }
+    },
+
+    toggleLowStockPopup: () => {
+        const pop = document.getElementById('lowStockPopup');
+        const body = document.getElementById('lowStockBody');
+        if (!pop) return;
+        if (!pop.classList.contains('hidden')) {
+            pop.classList.add('hidden');
+            return;
+        }
+        const items = Dashboard._lowStockData || [];
+        if (!items.length) {
+            body.innerHTML = '<div class="p-4 text-sm text-emerald-600"><i class="fa-solid fa-check-circle"></i> Всё в норме — остатки не ниже порогов.</div>';
+        } else {
+            body.innerHTML = items.map(x => {
+                const pct = x.min_quantity ? Math.round((x.current_quantity / x.min_quantity) * 100) : 0;
+                const barColor = x.severity === 'critical' ? 'bg-rose-500' : 'bg-amber-500';
+                return `
+                    <div class="px-4 py-3 border-b border-slate-100 last:border-0">
+                        <div class="flex justify-between items-start mb-1">
+                            <div>
+                                <div class="font-semibold text-sm text-slate-800">${x.name}</div>
+                                <div class="text-xs text-slate-500">${x.code || ''}</div>
+                            </div>
+                            <div class="text-xs text-right">
+                                <span class="font-bold ${x.severity === 'critical' ? 'text-rose-600' : 'text-amber-600'}">${x.current_quantity}</span>
+                                <span class="text-slate-400"> / ${x.min_quantity}</span>
+                            </div>
+                        </div>
+                        <div class="w-full bg-slate-200 rounded-full h-1.5 overflow-hidden">
+                            <div class="${barColor} h-1.5" style="width:${Math.min(100, pct)}%"></div>
+                        </div>
+                        ${x.deficit > 0 ? `<div class="text-xs text-rose-600 mt-1">Дефицит: ${x.deficit} шт.</div>` : ''}
+                    </div>`;
+            }).join('');
+        }
+        pop.classList.remove('hidden');
     }
 };
