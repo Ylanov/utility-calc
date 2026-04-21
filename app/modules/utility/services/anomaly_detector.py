@@ -280,17 +280,15 @@ def check_reading_for_anomalies_v2(
             total_score += 25
 
     # --- 4. НОВЫЕ ПРАВИЛА v3 ---
-    f, s = _check_round_number(current_deltas)
-    flags.extend(f); total_score += s
-
-    f, s = _check_hot_gt_cold(current_deltas)
-    flags.extend(f); total_score += s
-
-    f, s = _check_gap_recovery(current_reading, history, current_deltas)
-    flags.extend(f); total_score += s
-
-    f, s = _check_copy_neighbor(current_reading, current_deltas, neighbor_deltas)
-    flags.extend(f); total_score += s
+    for rule_fn, args in (
+        (_check_round_number, (current_deltas,)),
+        (_check_hot_gt_cold, (current_deltas,)),
+        (_check_gap_recovery, (current_reading, history, current_deltas)),
+        (_check_copy_neighbor, (current_reading, current_deltas, neighbor_deltas)),
+    ):
+        f, s = rule_fn(*args)
+        flags.extend(f)
+        total_score += s
 
     # --- 5. SELF-LEARNING: убираем dismissed-флаги ---
     # Если для этого жильца админ пометил флаг как «не аномалия» — выкидываем.
