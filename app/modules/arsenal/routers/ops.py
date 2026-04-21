@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_arsenal_db
-from app.core.security import get_password_hash
+from app.core.auth import get_password_hash
 from app.modules.arsenal.deps import get_current_arsenal_user
 from app.modules.arsenal.models import (
     AccountingObject,
