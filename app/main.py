@@ -49,6 +49,7 @@ from app.modules.utility.routers import (
     admin_dashboard,
     admin_initial_readings,
     admin_gsheets,
+    admin_analyzer,
     app_releases,
     qr,
 )
@@ -344,6 +345,7 @@ app.include_router(admin_dashboard.router)
 
 app.include_router(admin_initial_readings.router)
 app.include_router(admin_gsheets.router)
+app.include_router(admin_analyzer.router)
 app.include_router(app_releases.router)
 app.include_router(qr.router)
 

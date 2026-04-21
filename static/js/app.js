@@ -374,6 +374,10 @@ async function initModule(tabId) {
                     const { AppReleasesModule } = await import('./modules/app_releases.js');
                     loadedModules.appReleases = AppReleasesModule;
                 }
+                if (!loadedModules.analyzer) {
+                    const { AnalyzerModule } = await import('./modules/analyzer.js');
+                    loadedModules.analyzer = AnalyzerModule;
+                }
                 if (!loadedModules.tools) {
                     const { ToolsModule } = await import('./modules/tools.js');
                     loadedModules.tools = ToolsModule;
@@ -383,6 +387,7 @@ async function initModule(tabId) {
                 loadedModules.summary.init();
                 loadedModules.gsheets.init();
                 loadedModules.appReleases.init();
+                loadedModules.analyzer.init();
                 loadedModules.tools.init();
                 break;
             default:

@@ -66,8 +66,26 @@ DEFAULT_USER_AGENT = (
     "(KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
 )
 
+# DEFAULT-значения. Реально используются геттеры _fuzzy_threshold() и
+# _auto_approve_threshold() — они читают из таблицы analyzer_settings,
+# админ может крутить ползунки в UI «Центр анализа» без релиза.
 FUZZY_THRESHOLD = 78   # Минимум для «подозрительного» матча (pending)
 AUTO_APPROVE_THRESHOLD = 95  # ФИО почти точное + комната совпала → auto_approved
+
+
+def _fuzzy_threshold() -> int:
+    from app.modules.utility.services.analyzer_config import config
+    return config.get_int("gsheets.fuzzy_threshold", FUZZY_THRESHOLD)
+
+
+def _auto_approve_threshold() -> int:
+    from app.modules.utility.services.analyzer_config import config
+    return config.get_int("gsheets.auto_approve_threshold", AUTO_APPROVE_THRESHOLD)
+
+
+def _ambiguity_band() -> int:
+    from app.modules.utility.services.analyzer_config import config
+    return config.get_int("gsheets.ambiguity_band", 2)
 
 
 # =======================================================================
@@ -249,14 +267,16 @@ def match_user(
     best_name, best_score, _ = candidates[0]
     best_score = int(best_score)
 
-    if best_score < FUZZY_THRESHOLD:
+    if best_score < _fuzzy_threshold():
         return None, best_score, None
 
     # Проверяем: есть ли ДРУГИЕ кандидаты с тем же или почти тем же score?
-    # Если несколько ≥95 — это амбигуация, нужно решение админа.
+    # Пороги читаются из конфига админа.
+    auto_thr = _auto_approve_threshold()
+    band = _ambiguity_band()
     near_top = [
         (name, int(s)) for name, s, _ in candidates
-        if int(s) >= 95 and int(s) >= best_score - 2
+        if int(s) >= auto_thr and int(s) >= best_score - band
     ]
 
     if len(near_top) >= 2:
@@ -439,12 +459,12 @@ def sync_gsheets(
                 users_by_id=users_by_id, aliases_map=aliases_map,
             )
 
-            # Определяем статус
+            # Определяем статус (порог из конфига).
             if user_info is None:
                 status = "unmatched"
             elif conflict:
                 status = "conflict"
-            elif score >= AUTO_APPROVE_THRESHOLD:
+            elif score >= _auto_approve_threshold():
                 status = "auto_approved"
             else:
                 status = "pending"

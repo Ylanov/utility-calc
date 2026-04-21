@@ -37,6 +37,9 @@ from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.modules.utility.models import AppRelease, User
 from app.modules.utility.routers.admin_dashboard import write_audit_log
+from app.modules.utility.utils.apk_meta import (
+    ApkParseError, extract_apk_metadata,
+)
 
 router = APIRouter(tags=["App Releases"])
 logger = logging.getLogger(__name__)
@@ -230,8 +233,13 @@ async def list_releases(
 
 @router.post("/api/admin/app/releases")
 async def upload_release(
-    version: str = Form(...),
-    version_code: int = Form(...),
+    # ВАЖНО: version и version_code теперь ОПЦИОНАЛЬНЫ. Сервер сам прочитает
+    # их из AndroidManifest.xml внутри APK. Это убирает источник проблем
+    # «в форме указал 3.5.5, а APK на самом деле 1.2.0 → пользователи в цикле
+    # обновлений» — невозможно по построению.
+    # Если поля переданы — служат как контроль (если расходятся, 400).
+    version: Optional[str] = Form(None),
+    version_code: Optional[int] = Form(None),
     platform: str = Form("android"),
     release_notes: Optional[str] = Form(None),
     min_required_version_code: Optional[int] = Form(None),
@@ -240,15 +248,13 @@ async def upload_release(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Загружает новый APK и создаёт запись AppRelease."""
+    """Загружает новый APK и создаёт запись AppRelease.
+
+    Версия и version_code определяются АВТОМАТИЧЕСКИ из APK (AndroidManifest.xml).
+    Поля формы `version` и `version_code` — опциональны и используются только
+    как контроль: если переданы и не совпадают с APK, возвращается 400.
+    """
     _require_admin(current_user)
-
-    # Валидация
-    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version):
-        raise HTTPException(400, "Версия должна быть в формате semver (1.2.3)")
-
-    if version_code < 1:
-        raise HTTPException(400, "version_code должен быть положительным")
 
     if platform not in ("android",):
         raise HTTPException(400, f"Платформа {platform} пока не поддерживается")
@@ -257,32 +263,21 @@ async def upload_release(
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(400, f"Допустимы только: {', '.join(ALLOWED_EXTENSIONS)}")
 
-    # Проверка дубля версии
-    existing = (await db.execute(
-        select(AppRelease).where(
-            AppRelease.platform == platform,
-            AppRelease.version_code == version_code,
-        )
-    )).scalars().first()
-    if existing:
-        raise HTTPException(409, f"Версия с кодом {version_code} уже загружена")
-
-    # Сохранение файла
+    # Сохраняем файл во временное место — нам нужно сначала прочитать
+    # AndroidManifest, и только потом понять какое имя дать файлу
+    # (jkh-lider-android-<version>.apk берёт версию из APK, не из формы).
     os.makedirs(APPS_DIR, exist_ok=True)
-    safe_version = _slug_version(version)
-    file_name = f"jkh-lider-{platform}-{safe_version}.apk"
-    full_path = os.path.join(APPS_DIR, file_name)
+    tmp_path = os.path.join(APPS_DIR, f".upload-{current_user.id}-{datetime.utcnow().timestamp()}.tmp")
 
-    # Поточная запись с подсчётом размера и хеша
     sha = hashlib.sha256()
     written = 0
     try:
-        with open(full_path, "wb") as f:
+        with open(tmp_path, "wb") as f:
             while chunk := await file.read(1024 * 1024):
                 written += len(chunk)
                 if written > MAX_APK_SIZE:
                     f.close()
-                    os.remove(full_path)
+                    os.remove(tmp_path)
                     raise HTTPException(
                         413,
                         f"Файл слишком большой (>{MAX_APK_SIZE // 1024 // 1024} MB)",
@@ -292,17 +287,95 @@ async def upload_release(
     except HTTPException:
         raise
     except Exception as e:
-        if os.path.exists(full_path):
-            os.remove(full_path)
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
         raise HTTPException(500, f"Ошибка записи файла: {e}")
 
     file_hash = sha.hexdigest()
 
     # APK signature: первые 4 байта должны быть PK\x03\x04 (zip)
-    with open(full_path, "rb") as f:
+    with open(tmp_path, "rb") as f:
         if f.read(4) != b"PK\x03\x04":
-            os.remove(full_path)
+            os.remove(tmp_path)
             raise HTTPException(400, "Файл не похож на корректный APK")
+
+    # === Извлечение метаданных из APK ===
+    try:
+        apk_meta = extract_apk_metadata(tmp_path)
+    except ApkParseError as e:
+        os.remove(tmp_path)
+        raise HTTPException(
+            400,
+            f"Не удалось прочитать AndroidManifest.xml: {e}. "
+            "Убедитесь, что загружаете релизный APK, а не AAB или поврежденный файл.",
+        )
+
+    real_version = apk_meta.version_name
+    real_version_code = apk_meta.version_code
+    logger.info(
+        "APK upload: file=%s package=%s version=%s versionCode=%s",
+        file.filename, apk_meta.package_name, real_version, real_version_code,
+    )
+
+    if not re.fullmatch(r"[0-9]+(\.[0-9]+)+", real_version):
+        os.remove(tmp_path)
+        raise HTTPException(
+            400,
+            f"versionName из APK ({real_version!r}) не выглядит как semver. "
+            "Проверьте pubspec.yaml — должно быть, например, version: 3.5.5+30505",
+        )
+    if real_version_code < 1:
+        os.remove(tmp_path)
+        raise HTTPException(400, f"versionCode из APK ({real_version_code}) некорректен")
+
+    # Если админ что-то ввёл вручную — это контроль, расхождение → 400
+    # с понятным объяснением, ЧТО реально внутри APK.
+    if version and version != real_version:
+        os.remove(tmp_path)
+        raise HTTPException(
+            400,
+            f"Несоответствие: в форме указана версия «{version}», "
+            f"а APK собран как «{real_version}». Поправьте поле «Версия» "
+            f"либо пересоберите APK с pubspec.yaml version: {version}+{real_version_code}.",
+        )
+    if version_code is not None and version_code != real_version_code:
+        os.remove(tmp_path)
+        raise HTTPException(
+            400,
+            f"Несоответствие: в форме указан version_code={version_code}, "
+            f"а APK собран с {real_version_code}. Используйте {real_version_code} "
+            "либо пересоберите APK с нужным значением в pubspec.yaml.",
+        )
+
+    # Используем версии ИЗ APK (надёжный источник).
+    version = real_version
+    version_code = real_version_code
+
+    # Проверка дубля версии
+    existing = (await db.execute(
+        select(AppRelease).where(
+            AppRelease.platform == platform,
+            AppRelease.version_code == version_code,
+        )
+    )).scalars().first()
+    if existing:
+        os.remove(tmp_path)
+        raise HTTPException(
+            409,
+            f"Версия {version} (code {version_code}) уже загружена. "
+            "Удалите старую запись или соберите APK с другим versionCode.",
+        )
+
+    # Финальное имя файла — на основе версии из APK.
+    safe_version = _slug_version(version)
+    file_name = f"jkh-lider-{platform}-{safe_version}.apk"
+    full_path = os.path.join(APPS_DIR, file_name)
+
+    # Если файл с таким именем уже есть (предыдущая попытка с тем же version) —
+    # перезаписываем. БД-проверка дубля по version_code уже прошла выше.
+    if os.path.exists(full_path):
+        os.remove(full_path)
+    os.rename(tmp_path, full_path)
 
     release = AppRelease(
         version=version,

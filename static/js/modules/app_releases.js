@@ -45,8 +45,11 @@ export const AppReleasesModule = {
     cacheDOM() {
         this.dom = {
             form: document.getElementById('appReleaseForm'),
-            version: document.getElementById('releaseVersion'),
-            versionCode: document.getElementById('releaseVersionCode'),
+            // version и versionCode удалены из формы — определяются автоматически
+            // на сервере из APK. Оставляем поля как null-safe (querySelector вернёт
+            // null, а formData.append просто пропустит — этого достаточно).
+            version: null,
+            versionCode: null,
             minRequired: document.getElementById('releaseMinRequired'),
             notes: document.getElementById('releaseNotes'),
             file: document.getElementById('releaseFile'),
@@ -74,15 +77,8 @@ export const AppReleasesModule = {
             else if (action === 'edit-notes') this.editNotes(id);
         });
 
-        // Авто-подсказка version_code из version (1.2.3 → 10203)
-        this.dom.version?.addEventListener('blur', () => {
-            const v = this.dom.version.value.trim();
-            const m = v.match(/^(\d+)\.(\d+)\.(\d+)$/);
-            if (m && !this.dom.versionCode.value) {
-                const code = parseInt(m[1]) * 10000 + parseInt(m[2]) * 100 + parseInt(m[3]);
-                this.dom.versionCode.value = code;
-            }
-        });
+        // Раньше тут был авто-подсказка version_code из version. Удалено —
+        // теперь сервер сам читает обе величины из APK при загрузке.
     },
 
     async loadReleases() {
@@ -155,8 +151,8 @@ export const AppReleasesModule = {
         if (!file) return toast('Выберите APK-файл', 'error');
 
         const formData = new FormData();
-        formData.append('version', this.dom.version.value.trim());
-        formData.append('version_code', this.dom.versionCode.value);
+        // version и version_code НЕ отправляем — сервер прочитает их из APK.
+        // Это устраняет рассинхронизацию «в форме 3.5.5, а в APK 1.2.0».
         formData.append('platform', 'android');
         if (this.dom.minRequired.value) {
             formData.append('min_required_version_code', this.dom.minRequired.value);

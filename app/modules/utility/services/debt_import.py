@@ -10,7 +10,12 @@ from app.modules.utility.models import User, MeterReading, BillingPeriod
 
 logger = logging.getLogger(__name__)
 
-FUZZY_THRESHOLD = 88
+FUZZY_THRESHOLD = 88  # default; реально читается через _threshold() из конфига
+
+
+def _threshold() -> int:
+    from app.modules.utility.services.analyzer_config import config
+    return config.get_int("debt.fuzzy_threshold", FUZZY_THRESHOLD)
 
 
 def clean_decimal(value) -> Decimal:
@@ -70,7 +75,7 @@ def find_user_fuzzy(target_name: str, users_map: Dict[str, int]) -> Optional[int
 
     if match:
         best_match_name, score, _ = match
-        if score >= FUZZY_THRESHOLD:
+        if score >= _threshold():
             return users_map[best_match_name]
 
     return None
@@ -135,7 +140,7 @@ def sync_import_debts_process(file_path: str, db: Session, account_type: str) ->
             match = process.extractOne(norm, users_keys, scorer=fuzz.token_sort_ratio)
             if match:
                 best_match_name, score, _ = match
-                if score >= FUZZY_THRESHOLD:
+                if score >= _threshold():
                     found_data = users_map[best_match_name]
                     fuzzy_cache[norm] = found_data
                     return found_data

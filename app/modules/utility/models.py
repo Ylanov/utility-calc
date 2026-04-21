@@ -435,6 +435,63 @@ class GSheetsAlias(Base):
 
 
 # ======================================================
+# ANALYZER SETTINGS — единое место для всех порогов анализаторов
+# ======================================================
+# До этой таблицы пороги были разбросаны по коду:
+#   FUZZY_THRESHOLD = 78           в gsheets_sync.py
+#   AUTO_APPROVE_THRESHOLD = 95    там же
+#   anomaly_score < 80             в admin_readings_approve.py
+#   MAD multiplier 4               в anomaly_detector.py
+#   и т.д. — менять можно только релизом.
+#
+# Теперь все они хранятся как key/value в БД, кешируются на 60 секунд
+# в analyzer_config.py, редактируются админом через /admin/analyzer/settings.
+class AnalyzerSetting(Base):
+    __tablename__ = "analyzer_settings"
+
+    key = Column(String(64), primary_key=True)
+    value = Column(String, nullable=False)            # храним как str, парсим по value_type
+    value_type = Column(String(16), nullable=False)   # 'int' | 'float' | 'bool' | 'str'
+    category = Column(String(32), nullable=False)     # 'gsheets' | 'anomaly' | 'approve' | ...
+    description = Column(Text, nullable=True)         # человекочитаемое описание
+    min_value = Column(String, nullable=True)         # для UI-валидации
+    max_value = Column(String, nullable=True)
+    is_enabled = Column(Boolean, default=True, nullable=False)  # для on/off правил-флагов
+
+    updated_at = Column(DateTime, nullable=True, onupdate=_utcnow)
+    updated_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+
+# ======================================================
+# ANOMALY DISMISSAL — self-learning: «это НЕ аномалия для этого жильца»
+# ======================================================
+# Пример: жилец каждый месяц подаёт ровно 5.000 ХВС — потому что у него
+# счётчик действительно так показывает (бывает). Анализатор флагует FLAT_COLD,
+# админ устаёт от false-positive. Здесь админ помечает: «для user=42 правило
+# FLAT_COLD не применяется». В будущем check_reading_for_anomalies этот флаг
+# не выставит для этого жильца.
+#
+# Запись с user_id=NULL — глобальное отключение правила для всех (мягкий
+# аналог is_enabled=false в analyzer_settings, но удобный для UI «по флагу»).
+class AnomalyDismissal(Base):
+    __tablename__ = "anomaly_dismissals"
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    flag_code = Column(String(48), nullable=False, index=True)  # напр. 'FLAT_COLD', 'ROUND_NUMBER_HOT'
+    reason = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=_utcnow)
+    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    user = relationship("User", foreign_keys=[user_id])
+    created_by = relationship("User", foreign_keys=[created_by_id])
+
+    __table_args__ = (
+        Index("uq_anomaly_dismissal", "user_id", "flag_code", unique=True),
+    )
+
+
+# ======================================================
 # APP RELEASE — версии мобильного приложения
 # ======================================================
 # Хранит метаданные APK-релизов, выложенных через админку.

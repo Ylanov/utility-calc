@@ -39,6 +39,11 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
     # Убрали .with_for_update().
     # Это позволяет базе "дышать" и принимать другие запросы во время расчетов.
     # Если кто-то параллельно нажмет "Утвердить", операции будут идемпотентны.
+    # Порог риска для авто-bulk-approve берём из конфига (analyzer_settings).
+    # Дефолт 80 сохраняется, если БД ещё не сидирована.
+    from app.modules.utility.services.analyzer_config import config
+    score_gate = config.get_int("approve.score_threshold", 80)
+
     drafts_rows = (await db.execute(
         select(MeterReading, User, Room)
         .join(User, MeterReading.user_id == User.id)
@@ -46,7 +51,7 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
         .where(
             MeterReading.is_approved.is_(False),
             MeterReading.period_id == active_period.id,
-            MeterReading.anomaly_score < 80
+            MeterReading.anomaly_score < score_gate
         )
     )).all()
 

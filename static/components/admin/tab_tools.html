@@ -233,6 +233,90 @@
         </section>
 
         <!-- ==========================================
+             СЕКЦИЯ: ЦЕНТР АНАЛИЗА (анализаторы и пороги)
+             ========================================== -->
+        <section class="accordion-section" data-section="analyzer">
+            <button class="accordion-header" type="button" aria-expanded="false">
+                <span class="accordion-title">
+                    <span class="accordion-icon" style="background:rgba(124,58,237,0.12); color:#7c3aed;">
+                        <i class="fa-solid fa-brain"></i>
+                    </span>
+                    <span class="accordion-title-text">
+                        <strong>Центр анализа</strong>
+                        <span class="subtitle">Управление анализаторами, пороги, статистика срабатываний и self-learning</span>
+                    </span>
+                </span>
+                <i class="fa-solid fa-chevron-down accordion-chevron"></i>
+            </button>
+            <div class="accordion-body">
+                <div class="accordion-content">
+                    <div class="inner">
+                        <!-- KPI карточки -->
+                        <div id="analyzerKPIs" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:18px;">
+                            <div style="padding:18px; text-align:center; color:var(--text-secondary);">Загрузка статистики…</div>
+                        </div>
+
+                        <!-- Период анализа -->
+                        <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap;">
+                            <label style="font-size:13px; color:var(--text-secondary);">Период:</label>
+                            <select id="analyzerPeriod" style="width:160px;">
+                                <option value="7">7 дней</option>
+                                <option value="30" selected>30 дней</option>
+                                <option value="90">90 дней</option>
+                                <option value="365">365 дней</option>
+                            </select>
+                            <button id="btnAnalyzerRefresh" class="icon-btn" title="Обновить"><i class="fa-solid fa-rotate-right"></i></button>
+                            <button id="btnAnalyzerInvalidate" class="action-btn secondary-btn" style="padding:6px 12px; font-size:12px;" title="Сбросить кеш порогов в анализаторах">
+                                <i class="fa-solid fa-eraser"></i> Применить настройки сразу
+                            </button>
+                        </div>
+
+                        <!-- Top срабатываний -->
+                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-bottom:24px;">
+                            <div>
+                                <h4 style="margin:0 0 10px 0;"><i class="fa-solid fa-fire" style="color:#dc2626;"></i> Топ аномалий</h4>
+                                <div id="analyzerTopFlags" style="font-size:13px;">…</div>
+                            </div>
+                            <div>
+                                <h4 style="margin:0 0 10px 0;"><i class="fa-solid fa-chart-pie" style="color:#3b82f6;"></i> Статусы GSheets</h4>
+                                <div id="analyzerGsheetsStats" style="font-size:13px;">…</div>
+                            </div>
+                        </div>
+
+                        <!-- Настройки -->
+                        <h4 style="margin:0 0 12px 0;">
+                            <i class="fa-solid fa-sliders" style="color:#7c3aed;"></i> Настройки анализаторов
+                        </h4>
+                        <div id="analyzerSettings" style="margin-bottom:24px;">…</div>
+
+                        <!-- Self-learning: dismissed flags -->
+                        <h4 style="margin:0 0 12px 0;">
+                            <i class="fa-solid fa-graduation-cap" style="color:#10b981;"></i> Self-learning: отключённые аномалии
+                        </h4>
+                        <p class="hint-text" style="font-size:12px; margin-bottom:8px;">
+                            Если у жильца есть «честное» постоянное поведение, которое анализатор флагует — пометьте флаг как false-positive и анализатор больше не будет на него реагировать (для этого жильца, либо для всех если user_id=NULL).
+                        </p>
+                        <div style="overflow-x:auto; border:1px solid var(--border-color); border-radius:8px;">
+                            <table style="width:100%; min-width:680px;">
+                                <thead>
+                                    <tr>
+                                        <th style="text-align:left; padding:8px;">Жилец</th>
+                                        <th style="text-align:left; padding:8px;">Флаг</th>
+                                        <th style="text-align:left; padding:8px;">Причина</th>
+                                        <th style="text-align:left; padding:8px;">Создал</th>
+                                        <th style="text-align:left; padding:8px;">Когда</th>
+                                        <th style="text-align:right; padding:8px;">Действия</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="analyzerDismissals"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==========================================
              СЕКЦИЯ: ИМПОРТ ИЗ GOOGLE SHEETS
              ========================================== -->
         <section class="accordion-section" data-section="gsheets">
@@ -487,18 +571,20 @@
                                 <i class="fa-solid fa-cloud-arrow-up"></i> Загрузить новую версию
                             </h4>
                             <form id="appReleaseForm" enctype="multipart/form-data">
-                                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin-bottom: 12px;">
+                                <div style="margin-bottom: 12px; padding: 10px 14px; background: #ecfdf5; border: 1px solid #a7f3d0; border-radius: 8px; font-size: 12px; color: #065f46;">
+                                    <i class="fa-solid fa-circle-info"></i>
+                                    <b>Версия определяется автоматически</b> из самого APK
+                                    (поля <code>version</code> и <code>versionCode</code> в AndroidManifest).
+                                    В <code>pubspec.yaml</code> Flutter-приложения это значение
+                                    <code>version: 3.5.5+30505</code> — после <code>+</code> идёт
+                                    <code>versionCode</code>. Раньше тут вводили вручную и часто
+                                    расходилось — приложение из-за этого крутилось в цикле обновлений.
+                                </div>
+                                <div style="display: grid; grid-template-columns: 1fr; gap: 12px; margin-bottom: 12px;">
                                     <div class="form-group" style="margin: 0;">
-                                        <label>Версия (semver)</label>
-                                        <input type="text" id="releaseVersion" required pattern="\d+\.\d+\.\d+" placeholder="1.2.3">
-                                    </div>
-                                    <div class="form-group" style="margin: 0;">
-                                        <label>Version Code <span style="color:var(--text-secondary); font-size:11px;">(целое число)</span></label>
-                                        <input type="number" id="releaseVersionCode" required min="1" placeholder="10203">
-                                    </div>
-                                    <div class="form-group" style="margin: 0;">
-                                        <label>Min. для force-update <span style="color:var(--text-secondary); font-size:11px;">(опционально)</span></label>
-                                        <input type="number" id="releaseMinRequired" min="0" placeholder="напр. 10100">
+                                        <label>Min. для force-update <span style="color:var(--text-secondary); font-size:11px;">(опционально, целое число)</span></label>
+                                        <input type="number" id="releaseMinRequired" min="0" placeholder="напр. 10100"
+                                               title="Все клиенты с versionCode меньше этого значения получат принудительное обновление без кнопки «Позже».">
                                     </div>
                                 </div>
                                 <div class="form-group" style="margin-bottom: 12px;">
