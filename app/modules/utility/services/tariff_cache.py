@@ -21,7 +21,12 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    # Только для тайп-чекеров (mypy / ruff). Реальный импорт лениво в _ensure_loaded
+    # чтобы избежать циклов и дать модулю грузиться без БД.
+    from app.modules.utility.models import Tariff
 
 
 _CACHE_TTL_SECONDS = 600  # 10 минут — баланс между «свежо» и «не дёргать БД»
@@ -29,7 +34,7 @@ _CACHE_TTL_SECONDS = 600  # 10 минут — баланс между «свеж
 
 class TariffCache:
     def __init__(self):
-        self._tariffs: dict[int, "Tariff"] = {}  # type: ignore[name-defined]
+        self._tariffs: dict[int, "Tariff"] = {}
         self._default_id: Optional[int] = None
         self._loaded_at: float = 0.0
         self._lock = threading.RLock()
@@ -108,7 +113,7 @@ class TariffCache:
 
         return self.get_default()
 
-    def get_all_active(self) -> dict[int, "Tariff"]:  # type: ignore[name-defined]
+    def get_all_active(self) -> dict[int, "Tariff"]:
         """Снимок всех активных тарифов из кеша. Для bulk-операций."""
         self._ensure_loaded()
         return dict(self._tariffs)
