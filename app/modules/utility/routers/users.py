@@ -335,6 +335,214 @@ async def get_users(
     return {"total": total, "page": page, "size": limit, "items": items}
 
 
+# =====================================================================
+# STATS — агрегированная аналитика для вкладки «Жильцы»
+# ВАЖНО: объявлен ДО @router.get("/{user_id}"). FastAPI роутит по порядку,
+# и если /{user_id} окажется выше — путь /users/stats попадёт в него,
+# FastAPI попробует распарсить "stats" как int и вернёт 422.
+# =====================================================================
+@router.get("/stats", dependencies=[Depends(allow_accountant)])
+async def users_stats(
+        db: AsyncSession = Depends(get_db),
+):
+    """KPI + распределения + топ-должники/переплатчики одним раундом к БД."""
+    active_where = User.is_deleted.is_(False)
+    total_users = (await db.execute(
+        select(func.count(User.id)).where(active_where, User.role == "user")
+    )).scalar_one()
+    with_room = (await db.execute(
+        select(func.count(User.id)).where(
+            active_where, User.role == "user", User.room_id.is_not(None)
+        )
+    )).scalar_one()
+
+    by_type_rows = (await db.execute(
+        select(User.resident_type, func.count(User.id))
+        .where(active_where, User.role == "user")
+        .group_by(User.resident_type)
+    )).all()
+    by_type = {rt or "family": int(c) for rt, c in by_type_rows}
+
+    by_mode_rows = (await db.execute(
+        select(User.billing_mode, func.count(User.id))
+        .where(active_where, User.role == "user")
+        .group_by(User.billing_mode)
+    )).all()
+    by_mode = {bm or "by_meter": int(c) for bm, c in by_mode_rows}
+
+    dorm_rows = (await db.execute(
+        select(Room.dormitory_name, func.count(User.id))
+        .outerjoin(User, User.room_id == Room.id)
+        .where(active_where | User.id.is_(None))
+        .group_by(Room.dormitory_name)
+        .order_by(func.count(User.id).desc())
+    )).all()
+    by_dormitory = [
+        {"name": d or "— не указано —", "count": int(c)}
+        for d, c in dorm_rows if c > 0
+    ]
+
+    tariff_rows = (await db.execute(
+        select(Tariff.id, Tariff.name, func.count(User.id))
+        .outerjoin(User, (User.tariff_id == Tariff.id) & active_where & (User.role == "user"))
+        .group_by(Tariff.id, Tariff.name)
+        .order_by(func.count(User.id).desc())
+    )).all()
+    by_tariff = [
+        {"id": tid, "name": tname, "count": int(c)}
+        for tid, tname, c in tariff_rows
+    ]
+
+    debt_rows = (await db.execute(
+        select(
+            func.coalesce(func.sum(MeterReading.debt_209), 0),
+            func.coalesce(func.sum(MeterReading.debt_205), 0),
+            func.coalesce(func.sum(MeterReading.overpayment_209), 0),
+            func.coalesce(func.sum(MeterReading.overpayment_205), 0),
+        )
+        .where(MeterReading.is_approved.is_(True))
+    )).first()
+    total_debt = float((debt_rows[0] or 0) + (debt_rows[1] or 0))
+    total_overpayment = float((debt_rows[2] or 0) + (debt_rows[3] or 0))
+
+    top_debtor_rows = (await db.execute(
+        select(
+            User.id, User.username,
+            Room.dormitory_name, Room.room_number,
+            func.coalesce(func.sum(MeterReading.debt_209 + MeterReading.debt_205), 0).label("debt"),
+        )
+        .join(MeterReading, MeterReading.user_id == User.id)
+        .outerjoin(Room, User.room_id == Room.id)
+        .where(active_where, MeterReading.is_approved.is_(True))
+        .group_by(User.id, User.username, Room.dormitory_name, Room.room_number)
+        .having(func.coalesce(func.sum(MeterReading.debt_209 + MeterReading.debt_205), 0) > 0)
+        .order_by(func.coalesce(func.sum(MeterReading.debt_209 + MeterReading.debt_205), 0).desc())
+        .limit(5)
+    )).all()
+    top_debtors = [
+        {"id": uid, "username": uname,
+         "room": f"{dorm or '—'}, ком. {rnum or '—'}" if (dorm or rnum) else None,
+         "amount": float(amount)}
+        for uid, uname, dorm, rnum, amount in top_debtor_rows
+    ]
+
+    top_overpaid_rows = (await db.execute(
+        select(
+            User.id, User.username,
+            Room.dormitory_name, Room.room_number,
+            func.coalesce(func.sum(MeterReading.overpayment_209 + MeterReading.overpayment_205), 0).label("over"),
+        )
+        .join(MeterReading, MeterReading.user_id == User.id)
+        .outerjoin(Room, User.room_id == Room.id)
+        .where(active_where, MeterReading.is_approved.is_(True))
+        .group_by(User.id, User.username, Room.dormitory_name, Room.room_number)
+        .having(func.coalesce(func.sum(MeterReading.overpayment_209 + MeterReading.overpayment_205), 0) > 0)
+        .order_by(func.coalesce(func.sum(MeterReading.overpayment_209 + MeterReading.overpayment_205), 0).desc())
+        .limit(5)
+    )).all()
+    top_overpaid = [
+        {"id": uid, "username": uname,
+         "room": f"{dorm or '—'}, ком. {rnum or '—'}" if (dorm or rnum) else None,
+         "amount": float(amount)}
+        for uid, uname, dorm, rnum, amount in top_overpaid_rows
+    ]
+
+    return {
+        "total_users": int(total_users),
+        "with_room": int(with_room),
+        "without_room": int(total_users) - int(with_room),
+        "by_resident_type": by_type,
+        "by_billing_mode": by_mode,
+        "by_dormitory": by_dormitory,
+        "by_tariff": by_tariff,
+        "total_debt": total_debt,
+        "total_overpayment": total_overpayment,
+        "top_debtors": top_debtors,
+        "top_overpaid": top_overpaid,
+    }
+
+
+# =====================================================================
+# EXPORT — Excel со списком жильцов (с учётом фильтров)
+# Тоже ДО /{user_id} — ради единообразия и защиты от будущих конфликтов.
+# =====================================================================
+@router.get("/export/list", dependencies=[Depends(allow_accountant)])
+async def export_users_list(
+        search: Optional[str] = Query(None),
+        resident_type: Optional[str] = Query(None, pattern="^(family|single)$"),
+        billing_mode: Optional[str] = Query(None, pattern="^(by_meter|per_capita)$"),
+        dormitory: Optional[str] = Query(None),
+        tariff_id: Optional[int] = Query(None),
+        db: AsyncSession = Depends(get_db),
+):
+    """Excel-выгрузка всех отфильтрованных жильцов (без пагинации)."""
+    q = (
+        select(User)
+        .options(selectinload(User.room), selectinload(User.tariff))
+        .where(User.is_deleted.is_(False), User.role == "user")
+    )
+    if search or dormitory:
+        q = q.outerjoin(Room, User.room_id == Room.id)
+    if search:
+        p = f"%{search}%"
+        q = q.where(or_(
+            User.username.ilike(p),
+            Room.dormitory_name.ilike(p),
+            Room.room_number.ilike(p),
+            User.workplace.ilike(p),
+        ))
+    if resident_type:
+        q = q.where(User.resident_type == resident_type)
+    if billing_mode:
+        q = q.where(User.billing_mode == billing_mode)
+    if dormitory:
+        q = q.where(Room.dormitory_name == dormitory)
+    if tariff_id:
+        q = q.where(User.tariff_id == tariff_id)
+    q = q.order_by(User.id)
+
+    users = (await db.execute(q)).scalars().all()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Жильцы"
+    headers = [
+        "ID", "Логин / ФИО", "Роль", "Тип жильца", "Режим оплаты",
+        "Общежитие", "Комната", "Площадь м²", "Проживающих", "Тариф",
+        "Место работы",
+    ]
+    for i, h in enumerate(headers, 1):
+        c = ws.cell(row=1, column=i, value=h)
+        c.font = Font(bold=True)
+        c.fill = PatternFill("solid", fgColor="DBEAFE")
+    for i, u in enumerate(users, 2):
+        ws.cell(row=i, column=1, value=u.id)
+        ws.cell(row=i, column=2, value=u.username)
+        ws.cell(row=i, column=3, value=u.role)
+        ws.cell(row=i, column=4, value="Семейный" if u.resident_type == "family" else "Холостяк")
+        ws.cell(row=i, column=5, value="По счётчикам" if u.billing_mode == "by_meter" else "За койко-место")
+        ws.cell(row=i, column=6, value=u.room.dormitory_name if u.room else "")
+        ws.cell(row=i, column=7, value=u.room.room_number if u.room else "")
+        ws.cell(row=i, column=8, value=float(u.room.apartment_area) if (u.room and u.room.apartment_area) else 0)
+        ws.cell(row=i, column=9, value=u.residents_count or 1)
+        ws.cell(row=i, column=10, value=u.tariff.name if u.tariff else "")
+        ws.cell(row=i, column=11, value=u.workplace or "")
+    for col, width in [("A", 6), ("B", 32), ("C", 10), ("D", 14), ("E", 18),
+                       ("F", 22), ("G", 8), ("H", 10), ("I", 12), ("J", 22), ("K", 24)]:
+        ws.column_dimensions[col].width = width
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    from datetime import datetime as _dt
+    fname = f"residents_{_dt.utcnow().strftime('%Y%m%d_%H%M')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
 @router.get("/{user_id}", response_model=UserResponse, dependencies=[Depends(allow_accountant)])
 async def read_user(user_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(
@@ -636,233 +844,3 @@ async def register_device_token(
 
     return {"status": "success", "message": "Токен устройства успешно сохранен"}
 
-
-# =====================================================================
-# STATS — агрегированная аналитика для вкладки «Жильцы»
-# =====================================================================
-@router.get("/stats", dependencies=[Depends(allow_accountant)])
-async def users_stats(
-        db: AsyncSession = Depends(get_db),
-):
-    """Статистика для KPI-панели и графиков вкладки «Жильцы».
-    Один endpoint с серией агрегатов, один раунд-трип к БД.
-
-    Возвращает:
-      * Счётчики: total / with_room / without_room / by_resident_type / by_billing_mode
-      * Распределение по общежитиям (топ-10 + «другие»)
-      * Распределение по тарифам (сколько на каждом)
-      * Сводка долгов: общий долг / общая переплата / топ-5 должников / топ-5 переплат
-    """
-    from app.modules.utility.models import MeterReading
-
-    # --- Базовые счётчики (без группировки) ---
-    active_where = User.is_deleted.is_(False)
-    total_users = (await db.execute(
-        select(func.count(User.id)).where(active_where, User.role == "user")
-    )).scalar_one()
-
-    with_room = (await db.execute(
-        select(func.count(User.id)).where(
-            active_where, User.role == "user", User.room_id.is_not(None)
-        )
-    )).scalar_one()
-
-    # --- По типу жильца ---
-    by_type_rows = (await db.execute(
-        select(User.resident_type, func.count(User.id))
-        .where(active_where, User.role == "user")
-        .group_by(User.resident_type)
-    )).all()
-    by_type = {rt or "family": int(c) for rt, c in by_type_rows}
-
-    # --- По режиму оплаты ---
-    by_mode_rows = (await db.execute(
-        select(User.billing_mode, func.count(User.id))
-        .where(active_where, User.role == "user")
-        .group_by(User.billing_mode)
-    )).all()
-    by_mode = {bm or "by_meter": int(c) for bm, c in by_mode_rows}
-
-    # --- По общежитиям ---
-    dorm_rows = (await db.execute(
-        select(Room.dormitory_name, func.count(User.id))
-        .outerjoin(User, User.room_id == Room.id)
-        .where(active_where | User.id.is_(None))
-        .group_by(Room.dormitory_name)
-        .order_by(func.count(User.id).desc())
-    )).all()
-    by_dormitory = [
-        {"name": d or "— не указано —", "count": int(c)}
-        for d, c in dorm_rows if c > 0
-    ]
-
-    # --- По тарифам ---
-    from app.modules.utility.models import Tariff as TariffModel
-    tariff_rows = (await db.execute(
-        select(TariffModel.id, TariffModel.name, func.count(User.id))
-        .outerjoin(User, (User.tariff_id == TariffModel.id) & active_where & (User.role == "user"))
-        .group_by(TariffModel.id, TariffModel.name)
-        .order_by(func.count(User.id).desc())
-    )).all()
-    by_tariff = [
-        {"id": tid, "name": tname, "count": int(c)}
-        for tid, tname, c in tariff_rows
-    ]
-
-    # --- Долги / переплаты (суммируем по последним утверждённым MeterReading каждого жильца) ---
-    # Берём агрегат по всем approved-reading'ам — для «живого» состояния
-    # (debt/overpayment не обнуляются между периодами).
-    debt_rows = (await db.execute(
-        select(
-            func.coalesce(func.sum(MeterReading.debt_209), 0),
-            func.coalesce(func.sum(MeterReading.debt_205), 0),
-            func.coalesce(func.sum(MeterReading.overpayment_209), 0),
-            func.coalesce(func.sum(MeterReading.overpayment_205), 0),
-        )
-        .where(MeterReading.is_approved.is_(True))
-    )).first()
-    total_debt = float((debt_rows[0] or 0) + (debt_rows[1] or 0))
-    total_overpayment = float((debt_rows[2] or 0) + (debt_rows[3] or 0))
-
-    # Топ-5 должников (по (debt_209+debt_205) из последнего approved)
-    top_debtor_rows = (await db.execute(
-        select(
-            User.id, User.username,
-            Room.dormitory_name, Room.room_number,
-            func.coalesce(func.sum(MeterReading.debt_209 + MeterReading.debt_205), 0).label("debt"),
-        )
-        .join(MeterReading, MeterReading.user_id == User.id)
-        .outerjoin(Room, User.room_id == Room.id)
-        .where(active_where, MeterReading.is_approved.is_(True))
-        .group_by(User.id, User.username, Room.dormitory_name, Room.room_number)
-        .having(func.coalesce(func.sum(MeterReading.debt_209 + MeterReading.debt_205), 0) > 0)
-        .order_by(func.coalesce(func.sum(MeterReading.debt_209 + MeterReading.debt_205), 0).desc())
-        .limit(5)
-    )).all()
-    top_debtors = [
-        {"id": uid, "username": uname,
-         "room": f"{dorm or '—'}, ком. {rnum or '—'}" if (dorm or rnum) else None,
-         "amount": float(amount)}
-        for uid, uname, dorm, rnum, amount in top_debtor_rows
-    ]
-
-    top_overpaid_rows = (await db.execute(
-        select(
-            User.id, User.username,
-            Room.dormitory_name, Room.room_number,
-            func.coalesce(func.sum(MeterReading.overpayment_209 + MeterReading.overpayment_205), 0).label("over"),
-        )
-        .join(MeterReading, MeterReading.user_id == User.id)
-        .outerjoin(Room, User.room_id == Room.id)
-        .where(active_where, MeterReading.is_approved.is_(True))
-        .group_by(User.id, User.username, Room.dormitory_name, Room.room_number)
-        .having(func.coalesce(func.sum(MeterReading.overpayment_209 + MeterReading.overpayment_205), 0) > 0)
-        .order_by(func.coalesce(func.sum(MeterReading.overpayment_209 + MeterReading.overpayment_205), 0).desc())
-        .limit(5)
-    )).all()
-    top_overpaid = [
-        {"id": uid, "username": uname,
-         "room": f"{dorm or '—'}, ком. {rnum or '—'}" if (dorm or rnum) else None,
-         "amount": float(amount)}
-        for uid, uname, dorm, rnum, amount in top_overpaid_rows
-    ]
-
-    return {
-        "total_users": int(total_users),
-        "with_room": int(with_room),
-        "without_room": int(total_users) - int(with_room),
-        "by_resident_type": by_type,
-        "by_billing_mode": by_mode,
-        "by_dormitory": by_dormitory,
-        "by_tariff": by_tariff,
-        "total_debt": total_debt,
-        "total_overpayment": total_overpayment,
-        "top_debtors": top_debtors,
-        "top_overpaid": top_overpaid,
-    }
-
-
-# =====================================================================
-# EXPORT — Excel со списком жильцов (с учётом фильтров)
-# =====================================================================
-@router.get("/export/list", dependencies=[Depends(allow_accountant)])
-async def export_users_list(
-        search: Optional[str] = Query(None),
-        resident_type: Optional[str] = Query(None, pattern="^(family|single)$"),
-        billing_mode: Optional[str] = Query(None, pattern="^(by_meter|per_capita)$"),
-        dormitory: Optional[str] = Query(None),
-        tariff_id: Optional[int] = Query(None),
-        db: AsyncSession = Depends(get_db),
-):
-    """Excel-выгрузка всех отфильтрованных жильцов (без пагинации).
-    Используется для офлайн-сверки, отправки списков на утверждение."""
-    import io
-    from fastapi.responses import StreamingResponse
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill
-
-    q = (
-        select(User)
-        .options(selectinload(User.room), selectinload(User.tariff))
-        .where(User.is_deleted.is_(False), User.role == "user")
-    )
-    if search or dormitory:
-        q = q.outerjoin(Room, User.room_id == Room.id)
-    if search:
-        p = f"%{search}%"
-        q = q.where(or_(
-            User.username.ilike(p),
-            Room.dormitory_name.ilike(p),
-            Room.room_number.ilike(p),
-            User.workplace.ilike(p),
-        ))
-    if resident_type:
-        q = q.where(User.resident_type == resident_type)
-    if billing_mode:
-        q = q.where(User.billing_mode == billing_mode)
-    if dormitory:
-        q = q.where(Room.dormitory_name == dormitory)
-    if tariff_id:
-        q = q.where(User.tariff_id == tariff_id)
-    q = q.order_by(User.id)
-
-    users = (await db.execute(q)).scalars().all()
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Жильцы"
-    headers = [
-        "ID", "Логин / ФИО", "Роль", "Тип жильца", "Режим оплаты",
-        "Общежитие", "Комната", "Площадь м²", "Проживающих", "Тариф",
-        "Место работы",
-    ]
-    for i, h in enumerate(headers, 1):
-        c = ws.cell(row=1, column=i, value=h)
-        c.font = Font(bold=True)
-        c.fill = PatternFill("solid", fgColor="DBEAFE")
-    for i, u in enumerate(users, 2):
-        ws.cell(row=i, column=1, value=u.id)
-        ws.cell(row=i, column=2, value=u.username)
-        ws.cell(row=i, column=3, value=u.role)
-        ws.cell(row=i, column=4, value="Семейный" if u.resident_type == "family" else "Холостяк")
-        ws.cell(row=i, column=5, value="По счётчикам" if u.billing_mode == "by_meter" else "За койко-место")
-        ws.cell(row=i, column=6, value=u.room.dormitory_name if u.room else "")
-        ws.cell(row=i, column=7, value=u.room.room_number if u.room else "")
-        ws.cell(row=i, column=8, value=float(u.room.apartment_area) if (u.room and u.room.apartment_area) else 0)
-        ws.cell(row=i, column=9, value=u.residents_count or 1)
-        ws.cell(row=i, column=10, value=u.tariff.name if u.tariff else "")
-        ws.cell(row=i, column=11, value=u.workplace or "")
-    for col, width in [("A", 6), ("B", 32), ("C", 10), ("D", 14), ("E", 18),
-                       ("F", 22), ("G", 8), ("H", 10), ("I", 12), ("J", 22), ("K", 24)]:
-        ws.column_dimensions[col].width = width
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-    from datetime import datetime as _dt
-    fname = f"residents_{_dt.utcnow().strftime('%Y%m%d_%H%M')}.xlsx"
-    return StreamingResponse(
-        buf,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
-    )
