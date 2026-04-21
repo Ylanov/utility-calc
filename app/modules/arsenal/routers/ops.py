@@ -776,7 +776,7 @@ async def export_inventory_report(
 
     from fastapi.responses import StreamingResponse
     from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.styles import Font, PatternFill
 
     report = await inventory_report(inventory_id, db, current_user)
     inv = report["inventory"]
@@ -789,7 +789,6 @@ async def export_inventory_report(
     ws = wb.active
     ws.title = "Сводка"
     bold = Font(bold=True)
-    gray = PatternFill("solid", fgColor="F3F4F6")
     ws["A1"] = f"Инвентаризационная ведомость — {obj_name}"
     ws["A1"].font = Font(bold=True, size=14)
     ws.merge_cells("A1:D1")
