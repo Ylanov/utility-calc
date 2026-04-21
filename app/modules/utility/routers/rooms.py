@@ -188,11 +188,22 @@ async def update_room(room_id: int, data: RoomUpdate, db: AsyncSession = Depends
             if exist.scalars().first():
                 raise HTTPException(status_code=400, detail="Комната с таким номером уже есть в этом общежитии")
 
+    # Если меняется tariff_id комнаты — валидируем и инвалидируем кеш расчётов
+    tariff_changed = "tariff_id" in update_data and update_data["tariff_id"] != room.tariff_id
+    if tariff_changed and update_data["tariff_id"] is not None:
+        t = await db.get(Tariff, update_data["tariff_id"])
+        if not t or not t.is_active:
+            raise HTTPException(400, "Активный тариф с таким id не найден")
+
     for key, value in update_data.items():
         setattr(room, key, value)
 
     await db.commit()
     await db.refresh(room)
+
+    if tariff_changed:
+        from app.modules.utility.services.tariff_cache import tariff_cache
+        tariff_cache.invalidate()
     return room
 
 
@@ -280,7 +291,8 @@ async def replace_meter(room_id: int, data: ReplaceMeterSchema, db: AsyncSession
 
     # Если в комнате есть жилец, начисляем ему стоимость остатка старого счетчика
     if user and (d_hot > 0 or d_cold > 0 or d_elect > 0):
-        t = (await db.execute(select(Tariff).where(Tariff.id == getattr(user, 'tariff_id', 1)))).scalars().first()
+        from app.modules.utility.services.tariff_cache import tariff_cache
+        t = tariff_cache.get_effective_tariff(user=user, room=room)
 
         residents = Decimal(user.residents_count)
         total_res = Decimal(room.total_room_residents) if room.total_room_residents > 0 else Decimal(1)

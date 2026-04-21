@@ -12,7 +12,7 @@ from sqlalchemy import (
     func
 )
 from sqlalchemy.types import Numeric
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, validates
 from datetime import datetime, timezone
 
 from app.core.database import Base
@@ -121,6 +121,36 @@ class User(Base):
 
     # НОВОЕ: Отслеживание последнего изменения
     updated_at = Column(DateTime, nullable=True, onupdate=_utcnow)
+
+    # --------------------------------------------------------------
+    # Валидаторы консистентности — срабатывают на setattr.
+    # Защищают от ситуации когда поля рассыпаются («single» с 5 жильцами
+    # в residents_count, или family на per_capita).
+    # Тихие автокоррекции вместо exception — не ломаем старые скрипты
+    # импорта, но приводим данные в корректный вид.
+    # --------------------------------------------------------------
+    @validates("residents_count")
+    def _v_residents_count(self, key, value):
+        # Одиночка = 1 человек по определению. Если кто-то пытается поставить 5,
+        # молча исправляем до 1 и логируем (через print, логгер здесь не нужен,
+        # SQLAlchemy ORM events не лучшее место для логирования).
+        if getattr(self, "resident_type", None) == "single" and value not in (None, 1):
+            return 1
+        return value
+
+    @validates("resident_type")
+    def _v_resident_type(self, key, value):
+        # При смене на single сбрасываем count до 1 и billing_mode на per_capita.
+        if value == "single":
+            if getattr(self, "residents_count", None) not in (None, 1):
+                self.residents_count = 1
+            if getattr(self, "billing_mode", None) != "per_capita":
+                self.billing_mode = "per_capita"
+        elif value == "family":
+            # Смена на family: авто-установка by_meter (но только если был per_capita).
+            if getattr(self, "billing_mode", None) == "per_capita":
+                self.billing_mode = "by_meter"
+        return value
 
     __table_args__ = (
         Index(

@@ -25,7 +25,9 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
     room = user.room
     if not room: raise HTTPException(status_code=400, detail="Жилец не привязан к помещению")
 
-    t = (await db.execute(select(Tariff).where(Tariff.id == getattr(user, 'tariff_id', 1)))).scalars().first() or \
+    # Через единый кеш — Room.tariff_id побеждает User.tariff_id (см. tariff_cache.py).
+    from app.modules.utility.services.tariff_cache import tariff_cache
+    t = tariff_cache.get_effective_tariff(user=user, room=room) or \
         (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().first()
 
     history = (await db.execute(
@@ -104,7 +106,9 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
 
     fraction = Decimal(data.days_lived) / Decimal(data.total_days_in_month)
 
-    t = (await db.execute(select(Tariff).where(Tariff.id == getattr(user, 'tariff_id', 1)))).scalars().first() or \
+    # Через единый кеш — Room.tariff_id побеждает User.tariff_id (см. tariff_cache.py).
+    from app.modules.utility.services.tariff_cache import tariff_cache
+    t = tariff_cache.get_effective_tariff(user=user, room=room) or \
         (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().first()
 
     history = (await db.execute(

@@ -93,6 +93,17 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
                 tariff_name_raw = str(row[11]).strip() if len(row) > 11 and row[11] else None
                 tariff_id = None
 
+                # Тип жильца (опциональная колонка 13). Допускаются варианты:
+                #   'family' / 'семья' / '' / None → family (default)
+                #   'single' / 'холостяк' / 'койко' → single + per_capita
+                rt_raw = (str(row[12]).strip().lower() if len(row) > 12 and row[12] else "")
+                if rt_raw in ("single", "холостяк", "холост", "койко", "койко-место"):
+                    resident_type = "single"
+                    billing_mode = "per_capita"
+                else:
+                    resident_type = "family"
+                    billing_mode = "by_meter"
+
                 if tariff_name_raw:
                     norm_tariff = tariff_name_raw.lower()
                     if norm_tariff in existing_tariffs:
@@ -144,17 +155,32 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
 
                     if normalized_username in existing_users:
                         user = existing_users[normalized_username]
-                        # Обновляем пользователя
+                        # Обновляем пользователя.
+                        # ВАЖНО: переезд через сервис — закроет старую RoomAssignment и
+                        # откроет новую. Для импорта это критично: иначе у уже существующих
+                        # жильцов после массового импорта потеряется история проживания.
                         user.workplace = workplace
                         user.residents_count = residents_count
-                        user.room_id = room.id
+                        if user.room_id != room.id:
+                            from app.modules.utility.services.room_assignment import (
+                                move_user_to_room,
+                            )
+                            await move_user_to_room(
+                                db, user=user, new_room_id=room.id, note="excel-import",
+                            )
                         if tariff_id is not None:
                             user.tariff_id = tariff_id
+                        # resident_type / billing_mode обновляем только если в Excel явно указан single —
+                        # чтобы случайно не «пересадить» уже корректно настроенных family.
+                        if resident_type == "single":
+                            user.resident_type = resident_type
+                            user.billing_mode = billing_mode
                         if password and password != username:  # Если пароль был явно передан
                             user.hashed_password = hashed_password
                         updated_users += 1
                     else:
-                        # Создаем пользователя
+                        # Создаем пользователя. room_id ставим напрямую — для скорости bulk-импорта.
+                        # RoomAssignment засеется одним батчем после commit (см. ниже).
                         new_user = User(
                             username=username,
                             hashed_password=hashed_password,
@@ -163,6 +189,8 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
                             residents_count=residents_count,
                             room_id=room.id,
                             tariff_id=tariff_id,
+                            resident_type=resident_type,
+                            billing_mode=billing_mode,
                             is_deleted=False
                         )
                         db.add(new_user)
@@ -174,6 +202,38 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
                 errors.append(f"Строка {row_index}: Непредвиденная ошибка - {str(error)}")
 
         await db.commit()
+
+        # Bulk-сид RoomAssignment для НОВЫХ жильцов (тех у кого ещё не было
+        # активной записи). Делаем одним запросом — медленно делать N flush'ей
+        # для импорта на 1000+ строк. Активная запись определяется как
+        # moved_out_at IS NULL.
+        from sqlalchemy import select as _select
+        from app.modules.utility.models import RoomAssignment as _RA
+        users_with_room = (await db.execute(
+            _select(User.id, User.room_id).where(
+                User.is_deleted.is_(False),
+                User.room_id.is_not(None),
+                User.username.in_([u.username for u in existing_users.values()]),
+            )
+        )).all()
+        if users_with_room:
+            uids = [u[0] for u in users_with_room]
+            existing_active = {
+                row[0] for row in (await db.execute(
+                    _select(_RA.user_id).where(
+                        _RA.user_id.in_(uids),
+                        _RA.moved_out_at.is_(None),
+                    )
+                )).all()
+            }
+            new_assignments = [
+                _RA(user_id=uid, room_id=rid, note="excel-import (bulk seed)")
+                for uid, rid in users_with_room if uid not in existing_active
+            ]
+            if new_assignments:
+                db.add_all(new_assignments)
+                await db.commit()
+
         await asyncio.to_thread(workbook.close)
 
         return {

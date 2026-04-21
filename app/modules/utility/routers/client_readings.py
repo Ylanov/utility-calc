@@ -115,6 +115,15 @@ async def get_reading_state(
             is_draft = not current_reading.is_approved
             is_already_approved = current_reading.is_approved
 
+    # Для холостяков (per_capita) клиент должен скрыть форму ввода счётчиков
+    # и показать только сумму к оплате. Подтягиваем сумму из тарифа.
+    bm = getattr(user, "billing_mode", "by_meter")
+    per_capita_amount = None
+    if bm == "per_capita":
+        from app.modules.utility.services.tariff_cache import tariff_cache
+        eff_t = tariff_cache.get_effective_tariff(user=user, room=user.room)
+        per_capita_amount = eff_t.per_capita_amount if eff_t else None
+
     return {
         "period_name": period.name if period else None,
         "prev_hot": prev_hot,
@@ -137,6 +146,8 @@ async def get_reading_state(
         "cost_social_rent": current_reading.cost_social_rent if current_reading else None,
         "cost_waste": current_reading.cost_waste if current_reading else None,
         "cost_fixed_part": current_reading.cost_fixed_part if current_reading else None,
+        "billing_mode": bm,
+        "per_capita_amount": per_capita_amount,
     }
 
 
@@ -155,26 +166,38 @@ async def save_reading(
         select(User).options(selectinload(User.room)).where(User.id == current_user.id)
     )).scalars().first()
 
+    # Холостяк (per_capita) платит фикс. сумму, счётчики не передаются — отвергаем POST
+    # с понятным сообщением. Иначе клиент будет «отправлять впустую» — данные не сохранятся.
+    if user and getattr(user, "billing_mode", "by_meter") == "per_capita":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Вы оформлены на «койко-место»: показания счётчиков не подаются. "
+                "Сумма к оплате фиксированная, см. в личном кабинете."
+            ),
+        )
+
     if not user or not user.room_id:
         raise HTTPException(status_code=400, detail="Вы не привязаны к помещению для подачи показаний.")
 
     room = user.room
 
-    # 1. ПАРАЛЛЕЛЬНЫЕ ЗАПРОСЫ
-    period_task = db.execute(select(BillingPeriod).where(BillingPeriod.is_active))
-    tariff_task = db.execute(select(Tariff).where(Tariff.id == (getattr(user, 'tariff_id', None) or 1)))
-
-    period_res, tariff_res = await asyncio.gather(period_task, tariff_task)
-
-    period = period_res.scalars().first()
+    # 1. ЗАПРОСЫ. Тариф берём из in-memory кеша по правильному приоритету
+    # (Room.tariff_id → User.tariff_id → default), без обращения к БД.
+    from app.modules.utility.services.tariff_cache import tariff_cache
+    period = (await db.execute(
+        select(BillingPeriod).where(BillingPeriod.is_active)
+    )).scalars().first()
     if not period:
         raise HTTPException(400, "Расчетный период закрыт")
-
-    tariff = tariff_res.scalars().first()
+    tariff = tariff_cache.get_effective_tariff(user=user, room=room)
     if not tariff:
-        tariff = (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().first()
-        if not tariff:
-            raise HTTPException(500, "Тариф не найден")
+        # Кеш пуст / БД ещё не сидирована — fallback на любой активный тариф.
+        tariff = (await db.execute(
+            select(Tariff).where(Tariff.is_active)
+        )).scalars().first()
+    if not tariff:
+        raise HTTPException(500, "Тариф не найден")
 
     # 2. ИСПРАВЛЕНИЕ race condition: используем SELECT FOR UPDATE чтобы заблокировать
     # черновик на время транзакции. Два соседа не смогут одновременно создать дубль.
@@ -359,6 +382,16 @@ async def get_client_finance(
         )).scalars().first()
         if current_reading and current_reading.total_cost is not None:
             current_total = Decimal(current_reading.total_cost)
+        elif getattr(current_user, "billing_mode", "by_meter") == "per_capita":
+            # Холостяк физически не подаёт показания, а значит MeterReading
+            # за текущий период может отсутствовать. Для UX показываем ему
+            # ожидаемую к оплате сумму из тарифа (пусть видит цифру заранее).
+            from app.modules.utility.services.tariff_cache import tariff_cache
+            t = tariff_cache.get_effective_tariff(
+                user=current_user, room=getattr(current_user, "room", None),
+            )
+            if t and t.per_capita_amount is not None:
+                current_total = Decimal(str(t.per_capita_amount))
 
     return {
         "debt_209": Decimal(debt_209 or 0),

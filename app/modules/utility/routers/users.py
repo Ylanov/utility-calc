@@ -175,6 +175,12 @@ async def create_user(
 
     await _validate_tariff_id(new_user.tariff_id, db)
 
+    # Если переданы resident_type=single без явного billing_mode — авто-вывод.
+    rt = getattr(new_user, "resident_type", "family")
+    bm = getattr(new_user, "billing_mode", None) or (
+        "per_capita" if rt == "single" else "by_meter"
+    )
+
     db_user = User(
         username=new_user.username,
         hashed_password=get_password_hash(new_user.password),
@@ -182,17 +188,32 @@ async def create_user(
         workplace=new_user.workplace,
         residents_count=new_user.residents_count,
         tariff_id=new_user.tariff_id,
-        room_id=new_user.room_id,
+        # room_id выставится через move_user_to_room ниже — вместе с RoomAssignment.
+        room_id=None,
+        resident_type=rt,
+        billing_mode=bm,
         is_deleted=False,
         is_initial_setup_done=False
     )
     db.add(db_user)
+    await db.flush()  # нужен db_user.id для room_assignments.user_id FK
+
+    # Открываем активную RoomAssignment, если жильца сразу селят в комнату.
+    if new_user.room_id:
+        from app.modules.utility.services.room_assignment import move_user_to_room
+        await move_user_to_room(
+            db, user=db_user, new_room_id=new_user.room_id,
+            note="initial assignment",
+        )
 
     # ЗАПИСЬ В ЖУРНАЛ: Создание пользователя
     await write_audit_log(
         db, current_user.id, current_user.username,
         action="create", entity_type="user",
-        details={"new_username": new_user.username, "role": new_user.role}
+        details={
+            "new_username": new_user.username, "role": new_user.role,
+            "resident_type": rt, "billing_mode": bm,
+        }
     )
 
     await db.commit()

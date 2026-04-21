@@ -278,6 +278,21 @@ async def _apply_approve(
     if not user.room_id:
         raise HTTPException(status_code=400, detail="Жилец не привязан к помещению")
 
+    # Холостяк (per_capita) не подаёт показания счётчиков — платит фикс. сумму
+    # за койко-место. Если всё-таки пришла подача от его ФИО (например, кто-то
+    # в комнате сдал за всех) — это ошибка матчинга, а не их подача.
+    # Отклоняем строку с понятным сообщением — админ должен переназначить
+    # на другого жильца (например, family в той же комнате) или отклонить.
+    if getattr(user, "billing_mode", "by_meter") == "per_capita":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Жилец «{user.username}» оформлен на койко-место (per_capita) "
+                "и физически не подаёт показания счётчиков. "
+                "Используйте «Переназначить» чтобы привязать подачу к семейному жильцу этой комнаты."
+            ),
+        )
+
     # Текущий активный период — к нему привяжем показание.
     active_period = (await db.execute(
         select(BillingPeriod).where(BillingPeriod.is_active.is_(True))

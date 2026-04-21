@@ -206,9 +206,10 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
     if not room:
         raise HTTPException(status_code=400, detail="Жилец не привязан к помещению")
 
-    t = (await db.execute(
-        select(Tariff).where(Tariff.id == (getattr(user, 'tariff_id', None) or 1)))
-         ).scalars().first() or (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().first()
+    # Через единый кеш с приоритетом Room → User → default.
+    from app.modules.utility.services.tariff_cache import tariff_cache
+    t = tariff_cache.get_effective_tariff(user=user, room=room) or \
+        (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().first()
 
     prev = (await db.execute(
         select(MeterReading)

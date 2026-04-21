@@ -39,6 +39,9 @@ class RoomCreate(BaseModel):
     hw_meter_serial: Optional[str] = None
     cw_meter_serial: Optional[str] = None
     el_meter_serial: Optional[str] = None
+    # Тариф конкретной комнаты (опциональный). Если задан — у всех её жильцов
+    # этот тариф побеждает их персональный (см. tariff_cache.get_effective_tariff).
+    tariff_id: Optional[int] = None
 
 
 class RoomUpdate(BaseModel):
@@ -49,6 +52,7 @@ class RoomUpdate(BaseModel):
     hw_meter_serial: Optional[str] = None
     cw_meter_serial: Optional[str] = None
     el_meter_serial: Optional[str] = None
+    tariff_id: Optional[int] = None
 
 
 class RoomResponse(BaseModel):
@@ -60,6 +64,7 @@ class RoomResponse(BaseModel):
     hw_meter_serial: Optional[str] = None
     cw_meter_serial: Optional[str] = None
     el_meter_serial: Optional[str] = None
+    tariff_id: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -245,6 +250,11 @@ class ReadingStateResponse(BaseModel):
     cost_social_rent: Optional[Decimal] = None
     cost_waste: Optional[Decimal] = None
     cost_fixed_part: Optional[Decimal] = None
+
+    # Для UX: если жилец на per_capita — клиент скрывает форму ввода счётчиков
+    # и показывает «к оплате X ₽ (койко-место по тарифу)».
+    billing_mode: str = "by_meter"
+    per_capita_amount: Optional[Decimal] = None  # фикс. сумма из тарифа жильца
 
 
 class ApproveRequest(BaseModel):

@@ -85,10 +85,12 @@ def generate_receipt_task(reading_id: int) -> dict:
             room = user.room
             period = reading.period
 
-            user_tariff_id = getattr(user, 'tariff_id', None)
-            tariff = None
-            if user_tariff_id:
-                tariff = db.query(Tariff).filter(Tariff.id == user_tariff_id).first()
+            # Тариф через единый сервис: Room.tariff_id → User.tariff_id → default.
+            # Раньше код смотрел только User.tariff_id и не учитывал назначение
+            # тарифа на комнату/общежитие → у жильцов в общежитии с особым тарифом
+            # квитанция приходила по дефолтному.
+            from app.modules.utility.services.tariff_cache import tariff_cache
+            tariff = tariff_cache.get_effective_tariff(user=user, room=room)
             if not tariff:
                 tariff = db.query(Tariff).filter(Tariff.is_active).order_by(Tariff.id).first()
             if not tariff:
@@ -209,7 +211,9 @@ def start_bulk_receipt_generation(period_id: int):
                                 MeterReading.created_at < r.created_at
                             ).order_by(MeterReading.created_at.desc()).first()
 
-                            tariff = db.query(Tariff).filter(Tariff.id == r.user.tariff_id).first() if r.user.tariff_id else default_tariff
+                            # Через единый кеш: Room.tariff_id → User.tariff_id → default
+                            from app.modules.utility.services.tariff_cache import tariff_cache
+                            tariff = tariff_cache.get_effective_tariff(user=r.user, room=r.user.room) or default_tariff
 
                             # Генерируем PDF локально
                             pdf_path = generate_receipt_pdf(
@@ -449,6 +453,18 @@ def activate_scheduled_tariffs_task():
                 logger.info(f"[TARIFF] Activated tariff '{t.name}' (id={t.id}), effective_from={t.effective_from}")
 
             db.commit()
+
+            # ВАЖНО: без invalidate кеш tariff_cache на 10 мин продолжит
+            # отдавать старые (is_active=False) тарифы как «несуществующие»,
+            # и приоритет «Room.tariff_id» провалится на default. После этого
+            # коммита нужно явно сбросить кеш, чтобы новые тарифы сразу
+            # применялись в расчётах.
+            try:
+                from app.modules.utility.services.tariff_cache import tariff_cache
+                tariff_cache.invalidate()
+            except Exception:
+                logger.warning("[TARIFF] Could not invalidate tariff_cache after activation")
+
             logger.info(f"[TARIFF] Activated {len(activated_ids)} tariff(s).")
             return {"activated": len(activated_ids), "ids": activated_ids}
 
@@ -470,6 +486,14 @@ def detect_anomalies_task(reading_id: int):
             ).filter(MeterReading.id == reading_id).first()
 
             if not reading or reading.is_approved or not reading.room_id:
+                return
+
+            # Пропускаем анализ для холостяков (per_capita) — они не подают
+            # показания счётчиков, алгоритмы SPIKE/FLAT/TREND бесполезны и
+            # создают шум в «Центре анализа». Для них релевантны только
+            # финансовые флаги (DEBT_GROWING и др., считаются в другом месте).
+            if reading.user and getattr(reading.user, "billing_mode", "by_meter") == "per_capita":
+                logger.debug(f"Skipping anomaly detection for per_capita user (reading={reading.id})")
                 return
 
             history = db.query(MeterReading).filter(

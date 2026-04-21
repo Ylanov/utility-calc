@@ -107,6 +107,19 @@ async def get_dashboard_kpi(
     )
     occupied_rooms = occupied_rooms_result.scalar_one()
 
+    # Комнаты ГДЕ ЕСТЬ ХОТЯ БЫ ОДИН by_meter жилец. Только они физически могут
+    # «сдать показания». Комнаты, где только холостяки на per_capita, не должны
+    # портить процент «сдачи» (они не сдают по определению).
+    rooms_with_metered_user_result = await db.execute(
+        select(func.count(func.distinct(User.room_id))).where(
+            User.is_deleted.is_(False),
+            User.room_id.is_not(None),
+            User.role == "user",
+            User.billing_mode == "by_meter",
+        )
+    )
+    rooms_with_metered_user = rooms_with_metered_user_result.scalar_one()
+
     # === АКТИВНЫЙ ПЕРИОД ===
     active_period = (await db.execute(
         select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
@@ -147,12 +160,17 @@ async def get_dashboard_kpi(
         )
         ap = approved_stats.one()
 
-        pct = round(submitted / occupied_rooms * 100) if occupied_rooms > 0 else 0
+        # % рассчитываем от комнат С BY_METER-ЖИЛЬЦАМИ, не от всех занятых.
+        # Это честнее: комнаты одиночек не могут сдать, включать их в
+        # знаменатель — занижать метрику без вины.
+        denom = rooms_with_metered_user if rooms_with_metered_user > 0 else occupied_rooms
+        pct = round(submitted / denom * 100) if denom > 0 else 0
 
         period_data = {
             "name": active_period.name,
             "submitted_rooms": submitted,
             "total_occupied_rooms": occupied_rooms,
+            "rooms_expected_to_submit": rooms_with_metered_user,
             "submit_percent": pct,
             "total_drafts": ds[0],
             "anomalies": ds[1],

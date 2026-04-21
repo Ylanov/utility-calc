@@ -50,11 +50,14 @@ async def get_receipt_pdf(
 
     user, room = reading.user, reading.user.room
 
-    tariff = (
-        await db.execute(select(Tariff).where(Tariff.id == (getattr(user, 'tariff_id', None) or 1)))).scalars().first()
+    # Тариф через единый сервис: Room.tariff_id → User.tariff_id → default.
+    # tariff_cache использует in-memory кеш и учитывает приоритет комнатной привязки.
+    from app.modules.utility.services.tariff_cache import tariff_cache
+    tariff = tariff_cache.get_effective_tariff(user=user, room=room)
     if not tariff:
         tariff = (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().first()
-        if not tariff: raise HTTPException(404, "Активный тариф не найден")
+        if not tariff:
+            raise HTTPException(404, "Активный тариф не найден")
 
     prev = (await db.execute(
         select(MeterReading)
@@ -131,9 +134,9 @@ async def stream_admin_receipt(
 
     user, room = reading.user, reading.user.room
 
-    tariff = (
-        await db.execute(select(Tariff).where(Tariff.id == (getattr(user, 'tariff_id', None) or 1)))
-    ).scalars().first()
+    # Тариф через единый сервис (Room.tariff_id → User.tariff_id → default).
+    from app.modules.utility.services.tariff_cache import tariff_cache
+    tariff = tariff_cache.get_effective_tariff(user=user, room=room)
     if not tariff:
         tariff = (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().first()
         if not tariff:
