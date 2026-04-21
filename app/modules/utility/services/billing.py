@@ -119,7 +119,12 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
 
         # Расчет внутри чанка
         for user in chunk_users:
-            user_tariff = tariffs_map.get(getattr(user, "tariff_id", None)) or default_tariff
+            # Через единый кеш + приоритет Room.tariff_id → User.tariff_id → default.
+            from app.modules.utility.services.tariff_cache import tariff_cache
+            user_tariff = (
+                tariff_cache.get_effective_tariff(user=user, room=getattr(user, "room", None))
+                or default_tariff
+            )
             history = history_map.get(user.room_id, [])
             history.sort(key=lambda r: r.created_at, reverse=True)
 

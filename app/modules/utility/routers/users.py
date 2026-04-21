@@ -294,6 +294,49 @@ async def read_user(user_id: int, db: AsyncSession = Depends(get_db)):
     return user
 
 
+@router.get("/{user_id}/residence-history", dependencies=[Depends(allow_accountant)])
+async def get_residence_history(user_id: int, db: AsyncSession = Depends(get_db)):
+    """История проживания жильца — где и когда жил.
+
+    Используется в админке: вкладка «Жильцы» → клик по жильцу → история комнат.
+    Также можно посмотреть «кто жил в комнате X в период Y» через сервис
+    get_room_residents_at, но это пока не вынесено в HTTP-эндпоинт.
+    """
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+
+    from app.modules.utility.services.room_assignment import get_user_history
+    history = await get_user_history(db, user_id, limit=100)
+
+    # Подгружаем комнаты разом одним запросом (вместо N+1)
+    room_ids = list({h.room_id for h in history})
+    rooms_map = {}
+    if room_ids:
+        rooms = (await db.execute(select(Room).where(Room.id.in_(room_ids)))).scalars().all()
+        rooms_map = {r.id: r for r in rooms}
+
+    return {
+        "user": {"id": user.id, "username": user.username},
+        "current_room_id": user.room_id,
+        "items": [
+            {
+                "id": h.id,
+                "room_id": h.room_id,
+                "room": (
+                    f"{rooms_map[h.room_id].dormitory_name}, ком. {rooms_map[h.room_id].room_number}"
+                    if h.room_id in rooms_map else None
+                ),
+                "moved_in_at": h.moved_in_at.isoformat() if h.moved_in_at else None,
+                "moved_out_at": h.moved_out_at.isoformat() if h.moved_out_at else None,
+                "is_current": h.moved_out_at is None,
+                "note": h.note,
+            }
+            for h in history
+        ],
+    }
+
+
 @router.put("/{user_id}", response_model=UserResponse)
 async def update_user(
         user_id: int,
@@ -317,6 +360,24 @@ async def update_user(
 
     if "password" in update_dict and update_dict["password"]:
         db_user.hashed_password = get_password_hash(update_dict.pop("password"))
+
+    # Переезд: если меняется room_id — пишем в историю проживания (RoomAssignment).
+    # Раньше менялось одной строчкой setattr — без следов; теперь через сервис.
+    if "room_id" in update_dict and update_dict["room_id"] != db_user.room_id:
+        from app.modules.utility.services.room_assignment import move_user_to_room
+        await move_user_to_room(
+            db, user=db_user,
+            new_room_id=update_dict.pop("room_id"),
+            note="reassigned via update_user",
+        )
+
+    # Согласованность типа жильца и режима оплаты:
+    # 'single' → автоматически 'per_capita', 'family' → 'by_meter'.
+    # Если админ хочет нестандартное (single+by_meter), он явно передаст оба поля.
+    if "resident_type" in update_dict and "billing_mode" not in update_dict:
+        update_dict["billing_mode"] = (
+            "per_capita" if update_dict["resident_type"] == "single" else "by_meter"
+        )
 
     for key, value in update_dict.items():
         setattr(db_user, key, value)
@@ -392,17 +453,20 @@ async def relocate_user(
         raise HTTPException(status_code=404, detail="Пользователь не найден")
 
     action = "evict" if data.is_eviction else "move"
+    from app.modules.utility.services.room_assignment import move_user_to_room
 
     if action == "evict":
         user.is_deleted = True
         user.username = f"{user.username}_deleted_{user.id}"
-        user.room_id = None
+        # Закрываем активную RoomAssignment (moved_out_at = now), новой не создаём
+        await move_user_to_room(db, user=user, new_room_id=None, note="evicted")
         message = "Жилец успешно выселен. Финальная квитанция сформирована."
     elif action == "move":
         new_room = await db.get(Room, data.new_room_id)
         if not new_room:
             raise HTTPException(status_code=404, detail="Новая комната не найдена")
-        user.room_id = new_room.id
+        await move_user_to_room(db, user=user, new_room_id=new_room.id,
+                                note=f"relocate to {new_room.dormitory_name}/{new_room.room_number}")
         message = f"Финальная квитанция сформирована. Жилец переведен в {new_room.dormitory_name}, ком. {new_room.room_number}."
 
     # ЗАПИСЬ В ЖУРНАЛ: Переселение/Выселение

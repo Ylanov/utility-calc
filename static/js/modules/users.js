@@ -68,7 +68,11 @@ export const UsersModule = {
                 infoCap: document.getElementById('editInfoCap'),
                 infoHw: document.getElementById('editInfoHw'),
                 infoCw: document.getElementById('editInfoCw'),
-                infoEl: document.getElementById('editInfoEl')
+                infoEl: document.getElementById('editInfoEl'),
+                residentType: document.getElementById('editResidentType'),
+                billingMode: document.getElementById('editBillingMode'),
+                btnHistory: document.getElementById('btnShowResidenceHistory'),
+                historyContainer: document.getElementById('editResidenceHistory'),
             },
             btnClose: document.querySelector('#userEditModal .close-btn')
         };
@@ -323,6 +327,54 @@ export const UsersModule = {
             if (inputs.tariff) inputs.tariff.value = user.tariff_id || '';
             if (inputs.residents) inputs.residents.value = user.residents_count;
             if (inputs.work) inputs.work.value = user.workplace || '';
+            if (inputs.residentType) inputs.residentType.value = user.resident_type || 'family';
+            if (inputs.billingMode) inputs.billingMode.value = user.billing_mode || 'by_meter';
+
+            // Авто-подбор billing_mode при смене типа: single → per_capita.
+            // Админ может оставить выбор вручную (но прозрачно, не молча).
+            if (inputs.residentType && inputs.billingMode) {
+                inputs.residentType.onchange = () => {
+                    inputs.billingMode.value =
+                        inputs.residentType.value === 'single' ? 'per_capita' : 'by_meter';
+                };
+            }
+
+            // История проживания — по кнопке (lazy load).
+            if (inputs.btnHistory && inputs.historyContainer) {
+                inputs.historyContainer.style.display = 'none';
+                inputs.historyContainer.innerHTML = '';
+                inputs.btnHistory.onclick = async () => {
+                    const c = inputs.historyContainer;
+                    if (c.style.display !== 'none') {
+                        c.style.display = 'none';
+                        return;
+                    }
+                    c.style.display = 'block';
+                    c.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Загрузка…';
+                    try {
+                        const data = await api.get(`/users/${user.id}/residence-history`);
+                        if (!data.items?.length) {
+                            c.innerHTML = '<span style="color:var(--text-secondary);">История пока пустая.</span>';
+                            return;
+                        }
+                        const fmt = (s) => s ? new Date(s).toLocaleDateString('ru-RU') : null;
+                        c.innerHTML = data.items.map(it => `
+                            <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border-color);">
+                                <div>
+                                    <strong>${it.room || `комната #${it.room_id}`}</strong>
+                                    ${it.is_current ? '<span style="margin-left:8px; padding:1px 6px; border-radius:8px; background:#d1fae5; color:#065f46; font-size:10px; font-weight:600;">сейчас</span>' : ''}
+                                    ${it.note ? `<div style="color:var(--text-secondary); font-size:11px;">${it.note}</div>` : ''}
+                                </div>
+                                <div style="font-size:11px; color:var(--text-secondary); text-align:right;">
+                                    ${fmt(it.moved_in_at) || '—'}
+                                    ${it.moved_out_at ? ` → ${fmt(it.moved_out_at)}` : ' → сейчас'}
+                                </div>
+                            </div>`).join('');
+                    } catch (e) {
+                        c.innerHTML = `<span style="color:var(--danger-color);">Ошибка: ${e.message}</span>`;
+                    }
+                };
+            }
 
             if (user.room) {
                 if (inputs.dormSelect) {
@@ -367,7 +419,9 @@ export const UsersModule = {
             tariff_id: tariffIdVal ? parseInt(tariffIdVal) : null,
             room_id: roomIdVal ? parseInt(roomIdVal) : null,
             residents_count: parseInt(this.modal.inputs.residents.value),
-            workplace: this.modal.inputs.work.value.trim()
+            workplace: this.modal.inputs.work.value.trim(),
+            resident_type: this.modal.inputs.residentType?.value || 'family',
+            billing_mode: this.modal.inputs.billingMode?.value || 'by_meter',
         };
 
         if (this.modal.inputs.password.value) {

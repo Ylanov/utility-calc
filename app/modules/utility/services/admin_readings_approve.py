@@ -110,7 +110,10 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
         cur_cold = D(reading.cold_water)
         cur_elect = D(reading.electricity)
 
-        user_tariff = tariffs_map.get(user.tariff_id) if getattr(user, 'tariff_id', None) else default_tariff
+        # Единая логика выбора тарифа: Room.tariff_id → User.tariff_id → default.
+        # Использует in-memory кеш (TTL 600s), не делает SELECT на каждом reading.
+        from app.modules.utility.services.tariff_cache import tariff_cache
+        user_tariff = tariff_cache.get_effective_tariff(user=user, room=room) or default_tariff
         residents_count = user.residents_count if user.residents_count is not None else 1
         total_room = room.total_room_residents if room.total_room_residents > 0 else 1
 

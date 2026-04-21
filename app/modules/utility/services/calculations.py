@@ -39,6 +39,32 @@ def safe_positive(value: Decimal) -> Decimal:
     return value if value > ZERO else ZERO
 
 
+def calculate_per_capita(user, tariff, fraction=Decimal("1")) -> dict:
+    """Расчёт для холостяков, оплачивающих койко-место.
+
+    Это «плоская» сумма из тарифа per_capita_amount: счётчики у одиночек
+    в одной квартире не разделяются индивидуально (физически невозможно),
+    поэтому каждый холостяк платит фиксированную ставку, привязанную к
+    тарифу его проживания.
+
+    Возвращает ту же структуру что и calculate_utilities, чтобы вызывающий
+    код мог не различать ветки. Все компоненты счётчиков = 0; вся сумма
+    идёт в cost_fixed_part и в total_cost.
+    """
+    amount = quantize_money(D(getattr(tariff, "per_capita_amount", 0)) * D(fraction))
+    return {
+        "cost_hot_water":   ZERO,
+        "cost_cold_water":  ZERO,
+        "cost_sewage":      ZERO,
+        "cost_electricity": ZERO,
+        "cost_maintenance": ZERO,
+        "cost_social_rent": ZERO,
+        "cost_waste":       ZERO,
+        "cost_fixed_part":  amount,   # вся сумма попадает в «фиксированную часть»
+        "total_cost":       amount,
+    }
+
+
 def calculate_utilities(
         user,
         room,
@@ -68,6 +94,15 @@ def calculate_utilities(
       ТКО        = площадь * тариф * доля_дней
       Фиксир.    = площадь * (тариф_отопления + ОДН_электро) * доля_дней
     """
+
+    # ─────────────────────────────────────────────────
+    # Если жилец на per_capita (холостяк, платит за койко-место) — счётчиков нет.
+    # Делегируем calculate_per_capita и возвращаемся. Это защитная сетка:
+    # вызывающий код может забыть проверить billing_mode и передать объёмы —
+    # мы их игнорируем, потому что для одиночек это нерелевантно.
+    # ─────────────────────────────────────────────────
+    if getattr(user, "billing_mode", "by_meter") == "per_capita":
+        return calculate_per_capita(user, tariff, fraction=fraction)
 
     # ─────────────────────────────────────────────────
     # Объёмы: приводим к Decimal, защищаем от отрицательных значений.

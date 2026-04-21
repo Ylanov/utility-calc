@@ -104,6 +104,10 @@ SETTINGS_SEED = [
     ("finance.missing_receipt.enabled", "true", "bool", "finance",
      "Жилец занимает комнату, но за этот период нет утверждённого MeterReading.",
      None, None, True),
+    ("finance.wrong_billing_mode.enabled", "true", "bool", "finance",
+     "Несоответствие типа жильца и режима оплаты (single по счётчикам или family"
+     " за койко-место).",
+     None, None, True),
 ]
 
 

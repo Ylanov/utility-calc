@@ -193,6 +193,41 @@
                             <input type="text" id="editWorkplace">
                         </div>
                     </div>
+
+                    <!-- Тип жильца определяет МЕТОД РАСЧЁТА:
+                         family → по счётчикам (как раньше),
+                         single → за койко-место (фикс. сумма из тарифа). -->
+                    <div class="form-grid-2" style="margin-top:8px;">
+                        <div class="form-group">
+                            <label>Тип жильца</label>
+                            <select id="editResidentType">
+                                <option value="family">Семейный (платит по счётчикам)</option>
+                                <option value="single">Холостяк (койко-место)</option>
+                            </select>
+                            <p class="hint-text" style="margin:4px 0 0;font-size:11px;">
+                                Холостяки автоматически переключаются на «За койко-место» из тарифа.
+                            </p>
+                        </div>
+                        <div class="form-group">
+                            <label>Режим оплаты</label>
+                            <select id="editBillingMode">
+                                <option value="by_meter">По счётчикам</option>
+                                <option value="per_capita">За койко-место (фикс. сумма)</option>
+                            </select>
+                            <p class="hint-text" style="margin:4px 0 0;font-size:11px;">
+                                Обычно вытекает из типа, но можно переопределить вручную.
+                            </p>
+                        </div>
+                    </div>
+
+                    <!-- История переездов: подгружается при открытии модалки.
+                         Полезно для аудита: «жил в комнате A с такого-то, переехал в B». -->
+                    <div style="margin-top:12px;">
+                        <button type="button" id="btnShowResidenceHistory" class="action-btn secondary-btn" style="padding:6px 12px; font-size:12px;">
+                            <i class="fa-solid fa-clock-rotate-left"></i> История проживания
+                        </button>
+                        <div id="editResidenceHistory" style="display:none; margin-top:10px; padding:10px; background:var(--bg-page); border-radius:8px; font-size:12px;"></div>
+                    </div>
                 </div>
                 <div class="modal-footer">
                     <button type="button" class="action-btn secondary-btn close-btn">Отмена</button>

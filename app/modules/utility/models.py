@@ -49,6 +49,14 @@ class Room(Base):
     last_cold_water = Column(Numeric(12, 3), default=0.000)
     last_electricity = Column(Numeric(12, 3), default=0.000)
 
+    # Тариф конкретного помещения. Опциональный.
+    # Приоритет матча: Room.tariff_id → User.tariff_id → default (id=1).
+    # Это позволяет сценарий «всё общежитие № 5 на тарифе А, а № 7 на тарифе Б»
+    # массово, без обновления каждого жильца. Меняем тариф у комнаты — для всех её
+    # жильцов он применится автоматически (через get_effective_tariff в tariff_cache).
+    tariff_id = Column(Integer, ForeignKey("tariffs.id"), nullable=True, index=True)
+    tariff = relationship("Tariff", foreign_keys=[tariff_id])
+
     # НОВОЕ: Отслеживание последнего изменения
     updated_at = Column(DateTime, nullable=True, onupdate=_utcnow)
 
@@ -75,6 +83,22 @@ class User(Base):
 
     workplace = Column(String, nullable=True)
     residents_count = Column(Integer, default=1)
+
+    # Тип жильца — определяет, как считаются коммуналка.
+    #   'family' — семья (1 или несколько человек, residents_count >= 1).
+    #              Платит по СЧЁТЧИКАМ (ГВС/ХВС/электр) + фикс. часть (содержание/наём/ТКО/отопление).
+    #   'single' — холостяк (одиночное проживание, обычно с другими холостяками
+    #              в одной комнате). Платит за КОЙКО-МЕСТО (фиксированная сумма из тарифа,
+    #              независимо от показаний счётчиков).
+    # По умолчанию 'family' — это сохраняет старое поведение для существующих жильцов.
+    resident_type = Column(String(16), default="family", nullable=False, index=True)
+
+    # Режим начисления — техническое поле, которое следует из resident_type, но
+    # сделано отдельным чтобы:
+    #   1) можно было исключения (например семья, которой временно начисляют per_capita);
+    #   2) не ломать существующий код, который рассчитывает по billing_mode явно.
+    # Допустимые значения: 'by_meter' | 'per_capita'.
+    billing_mode = Column(String(16), default="by_meter", nullable=False, index=True)
 
     room_id = Column(Integer, ForeignKey("rooms.id"), nullable=True)
     room = relationship("Room", backref="users")
@@ -133,6 +157,13 @@ class Tariff(Base):
     waste_disposal = Column(Numeric(10, 4), default=0.0)
     electricity_per_sqm = Column(Numeric(10, 4), default=0.0)
     electricity_rate = Column(Numeric(10, 4), default=5.0)
+
+    # Фиксированная сумма за «койко-место» — для холостяков, которые живут
+    # вместе в одной квартире и каждый платит сам за себя.
+    # При billing_mode='per_capita' эта сумма становится итогом квитанции
+    # (счётчики ХВС/ГВС/Электр в этом случае НЕ учитываются индивидуально).
+    # Если 0 — холостяки в этом тарифе не используются.
+    per_capita_amount = Column(Numeric(10, 2), default=0.00, nullable=False)
 
     # Дата вступления в силу. Если задана в будущем — тариф "запланирован" (is_active=False)
     # и автоматически активируется Celery-задачей в эту дату.
@@ -488,6 +519,41 @@ class AnomalyDismissal(Base):
 
     __table_args__ = (
         Index("uq_anomaly_dismissal", "user_id", "flag_code", unique=True),
+    )
+
+
+# ======================================================
+# ROOM ASSIGNMENT — история проживания (где жил жилец)
+# ======================================================
+# Жильцы переезжают между комнатами и общежитиями: уволился — выехал, появился
+# новый — заехал в свободное место. До этой таблицы при изменении User.room_id
+# мы теряли информацию «когда уехал, куда». Это ломало:
+#   * квитанции за прошлые периоды (на чьё имя выставлять);
+#   * аналитику «текучка по общежитию»;
+#   * расчёт частичного месяца при переезде в середине периода.
+#
+# Заводится одна запись при каждом переезде: открытая (moved_out_at IS NULL) =
+# текущее место, закрытая (moved_out_at = дата выселения) = архив.
+# Для каждого жильца в любой момент времени активна РОВНО ОДНА открытая запись
+# (либо ни одной — если он уволен / не назначен в комнату).
+class RoomAssignment(Base):
+    __tablename__ = "room_assignments"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=False, index=True)
+    moved_in_at = Column(DateTime, nullable=False, default=_utcnow)
+    moved_out_at = Column(DateTime, nullable=True)  # NULL = до сих пор живёт
+    note = Column(Text, nullable=True)              # «уволен», «переезд», «в декрете»
+
+    user = relationship("User", foreign_keys=[user_id])
+    room = relationship("Room", foreign_keys=[room_id])
+
+    __table_args__ = (
+        # Поиск «активного» назначения жильца: WHERE user_id=X AND moved_out_at IS NULL.
+        Index("idx_assignment_user_active", "user_id", "moved_out_at"),
+        # «Кто жил в комнате X в период Y»: фильтр по room_id + dates.
+        Index("idx_assignment_room_dates", "room_id", "moved_in_at", "moved_out_at"),
     )
 
 

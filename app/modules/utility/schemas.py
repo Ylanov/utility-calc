@@ -72,6 +72,11 @@ AllowedRole = Literal["user", "accountant", "financier", "admin"]
 AllowedAccountType = Literal["209", "205"]
 
 
+# Тип жильца (см. User.resident_type) — пара значений, валидация на уровне схемы.
+ResidentType = Literal["family", "single"]
+BillingMode = Literal["by_meter", "per_capita"]
+
+
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=100)
     password: str = Field(..., min_length=8, max_length=128)
@@ -80,6 +85,10 @@ class UserCreate(BaseModel):
     residents_count: int = Field(1, ge=1, le=20)
     tariff_id: Optional[int] = None
     room_id: Optional[int] = None
+    # 'family' (по счётчикам) | 'single' (койко-место)
+    resident_type: ResidentType = "family"
+    # 'by_meter' (как раньше) | 'per_capita' (фикс. сумма из тарифа)
+    billing_mode: Optional[BillingMode] = None  # None → выводится из resident_type
     hw_meter_serial: Optional[str] = None
     cw_meter_serial: Optional[str] = None
     el_meter_serial: Optional[str] = None
@@ -94,6 +103,8 @@ class UserResponse(BaseModel):
     residents_count: int
 
     tariff_id: Optional[int] = None
+    resident_type: ResidentType = "family"
+    billing_mode: BillingMode = "by_meter"
 
     is_2fa_enabled: bool = False
     is_initial_setup_done: bool = False
@@ -111,6 +122,8 @@ class UserUpdate(BaseModel):
     residents_count: Optional[int] = Field(None, ge=1, le=20)
     tariff_id: Optional[int] = None
     room_id: Optional[int] = None
+    resident_type: Optional[ResidentType] = None
+    billing_mode: Optional[BillingMode] = None
     hw_meter_serial: Optional[str] = None
     cw_meter_serial: Optional[str] = None
     el_meter_serial: Optional[str] = None
@@ -147,6 +160,9 @@ class TariffSchema(BaseModel):
     waste_disposal: DecimalTariff
     electricity_per_sqm: DecimalTariff
     electricity_rate: DecimalTariff
+    # Фиксированная сумма за койко-место (для холостяков, billing_mode=per_capita).
+    # 0 = тариф не предполагает одиночек.
+    per_capita_amount: DecimalTariff = Decimal("0.00")
     # Дата вступления в силу (необязательная)
     effective_from: Optional[datetime] = None
 

@@ -27,6 +27,7 @@ FLAG_SEVERITY = {
     "OVERPAY_SUSPECT": "low",
     "HIGH_BILL_PER_PERSON": "medium",
     "MISSING_RECEIPT": "high",
+    "WRONG_BILLING_MODE": "medium",
 }
 
 
@@ -46,6 +47,8 @@ def analyze_finance(
     prev_costs: list[Decimal],          # суммы прошлых N периодов (старые → новые)
     prev_debts: list[Decimal],          # долги прошлых N периодов
     has_reading: bool,                  # есть ли MeterReading в текущем периоде вообще
+    resident_type: str = "family",      # 'family' | 'single'
+    billing_mode: str = "by_meter",     # 'by_meter' | 'per_capita'
 ) -> tuple[list[str], int]:
     """Возвращает (список финансовых флагов, suggested risk-level 0..100).
 
@@ -118,6 +121,16 @@ def analyze_finance(
             flags.append("HIGH_BILL_PER_PERSON")
             score += 20
 
+    # ---------- WRONG_BILLING_MODE ----------
+    # Несоответствие типа жильца и режима оплаты — показатель неконсистентных
+    # данных. Например, single (холостяк) всегда должен быть на per_capita,
+    # а family с counters — на by_meter. Если не так — кто-то ввёл руками.
+    if config.is_rule_enabled("finance.wrong_billing_mode"):
+        expected = "per_capita" if resident_type == "single" else "by_meter"
+        if billing_mode != expected:
+            flags.append("WRONG_BILLING_MODE")
+            score += 15
+
     return _filter_dismissed(flags, min(score, 100), user_id)
 
 
@@ -165,4 +178,7 @@ FLAG_CATALOG = [
     {"code": "MISSING_RECEIPT", "severity": "high",
      "title": "Нет квитанции за период",
      "desc": "У жильца не утверждено ни одного показания за этот период."},
+    {"code": "WRONG_BILLING_MODE", "severity": "medium",
+     "title": "Несоответствие типа жильца и режима оплаты",
+     "desc": "Холостяк (single) должен быть на per_capita, семья (family) — by_meter."},
 ]

@@ -16,7 +16,10 @@ export const TariffsModule = {
         water_supply: 't_w_sup',
         sewage: 't_sew',
         electricity_rate: 't_el_rate',
-        electricity_per_sqm: 't_el_sqm'
+        electricity_per_sqm: 't_el_sqm',
+        // Сумма за «койко-место» (для холостяков, billing_mode='per_capita').
+        // 0 = тариф для одиночек не применяется.
+        per_capita_amount: 't_per_capita',
     },
 
     // Утилита: форматировать дату для отображения
@@ -55,6 +58,20 @@ export const TariffsModule = {
             scheduledCard: document.getElementById('scheduledTariffsCard'),
             scheduledList: document.getElementById('scheduledTariffsList'),
             btnRefreshScheduled: document.getElementById('btnRefreshScheduled'),
+            // Калькулятор
+            previewArea: document.getElementById('prev_area'),
+            previewResidents: document.getElementById('prev_residents'),
+            previewHot: document.getElementById('prev_hot'),
+            previewCold: document.getElementById('prev_cold'),
+            previewElect: document.getElementById('prev_elect'),
+            previewResult: document.getElementById('tariffPreviewResult'),
+            // «Где применяется» + массовая привязка
+            usageBlock: document.getElementById('tariffUsageBlock'),
+            usageStats: document.getElementById('tariffUsageStats'),
+            usageDetails: document.getElementById('tariffUsageDetails'),
+            assignDormSelect: document.getElementById('assignDormSelect'),
+            btnAssignDorm: document.getElementById('btnAssignDorm'),
+            btnUnassignDorm: document.getElementById('btnUnassignDorm'),
         };
     },
 
@@ -90,6 +107,32 @@ export const TariffsModule = {
         if (btnSaveSchedule) {
             btnSaveSchedule.addEventListener('click', () => this.saveSchedule());
         }
+
+        // Калькулятор-превью: пересчитываем при любом изменении.
+        // Дебаунс 250ms — пользователь печатает в полях тарифа, не нагружаем сервер.
+        const debouncedPreview = this._debounce(() => this.recalcPreview(), 250);
+        const previewInputs = [
+            this.dom.previewArea, this.dom.previewResidents,
+            this.dom.previewHot, this.dom.previewCold, this.dom.previewElect,
+        ];
+        previewInputs.forEach(i => i?.addEventListener('input', debouncedPreview));
+        // Любое изменение цены тарифа тоже триггерит превью
+        Object.values(this.MAPPING).forEach(htmlId => {
+            const inp = document.getElementById(htmlId);
+            inp?.addEventListener('input', debouncedPreview);
+        });
+
+        // Массовая привязка к общежитию
+        this.dom.btnAssignDorm?.addEventListener('click', () => this.assignToDormitory(false));
+        this.dom.btnUnassignDorm?.addEventListener('click', () => this.assignToDormitory(true));
+    },
+
+    _debounce(fn, ms = 250) {
+        let t;
+        return (...args) => {
+            clearTimeout(t);
+            t = setTimeout(() => fn(...args), ms);
+        };
     },
 
     _updateScheduledAlert() {
@@ -224,6 +267,11 @@ export const TariffsModule = {
         if (this.dom.btnDelete) {
             this.dom.btnDelete.style.display = (tariff.id === 1) ? 'none' : 'block';
         }
+
+        // Загружаем «Где применяется» + список общежитий + перерисовываем превью.
+        this.loadUsage(tariff.id);
+        this.loadDormitoriesForAssign();
+        this.recalcPreview();
     },
 
     clearFormForNew() {
@@ -239,6 +287,181 @@ export const TariffsModule = {
         }
 
         if (this.dom.btnDelete) this.dom.btnDelete.style.display = 'none';
+        // Скрываем «Где применяется» — у нового тарифа ещё некого
+        if (this.dom.usageBlock) this.dom.usageBlock.style.display = 'none';
+        this.recalcPreview();
+    },
+
+    // ====================================================================
+    // КАЛЬКУЛЯТОР-ПРЕВЬЮ
+    // ====================================================================
+    /** Берёт текущие значения формы тарифа, дёргает /tariffs/preview, рисует разбивку. */
+    async recalcPreview() {
+        if (!this.dom.previewResult) return;
+
+        // Собираем тариф из формы (а не из БД) — превью должен реагировать
+        // на изменения в реальном времени, до сохранения.
+        const tariffData = {};
+        for (const [dbKey, htmlId] of Object.entries(this.MAPPING)) {
+            const inp = document.getElementById(htmlId);
+            tariffData[dbKey] = inp ? (parseFloat(inp.value) || 0) : 0;
+        }
+        const num = (id, def) => parseFloat(document.getElementById(id)?.value) || def;
+        const payload = {
+            tariff_data: tariffData,
+            apartment_area: num('prev_area', 18),
+            residents_count: parseInt(document.getElementById('prev_residents')?.value) || 1,
+            total_room_residents: parseInt(document.getElementById('prev_residents')?.value) || 1,
+            volume_hot: num('prev_hot', 3),
+            volume_cold: num('prev_cold', 5),
+            volume_electricity: num('prev_elect', 100),
+        };
+
+        try {
+            const r = await api.post('/tariffs/preview', payload);
+            this._renderPreview(r);
+        } catch (e) {
+            this.dom.previewResult.innerHTML = `<span style="color:var(--danger-color);">Ошибка калькулятора: ${escapeHtml(e.message)}</span>`;
+        }
+    },
+
+    _renderPreview(r) {
+        const fmt = v => Number(v || 0).toLocaleString('ru-RU', {
+            minimumFractionDigits: 2, maximumFractionDigits: 2,
+        }) + ' ₽';
+        const rowsHtml = Object.entries(r.breakdown)
+            .filter(([k, v]) => k !== 'total_cost' && Number(v) !== 0)
+            .map(([k, v]) => `
+                <div style="display:flex; justify-content:space-between; padding:3px 0; font-size:12px;">
+                    <span style="color:var(--text-secondary);">${escapeHtml(this._labelForCost(k))}</span>
+                    <span style="font-family:monospace;">${fmt(v)}</span>
+                </div>`).join('');
+        this.dom.previewResult.innerHTML = `
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+                <div>${rowsHtml || '<span style="color:var(--text-secondary);">Все компоненты = 0</span>'}</div>
+                <div style="border-left:1px dashed var(--border-color); padding-left:14px;">
+                    <div style="display:flex; justify-content:space-between; font-size:12px; color:var(--text-secondary);">
+                        <span>Счёт 209 (комм.)</span><span style="font-family:monospace;">${fmt(r.total_209)}</span>
+                    </div>
+                    <div style="display:flex; justify-content:space-between; font-size:12px; color:var(--text-secondary); margin-top:4px;">
+                        <span>Счёт 205 (наём)</span><span style="font-family:monospace;">${fmt(r.total_205)}</span>
+                    </div>
+                    <hr style="margin:8px 0; border:none; border-top:1px solid var(--border-color);">
+                    <div style="display:flex; justify-content:space-between; font-size:14px; font-weight:700;">
+                        <span>ИТОГО</span><span style="color:#059669;">${fmt(r.total_cost)}</span>
+                    </div>
+                </div>
+            </div>`;
+    },
+
+    _labelForCost(key) {
+        return ({
+            cost_hot_water: 'ГВС', cost_cold_water: 'ХВС', cost_sewage: 'Водоотв.',
+            cost_electricity: 'Электр.', cost_maintenance: 'Содержание', cost_social_rent: 'Наём',
+            cost_waste: 'ТКО', cost_fixed_part: 'Отопление',
+        })[key] || key;
+    },
+
+    // ====================================================================
+    // «ГДЕ ПРИМЕНЯЕТСЯ» + МАССОВАЯ ПРИВЯЗКА К ОБЩЕЖИТИЮ
+    // ====================================================================
+    async loadUsage(tariffId) {
+        if (!this.dom.usageBlock) return;
+        this.dom.usageBlock.style.display = 'block';
+        this.dom.usageStats.innerHTML = '<span style="color:var(--text-secondary);">Загрузка…</span>';
+        this.dom.usageDetails.innerHTML = '';
+        try {
+            const data = await api.get(`/tariffs/${tariffId}/usage`);
+            this._renderUsage(data);
+        } catch (e) {
+            this.dom.usageStats.innerHTML = `<span style="color:var(--danger-color);">Ошибка: ${escapeHtml(e.message)}</span>`;
+        }
+    },
+
+    _renderUsage(d) {
+        const stat = (label, value, color) => `
+            <div style="background:var(--bg-page); padding:10px 12px; border-radius:8px;">
+                <div style="font-size:11px; color:var(--text-secondary); text-transform:uppercase;">${escapeHtml(label)}</div>
+                <div style="font-size:20px; font-weight:700; color:${color};">${value}</div>
+            </div>`;
+        this.dom.usageStats.innerHTML = [
+            stat('Привязано комнат',          d.by_room.rooms_count, '#3b82f6'),
+            stat('Жильцов в этих комнатах',   d.by_room.users_in_rooms, '#10b981'),
+            stat('Персональная привязка',     d.by_user_direct.count, '#7c3aed'),
+            d.fallback_default_users
+                ? stat('На дефолте', d.fallback_default_users, '#f59e0b')
+                : '',
+            stat('Всего применяется',         d.total_effective, '#059669'),
+        ].filter(Boolean).join('');
+
+        let detailsHtml = '';
+        if (d.by_room.by_dormitory.length) {
+            detailsHtml += `
+                <div style="margin-bottom:8px;">
+                    <strong style="font-size:12px;">По общежитиям:</strong>
+                    <div style="margin-top:4px;">
+                        ${d.by_room.by_dormitory.map(g => `
+                            <span style="display:inline-block; margin:2px; padding:3px 8px; background:#dbeafe; color:#1e40af; border-radius:10px; font-size:11px; font-weight:600;">
+                                <i class="fa-solid fa-building"></i> ${escapeHtml(g.dormitory)} — ${g.rooms_count} комн.
+                            </span>`).join('')}
+                    </div>
+                </div>`;
+        }
+        if (d.by_user_direct.count > 0) {
+            detailsHtml += `<div style="font-size:11px; color:var(--text-secondary); margin-top:8px;">
+                Жильцы с персональной привязкой имеют ПРИОРИТЕТ ниже комнатной — если у их комнаты задан другой тариф, применится комнатный.
+            </div>`;
+        }
+        this.dom.usageDetails.innerHTML = detailsHtml || '';
+    },
+
+    /** Загружает уникальные общежития из существующих тарифов/комнат
+     * (через usage всех тарифов). Простой подход: дёргаем уже знакомый
+     * /housing/dormitories или (если его нет) собираем из usage активного
+     * тарифа. Здесь возьмём с housing endpoint — он есть в проекте. */
+    async loadDormitoriesForAssign() {
+        if (!this.dom.assignDormSelect) return;
+        // Один раз грузим
+        if (this.dom.assignDormSelect.dataset.loaded) return;
+        try {
+            const data = await api.get('/rooms/dormitories');
+            const list = Array.isArray(data) ? data : (data.items || []);
+            const opts = list.map(d => {
+                const name = typeof d === 'string' ? d : (d.name || d.dormitory_name || d.dormitory);
+                return `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
+            }).join('');
+            this.dom.assignDormSelect.innerHTML =
+                '<option value="">Выберите общежитие…</option>' + opts;
+            this.dom.assignDormSelect.dataset.loaded = '1';
+        } catch (e) {
+            // Фоллбек: если такого endpoint нет, пробуем взять список из текущего usage —
+            // у других тарифов могут быть привязки, в которых видны общежития. Не критично.
+            console.warn('Не удалось загрузить список общежитий:', e.message);
+        }
+    },
+
+    async assignToDormitory(unassign = false) {
+        const dorm = this.dom.assignDormSelect?.value;
+        if (!dorm) return toast('Выберите общежитие', 'warning');
+        const tariffId = parseInt(this.dom.inputId?.value);
+        if (!unassign && !tariffId) return toast('Сначала выберите тариф', 'warning');
+
+        const action = unassign
+            ? `снять комнатный тариф со ВСЕХ комнат общежития «${dorm}»?\nЖильцы вернутся на персональный тариф (или дефолтный).`
+            : `привязать тариф «${this.dom.inputName?.value || ''}» ко ВСЕМ комнатам общежития «${dorm}»?\nЭто переопределит персональные тарифы жильцов.`;
+        if (!confirm('Вы уверены — ' + action)) return;
+
+        try {
+            const r = await api.post('/tariffs/assign-to-dormitory', {
+                dormitory_name: dorm,
+                tariff_id: unassign ? null : tariffId,
+            });
+            toast(`Готово: затронуто ${r.rooms_affected} комнат`, 'success');
+            // Перезагружаем «Где применяется» для всех тарифов — состояние изменилось.
+            if (tariffId) this.loadUsage(tariffId);
+        } catch (e) {
+            toast('Ошибка: ' + e.message, 'error');
+        }
     },
 
     async loadScheduledTariffs() {

@@ -521,6 +521,8 @@ async def get_accountant_summary_v2(
             prev_costs=prev_costs,
             prev_debts=prev_debts,
             has_reading=True,
+            resident_type=getattr(user, "resident_type", "family"),
+            billing_mode=getattr(user, "billing_mode", "by_meter"),
         )
 
         if only_anomaly and not flags and not (reading.anomaly_flags or "").strip():
