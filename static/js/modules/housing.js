@@ -13,6 +13,8 @@ function escapeHtml(str) {
 export const HousingModule = {
     table: null,
     isInitialized: false,
+    tariffs: [],
+    expanded: new Set(),
 
     async init() {
         this.cacheDOM();
@@ -22,8 +24,12 @@ export const HousingModule = {
             this.isInitialized = true;
         }
 
-        await this.loadDormitories();
+        await Promise.all([
+            this.loadDormitories(),
+            this.loadTariffs(),
+        ]);
         this.initTable();
+        this.loadStats();
     },
 
     cacheDOM() {
@@ -32,6 +38,14 @@ export const HousingModule = {
             dormList: document.getElementById('dormList'),
             btnOpenAdd: document.getElementById('btnOpenAddRoom'),
             btnRefresh: document.getElementById('btnRefreshRooms'),
+            btnExport: document.getElementById('btnExportRooms'),
+
+            // Новые фильтры
+            filterOccupancy: document.getElementById('filterOccupancy'),
+            filterMissingMeter: document.getElementById('filterMissingMeter'),
+
+            // KPI
+            statsHost: document.getElementById('housingStats'),
 
             // Анализатор
             btnAnalyze: document.getElementById('btnAnalyzeHousing'),
@@ -57,6 +71,7 @@ export const HousingModule = {
                 num: document.getElementById('roomNumber'),
                 area: document.getElementById('roomArea'),
                 cap: document.getElementById('roomCapacity'),
+                tariff: document.getElementById('roomTariffId'),
                 hw: document.getElementById('roomHwSerial'),
                 cw: document.getElementById('roomCwSerial'),
                 el: document.getElementById('roomElSerial')
@@ -94,13 +109,24 @@ export const HousingModule = {
     },
 
     bindEvents() {
-        if (this.dom.btnRefresh) this.dom.btnRefresh.addEventListener('click', () => this.table.refresh());
+        if (this.dom.btnRefresh) this.dom.btnRefresh.addEventListener('click', () => {
+            this.table.refresh();
+            this.loadStats();
+        });
 
-        if (this.dom.dormFilterSelect) {
-            this.dom.dormFilterSelect.addEventListener('change', () => {
-                this.table.state.page = 1;
-                this.table.load();
-            });
+        const refilter = () => {
+            this.expanded.clear();
+            this.table.state.page = 1;
+            this.table.load();
+            this.loadStats();
+        };
+
+        if (this.dom.dormFilterSelect) this.dom.dormFilterSelect.addEventListener('change', refilter);
+        if (this.dom.filterOccupancy) this.dom.filterOccupancy.addEventListener('change', refilter);
+        if (this.dom.filterMissingMeter) this.dom.filterMissingMeter.addEventListener('change', refilter);
+
+        if (this.dom.btnExport) {
+            this.dom.btnExport.addEventListener('click', () => this.exportExcel());
         }
 
         if (this.dom.btnOpenAdd) {
@@ -256,45 +282,221 @@ export const HousingModule = {
                 pageInfo: 'roomsPageInfo'
             },
             getExtraParams: () => {
-                return { dormitory: this.dom.dormFilterSelect.value };
+                const params = {};
+                if (this.dom.dormFilterSelect?.value) params.dormitory = this.dom.dormFilterSelect.value;
+                if (this.dom.filterOccupancy?.value) params.occupancy = this.dom.filterOccupancy.value;
+                if (this.dom.filterMissingMeter?.checked) params.missing_meter = 'true';
+                return params;
             },
-            renderRow: (room) => {
-                return el('tr', { class: 'hover:bg-gray-50 transition-colors' },
-                    el('td', { class: 'text-gray-500 text-sm' }, `#${room.id}`),
-                    el('td', { style: { fontWeight: 'bold', color: '#1f2937' } }, room.dormitory_name),
-                    el('td', { style: { fontWeight: 'bold', color: '#374151' } }, room.room_number),
-                    el('td', {}, `${Number(room.apartment_area).toFixed(1)} м²`),
-                    el('td', { class: 'text-center' }, room.total_room_residents),
-                    el('td', { class: 'text-sm font-mono', style: {color: '#dc2626'} }, room.hw_meter_serial || '-'),
-                    el('td', { class: 'text-sm font-mono', style: {color: '#2563eb'} }, room.cw_meter_serial || '-'),
-                    el('td', { class: 'text-sm font-mono', style: {color: '#d97706'} }, room.el_meter_serial || '-'),
-                    el('td', { class: 'text-center' },
-                        // НОВОЕ: Кнопка установки начальных показаний
-                        el('button', {
-                            class: 'btn-icon', title: 'Начальные показания',
-                            style: { marginRight: '5px', background: '#eef2ff', color: '#4338ca', borderColor: '#c7d2fe' },
-                            onclick: () => this.openInitialModal(room)
-                        }, '📊'),
-                        el('button', {
-                            class: 'btn-icon', title: 'Замена счетчика',
-                            style: { marginRight: '5px', background: '#f0fdf4', color: '#166534', borderColor: '#bbf7d0' },
-                            onclick: () => this.openMeterModal(room)
-                        }, '🔄'),
-                        el('button', {
-                            class: 'btn-icon btn-edit', title: 'Редактировать',
-                            style: { marginRight: '5px' },
-                            onclick: () => this.openModal(room)
-                        }, '✎'),
-                        el('button', {
-                            class: 'btn-icon btn-delete', title: 'Удалить',
-                            onclick: () => this.deleteRoom(room.id)
-                        }, '🗑')
-                    )
-                );
-            }
+            renderRow: (room) => this.renderRoomRow(room),
         });
 
         this.table.init();
+    },
+
+    renderRoomRow(room) {
+        // Заполненность рассчитывается на клиенте из total_room_residents + total_residents.
+        // По домену: total_room_residents = вместимость комнаты (мест),
+        // residents_count каждого жильца = сколько он платит; резиденты мы тут
+        // не получаем (их видно через expand), поэтому в таблице даём подсказку
+        // через tint фона и чип с кол-вом мест.
+        const cap = Number(room.total_room_residents || 0);
+        const missing = !room.hw_meter_serial || !room.cw_meter_serial || !room.el_meter_serial;
+
+        const bgTint = missing ? 'background: #fffbeb;' : '';
+
+        const isOpen = this.expanded.has(room.id);
+        const chevron = el('button', {
+            class: 'btn-icon',
+            style: { background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '13px', color: 'var(--text-secondary)' },
+            title: isOpen ? 'Свернуть' : 'Показать жильцов',
+            onclick: (e) => { e.stopPropagation(); this.toggleExpand(room); },
+        }, isOpen ? '▼' : '▶');
+
+        const row = el('tr', {
+            class: 'hover:bg-gray-50 transition-colors',
+            'data-room-id': String(room.id),
+            style: bgTint ? { background: '#fffbeb' } : {},
+        },
+            el('td', { class: 'text-center' }, chevron),
+            el('td', { class: 'text-gray-500 text-sm' }, `#${room.id}`),
+            el('td', { style: { fontWeight: 'bold', color: '#1f2937' } }, room.dormitory_name),
+            el('td', { style: { fontWeight: 'bold', color: '#374151' } }, room.room_number),
+            el('td', {}, `${Number(room.apartment_area).toFixed(1)} м²`),
+            el('td', { class: 'text-center' }, String(cap)),
+            el('td', { class: 'text-sm font-mono', style: { color: room.hw_meter_serial ? '#dc2626' : '#9ca3af' } }, room.hw_meter_serial || '—'),
+            el('td', { class: 'text-sm font-mono', style: { color: room.cw_meter_serial ? '#2563eb' : '#9ca3af' } }, room.cw_meter_serial || '—'),
+            el('td', { class: 'text-sm font-mono', style: { color: room.el_meter_serial ? '#d97706' : '#9ca3af' } }, room.el_meter_serial || '—'),
+            el('td', { class: 'text-center' },
+                el('button', {
+                    class: 'btn-icon', title: 'Начальные показания',
+                    style: { marginRight: '5px', background: '#eef2ff', color: '#4338ca', borderColor: '#c7d2fe' },
+                    onclick: () => this.openInitialModal(room)
+                }, '📊'),
+                el('button', {
+                    class: 'btn-icon', title: 'Замена счетчика',
+                    style: { marginRight: '5px', background: '#f0fdf4', color: '#166534', borderColor: '#bbf7d0' },
+                    onclick: () => this.openMeterModal(room)
+                }, '🔄'),
+                el('button', {
+                    class: 'btn-icon btn-edit', title: 'Редактировать',
+                    style: { marginRight: '5px' },
+                    onclick: () => this.openModal(room)
+                }, '✎'),
+                el('button', {
+                    class: 'btn-icon btn-delete', title: 'Удалить',
+                    onclick: () => this.deleteRoom(room.id)
+                }, '🗑')
+            )
+        );
+
+        return row;
+    },
+
+    async toggleExpand(room) {
+        const tbody = document.getElementById('roomsTableBody');
+        if (!tbody) return;
+        const row = tbody.querySelector(`tr[data-room-id="${room.id}"]`);
+        if (!row) return;
+
+        // Если уже раскрыта — сворачиваем (удаляем detail-строку)
+        const nextRow = row.nextElementSibling;
+        if (nextRow && nextRow.classList.contains('room-details-row')) {
+            nextRow.remove();
+            this.expanded.delete(room.id);
+            // Перерисовать шеврон
+            const btn = row.querySelector('.btn-icon');
+            if (btn) btn.textContent = '▶';
+            return;
+        }
+
+        this.expanded.add(room.id);
+        const btn = row.querySelector('.btn-icon');
+        if (btn) btn.textContent = '▼';
+
+        // Вставляем строку-заглушку
+        const detailRow = document.createElement('tr');
+        detailRow.className = 'room-details-row';
+        detailRow.innerHTML = `<td colspan="10" style="background:#f9fafb; padding:16px 24px; color:var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка…</td>`;
+        row.after(detailRow);
+
+        try {
+            const data = await api.get(`/rooms/${room.id}/residents`);
+            detailRow.innerHTML = `<td colspan="10" style="background:#f9fafb; padding:14px 24px; border-left:3px solid var(--primary-color);">${this.renderRoomDetails(data)}</td>`;
+        } catch (e) {
+            detailRow.innerHTML = `<td colspan="10" style="background:#fef2f2; padding:12px 24px; color:var(--danger-color);">Ошибка загрузки: ${escapeHtml(e.message)}</td>`;
+        }
+    },
+
+    renderRoomDetails(data) {
+        const residents = (data.residents || []).map(r => {
+            const type = r.resident_type === 'single' ? '👤 Холост.' : '👨‍👩‍👧 Семья';
+            const mode = r.billing_mode === 'per_capita' ? '🛏 Койко' : '📊 Счёт.';
+            const tariff = r.tariff_name ? `<span style="color:#6366f1;">(${escapeHtml(r.tariff_name)})</span>` : '<span style="color:#9ca3af;">(дефолт)</span>';
+            return `
+                <li style="padding:6px 0; border-bottom:1px solid #e5e7eb; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+                    <b style="color:#1f2937;">${escapeHtml(r.username)}</b>
+                    <span style="font-size:11px; background:#e0e7ff; color:#3730a3; padding:2px 7px; border-radius:10px;">${type}</span>
+                    <span style="font-size:11px; background:#fef3c7; color:#92400e; padding:2px 7px; border-radius:10px;">${mode}</span>
+                    <span style="font-size:12px; color:var(--text-secondary);">платят за: <b>${r.residents_count}</b> чел.</span>
+                    ${tariff}
+                    ${r.workplace ? `<span style="font-size:12px; color:var(--text-secondary);">• ${escapeHtml(r.workplace)}</span>` : ''}
+                </li>
+            `;
+        }).join('');
+
+        const lr = data.last_reading;
+        const lrBlock = lr ? `
+            <div style="background:white; border:1px solid var(--border-color); border-radius:6px; padding:10px 14px; margin-top:10px; font-size:13px;">
+                <b style="color:#1f2937;">📈 Последнее показание</b>
+                <span style="color:var(--text-secondary); margin-left:8px;">(${lr.created_at ? new Date(lr.created_at).toLocaleDateString('ru-RU') : '—'})</span>
+                <div style="margin-top:6px; display:flex; gap:18px; flex-wrap:wrap;">
+                    <span style="color:#dc2626;">🔥 ГВС: <b>${lr.hot_water ?? '—'}</b></span>
+                    <span style="color:#2563eb;">💧 ХВС: <b>${lr.cold_water ?? '—'}</b></span>
+                    <span style="color:#d97706;">⚡ Электр.: <b>${lr.electricity ?? '—'}</b></span>
+                </div>
+            </div>
+        ` : `<div style="margin-top:10px; color:var(--text-secondary); font-size:12px;">Нет утверждённых показаний.</div>`;
+
+        const emptyList = `<div style="padding:10px 0; color:var(--text-secondary); font-style:italic;">В этой комнате нет зарегистрированных жильцов.</div>`;
+
+        return `
+            <div style="font-size:13px;">
+                <b style="color:#1f2937; margin-right:10px;">Жильцы (${data.residents?.length || 0}):</b>
+                ${residents ? `<ul style="list-style:none; padding:0; margin:8px 0 0;">${residents}</ul>` : emptyList}
+                ${lrBlock}
+            </div>
+        `;
+    },
+
+    async loadStats() {
+        if (!this.dom.statsHost) return;
+        const dormitory = this.dom.dormFilterSelect?.value || '';
+        const qs = dormitory ? `?dormitory=${encodeURIComponent(dormitory)}` : '';
+        try {
+            const s = await api.get(`/rooms/stats${qs}`);
+            this.renderStats(s);
+        } catch (e) {
+            this.dom.statsHost.innerHTML = `<div style="padding:14px; color:var(--danger-color); grid-column:1/-1;">Ошибка загрузки аналитики: ${escapeHtml(e.message)}</div>`;
+        }
+    },
+
+    renderStats(s) {
+        const card = (bg, color, icon, value, label) => `
+            <div style="background:${bg}; border-radius:10px; padding:14px 12px; border:1px solid ${color}33;">
+                <div style="display:flex; align-items:center; gap:8px; color:${color}; font-size:12px; margin-bottom:4px;">
+                    <span style="font-size:16px;">${icon}</span>${label}
+                </div>
+                <div style="font-size:22px; font-weight:700; color:#111827;">${value}</div>
+            </div>
+        `;
+        this.dom.statsHost.innerHTML = [
+            card('#eff6ff', '#2563eb', '🏠', s.total_rooms, 'Всего комнат'),
+            card('#f3f4f6', '#6b7280', '🚪', s.empty, 'Пустых'),
+            card('#fef9c3', '#a16207', '🟡', s.partial, 'Частичных'),
+            card('#ecfdf5', '#10b981', '✅', s.full, 'Полных'),
+            card('#fef2f2', '#dc2626', '🔴', s.overcrowded, 'Переполнено'),
+            card('#eef2ff', '#4338ca', '👥', `${s.total_residents}/${s.total_capacity}`, `Жильцов / мест (${s.occupancy_pct}%)`),
+            card('#fff7ed', '#ea580c', '⚠️', s.missing_meters_count, 'Без счётчика'),
+        ].join('');
+    },
+
+    async loadTariffs() {
+        try {
+            this.tariffs = await api.get('/tariffs');
+        } catch {
+            this.tariffs = [];
+        }
+    },
+
+    fillTariffSelect(selectedId) {
+        const sel = this.modal.inputs.tariff;
+        if (!sel) return;
+        sel.innerHTML = '<option value="">— Без переопределения —</option>';
+        (this.tariffs || []).filter(t => t.is_active).forEach(t => {
+            const opt = document.createElement('option');
+            opt.value = String(t.id);
+            opt.textContent = t.name;
+            if (selectedId != null && Number(selectedId) === t.id) opt.selected = true;
+            sel.appendChild(opt);
+        });
+    },
+
+    async exportExcel() {
+        const params = new URLSearchParams();
+        if (this.dom.dormFilterSelect?.value) params.append('dormitory', this.dom.dormFilterSelect.value);
+        if (this.dom.filterOccupancy?.value) params.append('occupancy', this.dom.filterOccupancy.value);
+        if (this.dom.filterMissingMeter?.checked) params.append('missing_meter', 'true');
+        const qs = params.toString() ? `?${params.toString()}` : '';
+        setLoading(this.dom.btnExport, true);
+        try {
+            await api.download(`/rooms/export${qs}`, `housing_${Date.now()}.xlsx`);
+            toast('Экспорт готов', 'success');
+        } catch (e) {
+            toast('Ошибка экспорта: ' + e.message, 'error');
+        } finally {
+            setLoading(this.dom.btnExport, false);
+        }
     },
 
     openModal(room = null) {
@@ -309,12 +511,14 @@ export const HousingModule = {
             this.modal.inputs.hw.value = room.hw_meter_serial || '';
             this.modal.inputs.cw.value = room.cw_meter_serial || '';
             this.modal.inputs.el.value = room.el_meter_serial || '';
+            this.fillTariffSelect(room.tariff_id);
         } else {
             this.modal.title.textContent = 'Добавить помещение';
             this.modal.inputs.id.value = '';
             if (this.dom.dormFilterSelect.value) {
                 this.modal.inputs.dorm.value = this.dom.dormFilterSelect.value;
             }
+            this.fillTariffSelect(null);
         }
         this.modal.window.classList.add('open');
     },
@@ -323,11 +527,13 @@ export const HousingModule = {
         e.preventDefault();
         const btn = this.modal.form.querySelector('.confirm-btn');
         const id = this.modal.inputs.id.value;
+        const tariffVal = this.modal.inputs.tariff?.value;
         const data = {
             dormitory_name: this.modal.inputs.dorm.value.trim(),
             room_number: this.modal.inputs.num.value.trim(),
             apartment_area: parseFloat(this.modal.inputs.area.value),
             total_room_residents: parseInt(this.modal.inputs.cap.value),
+            tariff_id: tariffVal ? parseInt(tariffVal) : null,
             hw_meter_serial: this.modal.inputs.hw.value.trim(),
             cw_meter_serial: this.modal.inputs.cw.value.trim(),
             el_meter_serial: this.modal.inputs.el.value.trim(),
@@ -345,6 +551,7 @@ export const HousingModule = {
             this.modal.window.classList.remove('open');
             this.table.refresh();
             this.loadDormitories();
+            this.loadStats();
         } catch (err) {
             toast(err.message, 'error');
         } finally {
@@ -358,6 +565,7 @@ export const HousingModule = {
             await api.delete(`/rooms/${id}`);
             toast('Помещение удалено', 'success');
             this.table.refresh();
+            this.loadStats();
         } catch (e) {
             toast(e.message, 'error');
         }

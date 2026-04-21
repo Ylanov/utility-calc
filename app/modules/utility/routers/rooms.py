@@ -119,9 +119,19 @@ async def get_rooms(
         limit: int = Query(50, ge=1, le=1000),
         search: Optional[str] = Query(None),
         dormitory: Optional[str] = Query(None),
+        # Новые фильтры — без них невозможно сделать быстрый drill-down
+        # по состоянию комнаты. У админа в проекте на 2000+ комнат без
+        # фильтров работать нельзя.
+        occupancy: Optional[str] = Query(
+            None, pattern="^(empty|partial|full|overcrowded)$",
+            description="empty=0 жильцов, partial<вместимости, full=, overcrowded>",
+        ),
+        missing_meter: Optional[bool] = Query(
+            None, description="Отсутствует хотя бы один из серийников счётчиков",
+        ),
         db: AsyncSession = Depends(get_db)
 ):
-    """Список комнат с пагинацией и поиском."""
+    """Список комнат с пагинацией и расширенными фильтрами."""
     query = select(Room)
     count_query = select(func.count(Room.id))
 
@@ -139,12 +149,272 @@ async def get_rooms(
         query = query.where(Room.dormitory_name == dormitory)
         count_query = count_query.where(Room.dormitory_name == dormitory)
 
+    # Фильтр по заполненности: коррелируем через subquery количества жильцов
+    if occupancy:
+        residents_subq = (
+            select(func.count(User.id))
+            .where(User.room_id == Room.id, User.is_deleted.is_(False), User.role == "user")
+            .correlate(Room)
+            .scalar_subquery()
+        )
+        cap = func.coalesce(Room.total_room_residents, 1)
+        if occupancy == "empty":
+            cond = residents_subq == 0
+        elif occupancy == "partial":
+            cond = (residents_subq > 0) & (residents_subq < cap)
+        elif occupancy == "full":
+            cond = residents_subq == cap
+        else:  # overcrowded
+            cond = residents_subq > cap
+        query = query.where(cond)
+        count_query = count_query.where(cond)
+
+    if missing_meter is True:
+        cond = (
+            (Room.hw_meter_serial.is_(None)) | (Room.hw_meter_serial == "")
+            | (Room.cw_meter_serial.is_(None)) | (Room.cw_meter_serial == "")
+            | (Room.el_meter_serial.is_(None)) | (Room.el_meter_serial == "")
+        )
+        query = query.where(cond)
+        count_query = count_query.where(cond)
+
     total = (await db.execute(count_query)).scalar_one()
 
     query = query.order_by(Room.dormitory_name, Room.room_number).offset((page - 1) * limit).limit(limit)
     items = (await db.execute(query)).scalars().all()
 
     return {"total": total, "page": page, "size": limit, "items": items}
+
+
+# =====================================================================
+# STATS — сводка по Жилфонду
+# =====================================================================
+@router.get("/stats", dependencies=[Depends(allow_management)])
+async def housing_stats(
+    dormitory: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """KPI для шапки вкладки «Жилфонд».
+
+    Возвращает:
+      * total_rooms / empty / partial / full / overcrowded
+      * total_area / avg_area
+      * total_capacity (суммарные места) / total_residents (сколько жильцов)
+      * missing_meters_count (комнаты с неполным набором счётчиков)
+      * by_dormitory (разбивка)
+
+    Если передан `dormitory` — все метрики считаются в рамках этого общежития.
+    """
+    base = select(Room)
+    if dormitory:
+        base = base.where(Room.dormitory_name == dormitory)
+
+    # Все комнаты с кол-вом проживающих одним запросом
+    residents_subq = (
+        select(
+            User.room_id.label("rid"),
+            func.count(User.id).label("residents"),
+        )
+        .where(User.is_deleted.is_(False), User.role == "user", User.room_id.is_not(None))
+        .group_by(User.room_id)
+        .subquery()
+    )
+    rows_q = (
+        select(
+            Room.id,
+            Room.dormitory_name,
+            Room.apartment_area,
+            Room.total_room_residents,
+            Room.hw_meter_serial,
+            Room.cw_meter_serial,
+            Room.el_meter_serial,
+            func.coalesce(residents_subq.c.residents, 0).label("residents"),
+        )
+        .outerjoin(residents_subq, residents_subq.c.rid == Room.id)
+    )
+    if dormitory:
+        rows_q = rows_q.where(Room.dormitory_name == dormitory)
+
+    rows = (await db.execute(rows_q)).all()
+
+    total = len(rows)
+    empty = partial = full = overcrowded = 0
+    total_area = Decimal("0")
+    total_capacity = 0
+    total_residents = 0
+    missing_meters = 0
+    by_dorm: dict = {}
+
+    for rid, dorm, area, capacity, hw, cw, el, residents in rows:
+        cap = int(capacity or 1)
+        r = int(residents or 0)
+        if r == 0:
+            empty += 1
+        elif r < cap:
+            partial += 1
+        elif r == cap:
+            full += 1
+        else:
+            overcrowded += 1
+
+        a = Decimal(str(area or 0))
+        total_area += a
+        total_capacity += cap
+        total_residents += r
+
+        if not hw or not cw or not el:
+            missing_meters += 1
+
+        d = by_dorm.setdefault(dorm or "—", {
+            "rooms": 0, "residents": 0, "capacity": 0, "area": Decimal("0"),
+        })
+        d["rooms"] += 1
+        d["residents"] += r
+        d["capacity"] += cap
+        d["area"] += a
+
+    avg_area = float(total_area / total) if total else 0.0
+    occupancy_pct = (
+        round(total_residents / total_capacity * 100) if total_capacity else 0
+    )
+
+    return {
+        "total_rooms": total,
+        "empty": empty,
+        "partial": partial,
+        "full": full,
+        "overcrowded": overcrowded,
+        "total_area": float(total_area),
+        "avg_area": round(avg_area, 2),
+        "total_capacity": total_capacity,
+        "total_residents": total_residents,
+        "occupancy_pct": occupancy_pct,
+        "free_slots": max(0, total_capacity - total_residents),
+        "missing_meters_count": missing_meters,
+        "by_dormitory": [
+            {
+                "name": name, "rooms": d["rooms"], "residents": d["residents"],
+                "capacity": d["capacity"], "area": float(d["area"]),
+                "occupancy_pct": (
+                    round(d["residents"] / d["capacity"] * 100) if d["capacity"] else 0
+                ),
+            }
+            for name, d in sorted(by_dorm.items())
+        ],
+    }
+
+
+# =====================================================================
+# EXPORT — Excel со списком комнат (с текущими фильтрами)
+# =====================================================================
+@router.get("/export", dependencies=[Depends(allow_management)])
+async def export_rooms(
+    search: Optional[str] = Query(None),
+    dormitory: Optional[str] = Query(None),
+    occupancy: Optional[str] = Query(None, pattern="^(empty|partial|full|overcrowded)$"),
+    missing_meter: Optional[bool] = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Excel-выгрузка всех отфильтрованных комнат + количество жильцов."""
+    import io
+    from fastapi.responses import StreamingResponse
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+
+    # Собираем тот же запрос что и для списка — но без пагинации
+    residents_subq = (
+        select(
+            User.room_id.label("rid"),
+            func.count(User.id).label("residents"),
+        )
+        .where(User.is_deleted.is_(False), User.role == "user", User.room_id.is_not(None))
+        .group_by(User.room_id)
+        .subquery()
+    )
+    q = (
+        select(
+            Room,
+            func.coalesce(residents_subq.c.residents, 0).label("residents"),
+            Tariff.name.label("tariff_name"),
+        )
+        .outerjoin(residents_subq, residents_subq.c.rid == Room.id)
+        .outerjoin(Tariff, Tariff.id == Room.tariff_id)
+    )
+    if search:
+        pat = f"%{search}%"
+        q = q.where(or_(
+            Room.room_number.ilike(pat),
+            Room.hw_meter_serial.ilike(pat),
+            Room.cw_meter_serial.ilike(pat),
+        ))
+    if dormitory:
+        q = q.where(Room.dormitory_name == dormitory)
+    if occupancy:
+        cap = func.coalesce(Room.total_room_residents, 1)
+        if occupancy == "empty":
+            q = q.where(residents_subq.c.residents.is_(None) | (residents_subq.c.residents == 0))
+        elif occupancy == "partial":
+            q = q.where((residents_subq.c.residents > 0) & (residents_subq.c.residents < cap))
+        elif occupancy == "full":
+            q = q.where(residents_subq.c.residents == cap)
+        elif occupancy == "overcrowded":
+            q = q.where(residents_subq.c.residents > cap)
+    if missing_meter is True:
+        q = q.where(
+            (Room.hw_meter_serial.is_(None)) | (Room.hw_meter_serial == "")
+            | (Room.cw_meter_serial.is_(None)) | (Room.cw_meter_serial == "")
+            | (Room.el_meter_serial.is_(None)) | (Room.el_meter_serial == "")
+        )
+    q = q.order_by(Room.dormitory_name, Room.room_number)
+
+    rows = (await db.execute(q)).all()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Жилфонд"
+    headers = [
+        "ID", "Общежитие", "Комната", "Площадь м²", "Мест", "Жильцов",
+        "Заполненность", "Тариф", "№ ГВС", "№ ХВС", "№ Электр.",
+    ]
+    for i, h in enumerate(headers, 1):
+        c = ws.cell(row=1, column=i, value=h)
+        c.font = Font(bold=True)
+        c.fill = PatternFill("solid", fgColor="DBEAFE")
+    for i, (room, residents, tariff_name) in enumerate(rows, 2):
+        cap = int(room.total_room_residents or 1)
+        r = int(residents or 0)
+        status = (
+            "Переполнена" if r > cap
+            else "Полная" if r == cap
+            else "Частичная" if r > 0
+            else "Пустая"
+        )
+        ws.cell(row=i, column=1, value=room.id)
+        ws.cell(row=i, column=2, value=room.dormitory_name)
+        ws.cell(row=i, column=3, value=room.room_number)
+        ws.cell(row=i, column=4, value=float(room.apartment_area or 0))
+        ws.cell(row=i, column=5, value=cap)
+        ws.cell(row=i, column=6, value=r)
+        ws.cell(row=i, column=7, value=status)
+        ws.cell(row=i, column=8, value=tariff_name or "")
+        ws.cell(row=i, column=9, value=room.hw_meter_serial or "")
+        ws.cell(row=i, column=10, value=room.cw_meter_serial or "")
+        ws.cell(row=i, column=11, value=room.el_meter_serial or "")
+
+    for col, w in [("A", 6), ("B", 28), ("C", 10), ("D", 10), ("E", 6),
+                   ("F", 8), ("G", 14), ("H", 22), ("I", 14), ("J", 14), ("K", 14)]:
+        ws.column_dimensions[col].width = w
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    from datetime import datetime as _dt
+    fname = f"housing_{_dt.utcnow().strftime('%Y%m%d_%H%M')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 @router.post("", response_model=RoomResponse, dependencies=[Depends(allow_management)])
@@ -163,6 +433,63 @@ async def create_room(data: RoomCreate, db: AsyncSession = Depends(get_db)):
     await db.commit()
     await db.refresh(room)
     return room
+
+
+@router.get("/{room_id}/residents", dependencies=[Depends(allow_management)])
+async def room_residents(
+    room_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Список жильцов комнаты + последнее утверждённое показание.
+    Используется раскрывающимся блоком в таблице Жилфонда."""
+    from sqlalchemy.orm import selectinload
+
+    room = await db.get(Room, room_id)
+    if not room:
+        raise HTTPException(404, "Комната не найдена")
+
+    users = (await db.execute(
+        select(User)
+        .options(selectinload(User.tariff))
+        .where(User.room_id == room_id, User.is_deleted.is_(False))
+        .order_by(User.username)
+    )).scalars().all()
+
+    # Последнее утверждённое показание в комнате (общее для всех жильцов)
+    last_reading = (await db.execute(
+        select(MeterReading)
+        .where(MeterReading.room_id == room_id, MeterReading.is_approved.is_(True))
+        .order_by(MeterReading.created_at.desc())
+        .limit(1)
+    )).scalars().first()
+
+    return {
+        "room": {
+            "id": room.id,
+            "dormitory_name": room.dormitory_name,
+            "room_number": room.room_number,
+            "apartment_area": float(room.apartment_area or 0),
+            "capacity": int(room.total_room_residents or 1),
+            "tariff_id": room.tariff_id,
+        },
+        "residents": [
+            {
+                "id": u.id, "username": u.username,
+                "resident_type": u.resident_type, "billing_mode": u.billing_mode,
+                "residents_count": u.residents_count,
+                "tariff_id": u.tariff_id,
+                "tariff_name": u.tariff.name if u.tariff else None,
+                "workplace": u.workplace,
+            }
+            for u in users
+        ],
+        "last_reading": {
+            "created_at": last_reading.created_at.isoformat() if last_reading and last_reading.created_at else None,
+            "hot_water": float(last_reading.hot_water) if last_reading else None,
+            "cold_water": float(last_reading.cold_water) if last_reading else None,
+            "electricity": float(last_reading.electricity) if last_reading else None,
+        } if last_reading else None,
+    }
 
 
 @router.get("/{room_id}", response_model=RoomResponse, dependencies=[Depends(allow_management)])

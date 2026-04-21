@@ -42,15 +42,35 @@
 
         <!-- Правая колонка: Таблица помещений -->
         <div class="card" style="margin: 0;">
+            <!-- KPI-сводка. Грузится из /rooms/stats параллельно с первой страницей таблицы.
+                 Пусто до ответа, затем рендерится через housing.js::renderStats. -->
+            <div id="housingStats" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px;">
+                <div style="padding:16px; text-align:center; color:var(--text-secondary); grid-column: 1/-1;">
+                    <i class="fa-solid fa-spinner fa-spin"></i> Загрузка аналитики…
+                </div>
+            </div>
+
             <div class="card-header">
                 <h3>Список помещений</h3>
                 <div class="toolbar-controls">
+                    <select id="filterOccupancy" title="Фильтр по заполненности">
+                        <option value="">Все состояния</option>
+                        <option value="empty">🚪 Пустые</option>
+                        <option value="partial">🟡 Частичные</option>
+                        <option value="full">✅ Полные</option>
+                        <option value="overcrowded">🔴 Переполненные</option>
+                    </select>
+                    <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-secondary); white-space:nowrap;">
+                        <input type="checkbox" id="filterMissingMeter" style="margin:0;">
+                        Без счётчика
+                    </label>
                     <select id="roomsLimitSelect">
                         <option value="25">25 строк</option>
                         <option value="50" selected>50 строк</option>
                         <option value="100">100 строк</option>
                     </select>
                     <input type="text" id="roomsSearchInput" placeholder="Поиск (№ комн., № счетчика)...">
+                    <button id="btnExportRooms" class="icon-btn" title="Выгрузить в Excel" style="color: var(--success-color);"><i class="fa-solid fa-file-excel"></i></button>
                     <button id="btnRefreshRooms" class="icon-btn" title="Обновить"><i class="fa-solid fa-rotate-right"></i></button>
                 </div>
             </div>
@@ -58,6 +78,7 @@
                 <table class="sticky-header-table">
                     <thead>
                         <tr>
+                            <th style="width: 28px;"></th>
                             <th data-sort="id" class="sortable">ID</th>
                             <th data-sort="dormitory_name" class="sortable">Общежитие</th>
                             <th data-sort="room_number" class="sortable">Комната</th>
@@ -70,7 +91,7 @@
                         </tr>
                     </thead>
                     <tbody id="roomsTableBody">
-                        <tr><td colspan="9" class="text-center" style="padding: 40px; color: var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка данных...</td></tr>
+                        <tr><td colspan="10" class="text-center" style="padding: 40px; color: var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка данных...</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -107,7 +128,7 @@
                         </div>
                     </div>
 
-                    <div class="form-grid-2" style="margin-bottom: 24px;">
+                    <div class="form-grid-2" style="margin-bottom: 16px;">
                         <div class="form-group">
                             <label>Площадь (м²)</label>
                             <input type="number" step="0.1" id="roomArea" required min="0" placeholder="0.0">
@@ -116,6 +137,16 @@
                             <label>Макс. мест для проживания</label>
                             <input type="number" id="roomCapacity" required min="1" value="1">
                         </div>
+                    </div>
+
+                    <div class="form-group" style="margin-bottom: 24px;">
+                        <label>Тариф (опционально — переопределяет тариф жильца)</label>
+                        <select id="roomTariffId" class="tariff-select">
+                            <option value="">— Без переопределения —</option>
+                        </select>
+                        <p class="hint-text" style="font-size:11px; margin:4px 0 0; color:var(--text-secondary);">
+                            Если задан — приоритет над тарифом жильца (Room.tariff_id &gt; User.tariff_id &gt; default).
+                        </p>
                     </div>
 
                     <h4 style="margin-bottom: 12px; font-size: 14px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">Серийные номера счетчиков (Опционально)</h4>
