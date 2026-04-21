@@ -682,3 +682,65 @@ class RecalcJob(Base):
         Index("idx_recalc_jobs_period_created", "period_id", "created_at"),
         Index("idx_recalc_jobs_status", "status"),
     )
+
+
+# ======================================================
+# DEBT IMPORT LOG — история импортов долгов из 1С
+# ======================================================
+class DebtImportLog(Base):
+    """Запись о каждом импорте Excel-сальдо из 1С.
+
+    Жизненный цикл:
+        pending → completed → (опционально reverted)
+               ↘ failed
+
+    snapshot_data хранит предыдущие значения debt_*/overpayment_* ДО
+    применения импорта — нужен для отката:
+        {
+            "<reading_id>": {
+                "debt_209": "...", "overpayment_209": "...",
+                "debt_205": "...", "overpayment_205": "..."
+            },
+            ...
+        }
+    not_found_users — JSON-массив строк ФИО, которые fuzzy-матчер не
+    смог привязать к жильцу. Админ может вернуться к списку и сделать
+    ручную привязку (reassign).
+    """
+    __tablename__ = "debt_import_logs"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+
+    # "209" | "205"
+    account_type = Column(String(8), nullable=False)
+
+    # Период, в который шла подача (FK nullable — если период удалили, лог остаётся)
+    period_id = Column(Integer, ForeignKey("periods.id", ondelete="SET NULL"), nullable=True)
+
+    file_name = Column(String(255), nullable=True)
+
+    # pending | completed | failed | reverted
+    status = Column(String(24), nullable=False, default="pending")
+
+    started_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    started_by_username = Column(String(128), nullable=True)
+    started_by = relationship("User", foreign_keys=[started_by_id])
+
+    processed = Column(Integer, nullable=False, default=0)
+    updated = Column(Integer, nullable=False, default=0)
+    created = Column(Integer, nullable=False, default=0)
+    not_found_count = Column(Integer, nullable=False, default=0)
+
+    not_found_users = Column(JSONB, nullable=True)
+    snapshot_data = Column(JSONB, nullable=True)
+
+    error = Column(Text, nullable=True)
+
+    started_at = Column(DateTime, default=_utcnow, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+    reverted_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (
+        Index("idx_debt_import_logs_started_at", "started_at"),
+        Index("idx_debt_import_logs_status", "status"),
+    )

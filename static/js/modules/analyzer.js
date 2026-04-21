@@ -94,6 +94,10 @@ export const AnalyzerModule = {
             cleanupDays:    document.getElementById('analyzerCleanupDays'),
             btnCleanupNow:  document.getElementById('btnAnalyzerCleanupNow'),
             cleanupResult:  document.getElementById('analyzerCleanupResult'),
+
+            // Таб «Сверка 1С»
+            btnReconcileRun: document.getElementById('btnReconcileRun'),
+            reconcileResults: document.getElementById('reconcileResults'),
         };
     },
 
@@ -135,6 +139,9 @@ export const AnalyzerModule = {
 
         // Таб «Обслуживание»
         this.dom.btnCleanupNow?.addEventListener('click', () => this.runGsheetsCleanup());
+
+        // Таб «Сверка 1С»
+        this.dom.btnReconcileRun?.addEventListener('click', () => this.runReconcile());
     },
 
     _setTab(tabId) {
@@ -709,6 +716,124 @@ export const AnalyzerModule = {
     // Запускается синхронно через /admin/analyzer/gsheets/cleanup-now.
     // Автоочистка идёт по расписанию (Celery beat 03:00 ежедневно).
     // ====================================================================
+    // ====================================================================
+    // ТАБ «СВЕРКА 1С» — расхождения readings vs 1С-долги в активном периоде
+    // Backend endpoint: GET /financier/debts/reconcile
+    // ====================================================================
+    async runReconcile() {
+        if (!this.dom.reconcileResults) return;
+        const btn = this.dom.btnReconcileRun;
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Сверяем…'; }
+        this.dom.reconcileResults.innerHTML = `
+            <div style="text-align:center; padding: 40px; color:#666;">
+                <i class="fa-solid fa-spinner fa-spin" style="font-size:24px; color:#f59e0b;"></i>
+                <div style="margin-top:10px;">Сравниваем показания и долги…</div>
+            </div>`;
+        try {
+            const data = await api.get('/financier/debts/reconcile');
+            this._renderReconcile(data);
+        } catch (e) {
+            this.dom.reconcileResults.innerHTML =
+                `<div style="color:var(--danger-color); padding: 20px;">Ошибка: ${escapeHtml(e.message)}</div>`;
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-arrows-rotate"></i> Запустить сверку'; }
+        }
+    },
+
+    _renderReconcile(data) {
+        if (!data.period) {
+            this.dom.reconcileResults.innerHTML = `
+                <div style="padding:24px; text-align:center; background:#f3f4f6; border-radius:8px; color:var(--text-secondary);">
+                    Нет активного периода — сверка невозможна.
+                </div>`;
+            return;
+        }
+
+        const fmtMoney = (v) => Number(v || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽';
+
+        const r1 = data.readings_without_debts || [];
+        const r2 = data.debts_without_readings || [];
+        const r3 = data.last_import_not_found || [];
+
+        const sec1 = `
+            <div style="margin-bottom: 20px; border: 1px solid #bbf7d040; border-radius: 8px; overflow: hidden;">
+                <div style="background: #ecfdf5; padding: 12px 15px; border-bottom: 1px solid #bbf7d0; font-weight: bold; color: #059669; display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 20px;">✅</span> Начислено — без долга в 1С (оплачено?) (${r1.length})
+                </div>
+                ${r1.length ? `
+                <div style="max-height:260px; overflow-y:auto; background:white;">
+                    <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                        <thead style="position:sticky; top:0; background:#f9fafb; z-index:1;">
+                            <tr style="text-align:left;">
+                                <th style="padding:8px 12px;">Жилец</th>
+                                <th style="padding:8px 12px;">Общ. / комн.</th>
+                                <th style="padding:8px 12px; text-align:right;">Начислено</th>
+                            </tr>
+                        </thead>
+                        <tbody>${r1.map(x => `
+                            <tr style="border-bottom:1px solid #f3f4f6;">
+                                <td style="padding:7px 12px; font-weight:600;">${escapeHtml(x.username)}</td>
+                                <td style="padding:7px 12px; color:var(--text-secondary); font-size:12px;">${escapeHtml(x.dormitory || '—')} / ${escapeHtml(x.room_number || '—')}</td>
+                                <td style="padding:7px 12px; text-align:right; font-family:monospace;">${fmtMoney(x.total_cost)}</td>
+                            </tr>`).join('')}</tbody>
+                    </table>
+                </div>` : `<div style="padding:14px; color:var(--text-secondary); background:white; font-size:12px;">Все начисленные получили долг из 1С.</div>`}
+            </div>`;
+
+        const sec2 = `
+            <div style="margin-bottom: 20px; border: 1px solid #fecaca40; border-radius: 8px; overflow: hidden;">
+                <div style="background: #fef2f2; padding: 12px 15px; border-bottom: 1px solid #fecaca; font-weight: bold; color: #dc2626; display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 20px;">⚠️</span> Долги в БД — без утверждённого показания (${r2.length})
+                </div>
+                ${r2.length ? `
+                <div style="max-height:260px; overflow-y:auto; background:white;">
+                    <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                        <thead style="position:sticky; top:0; background:#f9fafb; z-index:1;">
+                            <tr style="text-align:left;">
+                                <th style="padding:8px 12px;">Жилец</th>
+                                <th style="padding:8px 12px;">Общ. / комн.</th>
+                                <th style="padding:8px 12px; text-align:right;">Долг 209</th>
+                                <th style="padding:8px 12px; text-align:right;">Долг 205</th>
+                            </tr>
+                        </thead>
+                        <tbody>${r2.map(x => `
+                            <tr style="border-bottom:1px solid #f3f4f6;">
+                                <td style="padding:7px 12px; font-weight:600;">${escapeHtml(x.username)}</td>
+                                <td style="padding:7px 12px; color:var(--text-secondary); font-size:12px;">${escapeHtml(x.dormitory || '—')} / ${escapeHtml(x.room_number || '—')}</td>
+                                <td style="padding:7px 12px; text-align:right; font-family:monospace; color:#c0392b;">${fmtMoney(x.debt_209)}</td>
+                                <td style="padding:7px 12px; text-align:right; font-family:monospace; color:#d35400;">${fmtMoney(x.debt_205)}</td>
+                            </tr>`).join('')}</tbody>
+                    </table>
+                </div>` : `<div style="padding:14px; color:var(--text-secondary); background:white; font-size:12px;">Все долги в БД соответствуют утверждённым показаниям.</div>`}
+            </div>`;
+
+        const sec3 = `
+            <div style="margin-bottom: 20px; border: 1px solid #fde68a40; border-radius: 8px; overflow: hidden;">
+                <div style="background: #fef3c7; padding: 12px 15px; border-bottom: 1px solid #fde68a; font-weight: bold; color: #92400e; display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 20px;">👻</span> Не найдены в 1С — последний импорт (${r3.length})
+                </div>
+                ${r3.length ? `
+                <div style="max-height:260px; overflow-y:auto; background:white; padding:10px 14px; font-size:13px;">
+                    ${r3.map(fio => `<div style="padding:4px 0; border-bottom:1px solid #f3f4f6;">${escapeHtml(fio)}</div>`).join('')}
+                    ${data.last_import_id ? `
+                    <div style="margin-top:10px; text-align:right;">
+                        <a href="#" onclick="event.preventDefault(); window.__openDebtsNotFound && window.__openDebtsNotFound(${data.last_import_id});" style="color:#7c3aed; font-size:12px;">
+                            Открыть во вкладке «Долги 1С» →
+                        </a>
+                    </div>` : ''}
+                </div>` : `<div style="padding:14px; color:var(--text-secondary); background:white; font-size:12px;">Все ФИО из последнего импорта привязаны.</div>`}
+            </div>`;
+
+        const totalIssues = r1.length + r2.length + r3.length;
+        const header = `
+            <div style="padding:10px 14px; background:#eff6ff; border:1px solid #bfdbfe; border-radius:6px; margin-bottom:14px; font-size:13px;">
+                Период: <b>${escapeHtml(data.period.name)}</b>
+                · Всего расхождений: <b style="color:${totalIssues ? '#d97706' : '#059669'};">${totalIssues}</b>
+            </div>`;
+
+        this.dom.reconcileResults.innerHTML = header + sec1 + sec2 + sec3;
+    },
+
     async runGsheetsCleanup() {
         const days = Number(this.dom.cleanupDays?.value) || 365;
         if (days < 30) {

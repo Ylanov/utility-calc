@@ -264,7 +264,12 @@ def start_bulk_receipt_generation(period_id: int):
     retry_kwargs={"max_retries": 2, "countdown": 15},
     retry_backoff=True
 )
-def import_debts_task(file_path: str, account_type: str) -> dict:
+def import_debts_task(
+    file_path: str,
+    account_type: str,
+    started_by_id: int | None = None,
+    started_by_username: str | None = None,
+) -> dict:
     """Фоновая задача импорта долгов.
 
     Транзакционность: sync_import_debts_process делает ОДИН commit в конце
@@ -276,10 +281,20 @@ def import_debts_task(file_path: str, account_type: str) -> dict:
     будет ретрайнутся — файл остаётся на диске, чтобы ретрай мог его снова
     прочитать. Если все ретраи исчерпаны — файл остаётся (админ увидит
     ошибку и загрузит заново).
+
+    started_by_* — атрибуция импорта в DebtImportLog: админ видит «кто
+    когда запустил» в истории импортов.
     """
-    logger.info(f"[IMPORT] Start {file_path} for Account {account_type}")
+    logger.info(
+        f"[IMPORT] Start {file_path} for Account {account_type} "
+        f"by user_id={started_by_id} ({started_by_username})"
+    )
     with sync_db_session() as db:
-        result = sync_import_debts_process(file_path, db, account_type)
+        result = sync_import_debts_process(
+            file_path, db, account_type,
+            started_by_id=started_by_id,
+            started_by_username=started_by_username,
+        )
 
     # Сюда доходим только при успехе (ошибка пробрасывается из with).
     try:

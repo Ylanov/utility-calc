@@ -1,12 +1,14 @@
 # app/modules/utility/services/debt_import.py
 import openpyxl
 import logging
+import os
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Dict, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from rapidfuzz import process, fuzz
-from app.modules.utility.models import User, MeterReading, BillingPeriod
+from app.modules.utility.models import User, MeterReading, BillingPeriod, DebtImportLog
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +83,13 @@ def find_user_fuzzy(target_name: str, users_map: Dict[str, int]) -> Optional[int
     return None
 
 
-def sync_import_debts_process(file_path: str, db: Session, account_type: str) -> dict:
+def sync_import_debts_process(
+    file_path: str,
+    db: Session,
+    account_type: str,
+    started_by_id: int | None = None,
+    started_by_username: str | None = None,
+) -> dict:
     """
     Функция массового импорта долгов.
     Долг из 1С привязывается к КОМНАТЕ жильца. Долги соседей по комнате суммируются.
@@ -89,6 +97,11 @@ def sync_import_debts_process(file_path: str, db: Session, account_type: str) ->
     Важно: ВСЁ делается одной транзакцией. Если на 5000-й строке случится
     ошибка — откатываются все 4999 предыдущих, файл не удаляется (пусть
     админ исправит и перезапустит).
+
+    Дополнительно пишет запись в DebtImportLog:
+      * snapshot_data — предыдущие debt_* по каждому затрагиваемому reading_id
+        (для отмены импорта через endpoint /debts/import-history/{id}/undo);
+      * not_found_users — список ФИО, не найденных fuzzy (для ручной привязки).
     """
     logger.info(f"Starting debts import from {file_path} for Account {account_type}")
 
@@ -100,13 +113,30 @@ def sync_import_debts_process(file_path: str, db: Session, account_type: str) ->
         # Бросаем — Celery должен увидеть падение и ретраить.
         raise RuntimeError(f"Ошибка чтения файла: {error}") from error
 
+    # Создаём запись в логе ПЕРЕД импортом — чтобы при падении остался след.
+    import_log = DebtImportLog(
+        account_type=account_type,
+        file_name=os.path.basename(file_path) if file_path else None,
+        status="pending",
+        started_by_id=started_by_id,
+        started_by_username=started_by_username,
+    )
+    db.add(import_log)
+    db.flush()  # получаем id
+
     try:
         active_period = db.execute(
             select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
         ).scalars().first()
 
         if not active_period:
+            import_log.status = "failed"
+            import_log.error = "Нет активного периода для загрузки долгов"
+            import_log.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+            db.commit()
             return {"status": "error", "message": "Нет активного периода для загрузки долгов"}
+
+        import_log.period_id = active_period.id
 
         # 1. Предзагрузка пользователей (сохраняем id и room_id)
         users_raw = db.execute(select(User).where(User.is_deleted.is_(False))).scalars().all()
@@ -129,6 +159,12 @@ def sync_import_debts_process(file_path: str, db: Session, account_type: str) ->
         inserts_dict = {}  # room_id -> reading object (для вставки)
         fuzzy_cache = {}
         processed_rooms = set()  # Для обнуления старых долгов комнаты перед прибавлением новых из 1С
+
+        # snapshot_data: сохраняем ДО-состояние debt_*/overpayment_* по каждому
+        # затронутому existing reading. Используется для отката импорта.
+        # Новые (inserts) в snapshot не попадают — при undo они просто удалятся.
+        snapshot_before = {}  # reading_id -> {debt_209, overpayment_209, debt_205, overpayment_205}
+        inserts_reading_ids = []  # для undo (их создали — удалим при откате)
 
         def get_user_data_optimized(fio: str):
             norm = normalize_name(fio)
@@ -178,6 +214,14 @@ def sync_import_debts_process(file_path: str, db: Session, account_type: str) ->
 
                 # Если мы первый раз встречаем эту комнату в файле 1С - сбрасываем старые долги в 0
                 if room_id not in processed_rooms:
+                    # Снимаем snapshot до обнуления — для отката
+                    if reading.id not in snapshot_before:
+                        snapshot_before[reading.id] = {
+                            "debt_209": str(reading.debt_209 or 0),
+                            "overpayment_209": str(reading.overpayment_209 or 0),
+                            "debt_205": str(reading.debt_205 or 0),
+                            "overpayment_205": str(reading.overpayment_205 or 0),
+                        }
                     if account_type == "209":
                         reading.debt_209 = Decimal("0.00")
                         reading.overpayment_209 = Decimal("0.00")
@@ -234,6 +278,8 @@ def sync_import_debts_process(file_path: str, db: Session, account_type: str) ->
         # 7. Сохраняем в БД
         if inserts_dict:
             db.add_all(list(inserts_dict.values()))
+            db.flush()  # получаем id для snapshot/undo
+            inserts_reading_ids = [r.id for r in inserts_dict.values()]
 
         if updates_dict:
             updates_list = []
@@ -247,12 +293,27 @@ def sync_import_debts_process(file_path: str, db: Session, account_type: str) ->
                 })
             db.bulk_update_mappings(MeterReading, updates_list)
 
+        # 8. Финализируем DebtImportLog в той же транзакции
+        stats["not_found_users"] = list(set(stats["not_found_users"]))
+        import_log.status = "completed"
+        import_log.processed = stats["processed"]
+        import_log.updated = stats["updated"]
+        import_log.created = stats["created"]
+        import_log.not_found_count = len(stats["not_found_users"])
+        import_log.not_found_users = stats["not_found_users"][:2000]  # защита от гигантских файлов
+        import_log.snapshot_data = {
+            "before": snapshot_before,
+            "inserted_reading_ids": inserts_reading_ids,
+        }
+        import_log.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        import_log.id  # нужен id для stats
+
         db.commit()
 
-        stats["not_found_users"] = list(set(stats["not_found_users"]))
+        stats["log_id"] = import_log.id
         logger.info(
-            "Import finished. Processed: %s, Updated: %s, Created: %s",
-            stats["processed"], stats["updated"], stats["created"],
+            "Import finished. Log=%s Processed: %s, Updated: %s, Created: %s",
+            import_log.id, stats["processed"], stats["updated"], stats["created"],
         )
         return stats
 
@@ -260,6 +321,21 @@ def sync_import_debts_process(file_path: str, db: Session, account_type: str) ->
         # Полный откат: ни одна строка не должна остаться полузакоммиченной.
         db.rollback()
         logger.exception("Import failed — full rollback applied")
+        # Пробуем отметить лог как failed в новой транзакции
+        try:
+            failed_log = DebtImportLog(
+                account_type=account_type,
+                file_name=os.path.basename(file_path) if file_path else None,
+                status="failed",
+                started_by_id=started_by_id,
+                started_by_username=started_by_username,
+                error=str(error)[:2000],
+                completed_at=datetime.now(timezone.utc).replace(tzinfo=None),
+            )
+            db.add(failed_log)
+            db.commit()
+        except Exception:
+            db.rollback()
         # Пробрасываем — Celery отправит в retry (см. retry_kwargs у задачи).
         raise RuntimeError(f"Ошибка во время импорта: {error}") from error
 

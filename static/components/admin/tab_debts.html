@@ -1,17 +1,25 @@
 <!-- static/components/admin/tab_debts.html -->
 <div id="debts" class="tab-content">
+
+    <!-- ============================================
+         KPI-ПАНЕЛЬ — аналитика сверху
+         ============================================ -->
+    <div id="debtsStats" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:10px; margin-bottom:16px;">
+        <div style="padding:18px; text-align:center; color:var(--text-secondary); grid-column:1/-1;">
+            <i class="fa-solid fa-spinner fa-spin"></i> Загрузка аналитики…
+        </div>
+    </div>
+
     <div class="grid-2-col">
         <!-- Колонка 1: Импорт -->
         <div class="card" style="border-left: 4px solid #8b5cf6;">
             <div class="card-header" style="border-bottom: none; padding-bottom: 0; margin-bottom: 16px;">
                 <h3><i class="fa-solid fa-file-excel" style="color: #8b5cf6; margin-right: 8px;"></i> Импорт из 1С (Excel)</h3>
             </div>
-            <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 16px;">Загрузите файл "Оборотно-сальдовая ведомость" (.xlsx).<br>Система обновит сальдо для выбранного счета.</p>
+            <p style="color: var(--text-secondary); font-size: 14px; margin-bottom: 16px;">Загрузите файл «Оборотно-сальдовая ведомость» (.xlsx). Система обновит сальдо для выбранного счёта и запишет импорт в историю.</p>
 
             <div class="upload-area" style="margin-top: 0; padding: 24px;">
                 <label style="font-weight: 500; color: var(--text-main); margin-bottom: 8px; display: block; align-self: flex-start;">1. Выберите счет:</label>
-
-                <!-- НОВЫЙ КЛАСС ДЛЯ РАДИО-КНОПОК В ОДНУ СТРОКУ -->
                 <div class="radio-group" style="align-self: flex-start; margin-bottom: 24px;">
                     <label class="radio-label">
                         <input type="radio" name="accountType" value="209" checked>
@@ -32,26 +40,39 @@
             <div id="uploadResult" class="upload-result-box mt-20 hide"></div>
         </div>
 
-        <!-- Колонка 2: Справка -->
+        <!-- Колонка 2: История импортов -->
         <div class="card">
-            <div class="card-header">
-                <h3><i class="fa-solid fa-circle-info" style="color: var(--primary-color); margin-right: 8px;"></i> Справка по импорту</h3>
+            <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                <h3><i class="fa-solid fa-clock-rotate-left" style="color:#0ea5e9; margin-right:8px;"></i> История импортов</h3>
+                <button id="btnRefreshImportHistory" class="icon-btn" title="Обновить"><i class="fa-solid fa-rotate-right"></i></button>
             </div>
-            <ul style="color: var(--text-secondary); font-size: 14px; padding-left: 20px; line-height: 1.6; margin-top: 8px;">
-                <li style="margin-bottom: 8px;">Файл должен содержать ФИО, Дебет (Долг) и Кредит (Переплата).</li>
-                <li style="margin-bottom: 8px;">Импорт производится только для активного месяца.</li>
-                <li>Система автоматически найдет пользователей по ФИО (допускаются небольшие расхождения).</li>
-            </ul>
+            <div id="importHistoryList" style="max-height:320px; overflow-y:auto; font-size:13px;">
+                <div style="padding:20px; text-align:center; color:var(--text-secondary);">Загрузка…</div>
+            </div>
         </div>
     </div>
 
-    <!-- Таблица -->
+    <!-- ============================================
+         ТАБЛИЦА ДОЛГОВ с фильтрами и сортировкой
+         ============================================ -->
     <div class="card mt-20" style="margin-bottom: 0;">
         <div class="card-header">
             <h3>Список жильцов и долгов</h3>
-            <!-- ПАНЕЛЬ ПОИСКА В ОДНУ СТРОКУ -->
             <div class="toolbar-controls">
-                <input type="text" id="debtsSearchInput" placeholder="Поиск по ФИО...">
+                <!-- Фильтры: тип жильца -->
+                <select id="debtsFilterType" title="Быстрый фильтр">
+                    <option value="">Все</option>
+                    <option value="debtors">🔴 Только должники</option>
+                    <option value="overpaid">🟢 Только переплаты</option>
+                </select>
+                <select id="debtsFilterDormitory" title="Общежитие">
+                    <option value="">Все общежития</option>
+                </select>
+                <input type="number" id="debtsMinDebt" placeholder="Мин. долг ₽" min="0" style="width:110px;" title="Минимальный долг (209+205)">
+                <input type="text" id="debtsSearchInput" placeholder="Поиск по ФИО / комнате…">
+                <button id="btnExportDebts" class="icon-btn" title="Экспорт в Excel с текущими фильтрами" style="color: var(--success-color);">
+                    <i class="fa-solid fa-file-excel"></i>
+                </button>
                 <button id="btnRefreshDebts" class="icon-btn" title="Обновить"><i class="fa-solid fa-rotate-right"></i></button>
             </div>
         </div>
@@ -60,18 +81,19 @@
                 <thead>
                     <tr>
                         <th style="width: 60px;">ID</th>
-                        <th>ФИО (Логин)</th>
-                        <th>Общ.</th>
+                        <th data-debt-sort="username" class="sortable">ФИО (Логин)</th>
+                        <th data-debt-sort="room" class="sortable">Общ. / комн.</th>
                         <th style="color: var(--danger-color); border-left: 1px solid var(--border-color);">Долг 209</th>
                         <th style="color: var(--success-color);">Перепл. 209</th>
                         <th style="color: #d97706; border-left: 1px solid var(--border-color);">Долг 205</th>
                         <th style="color: var(--success-color);">Перепл. 205</th>
-                        <th>Итог тек.</th>
+                        <th data-debt-sort="debt" class="sortable" title="Сортировать по суммарному долгу">Σ долг</th>
+                        <th data-debt-sort="total" class="sortable">Итог тек.</th>
                         <th class="text-right">Действия</th>
                     </tr>
                 </thead>
                 <tbody id="debtsTableBody">
-                    <tr><td colspan="9" class="text-center" style="padding: 40px; color: var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка данных...</td></tr>
+                    <tr><td colspan="10" class="text-center" style="padding: 40px; color: var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка данных...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -80,6 +102,84 @@
                 <button id="btnPrevDebts" class="page-btn" disabled><i class="fa-solid fa-chevron-left"></i> Назад</button>
                 <span id="debtsPageInfo" style="font-size: 13px; font-weight: 500; color: var(--text-secondary);">Стр. 1</span>
                 <button id="btnNextDebts" class="page-btn">Вперед <i class="fa-solid fa-chevron-right"></i></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- МОДАЛКА: КОРРЕКТИРОВКА -->
+    <div id="debtAdjustModal" class="modal-overlay">
+        <div class="modal-window" style="width: 480px;">
+            <div class="modal-header" style="background: #eef2ff; border-bottom: 1px solid #c7d2fe;">
+                <h3 style="color: #4338ca;">
+                    <i class="fa-solid fa-pen-to-square"></i> Корректировка сальдо
+                </h3>
+                <button class="close-btn close-icon" data-adjust-close>&times;</button>
+            </div>
+            <form id="debtAdjustForm" class="styled-form">
+                <div class="modal-form" style="padding-top:16px;">
+                    <input type="hidden" id="adjustUserId">
+                    <p style="font-size:14px; margin-bottom:8px;">
+                        Жилец: <b id="adjustUserName" style="color: var(--primary-color);">—</b>
+                    </p>
+                    <p class="hint-text" style="font-size:12px; margin-bottom:18px;">
+                        Корректировка создаст проводку в журнале и обновит итог текущего периода.
+                    </p>
+
+                    <div class="form-grid-2 mb-3">
+                        <div class="form-group">
+                            <label>Счёт</label>
+                            <select id="adjustAccount" required>
+                                <option value="209">209 — Коммуналка</option>
+                                <option value="205">205 — Найм</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Сумма, ₽</label>
+                            <input type="number" step="0.01" id="adjustAmount" required placeholder="— для возврата, + для доначисления">
+                        </div>
+                    </div>
+
+                    <div class="form-group mb-3">
+                        <label>Причина (шаблон)</label>
+                        <select id="adjustTemplate">
+                            <option value="">— Выберите шаблон —</option>
+                            <option value="Исправление ошибки 1С">Исправление ошибки 1С</option>
+                            <option value="Возврат переплаты">Возврат переплаты</option>
+                            <option value="Перерасчёт по заявлению">Перерасчёт по заявлению</option>
+                            <option value="Ручная сверка с бухгалтерией">Ручная сверка с бухгалтерией</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Детали / комментарий</label>
+                        <textarea id="adjustDescription" required rows="3" placeholder="Например: переплата возвращена на счёт по заявлению от 15.04.2026"></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="action-btn secondary-btn" data-adjust-close>Отмена</button>
+                    <button type="submit" class="action-btn primary-btn">
+                        <i class="fa-solid fa-floppy-disk"></i> Сохранить корректировку
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- МОДАЛКА: НЕ НАЙДЕННЫЕ ФИО -->
+    <div id="notFoundModal" class="modal-overlay">
+        <div class="modal-window" style="width: 720px;">
+            <div class="modal-header" style="background: #fef2f2; border-bottom: 1px solid #fecaca;">
+                <h3 style="color: #991b1b;">
+                    <i class="fa-solid fa-user-slash"></i>
+                    Не найдены в 1С — <span id="notFoundLogMeta" style="font-weight:normal; color:var(--text-secondary); font-size:14px;"></span>
+                </h3>
+                <button class="close-btn close-icon" data-nf-close>&times;</button>
+            </div>
+            <div class="modal-form" style="padding:14px 18px; background:var(--bg-page); min-height:200px; max-height:480px; overflow-y:auto;">
+                <div id="notFoundList"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="action-btn secondary-btn" data-nf-close>Закрыть</button>
             </div>
         </div>
     </div>
