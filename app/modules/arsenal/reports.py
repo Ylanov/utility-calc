@@ -1,12 +1,16 @@
-from typing import Annotated
+from datetime import datetime, timedelta
+from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
-from sqlalchemy import or_
+from sqlalchemy import or_, func
 
 from app.core.database import get_arsenal_db
-from app.modules.arsenal.models import Document, DocumentItem, Nomenclature, WeaponRegistry, ArsenalUser
+from app.modules.arsenal.models import (
+    AccountingObject, Document, DocumentItem, Nomenclature,
+    WeaponRegistry, ArsenalUser,
+)
 from app.modules.arsenal.deps import get_current_arsenal_user
 
 router = APIRouter(tags=["Arsenal Reports"])
@@ -127,4 +131,272 @@ async def get_weapon_timeline(
     return {
         "status": status_text,
         "history": timeline
+    }
+
+
+# =====================================================================
+# БАЛАНСОВАЯ ВЕДОМОСТЬ — остатки по счетам / категориям / объектам
+# =====================================================================
+@router.get("/api/arsenal/reports/balance-summary")
+async def balance_summary(
+    object_id: Optional[int] = Query(None),
+    db: AsyncSession = Depends(get_arsenal_db),
+    current_user: ArsenalUser = Depends(get_current_arsenal_user),
+):
+    """Агрегированная балансовая ведомость: группировка по счёту учёта +
+    категории номенклатуры + объекту. Для бухгалтерии и годового инвентаря.
+    unit_head видит только свой склад."""
+    stmt = (
+        select(
+            WeaponRegistry.account_code,
+            Nomenclature.category,
+            AccountingObject.name.label("object_name"),
+            func.count(WeaponRegistry.id).label("units"),
+            func.coalesce(func.sum(WeaponRegistry.quantity), 0).label("qty"),
+            func.coalesce(
+                func.sum(WeaponRegistry.quantity * WeaponRegistry.price), 0
+            ).label("total_cost"),
+        )
+        .join(Nomenclature, Nomenclature.id == WeaponRegistry.nomenclature_id)
+        .outerjoin(AccountingObject, AccountingObject.id == WeaponRegistry.current_object_id)
+        .where(WeaponRegistry.status == 1)
+        .group_by(
+            WeaponRegistry.account_code,
+            Nomenclature.category,
+            AccountingObject.name,
+        )
+        .order_by(WeaponRegistry.account_code, Nomenclature.category)
+    )
+    if object_id:
+        stmt = stmt.where(WeaponRegistry.current_object_id == object_id)
+    if current_user.role != "admin" and current_user.object_id:
+        stmt = stmt.where(WeaponRegistry.current_object_id == current_user.object_id)
+
+    rows = (await db.execute(stmt)).all()
+    by_account: dict = {}
+    grand_total_cost = 0.0
+    grand_total_units = 0
+    for acc, cat, obj_name, units, qty, cost in rows:
+        acc_key = acc or "—"
+        d = by_account.setdefault(acc_key, {"items": [], "total_cost": 0.0, "total_units": 0})
+        d["items"].append({
+            "category": cat or "Без категории",
+            "object_name": obj_name or "—",
+            "units": int(units), "quantity": int(qty), "cost": float(cost),
+        })
+        d["total_cost"] += float(cost)
+        d["total_units"] += int(units)
+        grand_total_cost += float(cost)
+        grand_total_units += int(units)
+
+    return {
+        "by_account": by_account,
+        "grand_total_cost": grand_total_cost,
+        "grand_total_units": grand_total_units,
+    }
+
+
+@router.get("/api/arsenal/reports/balance-summary/export")
+async def export_balance_summary(
+    object_id: Optional[int] = Query(None),
+    db: AsyncSession = Depends(get_arsenal_db),
+    current_user: ArsenalUser = Depends(get_current_arsenal_user),
+):
+    """Excel-версия балансовой ведомости. 2 листа: Детализация + Итоги по счетам."""
+    import io
+    from fastapi.responses import StreamingResponse
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+
+    data = await balance_summary(object_id, db, current_user)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Детализация"
+    headers = ["Счёт", "Категория", "Объект", "Ед.", "Кол-во", "Стоимость, ₽"]
+    for i, h in enumerate(headers, 1):
+        c = ws.cell(row=1, column=i, value=h)
+        c.font = Font(bold=True)
+        c.fill = PatternFill("solid", fgColor="DBEAFE")
+    row = 2
+    for acc, block in data["by_account"].items():
+        for it in block["items"]:
+            ws.cell(row=row, column=1, value=acc)
+            ws.cell(row=row, column=2, value=it["category"])
+            ws.cell(row=row, column=3, value=it["object_name"])
+            ws.cell(row=row, column=4, value=it["units"])
+            ws.cell(row=row, column=5, value=it["quantity"])
+            ws.cell(row=row, column=6, value=it["cost"])
+            row += 1
+    for col_letter, width in [("A", 14), ("B", 28), ("C", 28), ("D", 8), ("E", 10), ("F", 14)]:
+        ws.column_dimensions[col_letter].width = width
+
+    ws2 = wb.create_sheet("Итоги по счетам")
+    ws2.append(["Счёт", "Ед.", "Стоимость, ₽"])
+    for acc, block in data["by_account"].items():
+        ws2.append([acc, block["total_units"], block["total_cost"]])
+    ws2.append([])
+    ws2.append(["ИТОГО", data["grand_total_units"], data["grand_total_cost"]])
+    for cell in ws2[1]:
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill("solid", fgColor="DBEAFE")
+    for cell in ws2[ws2.max_row]:
+        cell.font = Font(bold=True)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="balance_summary.xlsx"'},
+    )
+
+
+# =====================================================================
+# ОТЧЁТ ПО МОЛ
+# =====================================================================
+@router.get("/api/arsenal/reports/by-mol")
+async def report_by_mol(
+    db: AsyncSession = Depends(get_arsenal_db),
+    current_user: ArsenalUser = Depends(get_current_arsenal_user),
+):
+    """Что числится за каждым МОЛ — для годовых актов материальной ответственности."""
+    rows = (await db.execute(
+        select(
+            AccountingObject.mol_name,
+            AccountingObject.id.label("obj_id"),
+            AccountingObject.name.label("obj_name"),
+            func.coalesce(func.count(WeaponRegistry.id), 0).label("units"),
+            func.coalesce(func.sum(WeaponRegistry.quantity), 0).label("qty"),
+            func.coalesce(
+                func.sum(WeaponRegistry.quantity * WeaponRegistry.price), 0
+            ).label("cost"),
+        )
+        .outerjoin(
+            WeaponRegistry,
+            (WeaponRegistry.current_object_id == AccountingObject.id) &
+            (WeaponRegistry.status == 1),
+        )
+        .group_by(AccountingObject.mol_name, AccountingObject.id, AccountingObject.name)
+        .order_by(AccountingObject.mol_name, AccountingObject.name)
+    )).all()
+
+    by_mol: dict = {}
+    for mol, oid, oname, units, qty, cost in rows:
+        k = mol or "— МОЛ не назначен —"
+        d = by_mol.setdefault(k, {"objects": [], "total_units": 0, "total_cost": 0.0})
+        d["objects"].append({
+            "object_id": oid, "object_name": oname,
+            "units": int(units), "quantity": int(qty), "cost": float(cost),
+        })
+        d["total_units"] += int(units)
+        d["total_cost"] += float(cost)
+    return {"by_mol": by_mol}
+
+
+# =====================================================================
+# ОБОРОТ ЗА ПЕРИОД
+# =====================================================================
+@router.get("/api/arsenal/reports/turnover")
+async def turnover_report(
+    date_from: datetime,
+    date_to: datetime,
+    object_id: Optional[int] = Query(None),
+    db: AsyncSession = Depends(get_arsenal_db),
+    current_user: ArsenalUser = Depends(get_current_arsenal_user),
+):
+    """Оборот за период: сколько поступило/выбыло/перемещено, в шт. и в рублях."""
+    stmt = (
+        select(
+            Document.operation_type,
+            func.count(Document.id).label("docs"),
+            func.coalesce(func.sum(DocumentItem.quantity), 0).label("qty"),
+            func.coalesce(
+                func.sum(DocumentItem.quantity * DocumentItem.price), 0
+            ).label("cost"),
+        )
+        .join(DocumentItem, DocumentItem.document_id == Document.id)
+        .where(
+            Document.operation_date >= date_from,
+            Document.operation_date <= date_to,
+            Document.is_reversed.is_(False),
+        )
+        .group_by(Document.operation_type)
+    )
+    if object_id:
+        stmt = stmt.where(
+            (Document.source_id == object_id) | (Document.target_id == object_id)
+        )
+    if current_user.role != "admin" and current_user.object_id:
+        stmt = stmt.where(
+            (Document.source_id == current_user.object_id) |
+            (Document.target_id == current_user.object_id)
+        )
+
+    rows = (await db.execute(stmt)).all()
+    by_type = {
+        op: {"docs": int(d), "quantity": int(q), "cost": float(c)}
+        for op, d, q, c in rows
+    }
+    inbound_types = ("Первичный ввод", "Прием")
+    outbound_types = ("Списание", "Утилизация", "Отправка")
+    inbound_cost = sum(by_type.get(t, {}).get("cost", 0) for t in inbound_types)
+    outbound_cost = sum(by_type.get(t, {}).get("cost", 0) for t in outbound_types)
+
+    return {
+        "period": {
+            "from": date_from.isoformat(),
+            "to": date_to.isoformat(),
+            "object_id": object_id,
+        },
+        "by_operation": by_type,
+        "summary": {
+            "total_docs": sum(v["docs"] for v in by_type.values()),
+            "inbound_cost": inbound_cost,
+            "outbound_cost": outbound_cost,
+            "net_cost": inbound_cost - outbound_cost,
+        },
+    }
+
+
+# =====================================================================
+# ТОП ПЕРЕМЕЩАЮЩИХСЯ
+# =====================================================================
+@router.get("/api/arsenal/reports/top-moving")
+async def top_moving(
+    days: int = Query(30, ge=1, le=365),
+    limit: int = Query(20, ge=1, le=100),
+    db: AsyncSession = Depends(get_arsenal_db),
+    current_user: ArsenalUser = Depends(get_current_arsenal_user),
+):
+    """Топ-N наиболее активных позиций (по кол-ву движений) за последние N дней."""
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    rows = (await db.execute(
+        select(
+            Nomenclature.id,
+            Nomenclature.name,
+            Nomenclature.category,
+            func.count(DocumentItem.id).label("movements"),
+            func.coalesce(func.sum(DocumentItem.quantity), 0).label("qty"),
+        )
+        .join(DocumentItem, DocumentItem.nomenclature_id == Nomenclature.id)
+        .join(Document, Document.id == DocumentItem.document_id)
+        .where(
+            Document.operation_date >= cutoff,
+            Document.is_reversed.is_(False),
+        )
+        .group_by(Nomenclature.id, Nomenclature.name, Nomenclature.category)
+        .order_by(func.count(DocumentItem.id).desc())
+        .limit(limit)
+    )).all()
+
+    return {
+        "days": days,
+        "items": [
+            {
+                "nomenclature_id": nid, "name": name, "category": cat,
+                "movements": int(mv), "total_quantity": int(qty),
+            }
+            for nid, name, cat, mv, qty in rows
+        ],
     }

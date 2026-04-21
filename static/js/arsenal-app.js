@@ -62,8 +62,16 @@ function bindAppEvents() {
     document.getElementById('menuDocs')?.addEventListener('click', Documents.loadList);
     document.getElementById('menuObjects')?.addEventListener('click', Dictionaries.openObjectsModal);
     document.getElementById('menuNomenclature')?.addEventListener('click', Dictionaries.openNomenclatureModal);
-    document.getElementById('menuUsers')?.addEventListener('click', Users.loadAndShow);
-    document.getElementById('menuReports')?.addEventListener('click', () => UI.openModal('reportModal'));
+    // Пользователи: отдельная полноценная страница с CRUD, активацией,
+    // блокировкой, историей действий и статистикой по документам.
+    document.getElementById('menuUsers')?.addEventListener('click', () => {
+        window.location.href = 'arsenal_users.html';
+    });
+    // Отчёты: отдельная страница с табами (балансовая ведомость, по МОЛ,
+    // оборот за период, топ-позиции, история изделия).
+    document.getElementById('menuReports')?.addEventListener('click', () => {
+        window.location.href = 'arsenal_reports.html';
+    });
 
     // --- Основные кнопки ---
     document.getElementById('btnAddObject')?.addEventListener('click', () => UI.openModal('newObjectModal'));

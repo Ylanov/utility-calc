@@ -40,9 +40,35 @@ class ArsenalUser(ArsenalBase):
 
     object_id = Column(Integer, ForeignKey(ACCOUNTING_OBJECT_FK), nullable=True)
 
+    # ФИО + контактные данные — для идентификации в журнале и связи с МОЛ.
+    # full_name часто = mol_name у привязанного объекта, но может отличаться
+    # (например, зам. начальника склада). Опциональные — миграция backfill-ит
+    # пустыми и админ может заполнить постепенно.
+    full_name = Column(String, nullable=True)
+    phone = Column(String(32), nullable=True)
+    email = Column(String, nullable=True)
+
+    # Жизненный цикл учётки: активна / отключена.
+    # Отключение вместо удаления — чтобы сохранить ссылки в audit_log / documents
+    # (author_id). Отключённые не могут залогиниться.
+    is_active = Column(Boolean, default=True, nullable=False, index=True)
+    deactivated_at = Column(DateTime, nullable=True)
+    deactivated_by_id = Column(Integer, ForeignKey(ARSENAL_USER_FK), nullable=True)
+    deactivation_reason = Column(Text, nullable=True)
+
+    # Аналитика: последний успешный вход (обновляется в auth.py).
+    last_login_at = Column(DateTime, nullable=True)
+    last_login_ip = Column(String(45), nullable=True)
+    # Счётчик неудачных попыток — для блокировки после N попыток.
+    failed_login_count = Column(Integer, default=0, nullable=False)
+    locked_until = Column(DateTime, nullable=True)
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
     accounting_object = relationship("AccountingObject")
+    deactivated_by = relationship(
+        "ArsenalUser", foreign_keys=[deactivated_by_id], remote_side=[id],
+    )
 
 
 # =====================================================================

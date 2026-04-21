@@ -200,6 +200,18 @@
                     <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Счет учета по умолчанию</label>
                     <input type="text" id="newNomAccount" class="w-full border border-slate-300 p-2 rounded-lg text-sm focus:border-emerald-500 outline-none font-mono placeholder-slate-300" placeholder="101.38.1">
                 </div>
+                <div class="mb-3">
+                    <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">Категория</label>
+                    <input type="text" id="newNomCategory" list="nomCategoryList" class="w-full border border-slate-300 p-2 rounded-lg text-sm focus:border-emerald-500 outline-none" placeholder="Стрелковое оружие">
+                    <datalist id="nomCategoryList"></datalist>
+                </div>
+                <div class="mb-3">
+                    <label class="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-1 block">
+                        Мин. остаток <span class="text-slate-300 font-normal">(для партионного учёта)</span>
+                    </label>
+                    <input type="number" id="newNomMinQty" min="0" value="0" class="w-full border border-slate-300 p-2 rounded-lg text-sm focus:border-emerald-500 outline-none font-mono">
+                    <p class="text-[10px] text-slate-400 mt-1">Когда остаток упадёт ниже — в дашборде появится красный бейдж «Низкие остатки».</p>
+                </div>
                 <div class="mt-2 mb-4 bg-white p-3 border border-slate-200 rounded-lg shadow-sm">
                     <label class="flex items-start cursor-pointer select-none">
                         <input type="checkbox" id="newNomIsNumbered" class="mt-0.5 mr-3 h-4 w-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500" checked>

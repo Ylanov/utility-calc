@@ -156,16 +156,22 @@ const Dictionaries = {
                     const safeName = n.name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
                     const safeCode = (n.code || '').replace(/'/g, "\\'");
                     const safeAcc = (n.default_account || '').replace(/'/g, "\\'");
+                    const safeCat = (n.category || '').replace(/'/g, "\\'");
+                    const minQty = n.min_quantity ?? 0;
 
                     const badge = n.is_numbered
                         ? '<span class="px-2 py-0.5 bg-blue-50 text-blue-600 rounded text-[10px] font-bold border border-blue-100">Номерной</span>'
                         : '<span class="px-2 py-0.5 bg-amber-50 text-amber-600 rounded text-[10px] font-bold border border-amber-100">Партия</span>';
+                    // Категория-чип (если задана) — помогает визуально группировать каталог
+                    const catChip = n.category
+                        ? `<span class="ml-1 px-2 py-0.5 bg-slate-100 text-slate-600 rounded text-[10px]">${n.category}</span>`
+                        : '';
 
                     return `
-                    <tr class="hover:bg-emerald-50 cursor-pointer transition border-b border-slate-100 last:border-0" 
-                        onclick="Dictionaries.startEditNomenclature(${n.id}, '${safeName}', '${safeCode}', '${safeAcc}', ${n.is_numbered})">
+                    <tr class="hover:bg-emerald-50 cursor-pointer transition border-b border-slate-100 last:border-0"
+                        onclick="Dictionaries.startEditNomenclature(${n.id}, '${safeName}', '${safeCode}', '${safeAcc}', ${n.is_numbered}, '${safeCat}', ${minQty})">
                         <td class="p-3 font-mono text-xs text-emerald-600 font-bold">${n.code || '-'}</td>
-                        <td class="p-3 text-slate-700 text-sm font-medium">${n.name}</td>
+                        <td class="p-3 text-slate-700 text-sm font-medium">${n.name}${catChip}</td>
                         <td class="p-3 text-center">${badge}</td>
                         <td class="p-3 text-xs font-mono text-slate-500">${n.default_account || '-'}</td>
                     </tr>`;
@@ -203,21 +209,43 @@ const Dictionaries = {
         document.getElementById('newNomName').value = '';
         document.getElementById('newNomAccount').value = '';
         document.getElementById('newNomIsNumbered').checked = true;
+        const catEl = document.getElementById('newNomCategory');
+        const minEl = document.getElementById('newNomMinQty');
+        if (catEl) catEl.value = '';
+        if (minEl) minEl.value = '0';
 
         document.getElementById('nomFormTitle').innerHTML = '<i class="fa-solid fa-plus text-emerald-600"></i> Добавить новое изделие';
         document.getElementById('btnSaveNom').style.display = 'block';
         document.getElementById('nomEditActions').classList.add('hidden');
         document.getElementById('nomEditActions').classList.remove('flex');
+        // Подгружаем стандартные категории (один раз, datalist инициализируется сразу)
+        if (catEl && !Dictionaries._categoriesLoaded) {
+            Dictionaries._categoriesLoaded = true;
+            apiFetch('/api/arsenal/nomenclature/categories').then(async r => {
+                if (!r || !r.ok) return;
+                const data = await r.json();
+                const dl = document.getElementById('nomCategoryList');
+                if (dl) {
+                    dl.innerHTML = (data.categories || []).map(c =>
+                        `<option value="${c.name.replace(/"/g, '&quot;')}">`
+                    ).join('');
+                }
+            }).catch(() => {});
+        }
     },
 
     // Активация режима редактирования (При клике на строку таблицы)
-    startEditNomenclature: (id, name, code, account, isNumbered) => {
+    startEditNomenclature: (id, name, code, account, isNumbered, category, minQty) => {
         Dictionaries.nomState = { mode: 'edit', currentId: id };
         document.getElementById('editNomId').value = id;
         document.getElementById('newNomName').value = name;
         document.getElementById('newNomCode').value = code;
         document.getElementById('newNomAccount').value = account;
         document.getElementById('newNomIsNumbered').checked = isNumbered;
+        const catEl = document.getElementById('newNomCategory');
+        const minEl = document.getElementById('newNomMinQty');
+        if (catEl) catEl.value = category || '';
+        if (minEl) minEl.value = minQty ?? 0;
 
         document.getElementById('nomFormTitle').innerHTML = '<i class="fa-solid fa-pen text-blue-600"></i> Редактирование изделия';
         document.getElementById('btnSaveNom').style.display = 'none';
@@ -225,19 +253,31 @@ const Dictionaries = {
         document.getElementById('nomEditActions').classList.add('flex');
     },
 
-    // Создание новой номенклатуры
-    createNomenclature: async () => {
+    // Вспомогательная: собирает все поля формы в payload
+    _collectNomPayload: () => {
         const code = document.getElementById('newNomCode').value.trim();
         const name = document.getElementById('newNomName').value.trim();
         const account = document.getElementById('newNomAccount').value.trim();
         const isNum = document.getElementById('newNomIsNumbered').checked;
+        const catEl = document.getElementById('newNomCategory');
+        const minEl = document.getElementById('newNomMinQty');
+        return {
+            code, name, is_numbered: isNum,
+            default_account: account || null,
+            category: catEl ? (catEl.value.trim() || null) : null,
+            min_quantity: minEl ? (parseInt(minEl.value) || 0) : 0,
+        };
+    },
 
-        if (!name) return UI.showToast("Наименование обязательно.", "error");
+    // Создание новой номенклатуры
+    createNomenclature: async () => {
+        const payload = Dictionaries._collectNomPayload();
+        if (!payload.name) return UI.showToast("Наименование обязательно.", "error");
 
         try {
             const res = await apiFetch('/api/arsenal/nomenclature', {
                 method: 'POST',
-                body: JSON.stringify({ code, name, is_numbered: isNum, default_account: account || null })
+                body: JSON.stringify(payload)
             });
 
             if (res && res.ok) {
@@ -254,17 +294,14 @@ const Dictionaries = {
     // Обновление существующей номенклатуры
     updateNomenclature: async () => {
         const id = Dictionaries.nomState.currentId;
-        const code = document.getElementById('newNomCode').value.trim();
-        const name = document.getElementById('newNomName').value.trim();
-        const account = document.getElementById('newNomAccount').value.trim();
-        const isNum = document.getElementById('newNomIsNumbered').checked;
+        const payload = Dictionaries._collectNomPayload();
 
-        if (!id || !name) return;
+        if (!id || !payload.name) return;
 
         try {
             const res = await apiFetch(`/api/arsenal/nomenclature/${id}`, {
                 method: 'PUT',
-                body: JSON.stringify({ code, name, is_numbered: isNum, default_account: account || null })
+                body: JSON.stringify(payload)
             });
 
             if (res && res.ok) {

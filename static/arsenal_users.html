@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Пользователи · СТРОБ Арсенал</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; }
+  .chip { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+  .chip-active   { background:#d1fae5; color:#065f46; }
+  .chip-inactive { background:#fee2e2; color:#991b1b; }
+  .chip-locked   { background:#fef3c7; color:#92400e; }
+  .chip-admin    { background:#dbeafe; color:#1e40af; }
+  .chip-head     { background:#e5e7eb; color:#374151; }
+</style>
+</head>
+<body class="bg-slate-100 min-h-screen">
+
+<div id="toast-container" class="fixed top-4 right-4 z-50 space-y-2"></div>
+
+<div class="max-w-7xl mx-auto p-5">
+  <header class="mb-6 flex items-center justify-between">
+    <div>
+      <a href="arsenal_dashboard.html" class="text-xs text-slate-500 hover:text-slate-700">
+        <i class="fa-solid fa-arrow-left"></i> Дашборд
+      </a>
+      <h1 class="text-2xl font-bold text-slate-800 mt-1 flex items-center gap-3">
+        <i class="fa-solid fa-users text-blue-600"></i>
+        Управление пользователями
+      </h1>
+    </div>
+    <button id="btnCreate" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm">
+      <i class="fa-solid fa-user-plus"></i> Создать пользователя
+    </button>
+  </header>
+
+  <!-- KPI: быстрая сводка -->
+  <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
+    <div class="bg-white rounded-lg shadow-sm p-3"><div class="text-xs text-slate-500">Всего</div><div class="text-xl font-bold" id="kpiTotal">—</div></div>
+    <div class="bg-white rounded-lg shadow-sm p-3"><div class="text-xs text-slate-500">Активных</div><div class="text-xl font-bold text-emerald-600" id="kpiActive">—</div></div>
+    <div class="bg-white rounded-lg shadow-sm p-3"><div class="text-xs text-slate-500">Отключено</div><div class="text-xl font-bold text-rose-600" id="kpiInactive">—</div></div>
+    <div class="bg-white rounded-lg shadow-sm p-3"><div class="text-xs text-slate-500">Заблокировано</div><div class="text-xl font-bold text-amber-600" id="kpiLocked">—</div></div>
+    <div class="bg-white rounded-lg shadow-sm p-3"><div class="text-xs text-slate-500">Админов</div><div class="text-xl font-bold text-blue-600" id="kpiAdmins">—</div></div>
+  </div>
+
+  <!-- Фильтры -->
+  <div class="bg-white rounded-xl shadow-sm p-4 mb-4 grid grid-cols-1 md:grid-cols-4 gap-3">
+    <input id="fltQ" placeholder="Поиск: username / ФИО / email" class="border border-slate-300 rounded px-3 py-2 text-sm">
+    <select id="fltRole" class="border border-slate-300 rounded px-3 py-2 text-sm">
+      <option value="">Все роли</option>
+      <option value="admin">Администратор</option>
+      <option value="unit_head">Начальник склада</option>
+    </select>
+    <select id="fltActive" class="border border-slate-300 rounded px-3 py-2 text-sm">
+      <option value="">Все статусы</option>
+      <option value="true">Только активные</option>
+      <option value="false">Только отключённые</option>
+    </select>
+    <select id="fltObject" class="border border-slate-300 rounded px-3 py-2 text-sm">
+      <option value="">Все склады</option>
+    </select>
+  </div>
+
+  <!-- Таблица -->
+  <div class="bg-white rounded-xl shadow-sm overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="bg-slate-50 text-xs text-slate-500 uppercase">
+        <tr>
+          <th class="px-3 py-3 text-left">Пользователь</th>
+          <th class="px-3 py-3 text-left">Роль</th>
+          <th class="px-3 py-3 text-left">Склад</th>
+          <th class="px-3 py-3 text-center">Статус</th>
+          <th class="px-3 py-3 text-center">Документов</th>
+          <th class="px-3 py-3 text-left">Посл. вход</th>
+          <th class="px-3 py-3"></th>
+        </tr>
+      </thead>
+      <tbody id="usersBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ========== МОДАЛКА: создание/редактирование ========== -->
+<div id="userModal" class="hidden fixed inset-0 bg-black/50 items-center justify-center z-50" style="display:none;">
+  <div class="bg-white rounded-xl shadow-xl max-w-lg w-full mx-4 p-6 max-h-[90vh] overflow-y-auto">
+    <h3 class="text-lg font-bold mb-4" id="modalTitle">Новый пользователь</h3>
+    <form id="userForm" class="space-y-3">
+      <input type="hidden" id="f_id">
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">Логин (username) <span class="text-rose-500">*</span></label>
+        <input type="text" id="f_username" required minlength="3" class="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+      </div>
+      <div>
+        <label class="block text-xs text-slate-600 mb-1">ФИО</label>
+        <input type="text" id="f_full_name" class="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs text-slate-600 mb-1">Email</label>
+          <input type="email" id="f_email" class="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+        </div>
+        <div>
+          <label class="block text-xs text-slate-600 mb-1">Телефон</label>
+          <input type="tel" id="f_phone" class="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+        </div>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block text-xs text-slate-600 mb-1">Роль <span class="text-rose-500">*</span></label>
+          <select id="f_role" class="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+            <option value="unit_head">Начальник склада</option>
+            <option value="admin">Администратор</option>
+          </select>
+        </div>
+        <div>
+          <label class="block text-xs text-slate-600 mb-1">Склад / объект</label>
+          <select id="f_object" class="w-full border border-slate-300 rounded px-3 py-2 text-sm">
+            <option value="">— не привязан —</option>
+          </select>
+          <p class="text-[11px] text-slate-400 mt-1">Обязателен для роли «Начальник склада».</p>
+        </div>
+      </div>
+      <div id="createPasswordRow">
+        <label class="block text-xs text-slate-600 mb-1">Пароль (оставьте пустым → сгенерируется)</label>
+        <input type="text" id="f_password" minlength="8" class="w-full border border-slate-300 rounded px-3 py-2 text-sm" autocomplete="new-password">
+      </div>
+
+      <div class="flex justify-end gap-2 pt-3 border-t border-slate-200">
+        <button type="button" onclick="closeModal()" class="px-4 py-2 rounded border border-slate-300 text-sm">Отмена</button>
+        <button type="submit" class="px-4 py-2 rounded bg-blue-600 text-white text-sm">
+          <i class="fa-solid fa-check"></i> Сохранить
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ========== МОДАЛКА: детали пользователя ========== -->
+<div id="detailModal" class="hidden fixed inset-0 bg-black/50 items-center justify-center z-50" style="display:none;">
+  <div class="bg-white rounded-xl shadow-xl max-w-3xl w-full mx-4 max-h-[92vh] overflow-y-auto">
+    <div class="p-6" id="detailBody">Загрузка…</div>
+  </div>
+</div>
+
+<script src="js/arsenal-core.js"></script>
+<script src="js/arsenal-users.js"></script>
+</body>
+</html>
