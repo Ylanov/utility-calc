@@ -1,41 +1,41 @@
 """Arsenal upgrades: rollback, disposal_reasons, inventory, password_reset, low-stock
 
-Revision ID: arsenal_001_upgrades
-Revises: domain_001_resident_types
+Revision ID: arsenal_upg_001
+Revises: 7e8bc3dc33d2
 Create Date: 2026-04-25 10:00:00.000000
 
-Крупное улучшение модуля «СТРОБ Арсенал»:
+Изначально была ошибочно помещена в utility-alembic (head: domain_001_resident_types),
+где таблицы `nomenclature` / `documents` не существуют. Перенесена в
+alembic_arsenal — цепочка арсенальных миграций.
 
+Содержимое:
   1. nomenclature.min_quantity — порог «низкий остаток» для алертов.
   2. documents: is_reversed / reversed_by_document_id / reverses_document_id /
      disposal_reason_id — трекинг обратных документов и причина списания.
-  3. Новая таблица disposal_reasons — справочник причин утилизации.
-  4. Новые таблицы inventories / inventory_items — инвентаризация.
-  5. arsenal_password_reset_tokens — безопасный сброс пароля (не plaintext
-     в JSON, как было в POST /users/{id}/reset-password).
-
-Сидируется набор стандартных причин списания.
+  3. disposal_reasons — справочник причин утилизации (9 типовых причин).
+  4. inventories / inventory_items — полноценная инвентаризация.
+  5. arsenal_password_reset_tokens — безопасный сброс пароля.
 """
 from alembic import op
 import sqlalchemy as sa
 
 
-revision = 'arsenal_001_upgrades'
-down_revision = 'domain_001_resident_types'
+revision = 'arsenal_upg_001'
+down_revision = '7e8bc3dc33d2'
 branch_labels = None
 depends_on = None
 
 
 DISPOSAL_REASONS_SEED = [
-    ("BREAKDOWN",   "Поломка / неисправность",              "disposal"),
-    ("WEAR_OUT",    "Износ / истечение срока эксплуатации", "disposal"),
-    ("DEFECTIVE",   "Заводской брак",                       "disposal"),
-    ("LOST",        "Утрата",                                "lost"),
-    ("STOLEN",      "Хищение",                               "lost"),
-    ("TO_HEADQUARTERS", "Передача в вышестоящее управление", "external"),
-    ("TO_EXTERNAL", "Передача сторонней организации",       "external"),
-    ("COMBAT_LOSS", "Списание по боевой обстановке",        "disposal"),
-    ("OTHER",       "Иная причина",                          "other"),
+    ("BREAKDOWN",       "Поломка / неисправность",               "disposal"),
+    ("WEAR_OUT",        "Износ / истечение срока эксплуатации",  "disposal"),
+    ("DEFECTIVE",       "Заводской брак",                        "disposal"),
+    ("LOST",            "Утрата",                                "lost"),
+    ("STOLEN",          "Хищение",                               "lost"),
+    ("TO_HEADQUARTERS", "Передача в вышестоящее управление",     "external"),
+    ("TO_EXTERNAL",     "Передача сторонней организации",        "external"),
+    ("COMBAT_LOSS",     "Списание по боевой обстановке",         "disposal"),
+    ("OTHER",           "Иная причина",                          "other"),
 ]
 
 
@@ -46,7 +46,7 @@ def upgrade() -> None:
         sa.Column('min_quantity', sa.Integer(), nullable=False, server_default='0'),
     )
 
-    # --- 2. disposal_reasons (сначала, потому что на неё ссылается documents) ---
+    # --- 2. disposal_reasons (сначала, до FK от documents) ---
     op.create_table(
         'disposal_reasons',
         sa.Column('id', sa.Integer(), primary_key=True, autoincrement=True),
