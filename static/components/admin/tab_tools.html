@@ -393,6 +393,24 @@
             <div class="accordion-body">
                 <div class="accordion-content">
                     <div class="inner">
+                        <!-- ТАБЫ ВЕРХНЕГО УРОВНЯ: Дашборд / Период / Жилфонд / Обслуживание -->
+                        <div role="tablist" style="display:inline-flex; border:1px solid var(--border-color); border-radius:8px; overflow:hidden; margin-bottom:18px; flex-wrap:wrap;">
+                            <button type="button" data-analyzer-tab="dashboard" class="action-btn primary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
+                                <i class="fa-solid fa-gauge"></i> Аномалии и настройки
+                            </button>
+                            <button type="button" data-analyzer-tab="period" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
+                                <i class="fa-solid fa-chart-column"></i> Анализ периода
+                            </button>
+                            <button type="button" data-analyzer-tab="housing" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
+                                <i class="fa-solid fa-building"></i> Анализ жилфонда
+                            </button>
+                            <button type="button" data-analyzer-tab="maintenance" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
+                                <i class="fa-solid fa-broom"></i> Обслуживание
+                            </button>
+                        </div>
+
+                        <!-- ==================== ТАБ 1: АНОМАЛИИ И НАСТРОЙКИ ==================== -->
+                        <div data-analyzer-pane="dashboard">
                         <!-- KPI карточки -->
                         <div id="analyzerKPIs" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-bottom:18px;">
                             <div style="padding:18px; text-align:center; color:var(--text-secondary);">Загрузка статистики…</div>
@@ -453,6 +471,89 @@
                                 <tbody id="analyzerDismissals"></tbody>
                             </table>
                         </div>
+                        </div>
+                        <!-- ^ /data-analyzer-pane="dashboard" -->
+
+                        <!-- ==================== ТАБ 2: АНАЛИЗ ПЕРИОДА ==================== -->
+                        <div data-analyzer-pane="period" style="display:none;">
+                            <!-- Вложенные под-табы: предпросмотр / сравнение -->
+                            <div role="tablist" style="display:inline-flex; border:1px solid var(--border-color); border-radius:8px; overflow:hidden; margin-bottom:14px;">
+                                <button type="button" id="tabPreview" class="action-btn primary-btn" style="border-radius:0; padding:7px 14px; font-size:12px;">
+                                    <i class="fa-solid fa-clipboard-check"></i> Предпросмотр закрытия
+                                </button>
+                                <button type="button" id="tabCompare" class="action-btn secondary-btn" style="border-radius:0; padding:7px 14px; font-size:12px;">
+                                    <i class="fa-solid fa-scale-balanced"></i> Сравнение периодов
+                                </button>
+                            </div>
+
+                            <div id="paneClosePreview">
+                                <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap;">
+                                    <p class="hint-text" style="margin:0; font-size:13px;">
+                                        Сколько комнат сдали показания, сколько черновиков, сколько аномалий — что произойдёт при закрытии текущего периода.
+                                    </p>
+                                    <button id="btnLoadPreview" class="action-btn warning-btn" style="padding: 6px 14px; font-size: 13px;">
+                                        <i class="fa-solid fa-eye"></i> Загрузить отчёт
+                                    </button>
+                                </div>
+                                <div id="closePreviewContainer">
+                                    <p style="color: var(--text-secondary); font-size: 13px;">Нажмите «Загрузить отчёт» — отобразится текущая картина по всем общежитиям.</p>
+                                </div>
+                            </div>
+
+                            <div id="paneCompare" style="display:none;">
+                                <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 16px;">
+                                    <select id="comparePeriodA" style="flex: 1; min-width: 160px; max-width: 280px;">
+                                        <option value="">Период A...</option>
+                                    </select>
+                                    <span style="color: var(--text-secondary); font-weight: 600; font-size: 14px;">vs</span>
+                                    <select id="comparePeriodB" style="flex: 1; min-width: 160px; max-width: 280px;">
+                                        <option value="">Период B...</option>
+                                    </select>
+                                    <button id="btnCompare" class="action-btn primary-btn" style="padding: 8px 20px; font-size: 13px; white-space: nowrap;">
+                                        <i class="fa-solid fa-scale-balanced"></i> Сравнить
+                                    </button>
+                                </div>
+                                <div id="compareContainer"></div>
+                            </div>
+                        </div>
+
+                        <!-- ==================== ТАБ 3: АНАЛИЗ ЖИЛФОНДА ==================== -->
+                        <div data-analyzer-pane="housing" style="display:none;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap;">
+                                <p class="hint-text" style="margin:0; font-size:13px;">
+                                    Поиск аномалий в жилфонде: раздельные счета в одной комнате, перенаселение / недобор, пустые комнаты, нулевая площадь, жильцы без комнаты.
+                                </p>
+                                <button id="btnAnalyzerHousingRun" class="action-btn warning-btn" style="padding:6px 14px; font-size:13px;">
+                                    <i class="fa-solid fa-magnifying-glass-chart"></i> Запустить анализ
+                                </button>
+                            </div>
+                            <div id="analyzerHousingResults">
+                                <p style="color: var(--text-secondary); font-size:13px;">Нажмите «Запустить анализ» — отобразится полный отчёт по жилфонду.</p>
+                            </div>
+                        </div>
+
+                        <!-- ==================== ТАБ 4: ОБСЛУЖИВАНИЕ (cleanup gsheets, кеш) ==================== -->
+                        <div data-analyzer-pane="maintenance" style="display:none;">
+                            <h4 style="margin:0 0 10px 0;">
+                                <i class="fa-solid fa-broom" style="color:#10b981;"></i> Очистка старых импортов Google Sheets
+                            </h4>
+                            <p class="hint-text" style="margin:0 0 12px 0; font-size:13px;">
+                                Удаляет <b>завершённые</b> строки импорта (approved / auto_approved / rejected) старше указанного количества дней.
+                                Строки в статусе pending / conflict / unmatched никогда не удаляются — они ждут решения админа.
+                                Автоматически выполняется раз в сутки по расписанию, но вы можете запустить вручную.
+                            </p>
+                            <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; background:var(--bg-page); padding:12px 16px; border-radius:8px;">
+                                <div class="form-group" style="margin:0; min-width:160px;">
+                                    <label style="font-size:12px; color:var(--text-secondary);">Хранить дней (мин. 30)</label>
+                                    <input type="number" id="analyzerCleanupDays" min="30" value="365" style="padding:7px 10px;">
+                                </div>
+                                <button id="btnAnalyzerCleanupNow" class="action-btn danger-btn" style="padding:8px 16px; font-size:13px;">
+                                    <i class="fa-solid fa-trash"></i> Очистить сейчас
+                                </button>
+                            </div>
+                            <div id="analyzerCleanupResult" style="margin-top:12px; font-size:13px;"></div>
+                        </div>
+
                     </div>
                 </div>
             </div>
@@ -577,76 +678,10 @@
             </div>
         </section>
 
-        <!-- ==========================================
-             СЕКЦИЯ: СРАВНЕНИЕ ПЕРИОДОВ
-             ========================================== -->
-        <!-- ==========================================
-             СЕКЦИЯ: АНАЛИЗ ПЕРИОДОВ (объединяет «Сравнение» и «Предпросмотр закрытия»)
-             Раньше были две отдельные секции: они дёргали разные эндпоинты,
-             но обе работают с расчётными периодами. Теперь — одна секция с
-             табами, чтобы было меньше прокрутки в админке.
-             ========================================== -->
-        <section class="accordion-section" data-section="period-analysis" id="periodAnalysisCard">
-            <button class="accordion-header" type="button" aria-expanded="false">
-                <span class="accordion-title">
-                    <span class="accordion-icon" style="background:rgba(59,130,246,0.12); color:#3b82f6;">
-                        <i class="fa-solid fa-chart-column"></i>
-                    </span>
-                    <span class="accordion-title-text">
-                        <strong>Анализ периодов</strong>
-                        <span class="subtitle">Предпросмотр закрытия и сравнение двух периодов в одном месте</span>
-                    </span>
-                </span>
-                <i class="fa-solid fa-chevron-down accordion-chevron"></i>
-            </button>
-            <div class="accordion-body">
-                <div class="accordion-content">
-                    <div class="inner">
-                        <!-- Табы -->
-                        <div role="tablist" style="display:inline-flex; border:1px solid var(--border-color); border-radius:8px; overflow:hidden; margin-bottom:16px;">
-                            <button type="button" id="tabPreview" class="action-btn primary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
-                                <i class="fa-solid fa-clipboard-check"></i> Предпросмотр закрытия
-                            </button>
-                            <button type="button" id="tabCompare" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
-                                <i class="fa-solid fa-scale-balanced"></i> Сравнение периодов
-                            </button>
-                        </div>
-
-                        <!-- Tab 1: Предпросмотр закрытия -->
-                        <div id="paneClosePreview">
-                            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap;">
-                                <p class="hint-text" style="margin:0; font-size:13px;">
-                                    Сколько комнат сдали показания, сколько черновиков, сколько аномалий — что произойдёт при закрытии текущего периода.
-                                </p>
-                                <button id="btnLoadPreview" class="action-btn warning-btn" style="padding: 6px 14px; font-size: 13px;">
-                                    <i class="fa-solid fa-eye"></i> Загрузить отчёт
-                                </button>
-                            </div>
-                            <div id="closePreviewContainer">
-                                <p style="color: var(--text-secondary); font-size: 13px;">Нажмите «Загрузить отчёт» — отобразится текущая картина по всем общежитиям.</p>
-                            </div>
-                        </div>
-
-                        <!-- Tab 2: Сравнение периодов -->
-                        <div id="paneCompare" style="display:none;">
-                            <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 16px;">
-                                <select id="comparePeriodA" style="flex: 1; min-width: 160px; max-width: 280px;">
-                                    <option value="">Период A...</option>
-                                </select>
-                                <span style="color: var(--text-secondary); font-weight: 600; font-size: 14px;">vs</span>
-                                <select id="comparePeriodB" style="flex: 1; min-width: 160px; max-width: 280px;">
-                                    <option value="">Период B...</option>
-                                </select>
-                                <button id="btnCompare" class="action-btn primary-btn" style="padding: 8px 20px; font-size: 13px; white-space: nowrap;">
-                                    <i class="fa-solid fa-scale-balanced"></i> Сравнить
-                                </button>
-                            </div>
-                            <div id="compareContainer"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
+        <!-- Секция «Анализ периодов» удалена: её функции (предпросмотр закрытия
+             и сравнение периодов) переехали во вкладку «Центр анализа» как
+             подтабы «Анализ периода». Вся логика осталась прежней, id элементов
+             сохранены — summary.js дёргает их в том же месте. -->
 
         <!-- ==========================================
              СЕКЦИЯ: ФИНАНСОВАЯ ОТЧЁТНОСТЬ (СВОДКА v2)

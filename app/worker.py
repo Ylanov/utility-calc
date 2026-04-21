@@ -108,6 +108,15 @@ celery.conf.beat_schedule = {
         "task": "run_arsenal_analyzer_task",
         "schedule": crontab(minute=15),
     },
+    # Автоочистка старых завершённых строк импорта из Google Sheets.
+    # Запускается раз в сутки в 03:00 — спокойное время, нагрузки нет.
+    # Удаляет approved/auto_approved/rejected старше GSHEETS_CLEANUP_DAYS
+    # (дефолт 365 дней). pending/conflict/unmatched не трогает — их ждут
+    # админы в буфере. Если GSHEETS_CLEANUP_DAYS=0 — задача выходит сразу.
+    "cleanup-gsheets-old-rows-daily": {
+        "task": "cleanup_gsheets_old_rows_task",
+        "schedule": crontab(minute=0, hour=3),
+    },
 }
 
 # ИМПОРТЫ ЗАДАЧ

@@ -34,7 +34,16 @@ function fmtDateTime(iso) {
 
 export const AnalyzerModule = {
     isInitialized: false,
-    state: { period: 30, settings: [], dashboard: null, dismissals: [] },
+    state: {
+        period: 30,
+        settings: [],
+        dashboard: null,
+        dismissals: [],
+        // Активный под-таб периода: 'preview'|'compare'
+        periodsTab: 'preview',
+        // Кэш списка периодов для compare-селекторов
+        periodsCache: [],
+    },
 
     init() {
         if (this.isInitialized) {
@@ -46,6 +55,8 @@ export const AnalyzerModule = {
         this.bindEvents();
         this.isInitialized = true;
         this.refresh();
+        // Периоды нужны для вкладки «Анализ периода» → загружаем в фоне
+        this.loadPeriodsForCompare();
     },
 
     cacheDOM() {
@@ -58,6 +69,31 @@ export const AnalyzerModule = {
             period:         document.getElementById('analyzerPeriod'),
             btnRefresh:     document.getElementById('btnAnalyzerRefresh'),
             btnInvalidate:  document.getElementById('btnAnalyzerInvalidate'),
+
+            // Топ-табы (dashboard/period/housing/maintenance)
+            tabs:           document.querySelectorAll('[data-analyzer-tab]'),
+            panes:          document.querySelectorAll('[data-analyzer-pane]'),
+
+            // Таб «Анализ периода»
+            tabPreview:     document.getElementById('tabPreview'),
+            tabCompare:     document.getElementById('tabCompare'),
+            paneClosePreview: document.getElementById('paneClosePreview'),
+            paneCompare:    document.getElementById('paneCompare'),
+            btnLoadPreview: document.getElementById('btnLoadPreview'),
+            closePreviewContainer: document.getElementById('closePreviewContainer'),
+            comparePeriodA: document.getElementById('comparePeriodA'),
+            comparePeriodB: document.getElementById('comparePeriodB'),
+            btnCompare:     document.getElementById('btnCompare'),
+            compareContainer: document.getElementById('compareContainer'),
+
+            // Таб «Анализ жилфонда»
+            btnHousingRun:  document.getElementById('btnAnalyzerHousingRun'),
+            housingResults: document.getElementById('analyzerHousingResults'),
+
+            // Таб «Обслуживание»
+            cleanupDays:    document.getElementById('analyzerCleanupDays'),
+            btnCleanupNow:  document.getElementById('btnAnalyzerCleanupNow'),
+            cleanupResult:  document.getElementById('analyzerCleanupResult'),
         };
     },
 
@@ -82,6 +118,49 @@ export const AnalyzerModule = {
             const btn = e.target.closest('button[data-delete-dismissal]');
             if (btn) this.deleteDismissal(Number(btn.dataset.deleteDismissal));
         });
+
+        // Верхнеуровневые табы
+        this.dom.tabs?.forEach(btn => {
+            btn.addEventListener('click', () => this._setTab(btn.dataset.analyzerTab));
+        });
+
+        // Под-табы «Период»
+        this.dom.tabPreview?.addEventListener('click', () => this._setPeriodsTab('preview'));
+        this.dom.tabCompare?.addEventListener('click', () => this._setPeriodsTab('compare'));
+        this.dom.btnLoadPreview?.addEventListener('click', () => this.loadClosePreview());
+        this.dom.btnCompare?.addEventListener('click', () => this.runComparison());
+
+        // Таб «Жилфонд»
+        this.dom.btnHousingRun?.addEventListener('click', () => this.runHousingAnalysis());
+
+        // Таб «Обслуживание»
+        this.dom.btnCleanupNow?.addEventListener('click', () => this.runGsheetsCleanup());
+    },
+
+    _setTab(tabId) {
+        this.dom.tabs.forEach(btn => {
+            const active = btn.dataset.analyzerTab === tabId;
+            btn.classList.toggle('primary-btn', active);
+            btn.classList.toggle('secondary-btn', !active);
+        });
+        this.dom.panes.forEach(pane => {
+            pane.style.display = pane.dataset.analyzerPane === tabId ? '' : 'none';
+        });
+    },
+
+    _setPeriodsTab(tab) {
+        if (this.state.periodsTab === tab) return;
+        this.state.periodsTab = tab;
+        const isPreview = tab === 'preview';
+        if (this.dom.paneClosePreview) this.dom.paneClosePreview.style.display = isPreview ? '' : 'none';
+        if (this.dom.paneCompare) this.dom.paneCompare.style.display = isPreview ? 'none' : '';
+        const set = (btn, active) => {
+            if (!btn) return;
+            btn.classList.toggle('primary-btn', active);
+            btn.classList.toggle('secondary-btn', !active);
+        };
+        set(this.dom.tabPreview, isPreview);
+        set(this.dom.tabCompare, !isPreview);
     },
 
     async refresh() {
@@ -354,6 +433,306 @@ export const AnalyzerModule = {
             this.loadDismissals();
         } catch (e) {
             toast('Ошибка: ' + e.message, 'error');
+        }
+    },
+
+    // ====================================================================
+    // ТАБ «АНАЛИЗ ПЕРИОДА» — перенесено из summary.js
+    // Backend endpoints те же: /admin/periods/close-preview, /admin/periods/compare.
+    // ====================================================================
+    async loadPeriodsForCompare() {
+        try {
+            const periods = await api.get('/admin/periods/history');
+            this.state.periodsCache = periods || [];
+            const fill = (sel) => {
+                if (!sel) return;
+                sel.innerHTML = '<option value="">Выберите период…</option>';
+                this.state.periodsCache.forEach(p => {
+                    const o = document.createElement('option');
+                    o.value = p.id;
+                    o.textContent = p.name + (p.is_active ? ' (Акт.)' : '');
+                    sel.appendChild(o);
+                });
+            };
+            fill(this.dom.comparePeriodA);
+            fill(this.dom.comparePeriodB);
+            if (this.state.periodsCache.length >= 2) {
+                this.dom.comparePeriodB.value = this.state.periodsCache[0].id;
+                this.dom.comparePeriodA.value = this.state.periodsCache[1].id;
+            }
+        } catch (e) {
+            // тихо — селекторы останутся пустыми, админ увидит «Выберите период…»
+        }
+    },
+
+    async loadClosePreview() {
+        if (!this.dom.closePreviewContainer) return;
+        const btn = this.dom.btnLoadPreview;
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Анализ…'; }
+        this.dom.closePreviewContainer.innerHTML =
+            '<div style="padding:20px; text-align:center; color:var(--text-secondary);">Сканируем данные…</div>';
+        try {
+            const data = await api.get('/admin/periods/close-preview');
+            this._renderClosePreview(data);
+        } catch (e) {
+            this.dom.closePreviewContainer.innerHTML =
+                `<div style="padding:16px; color:var(--danger-color);">Ошибка: ${escapeHtml(e.message)}</div>`;
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-eye"></i> Загрузить отчёт'; }
+        }
+    },
+
+    _renderClosePreview(data) {
+        const pct = data.total_occupied_rooms > 0
+            ? Math.round(data.rooms_with_readings / data.total_occupied_rooms * 100) : 0;
+        const progressColor = pct >= 80 ? '#10b981' : pct >= 50 ? '#f59e0b' : '#ef4444';
+        const money = (v) => Number(v || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽';
+
+        const dormHtml = data.dormitories?.length ? `
+            <table style="width:100%; border-collapse:collapse; margin-top:14px; font-size:13px;">
+                <thead>
+                    <tr style="background:var(--bg-page); color:var(--text-secondary); font-size:11px; text-transform:uppercase;">
+                        <th style="text-align:left; padding:8px;">Общежитие</th>
+                        <th style="text-align:center; padding:8px;">Сдали</th>
+                        <th style="text-align:center; padding:8px;">Не сдали</th>
+                        <th style="text-align:center; padding:8px;">%</th>
+                    </tr>
+                </thead>
+                <tbody>${data.dormitories.map(d => `
+                    <tr style="border-bottom:1px solid var(--border-color);">
+                        <td style="padding:8px; font-weight:500;">${escapeHtml(d.name)}</td>
+                        <td style="text-align:center; padding:8px; color:#10b981; font-weight:600;">${d.submitted}</td>
+                        <td style="text-align:center; padding:8px; color:${d.missing > 0 ? '#ef4444' : 'var(--text-tertiary)'}; font-weight:600;">${d.missing}</td>
+                        <td style="text-align:center; padding:8px;">
+                            <div style="background:#e5e7eb; border-radius:4px; height:8px; width:80px; display:inline-block; vertical-align:middle;">
+                                <div style="background:${d.percent >= 80 ? '#10b981' : d.percent >= 50 ? '#f59e0b' : '#ef4444'}; height:100%; width:${d.percent}%; border-radius:4px;"></div>
+                            </div>
+                            <span style="margin-left:6px; font-size:12px;">${d.percent}%</span>
+                        </td>
+                    </tr>`).join('')}
+                </tbody>
+            </table>` : '';
+
+        const card = (label, value, color, bg) => `
+            <div style="background:${bg}; padding:14px; border-radius:8px; text-align:center;">
+                <div style="font-size:24px; font-weight:700; color:${color};">${value}</div>
+                <div style="font-size:12px; color:var(--text-secondary);">${label}</div>
+            </div>`;
+
+        this.dom.closePreviewContainer.innerHTML = `
+            <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; margin-bottom:14px;">
+                ${card('Комнат сдали', data.rooms_with_readings, '#10b981', '#f0fdf4')}
+                ${card('Авто-генерация', data.rooms_without_readings, data.rooms_without_readings > 0 ? '#ef4444' : '#10b981', data.rooms_without_readings > 0 ? '#fef2f2' : '#f0fdf4')}
+                ${card('Аномалий', data.anomalies_count, data.anomalies_count > 0 ? '#f59e0b' : '#10b981', data.anomalies_count > 0 ? '#fffbeb' : '#f0fdf4')}
+                ${card('Авто-утв.', data.safe_drafts, '#3b82f6', '#eff6ff')}
+                ${card('Предв. итого', money(data.estimated_total), '#1f2937', '#f9fafb')}
+            </div>
+            <div style="background:var(--bg-page); padding:10px 14px; border-radius:6px; margin-bottom:8px; display:flex; align-items:center; gap:12px;">
+                <div style="flex:1; background:#e5e7eb; border-radius:4px; height:12px;">
+                    <div style="background:${progressColor}; height:100%; width:${pct}%; border-radius:4px; transition: width 0.5s;"></div>
+                </div>
+                <span style="font-weight:600; font-size:14px; color:${progressColor};">${pct}%</span>
+                <span style="font-size:12px; color:var(--text-secondary);">комнат сдали показания</span>
+            </div>
+            ${dormHtml}`;
+    },
+
+    async runComparison() {
+        const idA = this.dom.comparePeriodA?.value;
+        const idB = this.dom.comparePeriodB?.value;
+        if (!idA || !idB) return toast('Выберите оба периода', 'warning');
+        if (idA === idB) return toast('Периоды должны быть разными', 'warning');
+
+        const btn = this.dom.btnCompare;
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Анализ…'; }
+        this.dom.compareContainer.innerHTML =
+            '<div style="padding:30px; text-align:center; color:var(--text-secondary);">Сравниваем данные…</div>';
+        try {
+            const data = await api.get(`/admin/periods/compare?period_a=${idA}&period_b=${idB}`);
+            this._renderComparison(data);
+        } catch (e) {
+            this.dom.compareContainer.innerHTML =
+                `<div style="padding:16px; color:var(--danger-color);">Ошибка: ${escapeHtml(e.message)}</div>`;
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-scale-balanced"></i> Сравнить'; }
+        }
+    },
+
+    _renderComparison(data) {
+        const LABELS = {
+            cost_hot_water: 'ГВС', cost_cold_water: 'ХВС', cost_sewage: 'Водоотв.',
+            cost_electricity: 'Электр.', cost_maintenance: 'Содержание', cost_social_rent: 'Наём',
+            cost_waste: 'ТКО', cost_fixed_part: 'Отопление', total_cost: 'ИТОГО'
+        };
+        const deltaCell = (val, pct) => {
+            const color = val > 0 ? '#ef4444' : val < 0 ? '#10b981' : '#9ca3af';
+            const arrow = val > 0 ? '▲' : val < 0 ? '▼' : '—';
+            const sign = val > 0 ? '+' : '';
+            return `<span style="color:${color}; font-weight:600;">${arrow} ${sign}${val.toFixed(2)}</span>
+                    <span style="color:${color}; font-size:11px; margin-left:4px;">(${sign}${pct}%)</span>`;
+        };
+
+        let html = `
+            <div style="padding:12px 16px; background:#eff6ff; border-radius:8px; margin-bottom:14px; font-size:13px; display:flex; gap:20px; align-items:center; flex-wrap:wrap;">
+                <span><strong>A:</strong> ${escapeHtml(data.period_a.name)}</span>
+                <span style="color:var(--text-secondary);">→</span>
+                <span><strong>B:</strong> ${escapeHtml(data.period_b.name)}</span>
+                <span style="color:var(--text-secondary); margin-left:auto; font-size:12px;">Красный = рост, зелёный = экономия</span>
+            </div>`;
+
+        data.dormitories.forEach(dorm => {
+            const tc = dorm.details.total_cost;
+            const dColor = tc.delta > 0 ? '#ef4444' : tc.delta < 0 ? '#10b981' : '#6b7280';
+            html += `
+                <div style="margin-bottom:14px; border:1px solid var(--border-color); border-radius:8px; overflow:hidden;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:var(--bg-page); border-bottom:1px solid var(--border-color);">
+                        <strong style="font-size:14px;">🏢 ${escapeHtml(dorm.dormitory)}</strong>
+                        <span style="color:${dColor}; font-weight:700; font-size:14px;">
+                            ${tc.delta > 0 ? '+' : ''}${tc.delta.toFixed(2)} ₽ (${tc.delta > 0 ? '+' : ''}${tc.percent}%)
+                        </span>
+                    </div>
+                    <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                        <thead>
+                            <tr style="background:var(--bg-page); color:var(--text-secondary); font-size:11px; text-transform:uppercase;">
+                                <th style="text-align:left; padding:6px 10px;">Ресурс</th>
+                                <th style="text-align:right; padding:6px 10px;">${escapeHtml(data.period_a.name)}</th>
+                                <th style="text-align:right; padding:6px 10px;">${escapeHtml(data.period_b.name)}</th>
+                                <th style="text-align:right; padding:6px 10px;">Изменение</th>
+                            </tr>
+                        </thead>
+                        <tbody>`;
+            for (const [key, label] of Object.entries(LABELS)) {
+                const dt = dorm.details[key];
+                if (!dt) continue;
+                const isTotal = key === 'total_cost';
+                const rs = isTotal ? 'background:#f0f9ff; font-weight:700;' : 'border-bottom:1px solid var(--border-color);';
+                html += `
+                    <tr style="${rs}">
+                        <td style="padding:6px 10px;">${label}</td>
+                        <td style="text-align:right; padding:6px 10px;">${dt.period_a.toFixed(2)}</td>
+                        <td style="text-align:right; padding:6px 10px;">${dt.period_b.toFixed(2)}</td>
+                        <td style="text-align:right; padding:6px 10px;">${deltaCell(dt.delta, dt.percent)}</td>
+                    </tr>`;
+            }
+            html += '</tbody></table></div>';
+        });
+
+        const gt = data.totals.details.total_cost;
+        const gtColor = gt.delta > 0 ? '#ef4444' : gt.delta < 0 ? '#10b981' : '#6b7280';
+        html += `
+            <div style="padding:16px; background:${gt.delta > 0 ? '#fef2f2' : gt.delta < 0 ? '#f0fdf4' : 'var(--bg-page)'}; border-radius:8px; border:2px solid ${gtColor}40; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                <div>
+                    <div style="font-size:13px; color:var(--text-secondary);">Общий итог по всем объектам</div>
+                    <div style="font-size:13px; margin-top:4px;">
+                        ${escapeHtml(data.period_a.name)}: <strong>${gt.period_a.toFixed(2)} ₽</strong>
+                        &nbsp;→&nbsp;
+                        ${escapeHtml(data.period_b.name)}: <strong>${gt.period_b.toFixed(2)} ₽</strong>
+                    </div>
+                </div>
+                <div style="text-align:right;">
+                    <div style="font-size:24px; font-weight:700; color:${gtColor};">${gt.delta > 0 ? '+' : ''}${gt.delta.toFixed(2)} ₽</div>
+                    <div style="font-size:14px; color:${gtColor};">${gt.delta > 0 ? '+' : ''}${gt.percent}%</div>
+                </div>
+            </div>`;
+        this.dom.compareContainer.innerHTML = html;
+    },
+
+    // ====================================================================
+    // ТАБ «АНАЛИЗ ЖИЛФОНДА» — перенесено из housing.js
+    // Backend endpoint тот же: /rooms/analyze.
+    // ====================================================================
+    async runHousingAnalysis() {
+        if (!this.dom.housingResults) return;
+        const btn = this.dom.btnHousingRun;
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Сканируем…'; }
+        this.dom.housingResults.innerHTML = `
+            <div style="text-align:center; padding: 40px; color:#666;">
+                <i class="fa-solid fa-spinner fa-spin" style="font-size:24px; color:#f59e0b;"></i>
+                <div style="margin-top:10px;">Сканируем базу данных…</div>
+            </div>`;
+        try {
+            const data = await api.get('/rooms/analyze');
+            this._renderHousingAnalysis(data);
+        } catch (e) {
+            this.dom.housingResults.innerHTML =
+                `<div style="color:red; text-align:center; padding: 20px;">Ошибка получения данных: ${escapeHtml(e.message)}</div>`;
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-magnifying-glass-chart"></i> Запустить анализ'; }
+        }
+    },
+
+    _renderHousingAnalysis(data) {
+        const sections = [
+            { key: 'unattached_users', icon: '👻', title: 'Жильцы без комнаты (Ошибки привязки)', color: '#dc2626', bg: '#fef2f2' },
+            { key: 'shared_billing',   icon: '👥', title: 'Совместное проживание (Раздельные Л/С в одной комнате)', color: '#3b82f6', bg: '#eff6ff' },
+            { key: 'overcrowded',      icon: '⚠️', title: 'Перенаселение (Платят за большее кол-во человек, чем есть мест)', color: '#ea580c', bg: '#fff7ed' },
+            { key: 'zero_area',        icon: '📏', title: 'Нулевая площадь (Ошибка заполнения)', color: '#b45309', bg: '#fef3c7' },
+            { key: 'underpopulated',   icon: '🛏️', title: 'Свободные места (Платят за меньшее кол-во человек, чем мест)', color: '#10b981', bg: '#ecfdf5' },
+            { key: 'empty_rooms',      icon: '🚪', title: 'Пустые комнаты (Никто не прописан)', color: '#6b7280', bg: '#f3f4f6' },
+        ];
+
+        let html = '';
+        let totalIssues = 0;
+        sections.forEach(sec => {
+            const items = data[sec.key];
+            if (items && items.length > 0) {
+                totalIssues += items.length;
+                html += `
+                    <div style="margin-bottom: 20px; border: 1px solid ${sec.color}40; border-radius: 8px; overflow: hidden;">
+                        <div style="background: ${sec.bg}; padding: 12px 15px; border-bottom: 1px solid ${sec.color}40; font-weight: bold; color: ${sec.color}; display: flex; align-items: center; gap: 10px;">
+                            <span style="font-size: 20px;">${sec.icon}</span> ${sec.title} (${items.length})
+                        </div>
+                        <ul style="list-style: none; padding: 0; margin: 0; background: white; max-height: 250px; overflow-y: auto;">
+                            ${items.map(item => `
+                                <li style="padding: 12px 15px; border-bottom: 1px solid #f3f4f6; font-size: 13px;">
+                                    <strong style="color: #1f2937; font-size: 14px;">${escapeHtml(item.title)}</strong>
+                                    <div style="color: #6b7280; margin-top: 4px; line-height: 1.4;">${escapeHtml(item.desc)}</div>
+                                </li>`).join('')}
+                        </ul>
+                    </div>`;
+            }
+        });
+
+        if (!totalIssues) {
+            html = `
+                <div style="text-align:center; padding: 60px 20px; background: white; border-radius: 8px; border: 1px solid #e5e7eb;">
+                    <div style="font-size: 40px; margin-bottom: 15px;">✅</div>
+                    <div style="color:#10b981; font-size: 18px; font-weight: bold;">Аномалий не обнаружено!</div>
+                    <div style="color:#6b7280; font-size: 14px; margin-top: 5px;">Жилфонд и пользователи в идеальном состоянии.</div>
+                </div>`;
+        }
+        this.dom.housingResults.innerHTML = html;
+    },
+
+    // ====================================================================
+    // ТАБ «ОБСЛУЖИВАНИЕ» — ручная очистка старых строк gsheets
+    // Запускается синхронно через /admin/analyzer/gsheets/cleanup-now.
+    // Автоочистка идёт по расписанию (Celery beat 03:00 ежедневно).
+    // ====================================================================
+    async runGsheetsCleanup() {
+        const days = Number(this.dom.cleanupDays?.value) || 365;
+        if (days < 30) {
+            toast('Минимум 30 дней — защита от случайной полной очистки', 'warning');
+            return;
+        }
+        if (!confirm(`Удалить завершённые строки импорта старше ${days} дней?\nДействие необратимо (pending / conflict / unmatched не затрагиваются).`)) return;
+
+        const btn = this.dom.btnCleanupNow;
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Очистка…'; }
+        this.dom.cleanupResult.innerHTML = '';
+        try {
+            const res = await api.post('/admin/analyzer/gsheets/cleanup-now', { retention_days: days });
+            this.dom.cleanupResult.innerHTML = `
+                <div style="padding:12px 16px; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; color:#065f46;">
+                    <b><i class="fa-solid fa-check"></i> Готово.</b>
+                    Удалено строк: <b>${res.deleted}</b>. Порог: старше ${res.retention_days} дней (до ${new Date(res.cutoff).toLocaleDateString('ru-RU')}).
+                </div>`;
+            toast(`Удалено ${res.deleted} строк`, 'success');
+        } catch (e) {
+            this.dom.cleanupResult.innerHTML =
+                `<div style="padding:12px 16px; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; color:#991b1b;">Ошибка: ${escapeHtml(e.message)}</div>`;
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-trash"></i> Очистить сейчас'; }
         }
     },
 };

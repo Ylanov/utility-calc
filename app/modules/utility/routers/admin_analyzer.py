@@ -468,3 +468,80 @@ async def flags_catalog(current_user: User = Depends(get_current_user)):
              "desc": "Жилец не подавал 3+ месяца, затем сразу пришёл с большим расходом."},
         ]
     }
+
+
+# =========================================================================
+# РУЧНАЯ ОЧИСТКА СТАРЫХ СТРОК GSHEETS (по кнопке из админки)
+# =========================================================================
+# По расписанию всё автоматически убирает cleanup_gsheets_old_rows_task
+# (раз в сутки в 03:00), но админ иногда хочет почистить прямо сейчас —
+# например, после крупного импорта или при исследовании базы.
+#
+# Удаляются только approved / auto_approved / rejected старше N дней.
+# pending/conflict/unmatched не трогаются — их ждут админы в буфере.
+# =========================================================================
+
+class GSheetsCleanupRequest(BaseModel):
+    retention_days: Optional[int] = None  # если None — берём из settings
+
+
+@router.post("/gsheets/cleanup-now")
+async def cleanup_gsheets_now(
+    data: GSheetsCleanupRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ручной запуск очистки завершённых строк импорта.
+
+    Выполняется синхронно (без Celery) — у админа ожидание «не уходит в
+    фон», а сразу видит итог. Для безопасности ограничиваем retention_days
+    снизу (30), чтобы случайный ноль не снёс всё.
+    """
+    _require_admin(current_user)
+
+    from app.core.config import settings as _settings
+    days = data.retention_days if data.retention_days is not None else _settings.GSHEETS_CLEANUP_DAYS
+    if days is None or days < 30:
+        raise HTTPException(
+            400,
+            "Минимум 30 дней — защита от случайной полной очистки буфера.",
+        )
+
+    # Выполняем ту же логику, что и Celery-задача, но в рамках async-сессии.
+    from datetime import datetime, timedelta
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    terminal = ("approved", "auto_approved", "rejected")
+
+    # Считаем сколько будет удалено (для audit_log) + удаляем пачкой
+    count_q = select(func.count(GSheetsImportRow.id)).where(
+        GSheetsImportRow.created_at < cutoff,
+        GSheetsImportRow.status.in_(terminal),
+    )
+    to_delete = (await db.execute(count_q)).scalar_one()
+
+    if to_delete == 0:
+        return {"deleted": 0, "cutoff": cutoff.isoformat(), "retention_days": days}
+
+    # Удаление батчами: у нас может быть 10k+ строк, одиночный DELETE
+    # с большим IN обойдётся быстрее в Celery-таске. Но для UI-ответа
+    # важно вернуть число — вызовем напрямую SQL-delete через .execute.
+    from sqlalchemy import delete as _delete
+    await db.execute(
+        _delete(GSheetsImportRow).where(
+            GSheetsImportRow.created_at < cutoff,
+            GSheetsImportRow.status.in_(terminal),
+        )
+    )
+
+    await write_audit_log(
+        db=db, user_id=current_user.id, username=current_user.username,
+        action="gsheets_cleanup", entity_type="gsheets_import_row",
+        details={"deleted": to_delete, "retention_days": days, "cutoff": cutoff.isoformat()},
+    )
+    await db.commit()
+
+    return {
+        "deleted": to_delete,
+        "cutoff": cutoff.isoformat(),
+        "retention_days": days,
+    }

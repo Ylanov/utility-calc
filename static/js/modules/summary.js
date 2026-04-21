@@ -1,20 +1,11 @@
 // static/js/modules/summary.js
 //
-// «Финансовая отчётность» (v2) + «Анализ периодов» (предпросмотр + сравнение).
+// «Финансовая отчётность» (v2) — только денежная сводка по жильцам.
 //
-// Что нового vs v1:
-//  * новый endpoint /admin/summary/v2 с финансовыми анализаторами
-//    (DEBT_GROWING, BILL_SPIKE, BILL_DROP, ZERO_BILL, OVERPAY_SUSPECT,
-//    HIGH_BILL_PER_PERSON, MISSING_RECEIPT);
-//  * KPI-карточки сверху, топ-должники / топ-переплатчики;
-//  * фильтры (все / должники / переплаты / аномалии / нет квитанции),
-//    поиск по ФИО или номеру комнаты;
-//  * группировка по общежитиям с раскрывающимися карточками;
-//  * sparkline за 6 месяцев, Δ vs прошлый период с цветом;
-//  * квитанция PDF одной кнопкой прямо в строке.
-//
-// «Анализ периодов» — два таба в одной accordion-секции
-// (раньше были две: «Сравнение» и «Предпросмотр закрытия»).
+// Раньше этот модуль также рулил «Анализом периодов» (предпросмотр закрытия
+// и сравнение двух периодов). Теперь это объединено в «Центр анализа» —
+// всё в analyzer.js (таб «Анализ периода»). Сюда остались только KPI,
+// фильтры, карточки общежитий, sparkline, выгрузка PDF/Excel/Zip.
 
 import { api } from '../core/api.js';
 import { setLoading, toast } from '../core/dom.js';
@@ -77,8 +68,6 @@ export const SummaryModule = {
         expandedDorms: new Set(),  // раскрытые карточки общежитий
         // Текущая загруженная сводка v2
         currentSummary: null,
-        // Активный таб «Анализ периодов»: 'preview'|'compare'
-        periodsTab: 'preview',
     },
     dom: {},
 
@@ -104,19 +93,6 @@ export const SummaryModule = {
             btnRefresh:     document.getElementById('btnRefreshSummary'),
             btnExcel:       document.getElementById('btnDownloadExcel'),
             btnZip:         document.getElementById('btnDownloadZip'),
-            // Анализ периодов: предпросмотр
-            closePreviewContainer: document.getElementById('closePreviewContainer'),
-            btnLoadPreview:        document.getElementById('btnLoadPreview'),
-            // Анализ периодов: сравнение
-            comparePeriodA:    document.getElementById('comparePeriodA'),
-            comparePeriodB:    document.getElementById('comparePeriodB'),
-            btnCompare:        document.getElementById('btnCompare'),
-            compareContainer:  document.getElementById('compareContainer'),
-            // Табы
-            tabPreview: document.getElementById('tabPreview'),
-            tabCompare: document.getElementById('tabCompare'),
-            paneClosePreview: document.getElementById('paneClosePreview'),
-            paneCompare: document.getElementById('paneCompare'),
         };
     },
 
@@ -124,8 +100,6 @@ export const SummaryModule = {
         this.dom.btnRefresh?.addEventListener('click', () => this.loadData());
         this.dom.btnExcel?.addEventListener('click', () => this.downloadExcel());
         this.dom.btnZip?.addEventListener('click', () => this.downloadZip());
-        this.dom.btnLoadPreview?.addEventListener('click', () => this.loadClosePreview());
-        this.dom.btnCompare?.addEventListener('click', () => this.runComparison());
 
         // Фильтры финансовой отчётности
         document.querySelectorAll('[data-summary-filter]').forEach(btn => {
@@ -165,29 +139,10 @@ export const SummaryModule = {
             const pdf = e.target.closest('button[data-pdf-id]');
             if (pdf) this.downloadReceipt(Number(pdf.dataset.pdfId));
         });
-
-        // Табы «Анализ периодов»
-        this.dom.tabPreview?.addEventListener('click', () => this._setPeriodsTab('preview'));
-        this.dom.tabCompare?.addEventListener('click', () => this._setPeriodsTab('compare'));
-    },
-
-    _setPeriodsTab(tab) {
-        if (this.state.periodsTab === tab) return;
-        this.state.periodsTab = tab;
-        const isPreview = tab === 'preview';
-        this.dom.paneClosePreview.style.display = isPreview ? '' : 'none';
-        this.dom.paneCompare.style.display      = isPreview ? 'none' : '';
-        const set = (btn, active) => {
-            if (!btn) return;
-            btn.classList.toggle('primary-btn', active);
-            btn.classList.toggle('secondary-btn', !active);
-        };
-        set(this.dom.tabPreview, isPreview);
-        set(this.dom.tabCompare, !isPreview);
     },
 
     // =====================================================
-    // ПЕРИОДЫ (общая загрузка для обоих модулей)
+    // ПЕРИОДЫ (только для селектора финансовой отчётности)
     // =====================================================
     async loadPeriods() {
         if (!this.dom.periodSelector) return;
@@ -200,7 +155,6 @@ export const SummaryModule = {
                 this.dom.periodSelector.innerHTML = '<span style="color:var(--text-secondary); font-size:13px;">Нет периодов</span>';
                 return;
             }
-            // Селектор для финансовой отчётности
             this.dom.periodSelector.innerHTML = '';
             const sel = document.createElement('select');
             sel.style.cssText = 'padding:7px 10px; font-size:13px; min-width:240px;';
@@ -216,31 +170,10 @@ export const SummaryModule = {
             });
             this.dom.periodSelector.appendChild(sel);
             this.state.selectedPeriodId = this.periodsCache[0].id;
-
-            this.populateCompareSelectors(this.periodsCache);
             this.loadData();
         } catch (e) {
             this.dom.periodSelector.textContent = 'Ошибка загрузки периодов.';
             console.error(e);
-        }
-    },
-
-    populateCompareSelectors(periods) {
-        if (!this.dom.comparePeriodA || !this.dom.comparePeriodB) return;
-        const fill = (selectEl) => {
-            selectEl.innerHTML = '<option value="">Выберите период…</option>';
-            periods.forEach(p => {
-                const o = document.createElement('option');
-                o.value = p.id;
-                o.textContent = p.name + (p.is_active ? ' (Акт.)' : '');
-                selectEl.appendChild(o);
-            });
-        };
-        fill(this.dom.comparePeriodA);
-        fill(this.dom.comparePeriodB);
-        if (periods.length >= 2) {
-            this.dom.comparePeriodB.value = periods[0].id;
-            this.dom.comparePeriodA.value = periods[1].id;
         }
     },
 
@@ -442,175 +375,10 @@ export const SummaryModule = {
             </tr>`;
     },
 
-    // =====================================================
-    // ПРЕДПРОСМОТР ЗАКРЫТИЯ ПЕРИОДА
-    // =====================================================
-    async loadClosePreview() {
-        setLoading(this.dom.btnLoadPreview, true, 'Анализ…');
-        this.dom.closePreviewContainer.innerHTML = '<div style="padding:20px; text-align:center; color:var(--text-secondary);">Сканируем данные…</div>';
-        try {
-            const data = await api.get('/admin/periods/close-preview');
-            this.renderClosePreview(data);
-        } catch (e) {
-            this.dom.closePreviewContainer.innerHTML = `<div style="padding:16px; color:var(--danger-color);">Ошибка: ${esc(e.message)}</div>`;
-        } finally {
-            setLoading(this.dom.btnLoadPreview, false, 'Загрузить отчёт');
-        }
-    },
-
-    renderClosePreview(data) {
-        const pct = data.total_occupied_rooms > 0
-            ? Math.round(data.rooms_with_readings / data.total_occupied_rooms * 100) : 0;
-        const progressColor = pct >= 80 ? '#10b981' : pct >= 50 ? '#f59e0b' : '#ef4444';
-
-        const dormHtml = data.dormitories?.length ? `
-            <table style="width:100%; border-collapse:collapse; margin-top:14px; font-size:13px;">
-                <thead>
-                    <tr style="background:var(--bg-page); color:var(--text-secondary); font-size:11px; text-transform:uppercase;">
-                        <th style="text-align:left; padding:8px;">Общежитие</th>
-                        <th style="text-align:center; padding:8px;">Сдали</th>
-                        <th style="text-align:center; padding:8px;">Не сдали</th>
-                        <th style="text-align:center; padding:8px;">%</th>
-                    </tr>
-                </thead>
-                <tbody>${data.dormitories.map(d => `
-                    <tr style="border-bottom:1px solid var(--border-color);">
-                        <td style="padding:8px; font-weight:500;">${esc(d.name)}</td>
-                        <td style="text-align:center; padding:8px; color:#10b981; font-weight:600;">${d.submitted}</td>
-                        <td style="text-align:center; padding:8px; color:${d.missing > 0 ? '#ef4444' : 'var(--text-tertiary)'}; font-weight:600;">${d.missing}</td>
-                        <td style="text-align:center; padding:8px;">
-                            <div style="background:#e5e7eb; border-radius:4px; height:8px; width:80px; display:inline-block; vertical-align:middle;">
-                                <div style="background:${d.percent >= 80 ? '#10b981' : d.percent >= 50 ? '#f59e0b' : '#ef4444'}; height:100%; width:${d.percent}%; border-radius:4px;"></div>
-                            </div>
-                            <span style="margin-left:6px; font-size:12px;">${d.percent}%</span>
-                        </td>
-                    </tr>`).join('')}
-                </tbody>
-            </table>` : '';
-
-        const card = (label, value, color, bg) => `
-            <div style="background:${bg}; padding:14px; border-radius:8px; text-align:center;">
-                <div style="font-size:24px; font-weight:700; color:${color};">${value}</div>
-                <div style="font-size:12px; color:var(--text-secondary);">${label}</div>
-            </div>`;
-
-        this.dom.closePreviewContainer.innerHTML = `
-            <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:10px; margin-bottom:14px;">
-                ${card('Комнат сдали', data.rooms_with_readings, '#10b981', '#f0fdf4')}
-                ${card('Авто-генерация', data.rooms_without_readings, data.rooms_without_readings > 0 ? '#ef4444' : '#10b981', data.rooms_without_readings > 0 ? '#fef2f2' : '#f0fdf4')}
-                ${card('Аномалий', data.anomalies_count, data.anomalies_count > 0 ? '#f59e0b' : '#10b981', data.anomalies_count > 0 ? '#fffbeb' : '#f0fdf4')}
-                ${card('Авто-утв.', data.safe_drafts, '#3b82f6', '#eff6ff')}
-                ${card('Предв. итого', fmtMoney(data.estimated_total), '#1f2937', '#f9fafb')}
-            </div>
-            <div style="background:var(--bg-page); padding:10px 14px; border-radius:6px; margin-bottom:8px; display:flex; align-items:center; gap:12px;">
-                <div style="flex:1; background:#e5e7eb; border-radius:4px; height:12px;">
-                    <div style="background:${progressColor}; height:100%; width:${pct}%; border-radius:4px; transition: width 0.5s;"></div>
-                </div>
-                <span style="font-weight:600; font-size:14px; color:${progressColor};">${pct}%</span>
-                <span style="font-size:12px; color:var(--text-secondary);">комнат сдали показания</span>
-            </div>
-            ${dormHtml}`;
-    },
-
-    // =====================================================
-    // СРАВНЕНИЕ ПЕРИОДОВ
-    // =====================================================
-    async runComparison() {
-        const idA = this.dom.comparePeriodA?.value;
-        const idB = this.dom.comparePeriodB?.value;
-        if (!idA || !idB) return toast('Выберите оба периода', 'warning');
-        if (idA === idB) return toast('Периоды должны быть разными', 'warning');
-
-        setLoading(this.dom.btnCompare, true, 'Анализ…');
-        this.dom.compareContainer.innerHTML = '<div style="padding:30px; text-align:center; color:var(--text-secondary);">Сравниваем данные…</div>';
-        try {
-            const data = await api.get(`/admin/periods/compare?period_a=${idA}&period_b=${idB}`);
-            this.renderComparison(data);
-        } catch (e) {
-            this.dom.compareContainer.innerHTML = `<div style="padding:16px; color:var(--danger-color);">Ошибка: ${esc(e.message)}</div>`;
-        } finally {
-            setLoading(this.dom.btnCompare, false, 'Сравнить');
-        }
-    },
-
-    renderComparison(data) {
-        const LABELS = {
-            cost_hot_water: 'ГВС', cost_cold_water: 'ХВС', cost_sewage: 'Водоотв.',
-            cost_electricity: 'Электр.', cost_maintenance: 'Содержание', cost_social_rent: 'Наём',
-            cost_waste: 'ТКО', cost_fixed_part: 'Отопление', total_cost: 'ИТОГО'
-        };
-        const deltaCell = (val, pct) => {
-            const color = val > 0 ? '#ef4444' : val < 0 ? '#10b981' : '#9ca3af';
-            const arrow = val > 0 ? '▲' : val < 0 ? '▼' : '—';
-            const sign = val > 0 ? '+' : '';
-            return `<span style="color:${color}; font-weight:600;">${arrow} ${sign}${val.toFixed(2)}</span>
-                    <span style="color:${color}; font-size:11px; margin-left:4px;">(${sign}${pct}%)</span>`;
-        };
-
-        let html = `
-            <div style="padding:12px 16px; background:#eff6ff; border-radius:8px; margin-bottom:14px; font-size:13px; display:flex; gap:20px; align-items:center; flex-wrap:wrap;">
-                <span><strong>A:</strong> ${esc(data.period_a.name)}</span>
-                <span style="color:var(--text-secondary);">→</span>
-                <span><strong>B:</strong> ${esc(data.period_b.name)}</span>
-                <span style="color:var(--text-secondary); margin-left:auto; font-size:12px;">Красный = рост, зелёный = экономия</span>
-            </div>`;
-
-        data.dormitories.forEach(dorm => {
-            const tc = dorm.details.total_cost;
-            const dColor = tc.delta > 0 ? '#ef4444' : tc.delta < 0 ? '#10b981' : '#6b7280';
-            html += `
-                <div style="margin-bottom:14px; border:1px solid var(--border-color); border-radius:8px; overflow:hidden;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:var(--bg-page); border-bottom:1px solid var(--border-color);">
-                        <strong style="font-size:14px;">🏢 ${esc(dorm.dormitory)}</strong>
-                        <span style="color:${dColor}; font-weight:700; font-size:14px;">
-                            ${tc.delta > 0 ? '+' : ''}${tc.delta.toFixed(2)} ₽ (${tc.delta > 0 ? '+' : ''}${tc.percent}%)
-                        </span>
-                    </div>
-                    <table style="width:100%; border-collapse:collapse; font-size:13px;">
-                        <thead>
-                            <tr style="background:var(--bg-page); color:var(--text-secondary); font-size:11px; text-transform:uppercase;">
-                                <th style="text-align:left; padding:6px 10px;">Ресурс</th>
-                                <th style="text-align:right; padding:6px 10px;">${esc(data.period_a.name)}</th>
-                                <th style="text-align:right; padding:6px 10px;">${esc(data.period_b.name)}</th>
-                                <th style="text-align:right; padding:6px 10px;">Изменение</th>
-                            </tr>
-                        </thead>
-                        <tbody>`;
-            for (const [key, label] of Object.entries(LABELS)) {
-                const dt = dorm.details[key];
-                if (!dt) continue;
-                const isTotal = key === 'total_cost';
-                const rs = isTotal ? 'background:#f0f9ff; font-weight:700;' : 'border-bottom:1px solid var(--border-color);';
-                html += `
-                    <tr style="${rs}">
-                        <td style="padding:6px 10px;">${label}</td>
-                        <td style="text-align:right; padding:6px 10px;">${dt.period_a.toFixed(2)}</td>
-                        <td style="text-align:right; padding:6px 10px;">${dt.period_b.toFixed(2)}</td>
-                        <td style="text-align:right; padding:6px 10px;">${deltaCell(dt.delta, dt.percent)}</td>
-                    </tr>`;
-            }
-            html += '</tbody></table></div>';
-        });
-
-        const gt = data.totals.details.total_cost;
-        const gtColor = gt.delta > 0 ? '#ef4444' : gt.delta < 0 ? '#10b981' : '#6b7280';
-        html += `
-            <div style="padding:16px; background:${gt.delta > 0 ? '#fef2f2' : gt.delta < 0 ? '#f0fdf4' : 'var(--bg-page)'}; border-radius:8px; border:2px solid ${gtColor}40; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
-                <div>
-                    <div style="font-size:13px; color:var(--text-secondary);">Общий итог по всем объектам</div>
-                    <div style="font-size:13px; margin-top:4px;">
-                        ${esc(data.period_a.name)}: <strong>${gt.period_a.toFixed(2)} ₽</strong>
-                        &nbsp;→&nbsp;
-                        ${esc(data.period_b.name)}: <strong>${gt.period_b.toFixed(2)} ₽</strong>
-                    </div>
-                </div>
-                <div style="text-align:right;">
-                    <div style="font-size:24px; font-weight:700; color:${gtColor};">${gt.delta > 0 ? '+' : ''}${gt.delta.toFixed(2)} ₽</div>
-                    <div style="font-size:14px; color:${gtColor};">${gt.delta > 0 ? '+' : ''}${gt.percent}%</div>
-                </div>
-            </div>`;
-        this.dom.compareContainer.innerHTML = html;
-    },
+    // Блоки «Предпросмотр закрытия периода» и «Сравнение периодов» перенесены
+    // в analyzer.js (таб «Анализ периода» в Центре анализа). Эндпоинты те же:
+    // /admin/periods/close-preview и /admin/periods/compare — просто дёргает
+    // их теперь AnalyzerModule.
 
     // =====================================================
     // КВИТАНЦИИ И ЭКСПОРТ

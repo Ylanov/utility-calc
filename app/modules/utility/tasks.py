@@ -859,3 +859,87 @@ def recalc_period_preview_task(job_id: int):
 def recalc_period_apply_task(job_id: int):
     """Применяет пересчитанные значения к БД (bulk_update)."""
     return _recalc_run(job_id, apply=True)
+
+
+# ==========================================================================
+# GSHEETS CLEANUP — автоочистка старых завершённых строк импорта
+# ==========================================================================
+# Gsheets-буфер за годы может набрать сотни тысяч строк (у нас 2000+ жильцов
+# каждый месяц подаёт показание — это ~24k строк в год). Хранить всю историю
+# бесконечно нет смысла: как только строка ушла в approved/auto_approved —
+# у неё есть ссылка reading_id на MeterReading, где лежат реальные данные.
+# rejected-строки нужны лишь для кратковременного разбора «почему отклонил»
+# и через N месяцев их тоже можно удалять.
+#
+# pending / conflict / unmatched НИКОГДА не удаляем автоматически — это
+# строки, которые ждут решения админа.
+# ==========================================================================
+
+
+def _cleanup_gsheets_rows(retention_days: int) -> dict:
+    """Удаляет завершённые строки старше retention_days. Батчами по 1000.
+
+    Возвращает {'deleted': N, 'cutoff': 'ISO datetime'}.
+    """
+    from datetime import datetime as _dt, timedelta as _td
+    from app.modules.utility.models import GSheetsImportRow
+
+    if retention_days <= 0:
+        logger.info("[GSHEETS-CLEANUP] retention_days<=0, задача пропущена")
+        return {"deleted": 0, "cutoff": None, "skipped": True}
+
+    cutoff = _dt.utcnow() - _td(days=retention_days)
+    terminal_statuses = ("approved", "auto_approved", "rejected")
+
+    CHUNK = 1000
+    total_deleted = 0
+
+    with sync_db_session() as db:
+        while True:
+            # Выбираем id-батч в пределах CHUNK. Идём по (status, created_at)
+            # — попадаем в индекс idx_gsheets_status_created.
+            ids = [
+                r[0] for r in db.query(GSheetsImportRow.id)
+                .filter(
+                    GSheetsImportRow.created_at < cutoff,
+                    GSheetsImportRow.status.in_(terminal_statuses),
+                )
+                .order_by(GSheetsImportRow.id)
+                .limit(CHUNK)
+                .all()
+            ]
+            if not ids:
+                break
+
+            deleted = (
+                db.query(GSheetsImportRow)
+                .filter(GSheetsImportRow.id.in_(ids))
+                .delete(synchronize_session=False)
+            )
+            db.commit()
+            total_deleted += deleted
+
+            # Если пришло меньше чем CHUNK — значит больше удалять нечего.
+            if deleted < CHUNK:
+                break
+
+    logger.info(
+        f"[GSHEETS-CLEANUP] удалено {total_deleted} строк "
+        f"(старше {retention_days} дней, cutoff={cutoff.isoformat()})"
+    )
+    return {
+        "deleted": total_deleted,
+        "cutoff": cutoff.isoformat(),
+        "retention_days": retention_days,
+    }
+
+
+@celery.task(name="cleanup_gsheets_old_rows_task")
+def cleanup_gsheets_old_rows_task(retention_days: int | None = None):
+    """Ежедневная автоочистка старых импортов из Google Sheets.
+
+    Без параметра — берёт settings.GSHEETS_CLEANUP_DAYS (дефолт 365).
+    Админ может вызвать вручную с параметром через /admin/analyzer/gsheets/cleanup-now.
+    """
+    days = retention_days if retention_days is not None else settings.GSHEETS_CLEANUP_DAYS
+    return _cleanup_gsheets_rows(days)

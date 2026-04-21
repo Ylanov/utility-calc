@@ -47,11 +47,8 @@ export const HousingModule = {
             // KPI
             statsHost: document.getElementById('housingStats'),
 
-            // Анализатор
-            btnAnalyze: document.getElementById('btnAnalyzeHousing'),
-            analyzerModal: document.getElementById('analyzerModal'),
-            analyzerResults: document.getElementById('analyzerResults'),
-            btnAnalyzerClose: document.querySelectorAll('#analyzerModal .close-btn'),
+            // Анализатор жилфонда переехал в «Центр анализа» (см. analyzer.js),
+            // этот модуль с ним больше не общается. DOM-ссылок здесь нет.
 
             // НОВОЕ: Начальные показания — импорт
             btnDownloadReadingsTemplate: document.getElementById('btnDownloadReadingsTemplate'),
@@ -143,16 +140,6 @@ export const HousingModule = {
             });
         });
 
-        // Анализатор
-        if (this.dom.btnAnalyze) {
-            this.dom.btnAnalyze.addEventListener('click', () => this.runAnalysis());
-        }
-        if (this.dom.btnAnalyzerClose) {
-            this.dom.btnAnalyzerClose.forEach(btn => btn.addEventListener('click', () => {
-                this.dom.analyzerModal.classList.remove('open');
-            }));
-        }
-
         // Замена счетчика
         if (this.meter.form) {
             this.meter.form.addEventListener('submit', (e) => this.handleMeterSubmit(e));
@@ -176,71 +163,9 @@ export const HousingModule = {
         }
     },
 
-    // ==========================================
-    // АНАЛИЗАТОР ЖИЛФОНДА
-    // ==========================================
-    async runAnalysis() {
-        this.dom.analyzerModal.classList.add('open');
-        this.dom.analyzerResults.innerHTML = `
-            <div style="text-align:center; padding: 40px; color:#666;">
-                <div class="spinner" style="border-color: #f59e0b; border-top-color: transparent; width: 30px; height: 30px; margin: 0 auto 15px auto;"></div>
-                Сканируем базу данных... ⏳
-            </div>`;
-
-        try {
-            const data = await api.get('/rooms/analyze');
-            this.renderAnalysis(data);
-        } catch(e) {
-            this.dom.analyzerResults.innerHTML = `<div style="color:red; text-align:center; padding: 20px;">Ошибка получения данных: ${escapeHtml(e.message)}</div>`;
-        }
-    },
-
-    renderAnalysis(data) {
-        let html = '';
-        const sections = [
-            { key: 'unattached_users', icon: '👻', title: 'Жильцы без комнаты (Ошибки привязки)', color: '#dc2626', bg: '#fef2f2' },
-            { key: 'shared_billing', icon: '👥', title: 'Совместное проживание (Раздельные Л/С в одной комнате)', color: '#3b82f6', bg: '#eff6ff' },
-            { key: 'overcrowded', icon: '⚠️', title: 'Перенаселение (Платят за большее кол-во человек, чем есть мест)', color: '#ea580c', bg: '#fff7ed' },
-            { key: 'zero_area', icon: '📏', title: 'Нулевая площадь (Ошибка заполнения)', color: '#b45309', bg: '#fef3c7' },
-            { key: 'underpopulated', icon: '🛏️', title: 'Свободные места (Платят за меньшее кол-во человек, чем мест)', color: '#10b981', bg: '#ecfdf5' },
-            { key: 'empty_rooms', icon: '🚪', title: 'Пустые комнаты (Никто не прописан)', color: '#6b7280', bg: '#f3f4f6' }
-        ];
-
-        let totalIssues = 0;
-
-        sections.forEach(sec => {
-            const items = data[sec.key];
-            if (items && items.length > 0) {
-                totalIssues += items.length;
-                html += `
-                    <div style="margin-bottom: 20px; border: 1px solid ${sec.color}40; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.02);">
-                        <div style="background: ${sec.bg}; padding: 12px 15px; border-bottom: 1px solid ${sec.color}40; font-weight: bold; color: ${sec.color}; display: flex; align-items: center; gap: 10px;">
-                            <span style="font-size: 20px;">${sec.icon}</span> ${sec.title} (${items.length})
-                        </div>
-                        <ul style="list-style: none; padding: 0; margin: 0; background: white; max-height: 250px; overflow-y: auto;">
-                            ${items.map(item => `
-                                <li style="padding: 12px 15px; border-bottom: 1px solid #f3f4f6; font-size: 13px;">
-                                    <strong style="color: #1f2937; font-size: 14px;">${escapeHtml(item.title)}</strong>
-                                    <div style="color: #6b7280; margin-top: 4px; line-height: 1.4;">${escapeHtml(item.desc)}</div>
-                                </li>
-                            `).join('')}
-                        </ul>
-                    </div>
-                `;
-            }
-        });
-
-        if (totalIssues === 0) {
-            html = `
-                <div style="text-align:center; padding: 60px 20px; background: white; border-radius: 8px; border: 1px solid #e5e7eb;">
-                    <div style="font-size: 40px; margin-bottom: 15px;">✅</div>
-                    <div style="color:#10b981; font-size: 18px; font-weight: bold;">Аномалий не обнаружено!</div>
-                    <div style="color:#6b7280; font-size: 14px; margin-top: 5px;">Жилфонд и пользователи в идеальном состоянии.</div>
-                </div>`;
-        }
-
-        this.dom.analyzerResults.innerHTML = html;
-    },
+    // Блок «Анализатор жилфонда» удалён — переехал в analyzer.js
+    // («Операции → Центр анализа → таб Жилфонд»). Backend-endpoint
+    // /rooms/analyze остался, его теперь дёргает AnalyzerModule.
 
     // ==========================================
     // СТАНДАРТНАЯ ЛОГИКА ЖИЛФОНДА

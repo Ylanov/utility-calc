@@ -75,6 +75,12 @@ class Settings(BaseSettings):
     GSHEETS_GID: str = "0"
     # Интервал автосинка в минутах (0 = отключить автосинхронизацию).
     GSHEETS_SYNC_INTERVAL_MINUTES: int = 15
+    # Сколько дней хранить ЗАВЕРШЁННЫЕ строки импорта (approved / auto_approved /
+    # rejected) до автоочистки. Задачи pending/unmatched/conflict не удаляются
+    # никогда — они ждут решения админа.
+    # Дефолт 365 дней (год). Для 2-летнего хранения выставьте 730.
+    # 0 отключает автоочистку полностью.
+    GSHEETS_CLEANUP_DAYS: int = 365
 
     @property
     def DATABASE_URL_ASYNC(self) -> str:
