@@ -559,28 +559,77 @@ async def search_users(
     db: AsyncSession = Depends(get_db),
 ):
     """Подсказка для UI: найти жильца по ФИО или комнате.
-    Возвращает [{id, username, room, residents_count}] отсортированный по релевантности.
+
+    Поиск токенизированный с поддержкой инициалов. Запрос «Неметуллаева А. Р.»
+    раньше ILIKE'ом не находил ничего (в БД хранится «Неметуллаева Айгуль
+    Рустамовна»), теперь корректно матчит:
+      * полнословные токены (len ≥ 2, без точки) → ILIKE %token% в AND
+      * инициалы (1 буква, с точкой/без) → должно быть слово в username,
+        начинающееся на эту букву
+
+    Примеры:
+      «неметуллаева»       → ILIKE %неметуллаева%
+      «иванов и.»          → ILIKE %иванов% + есть слово на «и»
+      «иванова а. р.»      → ILIKE %иванова% + слова на «а» и «р»
+      «409»                → по номеру комнаты
     """
     require_admin(current_user)
     q = (q or "").strip()
     if len(q) < 2:
         return {"items": []}
 
-    pat = f"%{q}%"
-    rows = (await db.execute(
+    # Нормализация: убираем запятые/точки как границы слов, нижний регистр.
+    import re as _re
+    raw_tokens = [t for t in _re.split(r"[\s,]+", q) if t]
+
+    full_words = []        # полные слова (≥2 букв после .strip('.'))
+    initials = []          # одиночные буквы-инициалы
+    for t in raw_tokens:
+        clean = t.strip(".").lower()
+        if not clean:
+            continue
+        if len(clean) == 1 and clean.isalpha():
+            initials.append(clean)
+        elif len(clean) >= 2:
+            full_words.append(clean)
+
+    # Если q — чистое число (номер комнаты) — отдельная ветка.
+    is_numeric = q.replace(" ", "").isdigit()
+
+    stmt = (
         select(User)
         .options(selectinload(User.room))
-        .where(
-            User.is_deleted.is_(False),
-            User.role == "user",
-            or_(
-                User.username.ilike(pat),
-                # Если q — число, ищем по номеру комнаты (через JOIN).
-                User.room.has(Room.room_number.ilike(pat)) if q else False,
-            ),
-        )
-        .limit(limit)
-    )).scalars().all()
+        .where(User.is_deleted.is_(False), User.role == "user")
+    )
+
+    if is_numeric:
+        stmt = stmt.where(User.room.has(Room.room_number.ilike(f"%{q}%")))
+    elif full_words:
+        # AND по полнословным токенам — иначе «иванов петров» вернёт всех
+        # у кого ЛИБО фамилия «иванов» ЛИБО имя «петров».
+        for fw in full_words:
+            stmt = stmt.where(User.username.ilike(f"%{fw}%"))
+    elif initials:
+        # Только инициалы — слишком размыто (вернёт пол-базы), не ищем.
+        return {"items": []}
+    else:
+        return {"items": []}
+
+    # Префетчим чуть больше чем limit — потом отфильтруем по инициалам в Python.
+    rows = (await db.execute(stmt.limit(limit * 4))).scalars().all()
+
+    # Python-рефайн по инициалам. Каждый инициал должен совпасть с первой
+    # буквой какого-нибудь слова в username. Пример: ["а","р"] должны найтись
+    # в ["неметуллаева","айгуль","рустамовна"] → «айгуль»→а, «рустамовна»→р.
+    if initials:
+        filtered = []
+        for u in rows:
+            words = u.username.lower().split()
+            if all(any(w.startswith(i) for w in words) for i in initials):
+                filtered.append(u)
+        rows = filtered
+
+    rows = rows[:limit]
 
     return {
         "items": [
@@ -616,14 +665,26 @@ def _patronymic_of(fio: str) -> str:
 def _surname_root(surname: str) -> str:
     """Корень фамилии без gender-окончаний.
     «Иванова» → «иванов», «Петровский» → «петровск», «Сидорова» → «сидоров».
+    Также унифицирует национальные окончания: «Акопян/Акопянц», «Абуладзе»,
+    «Гамцемлидзе/Гамсахурдия» — важно для общежитий в СНГ.
     Грубое приближение, но достаточно для фильтрации однофамильцев."""
     s = (surname or "").lower().strip()
-    for end in ("ова", "ева", "ёва", "ина", "ская", "цкая", "ая"):
+    # Женские окончания — сначала (иначе «Иванова» схлопнется только до «Иванов» через «ов»,
+    # чего мы и хотим, но «Иванова»→«ов» важнее чем «а»).
+    for end in ("ова", "ева", "ёва", "ина", "ская", "цкая", "аева", "иева", "уева"):
         if s.endswith(end) and len(s) > len(end) + 1:
             return s[: -len(end)]
-    for end in ("ов", "ев", "ёв", "ин", "ский", "цкий", "ой"):
+    # Мужские окончания
+    for end in ("ов", "ев", "ёв", "ин", "ский", "цкий", "ой", "аев", "иев", "уев"):
         if s.endswith(end) and len(s) > len(end) + 1:
             return s[: -len(end)]
+    # Национальные суффиксы — не урезаем, но нормализуем возможные вариации,
+    # чтобы «Акопянц» и «Акопян» давали один корень.
+    for end in ("янц", "ьянц"):
+        if s.endswith(end) and len(s) > len(end) + 1:
+            return s[: -len(end)] + "ян"
+    # -идзе / -швили / -ия / -ко / -юк / -чук — не трогаем (мужской и женский вариант
+    # совпадают, преобразование не нужно).
     return s
 
 
@@ -689,17 +750,28 @@ async def relative_candidates(
         }
 
     # ---------------- 1. Соседи по комнате ----------------
+    # Раньше был строгий `Room.room_number == raw_room` — «409А»/« 409 » мимо.
+    # Теперь нормализуем: убираем пробелы + используем ILIKE. Плюс отдельно
+    # сравниваем только цифровую часть (чтобы «комн. 409» vs «409А» всё равно
+    # давало roommate-хит).
     if raw_room:
+        import re as _re2
+        room_clean = raw_room.strip()
+        room_digits = "".join(_re2.findall(r"\d+", room_clean))  # только цифры
+        room_conds = [Room.room_number.ilike(f"%{room_clean}%")]
+        if room_digits and room_digits != room_clean:
+            room_conds.append(Room.room_number.ilike(f"%{room_digits}%"))
+
         room_query = select(User).options(selectinload(User.room)).where(
             User.is_deleted.is_(False),
             User.role == "user",
-            User.room.has(Room.room_number == raw_room),
+            User.room.has(or_(*room_conds)),
         )
         if raw_dorm:
             room_query = room_query.where(
                 User.room.has(Room.dormitory_name.ilike(f"%{raw_dorm}%"))
             )
-        roommates = (await db.execute(room_query.limit(10))).scalars().all()
+        roommates = (await db.execute(room_query.limit(15))).scalars().all()
         for u in roommates:
             same_surname = _surname_root(_surname_of(u.username)) == surname_root and surname_root
             _add(u, reason=("Сосед по комнате · однофамилец" if same_surname else "Сосед по комнате"),
@@ -707,21 +779,31 @@ async def relative_candidates(
 
     # ---------------- 2. Однофамильцы в общежитии ----------------
     if surname_root and len(surname_root) >= 3:
-        # Берём жильцов чья username начинается на корень фамилии (грубо).
+        # Раньше prefix-match `{root}%` — пропускал усеров с не-ФИО username
+        # (логины вроде «nm_ivanov»). Теперь substring `%{root}%` + python-рефайн
+        # чтобы отсечь ложные срабатывания (root «иван» совпадёт на «Ивановна»).
         sur_query = select(User).options(selectinload(User.room)).where(
             User.is_deleted.is_(False),
             User.role == "user",
-            User.username.ilike(f"{surname_root}%"),
+            User.username.ilike(f"%{surname_root}%"),
         )
         if raw_dorm:
             sur_query = sur_query.where(
                 User.room.has(Room.dormitory_name.ilike(f"%{raw_dorm}%"))
             )
-        same_surname = (await db.execute(sur_query.limit(15))).scalars().all()
+        same_surname = (await db.execute(sur_query.limit(30))).scalars().all()
         for u in same_surname:
-            if _surname_root(_surname_of(u.username)) != surname_root:
-                continue  # ложное срабатывание ilike
-            _add(u, reason="Однофамилец в общежитии", score=70)
+            # Основной фильтр: surname_root реально совпадает с корнем ПЕРВОГО
+            # слова в username. Это убирает ложные срабатывания типа
+            # «иван» matching «Ивановна» (там отчество, не фамилия).
+            if _surname_root(_surname_of(u.username)) == surname_root:
+                _add(u, reason="Однофамилец в общежитии", score=70)
+                continue
+            # Fallback: если username не в формате «Фамилия Имя ...» (login-стиль)
+            # и содержит surname_root как подстроку — всё равно предлагаем,
+            # но с пониженным score, пусть админ решит.
+            if surname_root in u.username.lower():
+                _add(u, reason="Похожая фамилия (возможно, в другом поле)", score=55)
 
     # ---------------- 3. Общий корень отчества ----------------
     if patronymic_root and len(patronymic_root) >= 4:
