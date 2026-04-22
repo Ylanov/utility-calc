@@ -519,10 +519,10 @@ export const GSheetsModule = {
     },
 
     _renderUserGroup(g) {
-        const expanded = this.state.expandedUserIds.has(g.key);
-        // Раскрываем по умолчанию, если в группе мало подач или есть требующие действий.
-        const autoExpand = g.rows.length <= 3 || g.pendingCount > 0;
-        const isOpen = expanded || (autoExpand && !this.state.expandedUserIds.has('__collapsed:' + g.key));
+        // Все группы по умолчанию свёрнуты — при 300+ жильцах с 29 подачами
+        // каждый раскрытый шеврон даёт мегапортянку в браузере.
+        // Раскрыть — клик по заголовку карточки (запоминается в expandedUserIds).
+        const isOpen = this.state.expandedUserIds.has(g.key);
 
         const headerColor = g.userId
             ? 'var(--primary-color)'
@@ -588,24 +588,31 @@ export const GSheetsModule = {
     },
 
     /**
-     * Цепочка подач: таблица отсортированная по дате, с дельтами относительно
-     * предыдущей подачи (видно растёт ли счётчик и на сколько).
+     * Цепочка подач: таблица с дельтами относительно предыдущей подачи
+     * (видно как растёт счётчик во времени).
+     *
+     * ВАЖНО: рендерим в хронологическом порядке (старые → новые), чтобы
+     * корректно считать дельты «от предыдущей подачи». После этого
+     * переворачиваем массив строк на показ — админ видит свежие сверху,
+     * старые снизу. Дельты остаются валидными (прирост от прошлой подачи).
      */
     _renderUserChain(g) {
-        const rowsHtml = g.rows.map((r, idx) => {
+        // Дельты — насколько счётчик вырос относительно предыдущей подачи.
+        const fmtDelta = (cur, prv) => {
+            if (cur == null || prv == null) return '';
+            const d = Number(cur) - Number(prv);
+            if (isNaN(d)) return '';
+            if (d === 0) return `<span style="color:#9ca3af; font-size:10px;"> · 0</span>`;
+            if (d < 0)  return `<span style="color:#dc2626; font-size:10px; font-weight:600;" title="Счётчик уменьшился — возможна ошибка"> · ↓${fmtNum(Math.abs(d))}</span>`;
+            return `<span style="color:#16a34a; font-size:10px;"> · +${fmtNum(d)}</span>`;
+        };
+
+        // g.rows уже отсортирован хронологически (старые → новые) в _groupRowsByUser.
+        // Строим HTML в таком порядке (для правильных дельт), но отображаем
+        // в обратном — чтобы свежие подачи были сверху.
+        const htmlByChronoIdx = g.rows.map((r, idx) => {
             const prev = idx > 0 ? g.rows[idx - 1] : null;
             const meta = STATUS_META[r.status] || { label: r.status, color: '#6b7280', bg: '#f3f4f6' };
-
-            // Дельты — насколько счётчик вырос относительно предыдущей подачи.
-            const fmtDelta = (cur, prv) => {
-                if (cur == null || prv == null) return '';
-                const d = Number(cur) - Number(prv);
-                if (isNaN(d)) return '';
-                if (d === 0) return `<span style="color:#9ca3af; font-size:10px;"> · 0</span>`;
-                if (d < 0)  return `<span style="color:#dc2626; font-size:10px; font-weight:600;" title="Счётчик уменьшился — возможна ошибка"> · ↓${fmtNum(Math.abs(d))}</span>`;
-                return `<span style="color:#16a34a; font-size:10px;"> · +${fmtNum(d)}</span>`;
-            };
-
             const actions = this._renderActions(r);
             const conflictNote = r.conflict_reason
                 ? `<div style="color:${STATUS_META.conflict.color}; font-size:11px; margin-top:2px;"><i class="fa-solid fa-triangle-exclamation"></i> ${escapeHtml(r.conflict_reason)}</div>`
@@ -632,7 +639,10 @@ export const GSheetsModule = {
                 </td>
                 <td style="padding:8px 10px; text-align:right; white-space:nowrap;">${actions}</td>
             </tr>`;
-        }).join('');
+        });
+
+        // Переворачиваем для отображения — свежие сверху.
+        const rowsHtml = htmlByChronoIdx.slice().reverse().join('');
 
         return `
         <div style="border-top:1px solid var(--border-color); background:var(--bg-page);">
@@ -652,15 +662,10 @@ export const GSheetsModule = {
     },
 
     _toggleUserGroup(key) {
-        const collapsedFlag = '__collapsed:' + key;
         if (this.state.expandedUserIds.has(key)) {
             this.state.expandedUserIds.delete(key);
-            this.state.expandedUserIds.add(collapsedFlag);
-        } else if (this.state.expandedUserIds.has(collapsedFlag)) {
-            this.state.expandedUserIds.delete(collapsedFlag);
         } else {
-            // Был не помечен — значит был в auto-expand состоянии. Сворачиваем.
-            this.state.expandedUserIds.add(collapsedFlag);
+            this.state.expandedUserIds.add(key);
         }
         this._renderGrouped();
     },
