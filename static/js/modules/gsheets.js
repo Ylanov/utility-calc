@@ -1015,7 +1015,11 @@ export const GSheetsModule = {
             const suggestionsBlock = modal.querySelector('#reassignSuggestions');
             const remember = modal.querySelector('#reassignRemember');
 
-            // Карточка кандидата (используется и в подсказках, и в результатах поиска).
+            // Карточка кандидата. Режимы:
+            //   * opts.suggestion=true  — две кнопки: «Это он» (прямая привязка,
+            //     когда в таблице указана только фамилия и это тот самый жилец)
+            //     + «Это родственник» (привязка с note-ролью типа «жена»).
+            //   * opts.suggestion=false — одна кнопка «Выбрать» (из поиска).
             const renderCandidate = (c, opts = {}) => {
                 const reasonHtml = opts.reason
                     ? `<div style="font-size:11px; color:#92400e; margin-top:4px;">
@@ -1023,13 +1027,26 @@ export const GSheetsModule = {
                           ${opts.score != null ? `<span style="margin-left:6px; opacity:0.7;">${opts.score}%</span>` : ''}
                        </div>`
                     : '';
-                const buttonLabel = opts.asRelative
-                    ? '<i class="fa-solid fa-people-roof"></i> Это родственник'
-                    : '<i class="fa-solid fa-check"></i> Выбрать';
-                const buttonClass = opts.asRelative ? 'success-btn' : 'primary-btn';
+                const buttons = opts.suggestion
+                    ? `
+                        <button class="action-btn primary-btn" data-pick="1" data-kind="self"
+                                style="padding:5px 10px; font-size:12px; white-space:nowrap;"
+                                title="Это тот самый жилец (в таблице была только фамилия)">
+                            <i class="fa-solid fa-check"></i> Это он
+                        </button>
+                        <button class="action-btn success-btn" data-pick="1" data-kind="relative"
+                                style="padding:5px 10px; font-size:12px; white-space:nowrap;"
+                                title="Родственник этого жильца (жена, муж, ребёнок…)">
+                            <i class="fa-solid fa-people-roof"></i> Родственник
+                        </button>`
+                    : `
+                        <button class="action-btn primary-btn" data-pick="1" data-kind="self"
+                                style="padding:5px 10px; font-size:12px; white-space:nowrap;">
+                            <i class="fa-solid fa-check"></i> Выбрать
+                        </button>`;
+
                 return `
                     <div class="reassign-candidate" data-user-id="${c.id}" data-username="${escapeHtml(c.username)}"
-                         data-as-relative="${opts.asRelative ? '1' : '0'}"
                          style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:10px 12px; border:1px solid var(--border-color); border-radius:8px; margin-bottom:6px; background:var(--bg-card);">
                         <div style="flex:1; min-width:0;">
                             <div style="font-weight:600; font-size:13px;">${escapeHtml(c.username)}</div>
@@ -1038,19 +1055,19 @@ export const GSheetsModule = {
                             </div>
                             ${reasonHtml}
                         </div>
-                        <button class="action-btn ${buttonClass}" data-pick="1" style="padding:5px 10px; font-size:12px; white-space:nowrap;">
-                            ${buttonLabel}
-                        </button>
+                        <div style="display:flex; gap:6px; flex-shrink:0;">${buttons}</div>
                     </div>`;
             };
 
-            // Делегирование клика на кнопку «Выбрать»/«Это родственник»
+            // Делегирование клика. kind='self' — прямая привязка,
+            // 'relative' — спросить роль и проставить asRelative.
             modal.addEventListener('click', (e) => {
                 const btn = e.target.closest('[data-pick="1"]');
                 if (!btn) return;
                 const card = btn.closest('.reassign-candidate');
                 if (!card) return;
-                const asRelative = card.dataset.asRelative === '1';
+                const kind = btn.dataset.kind || 'self';
+                const asRelative = kind === 'relative';
                 let note = null;
                 if (asRelative) {
                     note = prompt(
@@ -1069,7 +1086,10 @@ export const GSheetsModule = {
                 });
             });
 
-            // Подгружаем подсказки родственников (если есть rowId)
+            // Подгружаем подсказки родственников (если есть rowId).
+            // Блок ограничен по высоте — при 10+ кандидатах появляется внутренний
+            // скролл, а не распирает модалку (раньше поиск и результаты уезжали
+            // за нижний край окна).
             candidatesPromise.then(data => {
                 const cands = data?.candidates || [];
                 if (!cands.length) {
@@ -1078,14 +1098,17 @@ export const GSheetsModule = {
                 }
                 suggestionsBlock.innerHTML = `
                     <div style="background:#fef9c3; border:1px solid #fde68a; border-radius:10px; padding:12px 14px; margin-bottom:8px;">
-                        <div style="font-size:13px; font-weight:600; color:#92400e; margin-bottom:8px;">
-                            <i class="fa-solid fa-lightbulb"></i> Возможные кандидаты — анализатор нашёл связи
+                        <div style="font-size:13px; font-weight:600; color:#92400e; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
+                            <span><i class="fa-solid fa-lightbulb"></i> Возможные кандидаты (${cands.length})</span>
+                            <span style="font-size:11px; font-weight:normal; color:#92400e; opacity:0.8;">Прокрутите список ↓</span>
                         </div>
-                        ${cands.map(c => renderCandidate(c, {
-                            reason: c.reason,
-                            score: c.score,
-                            asRelative: true,
-                        })).join('')}
+                        <div style="max-height:38vh; overflow-y:auto; padding-right:4px;">
+                            ${cands.map(c => renderCandidate(c, {
+                                reason: c.reason,
+                                score: c.score,
+                                suggestion: true,
+                            })).join('')}
+                        </div>
                     </div>`;
             }).catch(() => { suggestionsBlock.innerHTML = ''; });
 
