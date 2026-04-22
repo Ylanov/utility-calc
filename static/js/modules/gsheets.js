@@ -759,15 +759,27 @@ export const GSheetsModule = {
         }
     },
 
-    async approveRow(rowId, { skipConfirm = false } = {}) {
+    async approveRow(rowId, { skipConfirm = false, moveToRawRoom = null } = {}) {
         const row = this.state.rows.find(r => r.id === rowId);
         if (!row) return;
+
+        // Если у строки статус "conflict" по комнате — ДО утверждения
+        // показываем диалог «чью комнату оставить». Параметр moveToRawRoom
+        // передаётся тем же путём что и skipConfirm — поэтому рекурсивный
+        // вызов из диалога не зацикливается.
+        if (moveToRawRoom === null && row.status === 'conflict' &&
+            row.conflict_reason && row.conflict_reason.toLowerCase().includes('комната')) {
+            this._showRoomConflictDialog(row);
+            return;
+        }
+
         if (!skipConfirm && !confirm(`Утвердить показания жильца «${row.matched_username || row.raw_fio}»?\nБудет создан MeterReading.`)) return;
 
         // Оптимистичное удаление
         this._removeRowLocally(rowId, 'approved');
         try {
-            await api.post(`/admin/gsheets/rows/${rowId}/approve`);
+            const qs = moveToRawRoom === true ? '?move_to_raw_room=true' : '';
+            await api.post(`/admin/gsheets/rows/${rowId}/approve${qs}`);
             toast('Показание утверждено', 'success');
             this.loadStats();
         } catch (e) {
@@ -782,6 +794,67 @@ export const GSheetsModule = {
             toast('Ошибка: ' + e.message, 'error');
             this.refresh();  // откатываемся на серверное состояние
         }
+    },
+
+    _showRoomConflictDialog(row) {
+        // Извлекаем номера из conflict_reason: «...в таблице X, у жильца Y»
+        const m = /в таблице\s+(\S+?)[,.]?\s+у жильца\s+(\S+)/i.exec(row.conflict_reason || '');
+        const rawRoom = m ? m[1] : (row.raw_room_number || '—');
+        const userRoom = m ? m[2] : '—';
+
+        document.getElementById('gsheetsRoomConflictModal')?.remove();
+
+        const modal = document.createElement('div');
+        modal.id = 'gsheetsRoomConflictModal';
+        modal.className = 'modal-overlay open';
+        modal.innerHTML = `
+            <div class="modal-window" style="width:560px;">
+                <div class="modal-header" style="background:#fef3c7; border-bottom:1px solid #fde68a;">
+                    <h3 style="color:#b45309;">
+                        <i class="fa-solid fa-triangle-exclamation"></i>
+                        Конфликт комнат — ${escapeHtml(row.matched_username || row.raw_fio)}
+                    </h3>
+                    <button class="close-btn close-icon" data-rc-close>&times;</button>
+                </div>
+                <div class="modal-form" style="padding:18px 22px; background:var(--bg-page);">
+                    <p style="margin:0 0 14px; font-size:13px;">
+                        Жилец в таблице указал <b>комнату ${escapeHtml(rawRoom)}</b>,
+                        но в системе он привязан к <b>комнате ${escapeHtml(userRoom)}</b>.
+                        Какую считать правильной?
+                    </p>
+                    <div style="display:flex; flex-direction:column; gap:10px;">
+                        <button class="action-btn secondary-btn" data-rc-choice="keep" style="text-align:left; padding:12px 16px;">
+                            <b>🏠 Оставить текущую (${escapeHtml(userRoom)})</b>
+                            <div style="font-size:12px; color:var(--text-secondary); margin-top:4px; font-weight:normal;">
+                                Жилец в системе живёт в этой комнате — данные из таблицы запишем на неё.
+                                Возможно, он просто перепутал номер.
+                            </div>
+                        </button>
+                        <button class="action-btn primary-btn" data-rc-choice="move" style="text-align:left; padding:12px 16px; background:#2563eb;">
+                            <b>🚚 Перевести жильца в комнату ${escapeHtml(rawRoom)}</b>
+                            <div style="font-size:12px; color:#dbeafe; margin-top:4px; font-weight:normal;">
+                                В базе обновим User.room_id на комнату из таблицы.
+                                Используйте если жилец реально переехал.
+                            </div>
+                        </button>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="action-btn secondary-btn" data-rc-close>Отмена</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        const close = () => modal.remove();
+        modal.addEventListener('click', (e) => {
+            if (e.target.closest('[data-rc-close]')) { close(); return; }
+            const choice = e.target.closest('[data-rc-choice]');
+            if (!choice) return;
+            const moveToRaw = choice.dataset.rcChoice === 'move';
+            close();
+            this.approveRow(row.id, { skipConfirm: true, moveToRawRoom: moveToRaw });
+        });
     },
 
     _showConflictModal(rowId, conflict) {

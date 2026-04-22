@@ -131,14 +131,40 @@ def parse_decimal(raw: str) -> Optional[Decimal]:
 
 
 def normalize_fio(fio: str) -> str:
-    """Приводит ФИО к единому виду для fuzzy-match."""
+    """Приводит ФИО к единому виду для fuzzy-match.
+
+    — lowercase
+    — убираем точки/запятые (чтобы «И.И.» и «И. И.» совпали)
+    — ё → е (частый источник расхождений)
+    — коллапсируем пробелы
+    """
     if not fio:
         return ""
-    # Убираем точки, множественные пробелы, приводим к lower
-    s = str(fio).lower()
+    s = str(fio).lower().replace("ё", "е")
     s = re.sub(r"[.,]", " ", s)
     s = " ".join(s.split())
     return s
+
+
+def canonical_initials(fio: str) -> str:
+    """Канонический вид «фамилия + инициалы» — для match'a
+    разных форматов одного и того же человека.
+
+    «Иванов Иван Иванович» → «иванов и и»
+    «Иванов И.И.»          → «иванов и и»
+    «Иванов И. И.»         → «иванов и и»
+    «Иванов  И.И.»         → «иванов и и»
+
+    Используется как ДОПОЛНИТЕЛЬНЫЙ ключ индекса: админы в Google Sheets
+    пишут короткие формы (ФИ или Ф.И.И.), а в БД username хранится как
+    полное ФИО. Без этого пересчёта fuzzy-матч слабый.
+    """
+    norm = normalize_fio(fio)
+    parts = [p for p in norm.split() if p]
+    if not parts:
+        return ""
+    # Фамилия + первые буквы всех остальных слов
+    return parts[0] + "".join(" " + p[0] for p in parts[1:])
 
 
 def parse_room_number(raw: str) -> Optional[str]:
@@ -183,6 +209,12 @@ def build_users_index(db: Session) -> tuple[dict[str, dict], list[str], dict[int
       - by_name: normalized_fio -> {id, username, room_id, room_number} (для fuzzy)
       - keys:    list[normalized_fio] (для rapidfuzz.extract)
       - by_id:   user_id -> {...} (для резолва alias→user_info)
+
+    ВАЖНО: в by_name кладём ДВА ключа на одного юзера:
+      1) полная нормализация:  «иванов иван иванович»
+      2) канонический инициальный вид: «иванов и и»
+    Так матчится и полное ФИО в подаче, и короткий формат «Иванов И.И.» —
+    оба дадут попадание без fuzzy.
     """
     users = db.execute(
         select(User, Room)
@@ -200,19 +232,48 @@ def build_users_index(db: Session) -> tuple[dict[str, dict], list[str], dict[int
             "room_number": room.room_number if room else None,
         }
         by_id[user.id] = info
-        key = normalize_fio(user.username)
-        if key:
-            by_name[key] = info
+        full = normalize_fio(user.username)
+        short = canonical_initials(user.username)
+        # Длинная форма приоритетна — если два разных юзера дают одинаковый
+        # short («Иванов Иван Иванович» и «Иванов Иннокентий Иванович»),
+        # short-ключ схлопнется и match_user пометит как conflict через fuzzy.
+        if full:
+            by_name[full] = info
+        # short добавляем только если отличается — иначе шум в keys-списке.
+        # И только если его ещё нет — полное имя в конфликте не перезапишет short
+        # другого юзера.
+        if short and short != full and short not in by_name:
+            by_name[short] = info
     return by_name, list(by_name.keys()), by_id
 
 
 def build_aliases_index(db: Session) -> dict[str, int]:
     """Загружает все алиасы: normalized_fio -> user_id.
     Используется sync для мгновенного матча подач от родственников
-    без обращения к fuzzy-логике."""
+    без обращения к fuzzy-логике.
+
+    При лукапе в match_user пробуем И нормализованное полное ФИО,
+    И canonical_initials — так старые алиасы (сохранённые до унификации
+    с точками «иванов и.и.») продолжат работать, а новые сохраняются
+    в чистом виде без точек.
+    """
     from app.modules.utility.models import GSheetsAlias
     rows = db.execute(select(GSheetsAlias.alias_fio_normalized, GSheetsAlias.user_id)).all()
-    return {norm: uid for norm, uid in rows}
+    aliases: dict[str, int] = {}
+    for norm, uid in rows:
+        if not norm:
+            continue
+        aliases[norm] = uid
+        # Страховка: перенормализуем старую запись на свежую нормализацию
+        # (на случай когда в БД лежит «иванов и.и.» с точками) и добавим
+        # дополнительный ключ. canonical_initials тоже.
+        re_norm = normalize_fio(norm)
+        if re_norm and re_norm != norm:
+            aliases.setdefault(re_norm, uid)
+        canon = canonical_initials(norm)
+        if canon:
+            aliases.setdefault(canon, uid)
+    return aliases
 
 
 def match_user(
@@ -238,22 +299,27 @@ def match_user(
     norm = normalize_fio(raw_fio)
     if not norm:
         return None, 0, None
+    # Canonical (фамилия + инициалы) — ДОПОЛНИТЕЛЬНЫЙ ключ, матчит разные
+    # форматы одного человека (полный vs инициальный).
+    canon = canonical_initials(raw_fio)
 
     # 0. Запомненный alias (родственник). Самый сильный сигнал.
-    if aliases_map and users_by_id and norm in aliases_map:
-        uid = aliases_map[norm]
-        info = users_by_id.get(uid)
-        if info:
-            return info, 100, None
+    # Пробуем ОБА вида ключа: полную нормализацию и canonical. Так старые
+    # записи алиасов (сохранённые до унификации normalize — с точками)
+    # продолжат работать, а новые сохраняются в canonical форме.
+    if aliases_map and users_by_id:
+        for key in (norm, canon):
+            if key and key in aliases_map:
+                uid = aliases_map[key]
+                info = users_by_id.get(uid)
+                if info:
+                    return info, 100, None
 
-    # Точное совпадение по нормализованной строке
-    if norm in users_map:
-        user = users_map[norm]
-        # Если в БД несколько юзеров после нормализации совпали —
-        # users_map хранит только последнего; это уже сигнал конфликта,
-        # но проверим: одинаковых ключей быть не должно (token_sort_ratio
-        # для двух одинаковых строк = 100). Если нужно — вытаскиваем все.
-        return user, 100, _check_room_conflict(user, raw_room)
+    # Точное совпадение по нормализованной строке ИЛИ canonical form
+    for key in (norm, canon):
+        if key and key in users_map:
+            user = users_map[key]
+            return user, 100, _check_room_conflict(user, raw_room)
 
     # Fuzzy: extract топ-5 кандидатов
     candidates = process.extract(

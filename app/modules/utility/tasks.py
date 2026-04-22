@@ -621,9 +621,28 @@ def _recalc_compute_one(db_session, reading, user, room, prev_reading, tariffs_b
         or tariffs_by_active
     )
 
-    p_hot = D(prev_reading.hot_water) if prev_reading else ZERO
-    p_cold = D(prev_reading.cold_water) if prev_reading else ZERO
-    p_elect = D(prev_reading.electricity) if prev_reading else ZERO
+    # BASELINE: первая подача жильца в системе — накопленное значение
+    # счётчика. Считать от нуля нельзя (получится квитанция в миллионы).
+    # Все cost_* = 0, абсолютные показания остаются в БД для следующего
+    # расчёта. Тот же подход в approve_single и bulk_approve_drafts.
+    if prev_reading is None:
+        zero_costs = {
+            "cost_hot_water": ZERO, "cost_cold_water": ZERO, "cost_sewage": ZERO,
+            "cost_electricity": ZERO, "cost_maintenance": ZERO, "cost_social_rent": ZERO,
+            "cost_waste": ZERO, "cost_fixed_part": ZERO, "total_cost": ZERO,
+        }
+        total_209_b = Decimal("0") + (reading.debt_209 or Decimal("0")) - (reading.overpayment_209 or Decimal("0"))
+        total_205_b = Decimal("0") + (reading.debt_205 or Decimal("0")) - (reading.overpayment_205 or Decimal("0"))
+        return {
+            "total_209": total_209_b,
+            "total_205": total_205_b,
+            "total_cost": total_209_b + total_205_b,
+            **zero_costs,
+        }
+
+    p_hot = D(prev_reading.hot_water)
+    p_cold = D(prev_reading.cold_water)
+    p_elect = D(prev_reading.electricity)
 
     hot_corr = D(reading.hot_correction or 0)
     cold_corr = D(reading.cold_correction or 0)

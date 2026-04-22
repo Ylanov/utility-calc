@@ -102,9 +102,38 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
     # Расчет в памяти
     for reading, user, room in drafts_rows:
         prev = prev_readings_map.get(room.id)
-        p_hot = D(prev.hot_water) if prev else ZERO
-        p_cold = D(prev.cold_water) if prev else ZERO
-        p_elect = D(prev.electricity) if prev else ZERO
+
+        # BASELINE — если у комнаты ещё нет утверждённого показания.
+        # При запуске системы счётчики уже могут иметь огромные накопленные
+        # значения. Считать от нуля нельзя — получится счёт в миллионы.
+        # Первая подача = baseline, все cost_* = 0. Расчёт пойдёт со следующей.
+        if prev is None:
+            zero_costs = {
+                "cost_hot_water": ZERO, "cost_cold_water": ZERO, "cost_sewage": ZERO,
+                "cost_electricity": ZERO, "cost_maintenance": ZERO, "cost_social_rent": ZERO,
+                "cost_waste": ZERO, "cost_fixed_part": ZERO, "total_cost": ZERO,
+            }
+            update_mappings.append({
+                "id": reading.id,
+                "is_approved": True,
+                "total_cost": ZERO,
+                "total_209": ZERO,
+                "total_205": ZERO,
+                "anomaly_flags": "BASELINE",
+                "anomaly_score": 0,
+                **zero_costs,
+            })
+            room_updates.append({
+                "id": room.id,
+                "last_hot_water": reading.hot_water,
+                "last_cold_water": reading.cold_water,
+                "last_electricity": reading.electricity,
+            })
+            continue
+
+        p_hot = D(prev.hot_water)
+        p_cold = D(prev.cold_water)
+        p_elect = D(prev.electricity)
 
         cur_hot = D(reading.hot_water)
         cur_cold = D(reading.cold_water)
@@ -217,28 +246,46 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
         .order_by(MeterReading.created_at.desc()).limit(1)
     )).scalars().first()
 
-    p_hot = D(prev.hot_water) if prev else ZERO
-    p_cold = D(prev.cold_water) if prev else ZERO
-    p_elect = D(prev.electricity) if prev else ZERO
+    # БАЗОВОЕ ПОКАЗАНИЕ — если у комнаты НИ ОДНОГО утверждённого раньше не было.
+    # На старте системы у жильцов счётчики могут быть с огромными значениями
+    # (накопление за годы жизни счётчика до внедрения). Если посчитать от нуля —
+    # получится квитанция на миллионы рублей за первый месяц. Поэтому первую
+    # подачу регистрируем как baseline: абсолютные значения сохраняем
+    # (они нужны для расчёта следующего периода), а все cost_* = 0.
+    # Расчёт пойдёт уже начиная со следующего показания.
+    is_baseline = prev is None
 
-    d_hot_final = max(ZERO, (D(reading.hot_water) - p_hot) - correction_data.hot_correction)
-    d_cold_final = max(ZERO, (D(reading.cold_water) - p_cold) - correction_data.cold_correction)
+    if is_baseline:
+        ZERO_COSTS = {
+            "cost_hot_water": ZERO, "cost_cold_water": ZERO, "cost_sewage": ZERO,
+            "cost_electricity": ZERO, "cost_maintenance": ZERO, "cost_social_rent": ZERO,
+            "cost_waste": ZERO, "cost_fixed_part": ZERO, "total_cost": ZERO,
+        }
+        costs = ZERO_COSTS
+        d_hot_final = d_cold_final = d_elect_final = ZERO
+    else:
+        p_hot = D(prev.hot_water)
+        p_cold = D(prev.cold_water)
+        p_elect = D(prev.electricity)
 
-    residents_count = user.residents_count if user.residents_count is not None else 1
-    total_room = room.total_room_residents if room.total_room_residents > 0 else 1
+        d_hot_final = max(ZERO, (D(reading.hot_water) - p_hot) - correction_data.hot_correction)
+        d_cold_final = max(ZERO, (D(reading.cold_water) - p_cold) - correction_data.cold_correction)
 
-    d_elect_final = max(ZERO, ((Decimal(residents_count) / Decimal(total_room)) * (
-            D(reading.electricity) - p_elect)) - correction_data.electricity_correction)
+        residents_count = user.residents_count if user.residents_count is not None else 1
+        total_room = room.total_room_residents if room.total_room_residents > 0 else 1
 
-    costs = calculate_utilities(
-        user=user,
-        room=room,
-        tariff=t,
-        volume_hot=d_hot_final,
-        volume_cold=d_cold_final,
-        volume_sewage=max(ZERO, (d_hot_final + d_cold_final) - correction_data.sewage_correction),
-        volume_electricity_share=d_elect_final
-    )
+        d_elect_final = max(ZERO, ((Decimal(residents_count) / Decimal(total_room)) * (
+                D(reading.electricity) - p_elect)) - correction_data.electricity_correction)
+
+        costs = calculate_utilities(
+            user=user,
+            room=room,
+            tariff=t,
+            volume_hot=d_hot_final,
+            volume_cold=d_cold_final,
+            volume_sewage=max(ZERO, (d_hot_final + d_cold_final) - correction_data.sewage_correction),
+            volume_electricity_share=d_elect_final
+        )
 
     adj_res = await db.execute(
         select(Adjustment.account_type, func.sum(Adjustment.amount))
@@ -267,6 +314,12 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
     for k, v in costs.items():
         if hasattr(reading, k):
             setattr(reading, k, v)
+
+    # BASELINE-маркер — чтобы в реестре и в квитанции админ/жилец видел,
+    # что это первая подача и стоимость = 0 намеренно.
+    if is_baseline:
+        reading.anomaly_flags = "BASELINE"
+        reading.anomaly_score = 0
 
     room.last_hot_water = reading.hot_water
     room.last_cold_water = reading.cold_water

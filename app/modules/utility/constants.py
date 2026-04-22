@@ -29,5 +29,7 @@ ANOMALY_MAP: Dict[str, Dict[str, str]] = {
     "AUTO_GENERATED": {"message": "Начислено по среднему (системой)", "severity": "info", "color": "#0ea5e9"},
     "ONE_TIME_CHARGE": {"message": "Разовое начисление (выселение)", "severity": "info", "color": "#8b5cf6"},
     "IMPORTED_DRAFT": {"message": "Загружено из Excel", "severity": "info", "color": "#10b981"},
+    "BASELINE": {"message": "Первая подача — базовое показание (сумма не начисляется)",
+                  "severity": "info", "color": "#10b981"},
     "UNKNOWN": {"message": "Неизвестная аномалия", "severity": "low", "color": "#9ca3af"}
 }

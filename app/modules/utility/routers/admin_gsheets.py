@@ -30,10 +30,15 @@ from app.modules.utility.models import (
 from app.modules.utility.routers.admin_dashboard import write_audit_log
 
 
-def _normalize_fio(fio: str) -> str:
-    """ФИО → нижний регистр + коллапс пробелов. Для сравнения алиасов.
-    «Иванова  Мария  ПЕТРОВНА» → «иванова мария петровна»."""
-    return re.sub(r"\s+", " ", (fio or "").strip().lower())
+# Используем единую нормализацию из gsheets_sync — раньше тут был свой
+# «_normalize_fio» который НЕ убирал точки, а sync убирал. Получалось:
+# после reassign alias сохранялся как «иванов и.и.», а sync на следующий
+# месяц искал «иванов и и» — ключи никогда не совпадали, и каждый раз
+# админ тыкал «Кто это?» заново. Теперь один источник правды.
+from app.modules.utility.services.gsheets_sync import (
+    normalize_fio as _normalize_fio,
+    canonical_initials,
+)
 
 router = APIRouter(prefix="/api/admin/gsheets", tags=["Admin GSheets"])
 
@@ -249,10 +254,16 @@ async def _apply_approve(
     db: AsyncSession,
     row: GSheetsImportRow,
     current_user: User,
+    move_to_raw_room: bool = False,
 ) -> MeterReading:
     """
     Создаёт MeterReading на основании импортированной строки.
     Показание сразу помечается как is_approved=True (раз уж админ подтвердил).
+
+    move_to_raw_room=True — если в таблице жилец указал другую комнату (conflict),
+    сначала переводим его в новую комнату (User.room_id), а потом создаём
+    показание на неё. Используется когда админ решает, что правильная —
+    та, что в таблице, а не та, что сейчас у жильца.
     """
     if row.status in ("approved", "auto_approved") and row.reading_id:
         raise HTTPException(
@@ -277,6 +288,48 @@ async def _apply_approve(
         raise HTTPException(status_code=400, detail="Жилец не найден или удалён")
     if not user.room_id:
         raise HTTPException(status_code=400, detail="Жилец не привязан к помещению")
+
+    # Онлайн-перевод жильца в комнату из таблицы (при конфликте комнат).
+    # Используем parse_room_number чтобы «00016» и «16» считать одним номером.
+    if move_to_raw_room and row.raw_room_number:
+        from app.modules.utility.services.gsheets_sync import parse_room_number
+        raw_num = parse_room_number(row.raw_room_number)
+        if raw_num:
+            # Ищем комнату — приоритет в том же общежитии что и текущая у жильца,
+            # либо по тексту raw_dormitory если указан.
+            from sqlalchemy import func as _func
+            target_room = None
+            if user.room_id:
+                current_room = await db.get(Room, user.room_id)
+                if current_room:
+                    target_room = (await db.execute(
+                        select(Room).where(
+                            Room.dormitory_name == current_room.dormitory_name,
+                            _func.replace(Room.room_number, " ", "") == raw_num,
+                        )
+                    )).scalars().first()
+            if not target_room and row.raw_dormitory:
+                target_room = (await db.execute(
+                    select(Room).where(
+                        Room.dormitory_name.ilike(f"%{row.raw_dormitory.strip()}%"),
+                        _func.replace(Room.room_number, " ", "") == raw_num,
+                    )
+                )).scalars().first()
+            if not target_room:
+                # Последний шанс — просто по номеру комнаты
+                target_room = (await db.execute(
+                    select(Room).where(
+                        _func.replace(Room.room_number, " ", "") == raw_num
+                    ).limit(1)
+                )).scalars().first()
+            if not target_room:
+                raise HTTPException(
+                    400,
+                    f"Не нашёл комнату «{row.raw_dormitory or ''} {raw_num}» в базе. "
+                    "Создайте помещение в Жилфонде или выберите вариант «Оставить текущую»."
+                )
+            user.room_id = target_room.id
+            await db.flush()
 
     # Холостяк (per_capita) не подаёт показания счётчиков — платит фикс. сумму
     # за койко-место. Если всё-таки пришла подача от его ФИО (например, кто-то
@@ -390,6 +443,11 @@ async def _apply_approve(
 @router.post("/rows/{row_id}/approve")
 async def approve_row(
     row_id: int,
+    move_to_raw_room: bool = Query(
+        False,
+        description="Если True — при conflict-комнат переселяем жильца "
+                    "в комнату из таблицы (обновляем User.room_id).",
+    ),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -404,7 +462,7 @@ async def approve_row(
     )).scalars().first()
     if not row:
         raise HTTPException(status_code=404, detail="Строка не найдена")
-    reading = await _apply_approve(db, row, current_user)
+    reading = await _apply_approve(db, row, current_user, move_to_raw_room=move_to_raw_room)
     await db.commit()
     return {"status": "ok", "reading_id": reading.id}
 
@@ -522,13 +580,17 @@ async def reassign_row(
         )
 
     # ------------------------------------------------------------
-    # Подхват сестринских подач: все unmatched/conflict с тем же ФИО.
+    # Подхват сестринских подач: все unmatched/conflict того же человека.
+    # Матчим по ДВУМ формам одновременно:
+    #   * полная нормализация (точное совпадение строки)
+    #   * canonical_initials — «Иванов И.И.» и «Иванов Иван Иванович»
+    #     считаются одним человеком.
+    # Это главный фикс проблемы «каждый месяц заново жму Кто это».
     # ------------------------------------------------------------
     normalized_fio = _normalize_fio(row.raw_fio)
+    canonical_fio = canonical_initials(row.raw_fio)
     siblings_updated = 0
-    if normalized_fio:
-        # Берём все строки того же ФИО, которые ещё не обработаны.
-        # approved / rejected / auto_approved не трогаем — их судьба уже решена.
+    if normalized_fio or canonical_fio:
         sibling_rows = (await db.execute(
             select(GSheetsImportRow).where(
                 GSheetsImportRow.id != row_id,
@@ -536,14 +598,16 @@ async def reassign_row(
             )
         )).scalars().all()
         for sr in sibling_rows:
-            if _normalize_fio(sr.raw_fio) != normalized_fio:
-                continue
-            sr.matched_user_id = new_user.id
-            sr.matched_room_id = new_user.room_id
-            sr.match_score = 100
-            sr.status = "pending"
-            sr.conflict_reason = None
-            siblings_updated += 1
+            sr_norm = _normalize_fio(sr.raw_fio)
+            sr_canon = canonical_initials(sr.raw_fio)
+            # Считаем sibling-ом если совпал любой из видов нормализации
+            if (sr_norm and sr_norm == normalized_fio) or (sr_canon and sr_canon == canonical_fio):
+                sr.matched_user_id = new_user.id
+                sr.matched_room_id = new_user.room_id
+                sr.match_score = 100
+                sr.status = "pending"
+                sr.conflict_reason = None
+                siblings_updated += 1
 
     await write_audit_log(
         db, current_user.id, current_user.username,
@@ -938,12 +1002,13 @@ async def confirm_relative(
     row.status = "pending"
     row.conflict_reason = None
 
-    # Подхват сестринских подач — аналогично reassign. После подтверждения
-    # «это родственник X» имеет смысл сразу привязать все остальные подачи
-    # с тем же ФИО, а не заставлять админа кликать заново.
+    # Подхват сестринских подач — аналогично reassign (по ДВУМ формам:
+    # normalize + canonical_initials), чтобы разные форматы одного ФИО
+    # не требовали повторных кликов «Кто это?».
     normalized_fio = _normalize_fio(row.raw_fio)
+    canonical_fio = canonical_initials(row.raw_fio)
     siblings_updated = 0
-    if normalized_fio:
+    if normalized_fio or canonical_fio:
         sibling_rows = (await db.execute(
             select(GSheetsImportRow).where(
                 GSheetsImportRow.id != row_id,
@@ -951,14 +1016,15 @@ async def confirm_relative(
             )
         )).scalars().all()
         for sr in sibling_rows:
-            if _normalize_fio(sr.raw_fio) != normalized_fio:
-                continue
-            sr.matched_user_id = new_user.id
-            sr.matched_room_id = new_user.room_id
-            sr.match_score = 100
-            sr.status = "pending"
-            sr.conflict_reason = None
-            siblings_updated += 1
+            sr_norm = _normalize_fio(sr.raw_fio)
+            sr_canon = canonical_initials(sr.raw_fio)
+            if (sr_norm and sr_norm == normalized_fio) or (sr_canon and sr_canon == canonical_fio):
+                sr.matched_user_id = new_user.id
+                sr.matched_room_id = new_user.room_id
+                sr.match_score = 100
+                sr.status = "pending"
+                sr.conflict_reason = None
+                siblings_updated += 1
 
     await write_audit_log(
         db, current_user.id, current_user.username,
