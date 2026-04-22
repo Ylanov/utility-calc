@@ -1069,6 +1069,25 @@ textarea { resize: vertical; min-height: 80px; }
     min-height: 0;
 }
 
+/* Многие модалки в проекте имеют структуру:
+ *   .modal-window > <form> > .modal-form + .modal-footer
+ * То есть между модал-окном и модал-формой стоит <form>. Так как <form>
+ * не flex-контейнер по умолчанию, его потомки (.modal-form и .modal-footer)
+ * ломают flex-цепочку: `flex:1` и `min-height:0` на .modal-form игнорируются,
+ * форма вырастает на всю высоту контента и вываливается за max-height:90vh
+ * модального окна. При browser-zoom это особенно заметно — модалка обрезана,
+ * скролла нет.
+ *
+ * Фикс: любой прямой <form> внутри .modal-window сам становится flex-column
+ * с flex:1, передавая flex-layout дальше к .modal-form. */
+.modal-window > form {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+}
+
 .modal-footer {
     padding: 16px 24px 24px 24px;
     display: flex;
