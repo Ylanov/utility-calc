@@ -410,9 +410,10 @@ function refreshModuleData(tabId) {
     if (!mod || !mod.isInitialized) return;
 
     switch (tabId) {
-        // При возврате на дашборд — обновляем KPI и таблицу реестра показаний.
+        // При возврате на дашборд — обновляем KPI, виджет GSheets и реестр.
         case 'dashboard': {
             if (typeof mod.loadKPI === 'function') mod.loadKPI();
+            if (typeof mod.loadGsheetsWidget === 'function') mod.loadGsheetsWidget();
             // Реестр показаний встроен в дашборд, обновим и его таблицу.
             const readingsMod = loadedModules.readings;
             if (readingsMod?.table) readingsMod.table.refresh();

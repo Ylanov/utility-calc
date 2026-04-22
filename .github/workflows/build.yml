@@ -8,6 +8,14 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # Принудительно запускаем JS-actions на Node 24 вместо deprecated Node 20.
+  # Таким образом warnings про "Node.js 20 actions are deprecated" пропадут
+  # ещё до того, как GitHub сделает Node 24 дефолтом (ожидается 2 июня 2026).
+  # Если какая-то конкретная action не поддержит Node 24 — упадёт в конкретном
+  # шаге, это будет сразу видно. Пока с текущим набором (checkout@v4,
+  # setup-python@v5, cache@v4, sonarqube-scan@v6, docker/*@v3-v5) проблем нет.
+  # Следующим этапом планируется апгрейд major-версий actions до N@v5+.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 concurrency:
   group: production-deploy

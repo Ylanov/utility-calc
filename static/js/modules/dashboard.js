@@ -37,6 +37,7 @@ export const DashboardModule = {
             this.isInitialized = true;
         }
         this.loadKPI();
+        this.loadGsheetsWidget();
         this.loadAuditFilters();
         this.loadAuditLog();
     },
@@ -57,6 +58,11 @@ export const DashboardModule = {
             comparisonBanner: document.getElementById('comparisonBanner'),
             comparisonText: document.getElementById('comparisonText'),
             comparisonDelta: document.getElementById('comparisonDelta'),
+            // GSheets widget
+            gsheetsWidgetBody: document.getElementById('gsheetsWidgetBody'),
+            gsheetsWidgetMeta: document.getElementById('gsheetsWidgetMeta'),
+            btnGsheetsWidgetOpen: document.getElementById('btnGsheetsWidgetOpen'),
+            btnGsheetsWidgetRefresh: document.getElementById('btnGsheetsWidgetRefresh'),
             // Audit
             auditContainer: document.getElementById('auditLogContainer'),
             auditFilterAction: document.getElementById('auditFilterAction'),
@@ -72,8 +78,19 @@ export const DashboardModule = {
     bindEvents() {
         if (this.dom.btnRefresh) this.dom.btnRefresh.addEventListener('click', () => {
             this.loadKPI();
+            this.loadGsheetsWidget();
             this.auditState.page = 1;
             this.loadAuditLog();
+        });
+        this.dom.btnGsheetsWidgetRefresh?.addEventListener('click', () => this.loadGsheetsWidget());
+        this.dom.btnGsheetsWidgetOpen?.addEventListener('click', () => {
+            // «Операции» — там секция gsheets. Роутер переключает таб по hash.
+            window.location.hash = 'tools';
+            // После переключения таба — чуть позже проскроллим до аккордеона gsheets.
+            setTimeout(() => {
+                document.querySelector('[data-section="gsheets"]')
+                    ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }, 400);
         });
         if (this.dom.btnPrev) this.dom.btnPrev.addEventListener('click', () => {
             if (this.auditState.page > 1) { this.auditState.page--; this.loadAuditLog(); }
@@ -178,6 +195,82 @@ export const DashboardModule = {
         } else if (this.dom.comparisonBanner) {
             this.dom.comparisonBanner.style.display = 'none';
         }
+    },
+
+    // =====================================================
+    // ВИДЖЕТ GOOGLE SHEETS
+    // Легковесная сводка на дашборде — чтобы админ видел
+    // состояние буфера импорта без переключения вкладок.
+    // Используется существующий endpoint /admin/gsheets/stats —
+    // новых запросов на backend не добавляем.
+    // =====================================================
+    async loadGsheetsWidget() {
+        if (!this.dom.gsheetsWidgetBody) return;
+        try {
+            const s = await api.get('/admin/gsheets/stats');
+            this.renderGsheetsWidget(s);
+        } catch (e) {
+            this.dom.gsheetsWidgetBody.innerHTML =
+                `<div style="padding:12px; color:var(--danger-color); grid-column:1/-1;">Ошибка: ${this._escape(e.message)}</div>`;
+            if (this.dom.gsheetsWidgetMeta) this.dom.gsheetsWidgetMeta.textContent = '';
+        }
+    },
+
+    renderGsheetsWidget(s) {
+        const by = s.by_status || {};
+        const active = (by.pending || 0) + (by.conflict || 0) + (by.unmatched || 0);
+        const auto = by.auto_approved || 0;
+        const done = by.approved || 0;
+        const reject = by.rejected || 0;
+
+        // Мета-строка в шапке виджета: последний импорт + статус настройки sheet_id.
+        if (this.dom.gsheetsWidgetMeta) {
+            const parts = [];
+            if (!s.sheet_id_configured) {
+                parts.push('<span style="color:var(--danger-color);">⚠ GSHEETS_SHEET_ID не задан</span>');
+            } else if (s.last_import_at) {
+                const d = new Date(s.last_import_at);
+                parts.push('последний sync: ' + d.toLocaleString('ru-RU', {
+                    day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit',
+                }));
+            } else {
+                parts.push('импортов пока не было');
+            }
+            if (s.auto_sync_interval_min) {
+                parts.push(`авто каждые ${s.auto_sync_interval_min} мин`);
+            }
+            this.dom.gsheetsWidgetMeta.innerHTML = parts.join(' · ');
+        }
+
+        const chip = (bg, color, icon, value, label, big = false) => `
+            <div style="background:${bg}; border:1px solid ${color}33; border-radius:10px; padding:12px; text-align:left;">
+                <div style="display:flex; align-items:center; gap:6px; color:${color}; font-size:11px; text-transform:uppercase; letter-spacing:0.3px; margin-bottom:4px;">
+                    <span>${icon}</span>${this._escape(label)}
+                </div>
+                <div style="font-size:${big ? '24' : '20'}px; font-weight:700; color:${big && value > 0 ? color : '#111827'};">${value}</div>
+            </div>
+        `;
+
+        // Подсветка «требуют действия» красным, если > 0
+        const activeColor = active > 0 ? '#dc2626' : '#6b7280';
+        const activeBg = active > 0 ? '#fef2f2' : '#f9fafb';
+
+        this.dom.gsheetsWidgetBody.innerHTML = [
+            chip(activeBg, activeColor, '⚠️', active, 'Требуют действия', true),
+            chip('#eff6ff', '#3b82f6', '⏳', by.pending || 0, 'В ожидании'),
+            chip('#fef3c7', '#f59e0b', '🔀', by.conflict || 0, 'Конфликт'),
+            chip('#fee2e2', '#ef4444', '🔍', by.unmatched || 0, 'Не найден'),
+            chip('#ede9fe', '#8b5cf6', '🤖', auto, 'Авто-утверждено'),
+            chip('#d1fae5', '#10b981', '✅', done, 'Утверждено'),
+            chip('#f3f4f6', '#6b7280', '🗑', reject, 'Отклонено'),
+        ].join('');
+    },
+
+    _escape(s) {
+        if (s == null) return '';
+        return String(s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     },
 
     // =====================================================

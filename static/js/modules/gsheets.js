@@ -184,26 +184,31 @@ export const GSheetsModule = {
             }
         });
 
-        // Те же обработчики для grouped-вида + раскрытие/сворачивание карточки
+        // Те же обработчики для grouped-вида + раскрытие/сворачивание карточки.
+        // ВАЖНО: ищем data-action и на button, и на <a> — FIO в заголовке группы
+        // это ссылка (<a data-action="group-show-history">), и если её не
+        // перехватить, браузер прыгал на href="#" → hashchange → SPA-роутер
+        // уходил на defaultTab = "dashboard". Админа резко кидало на дашборд.
         this.dom.groupedBody?.addEventListener('click', (e) => {
-            const btn = e.target.closest('button[data-action]');
-            if (btn) {
+            const el = e.target.closest('button[data-action], a[data-action]');
+            if (el) {
+                e.preventDefault();
                 e.stopPropagation();
-                const action = btn.dataset.action;
+                const action = el.dataset.action;
                 if (action === 'group-approve-all') {
-                    this.groupApproveAll(btn.dataset.userKey);
+                    this.groupApproveAll(el.dataset.userKey);
                     return;
                 }
                 if (action === 'group-show-history') {
-                    this.showUserHistory(Number(btn.dataset.userId));
+                    this.showUserHistory(Number(el.dataset.userId));
                     return;
                 }
                 if (action === 'group-find-relative') {
                     // То же что reassign, но из шапки unmatched-группы.
-                    this.reassignPrompt(Number(btn.dataset.rowId));
+                    this.reassignPrompt(Number(el.dataset.rowId));
                     return;
                 }
-                const rowId = Number(btn.dataset.rowId);
+                const rowId = Number(el.dataset.rowId);
                 if (action === 'approve') this.approveRow(rowId);
                 else if (action === 'reject') this.rejectRow(rowId);
                 else if (action === 'reassign') this.reassignPrompt(rowId);

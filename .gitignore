@@ -7,3 +7,9 @@ __pycache__/
 postgres-data/
 nginx/certs/
 project-7cb77-firebase-adminsdk-fbsvc-1fe4f000ec.json
+
+# Claude Code worktrees: каждая ветка Claude создаёт папку здесь с .git-gitfile.
+# Если закоммитить — git запишет их как gitlinks (mode 160000) и CI упадёт с
+# "no submodule mapping found in .gitmodules" (так уже случалось — смотри фикс
+# в этой же ветке). Игнорируем ВСЮ папку — она временная, не версионируется.
+.claude/

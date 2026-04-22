@@ -94,8 +94,35 @@
                 </div>
             </div>
 
+            <!-- ========================================
+                 ВИДЖЕТ: GOOGLE SHEETS (сводка)
+                 ======================================== -->
+            <div id="gsheetsWidget" class="card" style="margin-bottom: 0; border-left:4px solid #16a34a;">
+                <div class="card-header" style="padding-bottom:12px;">
+                    <h3 style="margin:0;">
+                        <i class="fa-solid fa-table" style="color:#16a34a; margin-right:8px;"></i>
+                        Google Sheets — приём показаний
+                    </h3>
+                    <div class="header-controls">
+                        <span id="gsheetsWidgetMeta" style="font-size:12px; color:var(--text-secondary);">Загрузка…</span>
+                        <button id="btnGsheetsWidgetOpen" class="action-btn secondary-btn" style="padding:6px 12px; font-size:12px;"
+                                title="Открыть вкладку «Операции» → раздел Google Sheets">
+                            <i class="fa-solid fa-arrow-up-right-from-square"></i> Открыть
+                        </button>
+                        <button id="btnGsheetsWidgetRefresh" class="icon-btn" title="Обновить">
+                            <i class="fa-solid fa-rotate-right"></i>
+                        </button>
+                    </div>
+                </div>
+                <div id="gsheetsWidgetBody" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; padding:4px 0 0;">
+                    <div style="padding:14px; text-align:center; color:var(--text-secondary); grid-column:1/-1;">
+                        <i class="fa-solid fa-spinner fa-spin"></i> Загрузка…
+                    </div>
+                </div>
+            </div>
+
             <!-- Управление и таблица -->
-            <div class="card" style="margin-bottom: 0;">
+            <div class="card" style="margin-bottom: 0; margin-top: 16px;">
                 <div class="card-header">
                     <h3><i class="fa-solid fa-chart-line" style="color:var(--primary-color); margin-right:8px;"></i> Реестр показаний</h3>
                     <div class="header-controls">
