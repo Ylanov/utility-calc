@@ -994,8 +994,15 @@ textarea { resize: vertical; min-height: 80px; }
     z-index: 1000;
     display: none;
     justify-content: center;
-    align-items: center;
+    /* align-items:center ранее был — но он не даёт модалке скроллиться,
+     * когда её высота больше вьюпорта (например, при браузерном zoom).
+     * flex-start + overflow-y:auto на overlay = модалка свободно скроллится
+     * вместе с оверлеем если вдруг не влезает. Внутренний скролл modal-form
+     * продолжает работать как раньше для больших форм. */
+    align-items: flex-start;
     padding: 20px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
     animation: fadeIn 0.2s ease-out;
 }
 .modal-overlay.open { display: flex; }
@@ -1011,6 +1018,10 @@ textarea { resize: vertical; min-height: 80px; }
     flex-direction: column;
     max-height: 90vh;
     overflow: hidden;
+    /* overlay имеет align-items:flex-start для скролла когда модалка
+     * не влезает — а `margin:auto` возвращает центрирование, когда места
+     * хватает (стандартный flexbox-паттерн). */
+    margin: auto;
 }
 
 .modal-header {
@@ -1046,11 +1057,16 @@ textarea { resize: vertical; min-height: 80px; }
 .close-icon:hover { background: rgba(60,64,67,0.08); color: var(--text-main); }
 .close-icon:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
 
-/* Тело модалки — скроллится если контент не влезает */
+/* Тело модалки — скроллится если контент не влезает.
+ * min-height:0 ОБЯЗАТЕЛЕН: flex-child с overflow-y:auto без этого
+ * не считает max-height родителя и вылезает за границы, скролл пропадает.
+ * Проявлялось на мобилках и при браузерном zoom — контент уходил вниз
+ * без возможности прокрутить. */
 .modal-form {
     padding: 0 24px 24px 24px;
     overflow-y: auto;
-    flex: 1;
+    flex: 1 1 auto;
+    min-height: 0;
 }
 
 .modal-footer {

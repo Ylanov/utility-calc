@@ -86,6 +86,9 @@ class ReleaseInfo(BaseModel):
     is_published: bool
     created_at: Optional[datetime]
     download_url: str
+    # Отмечаем в админке «файл отсутствует на диске» — так админ сразу видит
+    # битый релиз и может либо перезалить APK, либо снять is_published.
+    file_on_disk: bool = True
 
     class Config:
         from_attributes = True
@@ -127,18 +130,33 @@ async def latest_version(
     Если `current_version_code` передан и он меньше `min_required_version_code`
     последнего релиза, возвращаем `force_update=true`.
     """
-    release = (await db.execute(
+    # Берём несколько самых свежих — потом выбираем первый у которого файл
+    # РЕАЛЬНО лежит на диске. Раньше возвращали первый попавшийся, даже если
+    # APK отсутствовал — клиент получал download_url, кликал, и скачивал
+    # 110-байтный JSON-ответ с 404-ошибкой вместо APK.
+    candidates = (await db.execute(
         select(AppRelease)
         .where(
             AppRelease.platform == platform,
             AppRelease.is_published.is_(True),
         )
         .order_by(desc(AppRelease.version_code))
-        .limit(1)
-    )).scalars().first()
+        .limit(10)
+    )).scalars().all()
+
+    release = None
+    for r in candidates:
+        if r.file_name and os.path.isfile(os.path.join(APPS_DIR, r.file_name)):
+            release = r
+            break
+        logger.warning(
+            f"[APP] skip release id={r.id} ({r.file_name}) — файл отсутствует на диске"
+        )
 
     if not release:
-        raise HTTPException(404, "Опубликованных версий ещё нет")
+        # Специально 404 с text/plain — чтобы если фронт всё же попробует
+        # обработать как download, админ увидел понятный текст, а не JSON.
+        raise HTTPException(404, "Опубликованных версий с актуальным файлом нет. Админу — перезалить APK.")
 
     force = False
     if (
@@ -235,6 +253,7 @@ async def list_releases(
             is_published=r.is_published,
             created_at=r.created_at,
             download_url=f"/api/app/download/{r.file_name}",
+            file_on_disk=bool(r.file_name) and os.path.isfile(os.path.join(APPS_DIR, r.file_name)),
         ).model_dump()
         for r in rows
     ]

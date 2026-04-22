@@ -105,16 +105,26 @@ export const AppReleasesModule = {
         }
 
         this.dom.tableBody.innerHTML = releases.map(r => {
-            const statusBadge = r.is_published
-                ? '<span style="padding:2px 8px; border-radius:10px; background:#d1fae5; color:#065f46; font-size:11px; font-weight:600;">Опубликовано</span>'
-                : '<span style="padding:2px 8px; border-radius:10px; background:#fef3c7; color:#92400e; font-size:11px; font-weight:600;">Скрыто</span>';
+            // Раньше показывали только is_published — но у нас бывали релизы,
+            // где is_published=true, а APK-файл пропал с диска (рестарт без
+            // persistent volume, например). Админ такого не видел, в итоге
+            // юзеры качали 110-байтный JSON 404-ответ как APK. Теперь —
+            // явный бейдж «Файл пропал».
+            const fileMissing = r.file_on_disk === false;
+            const statusBadge = fileMissing
+                ? '<span style="padding:2px 8px; border-radius:10px; background:#fee2e2; color:#991b1b; font-size:11px; font-weight:600;" title="APK отсутствует на диске — перезалейте файл"><i class="fa-solid fa-triangle-exclamation"></i> Файл пропал</span>'
+                : (r.is_published
+                    ? '<span style="padding:2px 8px; border-radius:10px; background:#d1fae5; color:#065f46; font-size:11px; font-weight:600;">Опубликовано</span>'
+                    : '<span style="padding:2px 8px; border-radius:10px; background:#fef3c7; color:#92400e; font-size:11px; font-weight:600;">Скрыто</span>');
 
             const notesShort = (r.release_notes || '').length > 60
                 ? escapeHtml(r.release_notes.slice(0, 60)) + '…'
                 : escapeHtml(r.release_notes || '—');
 
+            const rowStyle = fileMissing ? 'background:rgba(254,226,226,0.35);' : '';
+
             return `
-                <tr>
+                <tr style="${rowStyle}">
                     <td><b>${escapeHtml(r.version)}</b> <span style="font-size:11px; color:var(--text-secondary);">${escapeHtml(r.platform)}</span></td>
                     <td style="font-family:monospace;">${r.version_code}</td>
                     <td style="font-family:monospace; color:${r.min_required_version_code ? '#d97706' : 'var(--text-secondary)'};">

@@ -108,18 +108,47 @@
          минимальный inline-скрипт чтобы не тащить ESM-стек на portal.html. -->
     <script>
     (async function() {
+        const link = document.getElementById('portalAppDownloadLink');
+        const label = document.getElementById('portalAppVersionLabel');
+        const qrBlock = document.getElementById('portalAppQR');
+        const block = document.getElementById('portalAppBlock');
+
+        // Показываем заглушку «временно недоступно» вместо тихого молчания —
+        // раньше юзер не знал, есть приложение или нет, а href="#" давал
+        // скачивание мусорного 110-байтного JSON-404 с обычным браузером.
+        const showUnavailable = (reason) => {
+            if (label) label.textContent = 'Временно недоступно';
+            if (link) {
+                link.href = '#';
+                link.removeAttribute('download');
+                link.style.background = '#9aa0a6';
+                link.style.cursor = 'not-allowed';
+                link.onclick = (e) => { e.preventDefault(); };
+                link.title = reason || 'Админ ещё не опубликовал APK';
+            }
+            if (qrBlock) {
+                qrBlock.innerHTML = '<span style="color:#a0aec0; font-size:11px;">QR недоступен</span>';
+            }
+            if (block) block.style.display = 'block';
+        };
+
         try {
             const resp = await fetch('/api/app/latest?platform=android', { credentials: 'omit' });
-            if (!resp.ok) return;  // 404 = нет опубликованных версий, тихо выходим
+            if (!resp.ok) {
+                // /latest теперь фильтрует релизы, у которых файл пропал с диска.
+                // 404 тут = «нет ни одной живой публикации» — показываем заглушку.
+                showUnavailable('Публикаций с доступным файлом нет');
+                return;
+            }
             const info = await resp.json();
-            if (!info || !info.download_url) return;
+            if (!info || !info.download_url) {
+                showUnavailable();
+                return;
+            }
 
-            document.getElementById('portalAppDownloadLink').href = info.download_url;
-            document.getElementById('portalAppDownloadLink').setAttribute(
-                'download', info.download_url.split('/').pop()
-            );
-            document.getElementById('portalAppVersionLabel').textContent =
-                'Скачать APK · v' + info.version;
+            link.href = info.download_url;
+            link.setAttribute('download', info.download_url.split('/').pop());
+            label.textContent = 'Скачать APK · v' + info.version;
 
             // QR генерится нашим бэком — не нарушает CSP (img-src 'self')
             // и не зависит от внешних сервисов вроде quickchart.io.
@@ -132,14 +161,14 @@
             img.style.height = '100%';
             img.style.display = 'block';
             img.loading = 'lazy';
-            const qrBlock = document.getElementById('portalAppQR');
             qrBlock.innerHTML = '';  // убираем placeholder «QR-код»
             qrBlock.appendChild(img);
 
-            document.getElementById('portalAppBlock').style.display = 'block';
+            block.style.display = 'block';
         } catch (e) {
-            // Сетевая ошибка / парсинг JSON — портал должен работать,
-            // блок «Скачать» просто останется скрытым. Без шума в консоли.
+            // Сетевая ошибка / парсинг JSON — тоже показываем заглушку,
+            // чтобы не было «серой» кнопки с битой ссылкой.
+            showUnavailable('Ошибка загрузки');
         }
     })();
     </script>
