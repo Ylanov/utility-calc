@@ -11,68 +11,10 @@
              ========================================= -->
         <section class="dashboard-main">
 
-            <!-- KPI КАРТОЧКИ -->
-            <div id="kpiContainer" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:16px;">
-                <div class="card" style="padding:20px; text-align:center; margin-bottom:0;">
-                    <div style="width:48px; height:48px; border-radius:50%; background:var(--primary-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
-                        <i class="fa-solid fa-users" style="color:var(--primary-color); font-size:20px;"></i>
-                    </div>
-                    <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Жильцы</div>
-                    <div id="kpiUsers" style="font-size:32px; font-weight:700; color:var(--text-main); margin:4px 0;">—</div>
-                    <div id="kpiUsersDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
-                </div>
-                <div class="card" style="padding:20px; text-align:center; margin-bottom:0;">
-                    <div style="width:48px; height:48px; border-radius:50%; background:var(--primary-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
-                        <i class="fa-solid fa-door-open" style="color:var(--primary-color); font-size:20px;"></i>
-                    </div>
-                    <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Комнаты</div>
-                    <div id="kpiRooms" style="font-size:32px; font-weight:700; color:var(--text-main); margin:4px 0;">—</div>
-                    <div id="kpiRoomsDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
-                </div>
-                <div class="card" style="padding:20px; text-align:center; margin-bottom:0;">
-                    <div style="width:48px; height:48px; border-radius:50%; background:var(--success-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
-                        <i class="fa-solid fa-circle-check" style="color:var(--success-color); font-size:20px;"></i>
-                    </div>
-                    <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Сдали показания</div>
-                    <div id="kpiSubmitted" style="font-size:32px; font-weight:700; color:#10b981; margin:4px 0;">—</div>
-                    <div id="kpiSubmittedDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
-                </div>
-                <div class="card" style="padding:20px; text-align:center; margin-bottom:0;">
-                    <div style="width:48px; height:48px; border-radius:50%; background:var(--warning-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
-                        <i class="fa-solid fa-triangle-exclamation" style="color:#f59e0b; font-size:20px;"></i>
-                    </div>
-                    <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Аномалии</div>
-                    <div id="kpiAnomalies" style="font-size:32px; font-weight:700; color:#f59e0b; margin:4px 0;">—</div>
-                    <div id="kpiAnomaliesDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
-                </div>
-                <div class="card" style="padding:20px; text-align:center; margin-bottom:0;">
-                    <div style="width:48px; height:48px; border-radius:50%; background:var(--success-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
-                        <i class="fa-solid fa-ruble-sign" style="color:#059669; font-size:20px;"></i>
-                    </div>
-                    <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Начислено</div>
-                    <div id="kpiRevenue" style="font-size:28px; font-weight:700; color:#059669; margin:4px 0;">—</div>
-                    <div id="kpiRevenueDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
-                </div>
-            </div>
-
-            <!-- СРАВНЕНИЕ С ПРОШЛЫМ МЕСЯЦЕМ -->
-            <div id="comparisonBanner" class="card" style="display:none; padding:16px 24px; margin-bottom:0; border-left:4px solid #3b82f6;">
-                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
-                    <div>
-                        <div style="font-size:13px; color:var(--text-secondary);">Сравнение с предыдущим периодом</div>
-                        <div id="comparisonText" style="font-size:14px; margin-top:4px;">—</div>
-                    </div>
-                    <div id="comparisonDelta" style="text-align:right; font-size:22px; font-weight:700;">—</div>
-                </div>
-            </div>
-
-            <!-- ========================================
-                 РЕЕСТР ПОКАЗАНИЙ (ранее отдельная вкладка)
-                 Переехал сюда под alias readings — модуль ReadingsModule
-                 инициализируется вместе с дашбордом.
-                 ======================================== -->
-
-            <!-- Статусы периода -->
+            <!-- =========================================
+                 СТАТУС ПЕРИОДА — теперь наверху: первое, что видит админ,
+                 это "открыт ли приём сейчас". Раньше было ниже KPI, нелогично.
+                 ========================================= -->
             <div class="status-card">
                 <div id="periodActiveState" class="period-state open" style="display: none;">
                     <div style="display: flex; align-items: center; gap: 15px;">
@@ -93,6 +35,113 @@
                     </div>
                 </div>
             </div>
+
+            <!-- KPI КАРТОЧКИ — все кликабельные.
+                 Клик → открывает модалку #dashboardDetailModal с детализацией
+                 по конкретной метрике (распределения, топы, ссылки на вкладки).
+                 data-dashboard-kpi используется JS как роутинг-ключ. -->
+            <div id="kpiContainer" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:16px;">
+                <div class="card kpi-card" data-dashboard-kpi="users"
+                     style="padding:20px; text-align:center; margin-bottom:0; cursor:pointer; transition:transform .15s, box-shadow .15s;"
+                     title="Клик — подробности по жильцам">
+                    <div style="width:48px; height:48px; border-radius:50%; background:var(--primary-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
+                        <i class="fa-solid fa-users" style="color:var(--primary-color); font-size:20px;"></i>
+                    </div>
+                    <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Жильцы</div>
+                    <div id="kpiUsers" style="font-size:32px; font-weight:700; color:var(--text-main); margin:4px 0;">—</div>
+                    <div id="kpiUsersDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
+                </div>
+                <div class="card kpi-card" data-dashboard-kpi="rooms"
+                     style="padding:20px; text-align:center; margin-bottom:0; cursor:pointer; transition:transform .15s, box-shadow .15s;"
+                     title="Клик — распределение по общежитиям">
+                    <div style="width:48px; height:48px; border-radius:50%; background:var(--primary-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
+                        <i class="fa-solid fa-door-open" style="color:var(--primary-color); font-size:20px;"></i>
+                    </div>
+                    <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Комнаты</div>
+                    <div id="kpiRooms" style="font-size:32px; font-weight:700; color:var(--text-main); margin:4px 0;">—</div>
+                    <div id="kpiRoomsDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
+                </div>
+                <div class="card kpi-card" data-dashboard-kpi="submissions"
+                     style="padding:20px; text-align:center; margin-bottom:0; cursor:pointer; transition:transform .15s, box-shadow .15s;"
+                     title="Клик — кто сдал и кто не сдал показания">
+                    <div style="width:48px; height:48px; border-radius:50%; background:var(--success-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
+                        <i class="fa-solid fa-circle-check" style="color:var(--success-color); font-size:20px;"></i>
+                    </div>
+                    <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Сдали показания</div>
+                    <div id="kpiSubmitted" style="font-size:32px; font-weight:700; color:#10b981; margin:4px 0;">—</div>
+                    <div id="kpiSubmittedDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
+                </div>
+                <div class="card kpi-card" data-dashboard-kpi="anomalies"
+                     style="padding:20px; text-align:center; margin-bottom:0; cursor:pointer; transition:transform .15s, box-shadow .15s;"
+                     title="Клик — топ срабатываний анализатора">
+                    <div style="width:48px; height:48px; border-radius:50%; background:var(--warning-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
+                        <i class="fa-solid fa-triangle-exclamation" style="color:#f59e0b; font-size:20px;"></i>
+                    </div>
+                    <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Аномалии</div>
+                    <div id="kpiAnomalies" style="font-size:32px; font-weight:700; color:#f59e0b; margin:4px 0;">—</div>
+                    <div id="kpiAnomaliesDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
+                </div>
+                <div class="card kpi-card" data-dashboard-kpi="finance"
+                     style="padding:20px; text-align:center; margin-bottom:0; cursor:pointer; transition:transform .15s, box-shadow .15s;"
+                     title="Клик — топ должников и переплатчиков">
+                    <div style="width:48px; height:48px; border-radius:50%; background:var(--success-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px auto;">
+                        <i class="fa-solid fa-ruble-sign" style="color:#059669; font-size:20px;"></i>
+                    </div>
+                    <div style="font-size:12px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px;">Начислено</div>
+                    <div id="kpiRevenue" style="font-size:28px; font-weight:700; color:#059669; margin:4px 0;">—</div>
+                    <div id="kpiRevenueDetail" style="font-size:12px; color:var(--text-secondary);">Загрузка...</div>
+                </div>
+            </div>
+
+            <!-- СРАВНЕНИЕ С ПРОШЛЫМ МЕСЯЦЕМ — теперь кликабельный баннер,
+                 открывает модалку сравнения периодов. -->
+            <div id="comparisonBanner" class="card" data-dashboard-kpi="comparison"
+                 style="display:none; padding:16px 24px; margin-bottom:0; border-left:4px solid #3b82f6; cursor:pointer;"
+                 title="Клик — детальное сравнение с прошлым периодом">
+                <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                    <div>
+                        <div style="font-size:13px; color:var(--text-secondary);">Сравнение с предыдущим периодом</div>
+                        <div id="comparisonText" style="font-size:14px; margin-top:4px;">—</div>
+                    </div>
+                    <div id="comparisonDelta" style="text-align:right; font-size:22px; font-weight:700;">—</div>
+                </div>
+            </div>
+
+            <!-- МОДАЛКА ДЕТАЛИЗАЦИИ KPI. Одна на дашборд — контент
+                 подставляется JS-ом в зависимости от data-dashboard-kpi
+                 нажатой карточки. -->
+            <div id="dashboardDetailModal" class="modal-overlay">
+                <div class="modal-window" style="width:720px;">
+                    <div class="modal-header">
+                        <h3 id="dashboardDetailTitle">Детали KPI</h3>
+                        <button class="close-btn close-icon" data-dd-close>&times;</button>
+                    </div>
+                    <div class="modal-form" id="dashboardDetailBody" style="background:var(--bg-page); min-height:240px;">
+                        <div style="padding:40px; text-align:center; color:var(--text-secondary);">
+                            <i class="fa-solid fa-spinner fa-spin"></i> Загрузка…
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="action-btn primary-btn" data-dd-navigate style="display:none;">
+                            <i class="fa-solid fa-arrow-up-right-from-square"></i> <span data-dd-navigate-label>Открыть вкладку</span>
+                        </button>
+                        <button class="action-btn secondary-btn" data-dd-close>Закрыть</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Hover-эффект на KPI: лёгкий подъём и тень. Без класса — работает
+                 на любом элементе с классом kpi-card. -->
+            <style>
+                .kpi-card:hover {
+                    transform: translateY(-2px);
+                    box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+                }
+                .kpi-card:active { transform: translateY(0); }
+                #comparisonBanner:hover {
+                    box-shadow: 0 4px 12px rgba(59,130,246,0.15);
+                }
+            </style>
 
             <!-- ========================================
                  ВИДЖЕТ: GOOGLE SHEETS (сводка)
