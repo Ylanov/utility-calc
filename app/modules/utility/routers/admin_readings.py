@@ -29,12 +29,39 @@ async def get_admin_readings(
         anomalies_only: bool = Query(False),
         sort_by: str = Query("created_at"),
         sort_dir: str = Query("desc", pattern="^(asc|desc)$"),
+        # Волна 1 — расширенные фильтры реестра
+        period_id: Optional[int] = Query(None, description="ID периода (default — активный)"),
+        risk_level: Optional[str] = Query(None, pattern="^(clean|suspicious|critical)$"),
+        flag_code: Optional[str] = Query(None, description="SPIKE_HOT / ZERO_BILL / ..."),
+        source: Optional[str] = Query(None, pattern="^(user|gsheets|auto|one_time|meter_replace)$"),
         current_user: User = Depends(allow_readings_view),
         db: AsyncSession = Depends(get_db)
 ):
     return await admin_readings_list.get_paginated_readings(
-        db, page, limit, cursor_id, direction, search, anomalies_only, sort_by, sort_dir
+        db, page, limit, cursor_id, direction, search, anomalies_only, sort_by, sort_dir,
+        period_id=period_id, risk_level=risk_level, flag_code=flag_code, source=source,
     )
+
+
+@router.get("/api/admin/readings/stats")
+async def get_admin_readings_stats(
+        period_id: Optional[int] = Query(None),
+        current_user: User = Depends(allow_readings_view),
+        db: AsyncSession = Depends(get_db)
+):
+    """KPI для шапки реестра показаний (волна 1)."""
+    return await admin_readings_list.get_readings_stats(db, period_id)
+
+
+@router.get("/api/admin/readings/{reading_id}/decision-context")
+async def get_reading_decision_context(
+        reading_id: int,
+        current_user: User = Depends(allow_readings_view),
+        db: AsyncSession = Depends(get_db)
+):
+    """Расширенный контекст для раскрывающейся панели реестра (волна 2):
+    история 4-х предыдущих утверждений, соседи, флаги + рекомендация."""
+    return await admin_readings_list.get_decision_context(db, reading_id)
 
 
 @router.post("/api/admin/approve-bulk")

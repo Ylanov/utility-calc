@@ -415,13 +415,25 @@ async def bulk_approve(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Массовое утверждение. Пропускает ошибочные строки, возвращает список проблемных."""
+    """Массовое утверждение. Пропускает ошибочные строки, возвращает список проблемных.
+
+    ВАЖНО: обрабатываем строки СТРОГО по sheet_timestamp от старого к новому.
+    Если админ утвердит сразу 29 подач Неметуллаевой за разные месяцы,
+    MeterReading'и создадутся в хронологическом порядке — счётчики растут
+    монотонно, дельты в истории корректные. Произвольный порядок SQL-ответа
+    раньше давал путаницу с прошлой/последней подачей при выборке.
+    """
     require_admin(current_user)
     if not data.row_ids:
         return {"approved": 0, "failed": []}
 
     rows = (await db.execute(
-        select(GSheetsImportRow).where(GSheetsImportRow.id.in_(data.row_ids))
+        select(GSheetsImportRow)
+        .where(GSheetsImportRow.id.in_(data.row_ids))
+        .order_by(
+            GSheetsImportRow.sheet_timestamp.asc().nulls_last(),
+            GSheetsImportRow.id.asc(),
+        )
     )).scalars().all()
 
     approved = 0
@@ -474,7 +486,14 @@ async def reassign_row(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Переопределяет matched_user для строки (когда fuzzy не угадал)."""
+    """Переопределяет matched_user для строки (когда fuzzy не угадал).
+
+    Важно: подтягиваем ВСЕ сестринские unmatched/conflict строки с таким же
+    (нормализованным) ФИО и привязываем их тоже. Раньше приходилось тыкать
+    «Кто это?» столько раз, сколько у жильца было подач в gsheets — админ
+    тратил 10-20 кликов на одного человека. Теперь один reassign закрывает
+    всю цепочку.
+    """
     require_admin(current_user)
 
     row = await db.get(GSheetsImportRow, row_id)
@@ -502,6 +521,30 @@ async def reassign_row(
             created_by_id=current_user.id,
         )
 
+    # ------------------------------------------------------------
+    # Подхват сестринских подач: все unmatched/conflict с тем же ФИО.
+    # ------------------------------------------------------------
+    normalized_fio = _normalize_fio(row.raw_fio)
+    siblings_updated = 0
+    if normalized_fio:
+        # Берём все строки того же ФИО, которые ещё не обработаны.
+        # approved / rejected / auto_approved не трогаем — их судьба уже решена.
+        sibling_rows = (await db.execute(
+            select(GSheetsImportRow).where(
+                GSheetsImportRow.id != row_id,
+                GSheetsImportRow.status.in_(("unmatched", "conflict", "pending")),
+            )
+        )).scalars().all()
+        for sr in sibling_rows:
+            if _normalize_fio(sr.raw_fio) != normalized_fio:
+                continue
+            sr.matched_user_id = new_user.id
+            sr.matched_room_id = new_user.room_id
+            sr.match_score = 100
+            sr.status = "pending"
+            sr.conflict_reason = None
+            siblings_updated += 1
+
     await write_audit_log(
         db, current_user.id, current_user.username,
         action="gsheets_reassign", entity_type="gsheets_row", entity_id=row_id,
@@ -509,10 +552,15 @@ async def reassign_row(
             "new_user_id": new_user.id,
             "fio": row.raw_fio,
             "alias_created": alias_created,
+            "siblings_updated": siblings_updated,
         },
     )
     await db.commit()
-    return {"status": "ok", "alias_created": alias_created}
+    return {
+        "status": "ok",
+        "alias_created": alias_created,
+        "siblings_updated": siblings_updated,
+    }
 
 
 async def _ensure_alias(
@@ -890,6 +938,28 @@ async def confirm_relative(
     row.status = "pending"
     row.conflict_reason = None
 
+    # Подхват сестринских подач — аналогично reassign. После подтверждения
+    # «это родственник X» имеет смысл сразу привязать все остальные подачи
+    # с тем же ФИО, а не заставлять админа кликать заново.
+    normalized_fio = _normalize_fio(row.raw_fio)
+    siblings_updated = 0
+    if normalized_fio:
+        sibling_rows = (await db.execute(
+            select(GSheetsImportRow).where(
+                GSheetsImportRow.id != row_id,
+                GSheetsImportRow.status.in_(("unmatched", "conflict", "pending")),
+            )
+        )).scalars().all()
+        for sr in sibling_rows:
+            if _normalize_fio(sr.raw_fio) != normalized_fio:
+                continue
+            sr.matched_user_id = new_user.id
+            sr.matched_room_id = new_user.room_id
+            sr.match_score = 100
+            sr.status = "pending"
+            sr.conflict_reason = None
+            siblings_updated += 1
+
     await write_audit_log(
         db, current_user.id, current_user.username,
         action="gsheets_confirm_relative", entity_type="gsheets_row", entity_id=row_id,
@@ -897,10 +967,15 @@ async def confirm_relative(
             "alias_user_id": new_user.id,
             "alias_fio": row.raw_fio,
             "note": data.note,
+            "siblings_updated": siblings_updated,
         },
     )
     await db.commit()
-    return {"status": "ok", "alias_created": alias_created}
+    return {
+        "status": "ok",
+        "alias_created": alias_created,
+        "siblings_updated": siblings_updated,
+    }
 
 
 # =========================================================================

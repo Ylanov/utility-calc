@@ -52,6 +52,11 @@ services:
     container_name: utility_calc_web
     volumes:
       - shared_data:/app/static/generated_files
+      # APK-файлы мобильного приложения — ДОЛЖНЫ быть на persistent volume.
+      # Без этого при каждом `docker-compose up --build` новый образ приносит
+      # пустую папку из git, и загруженные админом APK пропадают →
+      # /api/app/download/... отдаёт 404, клиент качает 110-байтный JSON.
+      - apps_data:/app/static/apps
     depends_on:
       db:
         condition: service_healthy
@@ -303,6 +308,7 @@ volumes:
   redis_data:
   shared_data:
   minio_data:
+  apps_data:      # APK мобильного приложения, устойчивы к rebuild образа
 
 networks:
   utility_net:

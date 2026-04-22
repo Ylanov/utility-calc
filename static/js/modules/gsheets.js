@@ -946,11 +946,19 @@ export const GSheetsModule = {
                 ? { user_id: result.userId, note: result.note || 'Родственник' }
                 : { user_id: result.userId, remember: result.remember, note: result.note || null };
             const resp = await api.post(endpoint, payload);
+
+            // Backend теперь подхватывает все остальные unmatched/conflict
+            // строки того же ФИО — сообщаем сколько.
+            const siblings = resp?.siblings_updated || 0;
+            const siblingsPart = siblings > 0
+                ? ` + привязано ещё ${siblings} ${siblings === 1 ? 'подача' : (siblings < 5 ? 'подачи' : 'подач')} того же ФИО`
+                : '';
+
             const msg = result.asRelative
-                ? `Подтверждено: подача от родственника ${result.username}. ФИО запомнено.`
+                ? `Подтверждено: подача от родственника ${result.username}.${siblingsPart}`
                 : (resp?.alias_created
-                    ? `Жилец переназначен. ФИО «${row?.raw_fio || ''}» запомнено за ${result.username}.`
-                    : `Жилец переназначен на ${result.username}.`);
+                    ? `Жилец переназначен на ${result.username}, ФИО «${row?.raw_fio || ''}» запомнено.${siblingsPart}`
+                    : `Жилец переназначен на ${result.username}.${siblingsPart}`);
             toast(msg, 'success');
             this.refresh();
         } catch (e) {
