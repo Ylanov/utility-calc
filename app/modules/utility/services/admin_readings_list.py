@@ -518,8 +518,11 @@ async def get_decision_context(db: AsyncSession, reading_id: int):
             "color": "#059669",
         }
 
-    # Предыдущее утверждённое — для расчёта дельт
-    prev = hist[0] if hist else None
+    # Предыдущее утверждённое — для расчёта дельт.
+    # Используем history (уже сериализованные dict'ы), а не hist (ORM-объекты):
+    # у MeterReading нет __getitem__, поэтому prev["hot_water"] на ORM-объекте
+    # даёт TypeError → 500 при разворачивании строки реестра.
+    prev = history[0] if history else None
     d_hot = float((reading.hot_water or 0) - (prev["hot_water"] if prev else 0))
     d_cold = float((reading.cold_water or 0) - (prev["cold_water"] if prev else 0))
     d_elect = float((reading.electricity or 0) - (prev["electricity"] if prev else 0))

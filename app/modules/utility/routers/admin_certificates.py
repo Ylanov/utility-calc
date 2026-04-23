@@ -17,7 +17,7 @@
 """
 from datetime import date, datetime
 from typing import Optional, List, Literal
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -568,43 +568,54 @@ async def admin_list_user_contracts(
 @router.post("/users/{user_id}/rental-contracts", dependencies=[Depends(allow_certs)])
 async def admin_upload_contract(
     user_id: int,
-    file: UploadFile = File(...),
-    number: Optional[str] = Query(None),
-    signed_date: Optional[date] = Query(None),
-    valid_until: Optional[date] = Query(None),
-    note: Optional[str] = Query(None),
-    activate: bool = Query(True, description="Сделать этот договор активным (деактивирует остальные)"),
+    # Договор = № + дата = обязательны. Без них справка ФЛС невалидна.
+    # Файл можно не прикреплять (старые договоры могут быть только бумажные),
+    # но метаданные должны быть всегда.
+    number: str = Form(..., min_length=1, max_length=64),
+    signed_date: date = Form(...),
+    valid_until: Optional[date] = Form(None),
+    note: Optional[str] = Form(None),
+    activate: bool = Form(True, description="Сделать этот договор активным (деактивирует остальные)"),
+    file: Optional[UploadFile] = File(None),
     current_user: User = Depends(allow_certs),
     db: AsyncSession = Depends(get_db),
 ):
-    """Загружает PDF-договор в MinIO и создаёт запись в БД.
-    При activate=True все остальные договоры этого жильца становятся is_active=False —
-    так у нас всегда ровно один «текущий» договор на жильца."""
+    """Регистрирует договор найма (номер + дата обязательны, PDF-скан
+    опционально) и при activate=True деактивирует остальные договоры этого
+    жильца — так у нас всегда ровно один «текущий» договор."""
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(404, "Жилец не найден")
 
-    # Валидация файла
-    if not file.filename:
-        raise HTTPException(400, "Нет имени файла")
-    ext = file.filename.rsplit(".", 1)[-1].lower().strip() if "." in file.filename else ""
-    if ext not in ALLOWED_CONTRACT_EXT:
-        raise HTTPException(400, f"Недопустимый формат .{ext}. Разрешены: {', '.join(sorted(ALLOWED_CONTRACT_EXT))}")
+    s3_key: Optional[str] = None
+    file_name: Optional[str] = None
+    file_size: Optional[int] = None
 
-    # Читаем байты + проверяем размер
-    body = await file.read()
-    if len(body) > MAX_CONTRACT_SIZE:
-        raise HTTPException(413, f"Файл слишком большой. Максимум {MAX_CONTRACT_SIZE // 1024 // 1024} МБ.")
-    if not body:
-        raise HTTPException(400, "Пустой файл")
+    # Файл опциональный: если админ прикрепил — валидируем и загружаем.
+    if file is not None and file.filename:
+        ext = file.filename.rsplit(".", 1)[-1].lower().strip() if "." in file.filename else ""
+        if ext not in ALLOWED_CONTRACT_EXT:
+            raise HTTPException(
+                400,
+                f"Недопустимый формат .{ext}. Разрешены: {', '.join(sorted(ALLOWED_CONTRACT_EXT))}",
+            )
+        body = await file.read()
+        if len(body) > MAX_CONTRACT_SIZE:
+            raise HTTPException(
+                413,
+                f"Файл слишком большой. Максимум {MAX_CONTRACT_SIZE // 1024 // 1024} МБ.",
+            )
+        if not body:
+            raise HTTPException(400, "Пустой файл")
 
-    # S3 upload
-    import uuid as _uuid
-    from app.modules.utility.services.s3_client import s3_service
-    s3_key = f"rental_contracts/{user_id}/{_uuid.uuid4().hex}.{ext}"
-    ctype = "application/pdf" if ext == "pdf" else f"image/{ext}"
-    if not s3_service.upload_bytes(body, s3_key, content_type=ctype):
-        raise HTTPException(500, "Не удалось сохранить файл в хранилище")
+        import uuid as _uuid
+        from app.modules.utility.services.s3_client import s3_service
+        s3_key = f"rental_contracts/{user_id}/{_uuid.uuid4().hex}.{ext}"
+        ctype = "application/pdf" if ext == "pdf" else f"image/{ext}"
+        if not s3_service.upload_bytes(body, s3_key, content_type=ctype):
+            raise HTTPException(500, "Не удалось сохранить файл в хранилище")
+        file_name = file.filename
+        file_size = len(body)
 
     # При activate=True — деактивируем старые договоры
     if activate:
@@ -616,12 +627,12 @@ async def admin_upload_contract(
 
     contract = RentalContract(
         user_id=user_id,
-        number=number,
+        number=number.strip(),
         signed_date=signed_date,
         valid_until=valid_until,
         file_s3_key=s3_key,
-        file_name=file.filename,
-        file_size=len(body),
+        file_name=file_name,
+        file_size=file_size,
         note=note,
         is_active=activate,
         uploaded_by_id=current_user.id,
@@ -630,7 +641,12 @@ async def admin_upload_contract(
     await write_audit_log(
         db, user_id=current_user.id, username=current_user.username,
         action="contract_upload", entity_type="rental_contract",
-        details={"user_id": user_id, "number": number, "file_name": file.filename, "size": len(body)},
+        details={
+            "user_id": user_id,
+            "number": number,
+            "file_name": file_name,
+            "size": file_size,
+        },
     )
     await db.commit()
     await db.refresh(contract)

@@ -310,12 +310,12 @@
                     </h4>
                     <form id="contractUploadForm" class="styled-form" style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
                         <div class="form-group" style="margin:0;">
-                            <label style="font-size:11px;">№ договора</label>
-                            <input type="text" id="contractNumber" placeholder="Например: 123/2026">
+                            <label style="font-size:11px;">№ договора <span style="color:var(--danger-color);">*</span></label>
+                            <input type="text" id="contractNumber" placeholder="Например: 123/2026" required maxlength="64">
                         </div>
                         <div class="form-group" style="margin:0;">
-                            <label style="font-size:11px;">Дата подписания</label>
-                            <input type="date" id="contractSignedDate">
+                            <label style="font-size:11px;">Дата подписания <span style="color:var(--danger-color);">*</span></label>
+                            <input type="date" id="contractSignedDate" required>
                         </div>
                         <div class="form-group" style="margin:0;">
                             <label style="font-size:11px;">Действует до (опционально)</label>
@@ -326,8 +326,8 @@
                             <input type="text" id="contractNote" placeholder="Внутренняя пометка">
                         </div>
                         <div class="form-group" style="margin:0; grid-column:1/-1;">
-                            <label style="font-size:11px;">PDF / JPG файла договора <span style="color:var(--danger-color);">*</span></label>
-                            <input type="file" id="contractFile" accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff" required>
+                            <label style="font-size:11px;">PDF / JPG скан договора <span style="color:var(--text-secondary); font-weight:normal;">(по желанию — можно прикрепить позже)</span></label>
+                            <input type="file" id="contractFile" accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff">
                         </div>
                         <div style="grid-column:1/-1; display:flex; justify-content:space-between; align-items:center; gap:10px;">
                             <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-secondary); cursor:pointer;">

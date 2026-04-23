@@ -129,6 +129,144 @@ def _draw_field_line(
     c.drawString(x + (width - label_width) / 2, y - 10, label)
 
 
+def _wrap_text(
+    c: rl_canvas.Canvas, text: str, font_name: str, font_size: int, max_w: float,
+) -> List[str]:
+    """Простой word-wrap по ширине canvas в пунктах. Длинные слова режутся
+    по символам — лучше некрасивый перенос, чем вылет за пределы страницы."""
+    if not text:
+        return []
+    words = text.split()
+    lines: List[str] = []
+    current = ""
+    for word in words:
+        trial = (current + " " + word).strip() if current else word
+        if c.stringWidth(trial, font_name, font_size) <= max_w:
+            current = trial
+        else:
+            if current:
+                lines.append(current)
+            # слово длиннее строки — режем по символам
+            if c.stringWidth(word, font_name, font_size) > max_w:
+                buf = ""
+                for ch in word:
+                    if c.stringWidth(buf + ch, font_name, font_size) <= max_w:
+                        buf += ch
+                    else:
+                        lines.append(buf)
+                        buf = ch
+                current = buf
+            else:
+                current = word
+    if current:
+        lines.append(current)
+    return lines
+
+
+_RESIDENT_REG_TYPE_LABEL = {
+    "permanent": "По месту жительства",
+    "temporary": "По месту пребывания",
+}
+
+_ROLE_FALLBACK = {
+    "spouse": "супруг(а)",
+    "child": "ребёнок",
+    "parent": "родитель",
+    "other": "член семьи",
+}
+
+
+def _resident_relation(m) -> str:
+    """Отношение к нанимателю: relation_to_head (если заполнено) иначе
+    расшифровка role."""
+    rel = (getattr(m, "relation_to_head", None) or "").strip()
+    if rel:
+        return rel
+    return _ROLE_FALLBACK.get(getattr(m, "role", ""), "член семьи")
+
+
+def _draw_residents_table(
+    c: rl_canvas.Canvas,
+    user,
+    family: List,
+    x: float, y: float, total_width: float,
+    font_reg: str, font_italic: str,
+) -> None:
+    """Рисует таблицу «Проживающие» как в образце выписки.
+    Колонки: №, ФИО, Дата прибытия, Тип регистрации, Дата рождения, Отношение.
+
+    Первой строкой идёт сам наниматель (из user), затем члены семьи.
+    Размер рассчитан под A4 — total_width ~17.5 cm.
+    """
+    # Ширины колонок — в долях total_width, чтобы при смене полей было просто
+    # настроить пропорции. Сумма = 1.
+    fractions = [0.05, 0.28, 0.13, 0.18, 0.13, 0.23]
+    widths = [total_width * f for f in fractions]
+    headers = ["№", "Фамилия, имя, отчество", "Дата прибытия",
+               "Тип регистрации", "Дата рождения", "Отношение к нанимателю"]
+
+    row_h = 12
+    header_h = 14
+
+    # Шапка
+    c.setFont(font_italic, 8)
+    cx = x
+    c.setLineWidth(0.3)
+    c.rect(x, y - header_h, total_width, header_h, stroke=1, fill=0)
+    for i, h in enumerate(headers):
+        c.drawString(cx + 2, y - header_h + 4, h)
+        cx += widths[i]
+        if i < len(headers) - 1:
+            c.line(cx, y, cx, y - header_h)
+    y_row = y - header_h
+
+    # Строки
+    c.setFont(font_reg, 8)
+    # Наниматель — первая строка
+    rows = [(
+        _resident_fullname(user) or (getattr(user, "username", "") or ""),
+        _fmt_date(getattr(user, "registration_date", None)),
+        _RESIDENT_REG_TYPE_LABEL.get(
+            "permanent",  # жилец всегда по месту жительства
+            "По месту жительства",
+        ),
+        "",  # Дата рождения жильца у нас не хранится отдельно
+        "наниматель",
+    )]
+    for m in family:
+        rows.append((
+            (m.full_name or "").strip(),
+            _fmt_date(m.arrival_date),
+            _RESIDENT_REG_TYPE_LABEL.get(m.registration_type or "", ""),
+            _fmt_date(m.birth_date),
+            _resident_relation(m),
+        ))
+
+    for idx, r in enumerate(rows, 1):
+        # Рамка строки
+        c.rect(x, y_row - row_h, total_width, row_h, stroke=1, fill=0)
+        cx = x
+        # №
+        c.drawString(cx + 2, y_row - row_h + 3, str(idx))
+        cx += widths[0]
+        c.line(cx, y_row, cx, y_row - row_h)
+        # ФИО, прибытие, тип, рождение, отношение
+        for i, val in enumerate(r):
+            col_idx = i + 1
+            col_w = widths[col_idx]
+            # Обрезаем если длиннее колонки
+            txt = val
+            while txt and c.stringWidth(txt, font_reg, 8) > col_w - 4:
+                txt = txt[:-1]
+            if txt != val and txt:
+                txt = txt[:-1] + "…"
+            c.drawString(cx + 2, y_row - row_h + 3, txt)
+            cx += col_w
+            if col_idx < len(headers) - 1:
+                c.line(cx, y_row, cx, y_row - row_h)
+        y_row -= row_h
+
+
 # =========================================================================
 # PDF: ЗАЯВЛЕНИЕ НА ВЫПИСКУ ИЗ ФЛС
 # =========================================================================
@@ -225,20 +363,42 @@ def generate_flc_pdf(
         c.drawString(margin_left, y, line)
         y -= 14
 
-    # ---------- 6. Члены семьи (дополнительный блок — оригинала нет,
-    #              но полезно: в справочные органы приятнее когда указан состав) ----------
-    if family:
-        y -= 12
+    # ---------- 6. Адрес прописки по паспорту (если указан) ----------
+    reg_addr = (getattr(user, "registration_address", None) or "").strip()
+    if reg_addr:
+        y -= 14
         c.setFont(_font(_FONT_ITALIC), 9)
-        c.drawString(margin_left, y, "Состав семьи:")
+        c.drawString(margin_left, y, "Адрес прописки по паспорту:")
         y -= 12
         c.setFont(_font(_FONT_REG), 9)
-        role_label = {"spouse": "супруг(а)", "child": "ребёнок", "parent": "родитель", "other": "член семьи"}
-        for m in family:
-            rl = role_label.get(m.role, m.role)
-            bd = _fmt_date(m.birth_date)
-            c.drawString(margin_left + 10, y, f"• {rl} — {m.full_name}, {bd} г.р.")
+        # Переносим длинный адрес по словам
+        max_w = width - margin_left - margin_right
+        for line in _wrap_text(c, reg_addr, _font(_FONT_REG), 9, max_w):
+            c.drawString(margin_left + 10, y, line)
             y -= 11
+
+    # ---------- 7. Состав семьи — таблица «Проживающие» (как в образце выписки) ----------
+    # Колонки: №, ФИО, Дата прибытия, Тип регистрации, Дата рождения, Отношение к нанимателю.
+    # Если жилец отметил «проживаю один» — family придёт пустым, пропускаем блок.
+    lives_alone = bool(getattr(user, "lives_alone", False))
+    if family:
+        y -= 14
+        c.setFont(_font(_FONT_ITALIC), 9)
+        c.drawString(margin_left, y, "Проживающие:")
+        y -= 13
+        _draw_residents_table(
+            c=c, user=user, family=family,
+            x=margin_left, y=y,
+            total_width=width - margin_left - margin_right,
+            font_reg=_font(_FONT_REG), font_italic=_font(_FONT_ITALIC),
+        )
+        # Высота таблицы = header 14 + 12 на строку. Сдвигаем y ниже таблицы.
+        y -= 14 + 12 * (len(family) + 1)
+    elif lives_alone:
+        y -= 12
+        c.setFont(_font(_FONT_ITALIC), 9)
+        c.drawString(margin_left, y, "Проживает один — членов семьи не указано.")
+        y -= 11
 
     # ---------- 7. Подпись + ФИО + дата ----------
     y -= 40

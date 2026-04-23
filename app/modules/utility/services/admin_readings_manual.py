@@ -51,13 +51,29 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
 
     user_share_elect = (Decimal(residents_count) / Decimal(total_room)) * d_elect
 
-    costs = calculate_utilities(
-        user=user, room=room, tariff=t, volume_hot=d_hot, volume_cold=d_cold,
-        volume_sewage=d_hot + d_cold, volume_electricity_share=user_share_elect
-    )
+    # BASELINE: если по комнате нет утверждённой истории — первая подача,
+    # все cost_* = 0 (счётчики могут быть «накрученные» за годы, см. также
+    # approve_single / bulk_approve_drafts / client save_reading). Флаг
+    # BASELINE попадёт в реестр, чтобы админ не искал «откуда ноль».
+    is_baseline = prev_latest is None
+    if is_baseline:
+        costs = {
+            "cost_hot_water": ZERO, "cost_cold_water": ZERO,
+            "cost_sewage": ZERO, "cost_electricity": ZERO,
+            "cost_maintenance": ZERO, "cost_social_rent": ZERO,
+            "cost_waste": ZERO, "cost_fixed_part": ZERO,
+            "total_cost": ZERO,
+        }
+    else:
+        costs = calculate_utilities(
+            user=user, room=room, tariff=t, volume_hot=d_hot, volume_cold=d_cold,
+            volume_sewage=d_hot + d_cold, volume_electricity_share=user_share_elect
+        )
 
     temp_reading = MeterReading(hot_water=data.hot_water, cold_water=data.cold_water, electricity=data.electricity)
     flags, score = check_reading_for_anomalies_v2(temp_reading, history, user=user)
+    if is_baseline:
+        flags, score = "BASELINE", 0
 
     adj_map = {row[0]: (row[1] or ZERO) for row in
                (await db.execute(select(Adjustment.account_type, func.sum(Adjustment.amount))
@@ -132,10 +148,23 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
 
     user_share_elect = (Decimal(residents_count) / Decimal(total_room)) * d_elect
 
-    costs = calculate_utilities(
-        user=user, room=room, tariff=t, volume_hot=d_hot, volume_cold=d_cold,
-        volume_sewage=d_hot + d_cold, volume_electricity_share=user_share_elect, fraction=fraction
-    )
+    # BASELINE: первая в жизни подача по комнате → 0 (см. комментарий выше).
+    # Для разового начисления это редкий сценарий (обычно у выселяющегося
+    # уже есть история), но технически возможен — страхуемся.
+    is_baseline = prev_latest is None
+    if is_baseline:
+        costs = {
+            "cost_hot_water": ZERO, "cost_cold_water": ZERO,
+            "cost_sewage": ZERO, "cost_electricity": ZERO,
+            "cost_maintenance": ZERO, "cost_social_rent": ZERO,
+            "cost_waste": ZERO, "cost_fixed_part": ZERO,
+            "total_cost": ZERO,
+        }
+    else:
+        costs = calculate_utilities(
+            user=user, room=room, tariff=t, volume_hot=d_hot, volume_cold=d_cold,
+            volume_sewage=d_hot + d_cold, volume_electricity_share=user_share_elect, fraction=fraction
+        )
 
     adj_map = {row[0]: (row[1] or ZERO) for row in
                (await db.execute(select(Adjustment.account_type, func.sum(Adjustment.amount))
@@ -148,9 +177,10 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
     total_209 = (costs['total_cost'] - costs['cost_social_rent']) + (draft.debt_209 or ZERO if draft else ZERO) - (draft.overpayment_209 or ZERO if draft else ZERO) + adj_map.get('209', ZERO)
     total_205 = costs['cost_social_rent'] + (draft.debt_205 or ZERO if draft else ZERO) - (draft.overpayment_205 or ZERO if draft else ZERO) + adj_map.get('205', ZERO)
 
+    charge_flag = "ONE_TIME_CHARGE_BASELINE" if is_baseline else "ONE_TIME_CHARGE"
     if draft:
         draft.hot_water, draft.cold_water, draft.electricity = data.hot_water, data.cold_water, data.electricity
-        draft.anomaly_flags, draft.anomaly_score = "ONE_TIME_CHARGE", 0
+        draft.anomaly_flags, draft.anomaly_score = charge_flag, 0
         for k, v in costs.items(): setattr(draft, k, v)
         draft.total_209, draft.total_205, draft.total_cost, draft.is_approved = total_209, total_205, total_209 + total_205, True
     else:
@@ -160,7 +190,7 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
             hot_water=data.hot_water, cold_water=data.cold_water, electricity=data.electricity,
             debt_209=ZERO, overpayment_209=ZERO, debt_205=ZERO, overpayment_205=ZERO,
             total_209=total_209, total_205=total_205, total_cost=total_209 + total_205,
-            is_approved=True, anomaly_flags="ONE_TIME_CHARGE", anomaly_score=0, **costs
+            is_approved=True, anomaly_flags=charge_flag, anomaly_score=0, **costs
         ))
 
     room.last_hot_water, room.last_cold_water, room.last_electricity = data.hot_water, data.cold_water, data.electricity

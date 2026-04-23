@@ -318,6 +318,13 @@
                                     <input type="date" id="profRegDate" required>
                                 </div>
                             </div>
+                            <div class="form-group mb-3">
+                                <label>Адрес прописки по паспорту <span style="color:var(--danger-color);">*</span></label>
+                                <textarea id="profRegAddress" rows="2" required
+                                          placeholder="г. Москва, ул. Примерная, д. 1, кв. 23"
+                                          style="resize:vertical;"></textarea>
+                                <small class="hint-text" style="font-size:11px;">Именно так, как в паспорте — этот адрес попадает в справку.</small>
+                            </div>
                             <div style="text-align:right;">
                                 <button type="submit" class="action-btn primary-btn" style="padding:6px 14px; font-size:13px;">
                                     <i class="fa-solid fa-floppy-disk"></i> Сохранить
@@ -326,15 +333,24 @@
                         </form>
                     </details>
 
-                    <!-- СЕКЦИЯ «СЕМЬЯ» — необязательная -->
-                    <details class="cert-section" style="margin-top:10px;">
+                    <!-- СЕКЦИЯ «СЕМЬЯ» — обязательная, если не отмечено «проживаю один» -->
+                    <details id="certFamilySection" class="cert-section" style="margin-top:10px;">
                         <summary style="cursor:pointer; padding:10px 12px; background:var(--bg-page); border-radius:8px; font-weight:600; font-size:14px; color:#10b981;">
                             <i class="fa-solid fa-people-group"></i> Состав семьи <span id="certFamilyCount" style="font-weight:normal; font-size:12px; color:var(--text-secondary);">— (0)</span>
-                            <span style="font-weight:normal; color:var(--text-secondary); font-size:12px; margin-left:6px;">— необязательно</span>
+                            <span id="certFamilyBadge" style="font-weight:normal; color:var(--danger-color); font-size:12px; margin-left:6px;">— обязательно</span>
                         </summary>
                         <div style="padding:10px 4px;">
-                            <p class="hint-text" style="font-size:12px; margin:0 0 10px;">
-                                Для ФЛС необязательно, но для некоторых справок нужен состав семьи.
+                            <!-- Тумблер «Проживаю один» — альтернатива заполнению семьи -->
+                            <label style="display:flex; align-items:center; gap:10px; padding:10px 12px; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; margin-bottom:10px; cursor:pointer;">
+                                <input type="checkbox" id="profLivesAlone" style="width:18px; height:18px;">
+                                <div style="flex:1;">
+                                    <div style="font-weight:600; font-size:13px; color:#92400e;">Проживаю один</div>
+                                    <div style="font-size:11px; color:#78350f;">Отметьте, если членов семьи нет — тогда таблицу заполнять не нужно.</div>
+                                </div>
+                            </label>
+
+                            <p class="hint-text" id="familyHintText" style="font-size:12px; margin:0 0 10px;">
+                                Укажите всех членов семьи с полными данными (ФИО, дата рождения, дата прибытия, тип регистрации, отношение к нанимателю) — они попадают в справку.
                             </p>
                             <div id="familyList"></div>
                             <button type="button" id="btnAddFamilyMember" class="action-btn success-btn" style="padding:5px 12px; font-size:12px; margin-top:6px;">
@@ -391,7 +407,7 @@
                     <div class="modal-form" style="padding-top:16px;">
                         <div class="form-grid-2 mb-3">
                             <div class="form-group">
-                                <label>Отношение</label>
+                                <label>Роль</label>
                                 <select id="familyRole" required>
                                     <option value="spouse">Супруг(а)</option>
                                     <option value="child">Ребёнок</option>
@@ -400,13 +416,49 @@
                                 </select>
                             </div>
                             <div class="form-group">
-                                <label>Дата рождения</label>
-                                <input type="date" id="familyBirthDate">
+                                <label>Дата рождения <span style="color:var(--danger-color);">*</span></label>
+                                <input type="date" id="familyBirthDate" required>
                             </div>
                         </div>
                         <div class="form-group mb-3">
                             <label>ФИО полностью <span style="color:var(--danger-color);">*</span></label>
                             <input type="text" id="familyFullName" required minlength="2" placeholder="Иванова Анна Петровна">
+                        </div>
+                        <div class="form-grid-2 mb-3">
+                            <div class="form-group">
+                                <label>Дата прибытия <span style="color:var(--danger-color);">*</span></label>
+                                <input type="date" id="familyArrivalDate" required>
+                                <small class="hint-text" style="font-size:11px;">Когда вселились в комнату.</small>
+                            </div>
+                            <div class="form-group">
+                                <label>Тип регистрации <span style="color:var(--danger-color);">*</span></label>
+                                <select id="familyRegType" required>
+                                    <option value="">— выберите —</option>
+                                    <option value="permanent">По месту жительства</option>
+                                    <option value="temporary">По месту пребывания</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group mb-3">
+                            <label>Отношение к нанимателю <span style="color:var(--danger-color);">*</span></label>
+                            <input type="text" id="familyRelationHead" required maxlength="64"
+                                   placeholder="Например: сын, дочь, жена, мать">
+                            <small class="hint-text" style="font-size:11px;">Именно так попадёт в справку (как в домовой книге).</small>
+                        </div>
+                        <h4 style="margin:8px 0 6px; font-size:12px; color:var(--text-secondary); text-transform:uppercase;">Паспорт (по желанию)</h4>
+                        <div class="form-grid-2 mb-3">
+                            <div class="form-group">
+                                <label>Серия</label>
+                                <input type="text" id="familyPassSeries" maxlength="20" inputmode="numeric">
+                            </div>
+                            <div class="form-group">
+                                <label>Номер</label>
+                                <input type="text" id="familyPassNumber" maxlength="20" inputmode="numeric">
+                            </div>
+                        </div>
+                        <div class="form-group mb-3">
+                            <label>Дата регистрации по паспорту</label>
+                            <input type="date" id="familyRegDate">
                         </div>
                     </div>
                     <div class="modal-footer">

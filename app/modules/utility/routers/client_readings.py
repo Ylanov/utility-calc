@@ -257,8 +257,25 @@ async def save_reading(
     p_cold = prev_latest.cold_water if prev_latest else zero
     p_elect = prev_latest.electricity if prev_latest else zero
 
-    # 5. Расчёт стоимостей
-    costs = ReadingService.calculate_costs(user, room, tariff, hot, cold, elect, p_hot, p_cold, p_elect)
+    # 5. Расчёт стоимостей.
+    # BASELINE: если у комнаты НЕТ ни одного утверждённого показания раньше —
+    # это первая в жизни подача. Счётчики уже могут быть «накрученные» за годы
+    # (45000 ГВС и т.п.), считать дельту от нуля нельзя: получится квитанция
+    # на сотни тысяч. Поэтому первую подачу регистрируем как baseline —
+    # все cost_* = 0, дельт нет; реальные расчёты пойдут со следующего месяца.
+    # Идентично логике approve_single / bulk_approve_drafts / _recalc_compute_one.
+    is_baseline = prev_latest is None
+    ZERO_MONEY = Decimal("0.00")
+    if is_baseline:
+        costs = {
+            "cost_hot_water": ZERO_MONEY, "cost_cold_water": ZERO_MONEY,
+            "cost_sewage": ZERO_MONEY, "cost_electricity": ZERO_MONEY,
+            "cost_maintenance": ZERO_MONEY, "cost_social_rent": ZERO_MONEY,
+            "cost_waste": ZERO_MONEY, "cost_fixed_part": ZERO_MONEY,
+            "total_cost": ZERO_MONEY,
+        }
+    else:
+        costs = ReadingService.calculate_costs(user, room, tariff, hot, cold, elect, p_hot, p_cold, p_elect)
 
     # 6. Сборка долгов и итогов
     d_209 = draft.debt_209 or Decimal("0.00") if draft else Decimal("0.00")
@@ -272,6 +289,9 @@ async def save_reading(
     total_209 = cost_utils + d_209 - o_209 + adj_map.get('209', Decimal("0.00"))
     total_205 = cost_rent + d_205 - o_205 + adj_map.get('205', Decimal("0.00"))
     grand_total = total_209 + total_205
+    # Пометка флага, чтобы в реестре/админке было понятно — это baseline,
+    # ноль намеренно, а не ошибка расчёта.
+    baseline_flag = "BASELINE" if is_baseline else "PENDING"
 
     # 7. СОХРАНЕНИЕ
     if draft:
@@ -290,7 +310,7 @@ async def save_reading(
 
         draft.hot_water, draft.cold_water, draft.electricity = hot, cold, elect
         draft.total_209, draft.total_205, draft.total_cost = total_209, total_205, grand_total
-        draft.anomaly_flags, draft.anomaly_score = "PENDING", 0
+        draft.anomaly_flags, draft.anomaly_score = baseline_flag, 0
 
         for key, value in costs.items():
             if hasattr(draft, key):
@@ -319,7 +339,7 @@ async def save_reading(
             total_205=total_205,
             total_cost=grand_total,
             is_approved=False,
-            anomaly_flags="PENDING",
+            anomaly_flags=baseline_flag,
             anomaly_score=0,
             edit_count=1,
             edit_history=[],

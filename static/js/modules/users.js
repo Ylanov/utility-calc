@@ -588,7 +588,15 @@ export const UsersModule = {
             return mb >= 1 ? `${mb.toFixed(1)} МБ` : `${Math.round(n / 1024)} КБ`;
         };
 
-        listEl.innerHTML = rows.map(c => `
+        // Отсортируем: активный сверху, дальше по дате подписания.
+        const sorted = [...rows].sort((a, b) => {
+            if (a.is_active !== b.is_active) return a.is_active ? -1 : 1;
+            return String(b.signed_date || '').localeCompare(String(a.signed_date || ''));
+        });
+
+        listEl.innerHTML = sorted.map(c => {
+            const hasFile = !!c.file_name;
+            return `
             <div style="display:flex; gap:12px; align-items:center; padding:10px 12px; margin-bottom:8px;
                         background:${c.is_active ? '#f0fdf4' : 'var(--bg-card)'};
                         border:1px solid ${c.is_active ? '#bbf7d0' : 'var(--border-color)'};
@@ -597,7 +605,7 @@ export const UsersModule = {
                             background:${c.is_active ? '#10b981' : '#9ca3af'}22;
                             color:${c.is_active ? '#10b981' : '#6b7280'};
                             display:flex; align-items:center; justify-content:center; flex-shrink:0;">
-                    <i class="fa-solid fa-file-pdf"></i>
+                    <i class="fa-solid ${hasFile ? 'fa-file-pdf' : 'fa-file-lines'}"></i>
                 </div>
                 <div style="flex:1; min-width:0;">
                     <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
@@ -605,16 +613,18 @@ export const UsersModule = {
                         <span style="font-size:12px; color:var(--text-secondary);">от ${esc(fmtDate(c.signed_date))}</span>
                         ${c.valid_until ? `<span style="font-size:11px; color:var(--text-tertiary);">до ${esc(fmtDate(c.valid_until))}</span>` : ''}
                         ${c.is_active ? '<span style="font-size:10px; background:#d1fae5; color:#065f46; padding:2px 7px; border-radius:10px; font-weight:600;">АКТИВНЫЙ</span>' : ''}
+                        ${hasFile ? '' : '<span style="font-size:10px; background:#fef3c7; color:#92400e; padding:2px 7px; border-radius:10px; font-weight:600;">без файла</span>'}
                     </div>
                     <div style="font-size:11px; color:var(--text-secondary); margin-top:2px;">
-                        ${esc(c.file_name || '')} ${c.file_size ? '· ' + esc(fmtSize(c.file_size)) : ''}
+                        ${hasFile ? esc(c.file_name) + (c.file_size ? ' · ' + esc(fmtSize(c.file_size)) : '') : 'Файл не прикреплён'}
                         ${c.note ? ' · ' + esc(c.note) : ''}
                     </div>
                 </div>
                 <div style="display:flex; gap:4px; flex-shrink:0;">
-                    <button class="icon-btn" data-contract-download="${c.id}" title="Скачать">
-                        <i class="fa-solid fa-download"></i>
-                    </button>
+                    ${hasFile ? `
+                        <button class="icon-btn" data-contract-download="${c.id}" title="Скачать">
+                            <i class="fa-solid fa-download"></i>
+                        </button>` : ''}
                     ${c.is_active ? '' : `
                         <button class="icon-btn" data-contract-activate="${c.id}" title="Сделать активным"
                                 style="color:#10b981;">
@@ -626,29 +636,33 @@ export const UsersModule = {
                     </button>
                 </div>
             </div>
-        `).join('');
+        `;
+        }).join('');
     },
 
     async _submitContractUpload(e) {
         e.preventDefault();
         if (!this._contractsUserId) return;
-        const fileInput = document.getElementById('contractFile');
-        const file = fileInput?.files?.[0];
-        if (!file) return toast('Выберите файл договора', 'error');
 
-        const fd = new FormData();
-        fd.append('file', file);
-        const params = new URLSearchParams();
         const num = document.getElementById('contractNumber').value.trim();
         const signed = document.getElementById('contractSignedDate').value;
+        if (!num) return toast('Укажите № договора', 'error');
+        if (!signed) return toast('Укажите дату подписания', 'error');
+
         const until = document.getElementById('contractValidUntil').value;
         const note = document.getElementById('contractNote').value.trim();
         const activate = document.getElementById('contractActivate').checked;
-        if (num) params.set('number', num);
-        if (signed) params.set('signed_date', signed);
-        if (until) params.set('valid_until', until);
-        if (note) params.set('note', note);
-        params.set('activate', activate ? 'true' : 'false');
+        const file = document.getElementById('contractFile')?.files?.[0] || null;
+
+        // Всё через multipart/form-data: номер/дата идут как Form-поля,
+        // файл — опциональный; без файла можно сохранить только метаданные.
+        const fd = new FormData();
+        fd.append('number', num);
+        fd.append('signed_date', signed);
+        if (until) fd.append('valid_until', until);
+        if (note) fd.append('note', note);
+        fd.append('activate', activate ? 'true' : 'false');
+        if (file) fd.append('file', file);
 
         const btn = e.target.querySelector('button[type="submit"]');
         const orig = btn.innerHTML;
@@ -656,10 +670,10 @@ export const UsersModule = {
         btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Загрузка…';
         try {
             await api.post(
-                `/admin/users/${this._contractsUserId}/rental-contracts?${params}`,
+                `/admin/users/${this._contractsUserId}/rental-contracts`,
                 fd,
             );
-            toast('Договор загружен', 'success');
+            toast(file ? 'Договор загружен' : 'Данные договора сохранены', 'success');
             e.target.reset();
             document.getElementById('contractActivate').checked = true;
             this._loadContracts();

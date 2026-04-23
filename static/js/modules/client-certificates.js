@@ -97,8 +97,13 @@ export const ClientCertificates = {
             profPassIssuedBy: document.getElementById('profPassIssuedBy'),
             profPassIssuedAt: document.getElementById('profPassIssuedAt'),
             profRegDate: document.getElementById('profRegDate'),
+            profRegAddress: document.getElementById('profRegAddress'),
+            profLivesAlone: document.getElementById('profLivesAlone'),
 
             // Секция «Семья»
+            familySection: document.getElementById('certFamilySection'),
+            familyBadge: document.getElementById('certFamilyBadge'),
+            familyHintText: document.getElementById('familyHintText'),
             familyList: document.getElementById('familyList'),
             familyCount: document.getElementById('certFamilyCount'),
             btnAddFamily: document.getElementById('btnAddFamilyMember'),
@@ -109,6 +114,12 @@ export const ClientCertificates = {
             familyRole: document.getElementById('familyRole'),
             familyFullName: document.getElementById('familyFullName'),
             familyBirthDate: document.getElementById('familyBirthDate'),
+            familyArrivalDate: document.getElementById('familyArrivalDate'),
+            familyRegType: document.getElementById('familyRegType'),
+            familyRelationHead: document.getElementById('familyRelationHead'),
+            familyPassSeries: document.getElementById('familyPassSeries'),
+            familyPassNumber: document.getElementById('familyPassNumber'),
+            familyRegDate: document.getElementById('familyRegDate'),
         };
     },
 
@@ -135,6 +146,8 @@ export const ClientCertificates = {
         // Кнопки в модалке
         this.dom.flcSubmit?.addEventListener('click', () => this.submitFlcOrder());
         this.dom.profileForm?.addEventListener('submit', (e) => this.saveProfileInline(e));
+        // «Проживаю один» — автосохранение флага и обновление баннеров.
+        this.dom.profLivesAlone?.addEventListener('change', () => this.toggleLivesAlone());
         this.dom.btnRefreshCerts?.addEventListener('click', () => this.loadCerts());
         this.dom.certsList?.addEventListener('click', (e) => {
             const btn = e.target.closest('[data-cert-download]');
@@ -183,6 +196,8 @@ export const ClientCertificates = {
         if (d.profPassIssuedBy)d.profPassIssuedBy.value= p.passport_issued_by || '';
         if (d.profPassIssuedAt)d.profPassIssuedAt.value= p.passport_issued_at || '';
         if (d.profRegDate)     d.profRegDate.value     = p.registration_date || '';
+        if (d.profRegAddress)  d.profRegAddress.value  = p.registration_address || '';
+        if (d.profLivesAlone)  d.profLivesAlone.checked = !!p.lives_alone;
     },
 
     async saveProfileInline(e) {
@@ -195,6 +210,7 @@ export const ClientCertificates = {
             passport_issued_by: this.dom.profPassIssuedBy.value.trim() || null,
             passport_issued_at: this.dom.profPassIssuedAt.value || null,
             registration_date: this.dom.profRegDate.value || null,
+            registration_address: this.dom.profRegAddress?.value.trim() || null,
         };
         const btn = this.dom.profileForm.querySelector('button[type="submit"]');
         const orig = btn.innerHTML;
@@ -213,19 +229,66 @@ export const ClientCertificates = {
         }
     },
 
-    // Проверка «всё ли готово для заказа»
+    // Какие поля FamilyMember обязаны быть заполнены для справки
+    _familyMemberProblems(m) {
+        const problems = [];
+        if (!(m.full_name || '').trim()) problems.push('ФИО');
+        if (!m.birth_date) problems.push('дата рождения');
+        if (!m.arrival_date) problems.push('дата прибытия');
+        if (!m.registration_type) problems.push('тип регистрации');
+        if (!(m.relation_to_head || '').trim()) problems.push('отношение');
+        return problems;
+    },
+
+    // Ищет активный договор (или самый свежий) с обязательными полями.
+    // Жилец не может его создать сам — этим занимается админ. Если договора
+    // нет или нет номера/даты — UI показывает «обратитесь к администратору».
+    _activeContract() {
+        if (!Array.isArray(this.contracts) || !this.contracts.length) return null;
+        const active = this.contracts.find(c => c.is_active);
+        const chosen = active || this.contracts[0];
+        if (!chosen || !chosen.number || !chosen.signed_date) return null;
+        return chosen;
+    },
+
+    // Проверка «всё ли готово для заказа». Повторяет серверную валидацию,
+    // чтобы UI не гонял запросы за каждым кликом.
     _missingFields() {
         const p = this.profile || {};
         const missing = [];
         if (!(p.full_name || p.username)) missing.push('ФИО');
         if (!p.passport_series || !p.passport_number) missing.push('паспорт (серия и номер)');
         if (!p.registration_date) missing.push('дата регистрации');
+        if (!(p.registration_address || '').trim()) missing.push('адрес прописки по паспорту');
+
+        // Договор найма — обязателен, создаёт админ.
+        if (!this._activeContract()) {
+            missing.push('договор найма (№ и дата) — оформит администратор');
+        }
+
+        // Семья: если не «проживаю один» — должна быть непустой и полной.
+        if (!p.lives_alone) {
+            if (!this.family.length) {
+                missing.push('состав семьи или отметка «проживаю один»');
+            } else {
+                const bad = this.family
+                    .map(m => ({ name: m.full_name || '(без ФИО)', problems: this._familyMemberProblems(m) }))
+                    .filter(x => x.problems.length > 0);
+                if (bad.length) {
+                    missing.push(
+                        'данные членов семьи: ' +
+                        bad.map(x => `${x.name} — ${x.problems.join(', ')}`).join('; ')
+                    );
+                }
+            }
+        }
         return missing;
     },
 
     updateModalState() {
         const missing = this._missingFields();
         const ready = missing.length === 0;
+        const p = this.profile || {};
 
         // Баннеры
         if (this.dom.flcWarn) {
@@ -236,8 +299,7 @@ export const ClientCertificates = {
                 this.dom.flcWarn.innerHTML = `
                     <b><i class="fa-solid fa-circle-exclamation"></i> Заполните данные для заказа</b>
                     <div style="margin-top:6px;">
-                        Недостающие поля: <b>${missing.map(esc).join(', ')}</b>.
-                        Раскройте секцию «Мои данные» ниже и заполните — потом сможете заказать справку.
+                        ${missing.map(m => `• ${esc(m)}`).join('<br>')}
                     </div>
                 `;
             }
@@ -246,14 +308,44 @@ export const ClientCertificates = {
             this.dom.flcOk.style.display = ready ? 'block' : 'none';
         }
 
-        // Секция профиля: если не готов — открыта; если готов — свёрнута
+        // Секция профиля: если в профиле чего-то не хватает — раскрыта.
+        const profileMissing =
+            !(p.full_name || p.username) ||
+            !p.passport_series || !p.passport_number ||
+            !p.registration_date ||
+            !(p.registration_address || '').trim();
         if (this.dom.profileSection) {
-            this.dom.profileSection.open = !ready;
+            this.dom.profileSection.open = profileMissing;
         }
         if (this.dom.profileHint) {
-            this.dom.profileHint.textContent = ready
-                ? '— сохранено, можно менять'
-                : '— заполняется один раз';
+            this.dom.profileHint.textContent = profileMissing
+                ? '— заполняется один раз'
+                : '— сохранено, можно менять';
+        }
+
+        // Секция семьи: если lives_alone — свёрнута, бейдж «не требуется»;
+        // иначе — если нет/неполная семья — открыта, бейдж «обязательно».
+        const familyMissing = !p.lives_alone && (
+            !this.family.length ||
+            this.family.some(m => this._familyMemberProblems(m).length > 0)
+        );
+        if (this.dom.familySection) {
+            this.dom.familySection.open = familyMissing;
+        }
+        if (this.dom.familyBadge) {
+            if (p.lives_alone) {
+                this.dom.familyBadge.textContent = '— «проживаю один»';
+                this.dom.familyBadge.style.color = 'var(--success-color)';
+            } else if (familyMissing) {
+                this.dom.familyBadge.textContent = '— обязательно';
+                this.dom.familyBadge.style.color = 'var(--danger-color)';
+            } else {
+                this.dom.familyBadge.textContent = '— заполнено';
+                this.dom.familyBadge.style.color = 'var(--success-color)';
+            }
+        }
+        if (this.dom.familyHintText) {
+            this.dom.familyHintText.style.display = p.lives_alone ? 'none' : '';
         }
 
         // Кнопка заказа
@@ -261,6 +353,18 @@ export const ClientCertificates = {
             this.dom.flcSubmit.disabled = !ready;
             this.dom.flcSubmit.style.opacity = ready ? '1' : '0.5';
             this.dom.flcSubmit.style.cursor = ready ? 'pointer' : 'not-allowed';
+        }
+    },
+
+    async toggleLivesAlone() {
+        const checked = !!this.dom.profLivesAlone?.checked;
+        try {
+            this.profile = await api.put('/me/profile', { lives_alone: checked });
+            this.updateModalState();
+            toast(checked ? 'Отмечено: проживаю один' : 'Отметка снята', 'success');
+        } catch (err) {
+            this.dom.profLivesAlone.checked = !checked;
+            toast('Ошибка: ' + err.message, 'error');
         }
     },
 
@@ -289,17 +393,35 @@ export const ClientCertificates = {
                 </div>`;
             return;
         }
+        const REG_TYPE_LABEL = { permanent: 'По месту жительства', temporary: 'По месту пребывания' };
         this.dom.familyList.innerHTML = `
             <div style="display:flex; flex-direction:column; gap:6px;">
-                ${this.family.map(m => `
-                    <div style="display:flex; align-items:center; gap:10px; padding:8px 10px;
-                                background:var(--bg-page); border-radius:6px; border:1px solid var(--border-color);">
-                        <i class="fa-solid fa-user" style="color:var(--primary-color); font-size:14px;"></i>
+                ${this.family.map(m => {
+                    const problems = this._familyMemberProblems(m);
+                    const incomplete = problems.length > 0;
+                    const relation = (m.relation_to_head || '').trim() || ROLE_LABEL[m.role] || m.role;
+                    return `
+                    <div style="display:flex; align-items:flex-start; gap:10px; padding:8px 10px;
+                                background:${incomplete ? '#fef2f2' : 'var(--bg-page)'};
+                                border-radius:6px;
+                                border:1px solid ${incomplete ? '#fecaca' : 'var(--border-color)'};">
+                        <i class="fa-solid fa-user" style="color:var(--primary-color); font-size:14px; margin-top:3px;"></i>
                         <div style="flex:1; min-width:0;">
-                            <div style="font-weight:600; font-size:13px;">${esc(m.full_name)}</div>
-                            <div style="font-size:11px; color:var(--text-secondary);">
-                                ${esc(ROLE_LABEL[m.role] || m.role)}${m.birth_date ? ' · ' + esc(fmtDate(m.birth_date)) + ' г.р.' : ''}
+                            <div style="font-weight:600; font-size:13px;">
+                                ${esc(m.full_name || '(без ФИО)')}
+                                <span style="font-weight:normal; color:var(--text-secondary); font-size:11px;">
+                                    — ${esc(relation)}
+                                </span>
                             </div>
+                            <div style="font-size:11px; color:var(--text-secondary); margin-top:2px;">
+                                ${m.birth_date ? 'Рожд. ' + esc(fmtDate(m.birth_date)) : '<span style="color:#ef4444;">нет даты рожд.</span>'}
+                                · ${m.arrival_date ? 'Прибытие ' + esc(fmtDate(m.arrival_date)) : '<span style="color:#ef4444;">нет даты прибытия</span>'}
+                                · ${m.registration_type ? esc(REG_TYPE_LABEL[m.registration_type] || m.registration_type) : '<span style="color:#ef4444;">нет типа рег.</span>'}
+                            </div>
+                            ${incomplete ? `
+                                <div style="margin-top:4px; font-size:11px; color:#991b1b;">
+                                    <i class="fa-solid fa-triangle-exclamation"></i> Не хватает: ${esc(problems.join(', '))}
+                                </div>` : ''}
                         </div>
                         <button class="icon-btn" data-family-edit="${m.id}" title="Редактировать" style="padding:4px;">
                             <i class="fa-solid fa-pen"></i>
@@ -309,7 +431,8 @@ export const ClientCertificates = {
                             <i class="fa-solid fa-trash"></i>
                         </button>
                     </div>
-                `).join('')}
+                `;
+                }).join('')}
             </div>
         `;
     },
@@ -323,6 +446,12 @@ export const ClientCertificates = {
             d.familyRole.value = member.role;
             d.familyFullName.value = member.full_name || '';
             d.familyBirthDate.value = member.birth_date || '';
+            if (d.familyArrivalDate) d.familyArrivalDate.value = member.arrival_date || '';
+            if (d.familyRegType) d.familyRegType.value = member.registration_type || '';
+            if (d.familyRelationHead) d.familyRelationHead.value = member.relation_to_head || '';
+            if (d.familyPassSeries) d.familyPassSeries.value = member.passport_series || '';
+            if (d.familyPassNumber) d.familyPassNumber.value = member.passport_number || '';
+            if (d.familyRegDate) d.familyRegDate.value = member.registration_date || '';
         } else {
             d.familyModalTitle.textContent = 'Добавить члена семьи';
             d.familyId.value = '';
@@ -337,6 +466,12 @@ export const ClientCertificates = {
             role: this.dom.familyRole.value,
             full_name: this.dom.familyFullName.value.trim(),
             birth_date: this.dom.familyBirthDate.value || null,
+            arrival_date: this.dom.familyArrivalDate?.value || null,
+            registration_type: this.dom.familyRegType?.value || null,
+            relation_to_head: this.dom.familyRelationHead?.value.trim() || null,
+            passport_series: this.dom.familyPassSeries?.value.trim() || null,
+            passport_number: this.dom.familyPassNumber?.value.trim() || null,
+            registration_date: this.dom.familyRegDate?.value || null,
         };
         const btn = this.dom.familyForm.querySelector('button[type="submit"]');
         const orig = btn.innerHTML;
@@ -347,7 +482,8 @@ export const ClientCertificates = {
             else await api.post('/me/family', payload);
             toast('Сохранено', 'success');
             this.dom.familyModal.classList.remove('open');
-            this.loadFamily();
+            await this.loadFamily();
+            this.updateModalState();
         } catch (err) {
             toast('Ошибка: ' + err.message, 'error');
         } finally {
@@ -361,7 +497,8 @@ export const ClientCertificates = {
         try {
             await api.delete(`/me/family/${id}`);
             toast('Удалено', 'success');
-            this.loadFamily();
+            await this.loadFamily();
+            this.updateModalState();
         } catch (e) {
             toast('Ошибка: ' + e.message, 'error');
         }
@@ -456,20 +593,26 @@ export const ClientCertificates = {
         this.populateProfileForm();
         this.updateModalState();
 
-        // Договор найма — если есть активный, показываем инфо-блок
-        const active = this.contracts.find(c => c.is_active) || this.contracts[0];
+        // Договор найма — обязателен для заказа. Если нет активного с номером
+        // и датой — предупреждаем жильца что заказ заблокирован и надо
+        // обратиться к администратору.
+        const active = this._activeContract();
+        this.dom.flcContractBlock.style.display = 'block';
         if (active) {
-            this.dom.flcContractBlock.style.display = 'block';
+            this.dom.flcContractInfo.style.background = '#ecfdf5';
+            this.dom.flcContractInfo.style.color = '#065f46';
             this.dom.flcContractInfo.innerHTML = `
-                <b>№ ${esc(active.number || '—')}</b>
+                <b>№ ${esc(active.number)}</b>
                 · от ${esc(fmtDate(active.signed_date))}
                 ${active.valid_until ? ' · действует до ' + esc(fmtDate(active.valid_until)) : ''}
             `;
         } else {
-            this.dom.flcContractBlock.style.display = 'block';
+            this.dom.flcContractInfo.style.background = '#fef2f2';
+            this.dom.flcContractInfo.style.color = '#991b1b';
             this.dom.flcContractInfo.innerHTML = `
-                <span style="color:var(--warning-color);">⚠ Активный договор не найден.</span>
-                Поля «дата/№ договора» в справке останутся пустыми — админ может дозаполнить.
+                <b><i class="fa-solid fa-triangle-exclamation"></i> Договор найма не оформлен.</b>
+                Обратитесь к администратору — он внесёт номер и дату договора, после чего
+                вы сможете заказать справку.
             `;
         }
     },
