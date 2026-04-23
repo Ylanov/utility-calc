@@ -182,15 +182,25 @@ export const ReadingsModule = {
     // ===========================================================
     // KPI
     // ===========================================================
+    // Защита от race condition: если админ быстро меняет фильтр (период,
+    // риск) — вылетает несколько параллельных запросов. Ранний может
+    // ответить позже и перезаписать свежее значение на UI — тогда KPI
+    // показывал «чужие» показатели до следующего обновления.
+    // Теперь каждый вызов инкрементирует _statsReqId; если после await
+    // id уже устарел — результат игнорируем.
+    _statsReqId: 0,
     async loadStats() {
         if (!this.dom.kpis) return;
+        const myId = ++this._statsReqId;
         try {
             const params = new URLSearchParams();
             if (this.dom.filterPeriod?.value) params.set('period_id', this.dom.filterPeriod.value);
             const s = await api.get(`/admin/readings/stats?${params}`);
+            if (myId !== this._statsReqId) return;  // пришёл ответ на устаревший запрос
             this.renderStats(s);
             this.fillFlagsFilter(s.top_flags || []);
         } catch (e) {
+            if (myId !== this._statsReqId) return;
             this.dom.kpis.innerHTML =
                 `<div style="padding:12px; color:var(--danger-color); grid-column:1/-1;">Ошибка аналитики: ${escapeHtml(e.message)}</div>`;
         }

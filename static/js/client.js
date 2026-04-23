@@ -35,6 +35,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const { ClientDashboard } = await import('./modules/client-dashboard.js');
         const { TotpSetup } = await import('./core/totp.js');
         const { ClientAppDownload } = await import('./modules/client-app-download.js');
+        const { ClientCertificates } = await import('./modules/client-certificates.js');
 
         // Запускаем основной модуль личного кабинета
         ClientDashboard.init();
@@ -44,6 +45,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
         // Подгружаем карточку «Скачать приложение» (если опубликован APK)
         ClientAppDownload.init();
+
+        // Вкладка «Справки» + профильная форма с паспортом/семьёй.
+        // Инициализация лёгкая — первый запрос идёт только когда жилец
+        // реально переключится на вкладку (ленивая загрузка данных).
+        ClientCertificates.init();
 
     } catch (error) {
         console.error('Ошибка загрузки модулей клиента:', error);

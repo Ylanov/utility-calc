@@ -29,6 +29,13 @@ const ENTITY_LABELS = {
 export const DashboardModule = {
     isInitialized: false,
     auditState: { page: 1, limit: 30, total: 0, filterAction: '', filterEntity: '' },
+    // Request-id счётчики — защита от race condition. Если пользователь
+    // кликает рефреш/открывает KPI-модалку несколько раз подряд, ответ
+    // на старый запрос может прилететь ПОСЛЕ свежего и перезаписать UI.
+    // Проверяем актуальность id после каждого await.
+    _kpiReqId: 0,
+    _gsheetsReqId: 0,
+    _detailReqId: 0,
 
     init() {
         this.cacheDOM();
@@ -131,10 +138,13 @@ export const DashboardModule = {
     // KPI
     // =====================================================
     async loadKPI() {
+        const myId = ++this._kpiReqId;
         try {
             const data = await api.get('/admin/dashboard');
+            if (myId !== this._kpiReqId) return;  // поздний ответ — игнор
             this.renderKPI(data);
         } catch (e) {
+            if (myId !== this._kpiReqId) return;
             console.error('Dashboard KPI error:', e);
         }
     },
@@ -253,16 +263,23 @@ export const DashboardModule = {
         }
         this.dom.detailModal.classList.add('open');
 
+        // Race guard: если админ быстро кликает разные KPI, поздний ответ
+        // старого рендера мог перезаписать свежий заголовок — в модалку
+        // «Жильцы» показывались бы цифры из «Комнат». Проверяем id после await.
+        const myId = ++this._detailReqId;
+        this._currentKpi = kpi;
+
         try {
             switch (kpi) {
-                case 'users':       await this._renderUsersDetail(); break;
-                case 'rooms':       await this._renderRoomsDetail(); break;
-                case 'submissions': await this._renderSubmissionsDetail(); break;
-                case 'anomalies':   await this._renderAnomaliesDetail(); break;
-                case 'finance':     await this._renderFinanceDetail(); break;
-                case 'comparison':  await this._renderComparisonDetail(); break;
+                case 'users':       await this._renderUsersDetail(myId); break;
+                case 'rooms':       await this._renderRoomsDetail(myId); break;
+                case 'submissions': await this._renderSubmissionsDetail(myId); break;
+                case 'anomalies':   await this._renderAnomaliesDetail(myId); break;
+                case 'finance':     await this._renderFinanceDetail(myId); break;
+                case 'comparison':  await this._renderComparisonDetail(myId); break;
             }
         } catch (e) {
+            if (myId !== this._detailReqId) return;
             this.dom.detailBody.innerHTML =
                 `<div style="padding:24px; color:var(--danger-color);">Ошибка: ${this._escape(e.message)}</div>`;
         }
@@ -289,8 +306,9 @@ export const DashboardModule = {
         `;
     },
 
-    async _renderUsersDetail() {
+    async _renderUsersDetail(myId) {
         const s = await api.get('/users/stats');
+        if (myId !== undefined && myId !== this._detailReqId) return;
         const cards = [
             { label: 'Всего жильцов',   value: s.total_users,      color: '#2563eb', bg: '#eff6ff' },
             { label: 'С комнатой',      value: s.with_room,        color: '#10b981', bg: '#ecfdf5' },
@@ -335,8 +353,9 @@ export const DashboardModule = {
         `;
     },
 
-    async _renderRoomsDetail() {
+    async _renderRoomsDetail(myId) {
         const s = await api.get('/rooms/stats');
+        if (myId !== undefined && myId !== this._detailReqId) return;
         const cards = [
             { label: 'Всего комнат',  value: s.total_rooms,       color: '#2563eb', bg: '#eff6ff' },
             { label: 'Пустых',        value: s.empty,             color: '#6b7280', bg: '#f3f4f6' },
@@ -374,8 +393,9 @@ export const DashboardModule = {
         `;
     },
 
-    async _renderSubmissionsDetail() {
+    async _renderSubmissionsDetail(myId) {
         const data = await api.get('/admin/periods/close-preview');
+        if (myId !== undefined && myId !== this._detailReqId) return;
         const pct = data.total_occupied_rooms > 0
             ? Math.round(data.rooms_with_readings / data.total_occupied_rooms * 100) : 0;
         const cards = [
@@ -411,8 +431,9 @@ export const DashboardModule = {
         `;
     },
 
-    async _renderAnomaliesDetail() {
+    async _renderAnomaliesDetail(myId) {
         const data = await api.get('/admin/analyzer/dashboard?days=30');
+        if (myId !== undefined && myId !== this._detailReqId) return;
         const a = data.anomalies || {};
         const sev = a.by_severity || {};
         const cards = [
@@ -440,9 +461,10 @@ export const DashboardModule = {
         `;
     },
 
-    async _renderFinanceDetail() {
+    async _renderFinanceDetail(myId) {
         // Берём stats по долгам (быстро, одно число + разбивка).
         const s = await api.get('/financier/debts/stats');
+        if (myId !== undefined && myId !== this._detailReqId) return;
         const fmtMoney = (v) => Number(v || 0).toLocaleString('ru-RU', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' ₽';
         const cards = [
             { label: 'Период',        value: s.period_name || '—',  color: '#7c3aed', bg: '#f5f3ff' },
@@ -506,10 +528,13 @@ export const DashboardModule = {
     // =====================================================
     async loadGsheetsWidget() {
         if (!this.dom.gsheetsWidgetBody) return;
+        const myId = ++this._gsheetsReqId;
         try {
             const s = await api.get('/admin/gsheets/stats');
+            if (myId !== this._gsheetsReqId) return;
             this.renderGsheetsWidget(s);
         } catch (e) {
+            if (myId !== this._gsheetsReqId) return;
             this.dom.gsheetsWidgetBody.innerHTML =
                 `<div style="padding:12px; color:var(--danger-color); grid-column:1/-1;">Ошибка: ${this._escape(e.message)}</div>`;
             if (this.dom.gsheetsWidgetMeta) this.dom.gsheetsWidgetMeta.textContent = '';

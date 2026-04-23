@@ -233,7 +233,7 @@ function handleRoute() {
     // Дашборд объединён со сверкой показаний; ручной ввод, тарифы и сводка
     // объединены в секцию "Операции" (tools). Старые ссылки перенаправляем
     // для обратной совместимости.
-    const validTabs = ['dashboard', 'tools', 'housing', 'users', 'debts'];
+    const validTabs = ['dashboard', 'tools', 'housing', 'users', 'debts', 'certs'];
     let tabToLoad = validTabs.includes(hash) ? hash : defaultTab;
     if (hash === 'readings') tabToLoad = 'dashboard';
     if (hash === 'manual' || hash === 'tariffs' || hash === 'accountant') tabToLoad = 'tools';
@@ -395,6 +395,14 @@ async function initModule(tabId) {
                 loadedModules.recalc.init();
                 loadedModules.tools.init();
                 break;
+            // Админская вкладка «Справки» (волна 3 фичи заказа справок).
+            case 'certs':
+                if (!loadedModules.certs) {
+                    const { AdminCertificatesModule } = await import('./modules/admin-certificates.js');
+                    loadedModules.certs = AdminCertificatesModule;
+                }
+                loadedModules.certs.init();
+                break;
             default:
                 console.warn(`Модуль для вкладки "${tabId}" не найден.`);
         }
@@ -425,6 +433,9 @@ function refreshModuleData(tabId) {
             break;
         case 'debts':
             if (typeof mod.reload === 'function') mod.reload();
+            break;
+        case 'certs':
+            if (typeof mod.refreshAll === 'function') mod.refreshAll();
             break;
         // Операции: перезагружаем тарифы (lightweight), gsheets, очищаем поиск жильца
         case 'tools': {

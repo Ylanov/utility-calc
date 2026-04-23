@@ -8,6 +8,7 @@ from sqlalchemy import (
     Boolean,
     Index,
     DateTime,
+    Date,
     Text,
     func
 )
@@ -121,6 +122,19 @@ class User(Base):
 
     # НОВОЕ: Отслеживание последнего изменения
     updated_at = Column(DateTime, nullable=True, onupdate=_utcnow)
+
+    # ======================================================
+    # Паспорт и личные данные — нужны для заказа справок
+    # (выписка из ФЛС и др.). Все nullable — жилец заполняет
+    # при первом заказе, админ может поправить.
+    # ======================================================
+    full_name = Column(String(255), nullable=True)
+    position = Column(String(255), nullable=True)
+    passport_series = Column(String(20), nullable=True)
+    passport_number = Column(String(20), nullable=True)
+    passport_issued_by = Column(String(500), nullable=True)
+    passport_issued_at = Column(Date, nullable=True)
+    registration_date = Column(Date, nullable=True)
 
     # --------------------------------------------------------------
     # Валидаторы консистентности — срабатывают на setattr.
@@ -743,4 +757,111 @@ class DebtImportLog(Base):
     __table_args__ = (
         Index("idx_debt_import_logs_started_at", "started_at"),
         Index("idx_debt_import_logs_status", "status"),
+    )
+
+
+# ======================================================
+# FAMILY MEMBER — члены семьи жильца
+# ======================================================
+class FamilyMember(Base):
+    """Супруг(а), дети, другие родственники — прикрепляются к жильцу.
+
+    Используется для генерации справок (выписка из ФЛС и др.),
+    где требуется перечислить состав семьи. Свидетельства о рождении /
+    паспорта можно хранить опционально (поля passport_* nullable) —
+    в базовом сценарии жильцу хватит ФИО + дата рождения.
+    """
+    __tablename__ = "family_members"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    # spouse | child | parent | other
+    role = Column(String(20), nullable=False)
+    full_name = Column(String(255), nullable=False)
+    birth_date = Column(Date, nullable=True)
+    passport_series = Column(String(20), nullable=True)
+    passport_number = Column(String(20), nullable=True)
+    registration_date = Column(Date, nullable=True)
+
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+    updated_at = Column(DateTime, nullable=True, onupdate=_utcnow)
+
+    user = relationship("User", foreign_keys=[user_id])
+
+    __table_args__ = (
+        Index("idx_family_user", "user_id"),
+    )
+
+
+# ======================================================
+# RENTAL CONTRACT — договор найма жилого помещения
+# ======================================================
+class RentalContract(Base):
+    """Договор найма жилья (PDF-копия + метаданные).
+
+    Подгружается админом или самим жильцом, хранится в MinIO по пути
+    `rental_contracts/<user_id>/<uuid>.pdf`. При заказе справки
+    автоматически подтягиваются поля «дата/№» из активного договора.
+    Жилец может иметь несколько договоров (переезд между комнатами) —
+    актуальный определяется по `is_active`.
+    """
+    __tablename__ = "rental_contracts"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    number = Column(String(64), nullable=True)
+    signed_date = Column(Date, nullable=True)
+    valid_until = Column(Date, nullable=True)
+
+    file_s3_key = Column(String(500), nullable=True)
+    file_name = Column(String(255), nullable=True)
+    file_size = Column(Integer, nullable=True)
+
+    note = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    uploaded_at = Column(DateTime, default=_utcnow, nullable=False)
+    uploaded_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    user = relationship("User", foreign_keys=[user_id])
+    uploaded_by = relationship("User", foreign_keys=[uploaded_by_id])
+
+    __table_args__ = (
+        Index("idx_rental_user_active", "user_id", "is_active"),
+    )
+
+
+# ======================================================
+# CERTIFICATE REQUEST — заявка на справку
+# ======================================================
+class CertificateRequest(Base):
+    """Заявка жильца на справку (выписка из ФЛС и др.).
+
+    Жизненный цикл: pending (заказал жилец) → generated (PDF готов) →
+    delivered (админ выдал). rejected — отклонена админом.
+
+    type сейчас поддерживает 'flc' (выписка из финансово-лицевого счёта).
+    В будущем добавятся 'residency' (о проживании), 'composition' (о
+    составе семьи) и т.д. — поле data (JSONB) хранит type-specific поля.
+    """
+    __tablename__ = "certificate_requests"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    type = Column(String(32), nullable=False, default="flc")
+    status = Column(String(16), nullable=False, default="pending")
+    data = Column(JSONB, nullable=True)
+    pdf_s3_key = Column(String(500), nullable=True)
+    note = Column(Text, nullable=True)
+
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+    processed_at = Column(DateTime, nullable=True)
+    processed_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+    user = relationship("User", foreign_keys=[user_id])
+    processed_by = relationship("User", foreign_keys=[processed_by_id])
+
+    __table_args__ = (
+        Index("idx_cert_user_created", "user_id", "created_at"),
+        Index("idx_cert_status", "status"),
     )

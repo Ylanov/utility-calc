@@ -1,0 +1,77 @@
+<!-- static/components/admin/tab_certs.html -->
+<div id="certs" class="tab-content">
+
+    <!-- KPI заявок -->
+    <div id="certsStats" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; margin-bottom:16px;">
+        <div style="padding:14px; text-align:center; color:var(--text-secondary); grid-column:1/-1;">
+            <i class="fa-solid fa-spinner fa-spin"></i> Загрузка аналитики…
+        </div>
+    </div>
+
+    <!-- Таблица заявок с фильтрами -->
+    <div class="card" style="margin-bottom:0;">
+        <div class="card-header">
+            <h3><i class="fa-solid fa-file-lines" style="color:var(--primary-color); margin-right:8px;"></i> Заявки на справки</h3>
+            <div class="toolbar-controls">
+                <select id="certsFilterStatus" title="Статус">
+                    <option value="">Все статусы</option>
+                    <option value="pending">⏳ В обработке</option>
+                    <option value="generated">✅ Готова</option>
+                    <option value="delivered">📦 Выдана</option>
+                    <option value="rejected">🚫 Отклонена</option>
+                </select>
+                <select id="certsFilterType" title="Тип справки">
+                    <option value="">Все типы</option>
+                    <option value="flc">Выписка из ФЛС</option>
+                </select>
+                <input type="text" id="certsSearch" placeholder="ФИО / логин / комната…" style="min-width:200px;">
+                <button id="btnRefreshCerts" class="icon-btn" title="Обновить"><i class="fa-solid fa-rotate-right"></i></button>
+            </div>
+        </div>
+
+        <div class="table-responsive">
+            <table class="sticky-header-table">
+                <thead>
+                    <tr>
+                        <th style="width:50px;">№</th>
+                        <th>Тип / дата</th>
+                        <th>Жилец</th>
+                        <th>Общ. / комн.</th>
+                        <th>Куда</th>
+                        <th>Статус</th>
+                        <th class="text-right">Действия</th>
+                    </tr>
+                </thead>
+                <tbody id="certsTableBody">
+                    <tr><td colspan="7" class="text-center" style="padding:40px; color:var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка…</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="modal-footer" style="background:transparent; border:none; padding:16px 0 0 0;">
+            <div class="pagination">
+                <button id="btnCertsPrev" class="page-btn" disabled><i class="fa-solid fa-chevron-left"></i> Назад</button>
+                <span id="certsPageInfo" style="font-size:13px; font-weight:500; color:var(--text-secondary);">Стр. 1</span>
+                <button id="btnCertsNext" class="page-btn">Вперёд <i class="fa-solid fa-chevron-right"></i></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- МОДАЛКА: ДЕТАЛИ ЗАЯВКИ + РЕДАКТИРОВАНИЕ -->
+    <div id="certDetailModal" class="modal-overlay">
+        <div class="modal-window" style="width:820px;">
+            <div class="modal-header">
+                <h3 id="certModalTitle">Заявка на справку</h3>
+                <button class="close-btn close-icon" data-cert-close>&times;</button>
+            </div>
+            <div class="modal-form" id="certModalBody" style="padding-top:12px; min-height:320px;">
+                <div style="padding:40px; text-align:center; color:var(--text-secondary);">
+                    <i class="fa-solid fa-spinner fa-spin"></i> Загрузка…
+                </div>
+            </div>
+            <div class="modal-footer" id="certModalFooter">
+                <button class="action-btn secondary-btn" data-cert-close>Закрыть</button>
+            </div>
+        </div>
+    </div>
+</div>

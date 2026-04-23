@@ -289,6 +289,73 @@
         </div>
     </div>
 
+    <!-- Модалка: Договоры найма жилого помещения.
+         Хранилище PDF-договоров с привязкой к жильцу. Один договор
+         всегда «активен» — он автоматически используется при генерации
+         справок ФЛС (поля «дата/№ договора» подставляются из него). -->
+    <div id="contractsModal" class="modal-overlay">
+        <div class="modal-window" style="width: 680px;">
+            <div class="modal-header" style="background:#f5f3ff; border-bottom:1px solid #ddd6fe;">
+                <h3 style="color:#7c3aed;">
+                    <i class="fa-solid fa-file-signature"></i>
+                    Договоры найма — <span id="contractsUserLabel">—</span>
+                </h3>
+                <button class="close-btn close-icon" data-contracts-close>&times;</button>
+            </div>
+            <div class="modal-form" style="padding-top:14px; min-height:280px;">
+                <!-- Форма загрузки нового договора -->
+                <div style="background:var(--bg-page); border-radius:8px; padding:14px; margin-bottom:14px;">
+                    <h4 style="margin:0 0 10px 0; font-size:13px; color:var(--text-secondary); text-transform:uppercase;">
+                        <i class="fa-solid fa-cloud-arrow-up"></i> Загрузить новый договор
+                    </h4>
+                    <form id="contractUploadForm" class="styled-form" style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                        <div class="form-group" style="margin:0;">
+                            <label style="font-size:11px;">№ договора</label>
+                            <input type="text" id="contractNumber" placeholder="Например: 123/2026">
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label style="font-size:11px;">Дата подписания</label>
+                            <input type="date" id="contractSignedDate">
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label style="font-size:11px;">Действует до (опционально)</label>
+                            <input type="date" id="contractValidUntil">
+                        </div>
+                        <div class="form-group" style="margin:0;">
+                            <label style="font-size:11px;">Комментарий</label>
+                            <input type="text" id="contractNote" placeholder="Внутренняя пометка">
+                        </div>
+                        <div class="form-group" style="margin:0; grid-column:1/-1;">
+                            <label style="font-size:11px;">PDF / JPG файла договора <span style="color:var(--danger-color);">*</span></label>
+                            <input type="file" id="contractFile" accept=".pdf,.jpg,.jpeg,.png,.tif,.tiff" required>
+                        </div>
+                        <div style="grid-column:1/-1; display:flex; justify-content:space-between; align-items:center; gap:10px;">
+                            <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-secondary); cursor:pointer;">
+                                <input type="checkbox" id="contractActivate" checked>
+                                Сделать активным (остальные станут архивными)
+                            </label>
+                            <button type="submit" class="action-btn primary-btn" style="padding:6px 16px; font-size:13px;">
+                                <i class="fa-solid fa-upload"></i> Загрузить
+                            </button>
+                        </div>
+                    </form>
+                </div>
+
+                <h4 style="margin:0 0 10px 0; font-size:13px; color:var(--text-secondary); text-transform:uppercase;">
+                    <i class="fa-solid fa-folder-open"></i> Все договоры жильца
+                </h4>
+                <div id="contractsList" style="max-height:260px; overflow-y:auto;">
+                    <div style="padding:20px; text-align:center; color:var(--text-secondary);">
+                        <i class="fa-solid fa-spinner fa-spin"></i> Загрузка…
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="action-btn secondary-btn" data-contracts-close>Закрыть</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Модалка: Выселение / Переезд -->
     <div id="relocateModal" class="modal-overlay">
         <div class="modal-window" style="width: 600px;">

@@ -71,6 +71,46 @@ class S3Service:
             logger.error(f"S3 Upload FileObj Error: {e}")
             return False
 
+    def upload_bytes(self, data: bytes, object_name: str, content_type: str = "application/octet-stream") -> bool:
+        """Загружает in-memory bytes — удобно для PDF, генерируемых в RAM."""
+        if not self.is_available:
+            return False
+        try:
+            self.s3.put_object(
+                Bucket=self.bucket,
+                Key=object_name,
+                Body=data,
+                ContentType=content_type,
+            )
+            return True
+        except ClientError as e:
+            logger.error(f"S3 Upload Bytes Error: {e}")
+            return False
+
+    def download_fileobj(self, object_name: str) -> bytes | None:
+        """Скачивает объект в bytes. Возвращает None если файла нет или S3 недоступен."""
+        if not self.is_available:
+            return None
+        try:
+            import io
+            buf = io.BytesIO()
+            self.s3.download_fileobj(self.bucket, object_name, buf)
+            return buf.getvalue()
+        except ClientError as e:
+            logger.error(f"S3 Download Error for {object_name}: {e}")
+            return None
+
+    def delete_object(self, object_name: str) -> bool:
+        """Удаляет объект из S3. Тихо возвращает True если файла нет (идемпотентно)."""
+        if not self.is_available:
+            return False
+        try:
+            self.s3.delete_object(Bucket=self.bucket, Key=object_name)
+            return True
+        except ClientError as e:
+            logger.error(f"S3 Delete Error for {object_name}: {e}")
+            return False
+
     def get_presigned_url(self, object_name: str, expiration=300) -> str:
         """
         Генерирует временную ссылку на скачивание файла (по умолчанию живет 5 минут).

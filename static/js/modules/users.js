@@ -318,6 +318,12 @@ export const UsersModule = {
                             onclick: () => openRelocateModal(user, this.rel, this.dormsCache)
                         }, '🚚'),
                         el('button', {
+                            class: 'btn-icon',
+                            title: 'Договоры найма',
+                            style: { marginRight: '5px', background: '#f5f3ff', color: '#7c3aed', borderColor: '#ddd6fe' },
+                            onclick: () => this.openContractsModal(user)
+                        }, '📄'),
+                        el('button', {
                             class: 'btn-icon btn-edit',
                             title: 'Редактировать',
                             style: { marginRight: '5px' },
@@ -504,6 +510,193 @@ export const UsersModule = {
             this.table.refresh();
         } catch (error) {
             toast(error.message, 'error');
+        }
+    },
+
+    // =====================================================================
+    // ДОГОВОРЫ НАЙМА — отдельная модалка на жильца (волна 4 фичи справок).
+    // Показывает список договоров + форму загрузки. При заказе ФЛС поля
+    // «дата/№ договора» автоматически берутся из активного договора.
+    // =====================================================================
+    _contractsUserId: null,
+
+    openContractsModal(user) {
+        this._contractsUserId = user.id;
+        const modal = document.getElementById('contractsModal');
+        if (!modal) return;
+        document.getElementById('contractsUserLabel').textContent = user.username;
+        // Сброс формы загрузки
+        const form = document.getElementById('contractUploadForm');
+        form?.reset();
+        if (document.getElementById('contractActivate')) {
+            document.getElementById('contractActivate').checked = true;
+        }
+
+        // Привязываем обработчики один раз — флаг сохраняется на модалке
+        if (!modal.dataset.contractsBound) {
+            modal.addEventListener('click', (e) => {
+                if (e.target.closest('[data-contracts-close]') || e.target === modal) {
+                    modal.classList.remove('open');
+                }
+            });
+            form?.addEventListener('submit', (e) => this._submitContractUpload(e));
+            document.getElementById('contractsList')?.addEventListener('click', (e) => {
+                const dl = e.target.closest('[data-contract-download]');
+                const act = e.target.closest('[data-contract-activate]');
+                const del = e.target.closest('[data-contract-delete]');
+                if (dl)  this._downloadContract(Number(dl.dataset.contractDownload));
+                if (act) this._activateContract(Number(act.dataset.contractActivate));
+                if (del) this._deleteContract(Number(del.dataset.contractDelete));
+            });
+            modal.dataset.contractsBound = '1';
+        }
+
+        modal.classList.add('open');
+        this._loadContracts();
+    },
+
+    async _loadContracts() {
+        const listEl = document.getElementById('contractsList');
+        if (!listEl || !this._contractsUserId) return;
+        listEl.innerHTML = '<div style="padding:14px; text-align:center; color:var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка…</div>';
+        try {
+            const rows = await api.get(`/admin/users/${this._contractsUserId}/rental-contracts`);
+            this._renderContracts(rows);
+        } catch (e) {
+            listEl.innerHTML = `<div style="padding:14px; color:var(--danger-color);">Ошибка: ${String(e.message).replace(/</g,'&lt;')}</div>`;
+        }
+    },
+
+    _renderContracts(rows) {
+        const listEl = document.getElementById('contractsList');
+        if (!rows || !rows.length) {
+            listEl.innerHTML = `
+                <div style="padding:20px; text-align:center; color:var(--text-secondary); font-size:13px;">
+                    У жильца пока нет загруженных договоров. Заполните форму выше — при заказе справки
+                    поля «дата/№ договора» будут автоматически подставляться.
+                </div>`;
+            return;
+        }
+        const esc = (s) => {
+            if (s == null) return '';
+            const d = document.createElement('div'); d.textContent = String(s); return d.innerHTML;
+        };
+        const fmtDate = (iso) => iso ? new Date(iso).toLocaleDateString('ru-RU') : '—';
+        const fmtSize = (n) => {
+            if (!n) return '';
+            const mb = n / 1024 / 1024;
+            return mb >= 1 ? `${mb.toFixed(1)} МБ` : `${Math.round(n / 1024)} КБ`;
+        };
+
+        listEl.innerHTML = rows.map(c => `
+            <div style="display:flex; gap:12px; align-items:center; padding:10px 12px; margin-bottom:8px;
+                        background:${c.is_active ? '#f0fdf4' : 'var(--bg-card)'};
+                        border:1px solid ${c.is_active ? '#bbf7d0' : 'var(--border-color)'};
+                        border-radius:8px;">
+                <div style="width:36px; height:36px; border-radius:8px;
+                            background:${c.is_active ? '#10b981' : '#9ca3af'}22;
+                            color:${c.is_active ? '#10b981' : '#6b7280'};
+                            display:flex; align-items:center; justify-content:center; flex-shrink:0;">
+                    <i class="fa-solid fa-file-pdf"></i>
+                </div>
+                <div style="flex:1; min-width:0;">
+                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                        <b>№ ${esc(c.number || '—')}</b>
+                        <span style="font-size:12px; color:var(--text-secondary);">от ${esc(fmtDate(c.signed_date))}</span>
+                        ${c.valid_until ? `<span style="font-size:11px; color:var(--text-tertiary);">до ${esc(fmtDate(c.valid_until))}</span>` : ''}
+                        ${c.is_active ? '<span style="font-size:10px; background:#d1fae5; color:#065f46; padding:2px 7px; border-radius:10px; font-weight:600;">АКТИВНЫЙ</span>' : ''}
+                    </div>
+                    <div style="font-size:11px; color:var(--text-secondary); margin-top:2px;">
+                        ${esc(c.file_name || '')} ${c.file_size ? '· ' + esc(fmtSize(c.file_size)) : ''}
+                        ${c.note ? ' · ' + esc(c.note) : ''}
+                    </div>
+                </div>
+                <div style="display:flex; gap:4px; flex-shrink:0;">
+                    <button class="icon-btn" data-contract-download="${c.id}" title="Скачать">
+                        <i class="fa-solid fa-download"></i>
+                    </button>
+                    ${c.is_active ? '' : `
+                        <button class="icon-btn" data-contract-activate="${c.id}" title="Сделать активным"
+                                style="color:#10b981;">
+                            <i class="fa-solid fa-check"></i>
+                        </button>`}
+                    <button class="icon-btn" data-contract-delete="${c.id}" title="Удалить"
+                            style="color:var(--danger-color);">
+                        <i class="fa-solid fa-trash"></i>
+                    </button>
+                </div>
+            </div>
+        `).join('');
+    },
+
+    async _submitContractUpload(e) {
+        e.preventDefault();
+        if (!this._contractsUserId) return;
+        const fileInput = document.getElementById('contractFile');
+        const file = fileInput?.files?.[0];
+        if (!file) return toast('Выберите файл договора', 'error');
+
+        const fd = new FormData();
+        fd.append('file', file);
+        const params = new URLSearchParams();
+        const num = document.getElementById('contractNumber').value.trim();
+        const signed = document.getElementById('contractSignedDate').value;
+        const until = document.getElementById('contractValidUntil').value;
+        const note = document.getElementById('contractNote').value.trim();
+        const activate = document.getElementById('contractActivate').checked;
+        if (num) params.set('number', num);
+        if (signed) params.set('signed_date', signed);
+        if (until) params.set('valid_until', until);
+        if (note) params.set('note', note);
+        params.set('activate', activate ? 'true' : 'false');
+
+        const btn = e.target.querySelector('button[type="submit"]');
+        const orig = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Загрузка…';
+        try {
+            await api.post(
+                `/admin/users/${this._contractsUserId}/rental-contracts?${params}`,
+                fd,
+            );
+            toast('Договор загружен', 'success');
+            e.target.reset();
+            document.getElementById('contractActivate').checked = true;
+            this._loadContracts();
+        } catch (err) {
+            toast('Ошибка загрузки: ' + err.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = orig;
+        }
+    },
+
+    async _downloadContract(contractId) {
+        try {
+            await api.download(`/admin/rental-contracts/${contractId}/download`, `contract_${contractId}.pdf`);
+        } catch (e) {
+            toast('Ошибка скачивания: ' + e.message, 'error');
+        }
+    },
+
+    async _activateContract(contractId) {
+        try {
+            await api.post(`/admin/rental-contracts/${contractId}/activate`);
+            toast('Договор активирован — остальные стали архивными', 'success');
+            this._loadContracts();
+        } catch (e) {
+            toast('Ошибка: ' + e.message, 'error');
+        }
+    },
+
+    async _deleteContract(contractId) {
+        if (!confirm('Удалить договор безвозвратно? Файл будет стёрт из хранилища.')) return;
+        try {
+            await api.delete(`/admin/rental-contracts/${contractId}`);
+            toast('Договор удалён', 'success');
+            this._loadContracts();
+        } catch (e) {
+            toast('Ошибка: ' + e.message, 'error');
         }
     },
 
