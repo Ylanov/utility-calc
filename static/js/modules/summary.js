@@ -65,7 +65,10 @@ export const SummaryModule = {
         // Фильтры финансовой отчётности
         filter: 'all',     // 'all'|'debtors'|'overpaid'|'anomaly'|'missing'
         search: '',
-        expandedDorms: new Set(),  // раскрытые карточки общежитий
+        expandedDorms: new Set(),          // раскрытые карточки общежитий
+        expandedResidents: new Set(),      // раскрытые жильцы (user_id)
+        residentDetailCache: new Map(),    // user_id -> detail JSON (фетчится по клику)
+        residentDetailLoading: new Set(),  // user_id -> загрузка идёт
         // Текущая загруженная сводка v2
         currentSummary: null,
     },
@@ -136,8 +139,21 @@ export const SummaryModule = {
                 this.renderSummary();
                 return;
             }
+
+            // Клик по строке жильца — разворачиваем деталь. PDF-кнопка идёт
+            // ниже отдельным ветвлением, чтобы клик по ней не разворачивал строку.
             const pdf = e.target.closest('button[data-pdf-id]');
-            if (pdf) this.downloadReceipt(Number(pdf.dataset.pdfId));
+            if (pdf) {
+                this.downloadReceipt(Number(pdf.dataset.pdfId));
+                return;
+            }
+
+            const resRow = e.target.closest('[data-toggle-resident]');
+            if (resRow) {
+                const uid = Number(resRow.dataset.toggleResident);
+                this.toggleResident(uid);
+                return;
+            }
         });
     },
 
@@ -184,6 +200,12 @@ export const SummaryModule = {
         if (!this.state.selectedPeriodId) return;
         if (this.state.controller) this.state.controller.abort();
         this.state.controller = new AbortController();
+
+        // Сброс развёрнутых жильцов — фильтр/период меняется, строки могут
+        // уйти, а кеш деталей зависит от period_id. Проще сбросить чем синкать.
+        this.state.expandedResidents.clear();
+        this.state.residentDetailCache.clear();
+        this.state.residentDetailLoading.clear();
 
         this.dom.kpis.innerHTML = '<div style="grid-column: 1/-1; padding:14px; text-align:center; color:var(--text-secondary);">Загрузка…</div>';
         this.dom.topRow.innerHTML = '';
@@ -327,6 +349,7 @@ export const SummaryModule = {
 
     _renderResidentRow(r) {
         const isMissing = !r.reading_id;
+        const isExpanded = r.user_id && this.state.expandedResidents.has(r.user_id);
         const deltaCell = (() => {
             if (r.delta_amount === null || r.delta_amount === undefined) return '<span style="color:var(--text-tertiary);">—</span>';
             const sign = r.delta_amount > 0 ? '+' : '';
@@ -355,11 +378,17 @@ export const SummaryModule = {
             ? `<button class="action-btn primary-btn" data-pdf-id="${r.reading_id}" style="padding:4px 10px; font-size:11px;" title="Скачать квитанцию PDF"><i class="fa-solid fa-file-pdf"></i></button>`
             : `<span style="color:var(--text-tertiary); font-size:11px;">—</span>`;
 
-        const rowBg = isMissing ? 'background:rgba(254,226,226,0.4);' : '';
-        return `
-            <tr style="border-bottom:1px solid var(--border-color); ${rowBg}">
+        const rowBg = isMissing ? 'background:rgba(254,226,226,0.4);' : (isExpanded ? 'background:rgba(59,130,246,0.05);' : '');
+        const expandIcon = r.user_id
+            ? `<i class="fa-solid fa-chevron-${isExpanded ? 'down' : 'right'}" style="color:var(--text-tertiary); font-size:10px; margin-right:4px;"></i>`
+            : '';
+        const clickAttrs = r.user_id ? `data-toggle-resident="${r.user_id}" style="cursor:pointer;"` : '';
+
+        // Основная строка + (если раскрыта) панель деталей под ней
+        const mainRow = `
+            <tr ${clickAttrs} style="border-bottom:1px solid var(--border-color); ${rowBg}">
                 <td style="padding:8px 10px;">
-                    <div style="font-weight:600;">${esc(r.username)}</div>
+                    <div style="font-weight:600;">${expandIcon}${esc(r.username)}</div>
                     <div style="color:var(--text-secondary); font-size:11px;">${esc(r.area || 0)}м² · ${r.residents_count} чел.</div>
                 </td>
                 <td style="padding:8px 10px; font-family:monospace; font-size:12px;">${esc(r.room_number || '—')}</td>
@@ -373,6 +402,243 @@ export const SummaryModule = {
                 <td style="padding:8px 10px;">${flagsHtml || '<span style="color:var(--text-tertiary); font-size:11px;">—</span>'}</td>
                 <td style="padding:8px 10px; text-align:right;">${pdfBtn}</td>
             </tr>`;
+
+        if (!isExpanded) return mainRow;
+
+        const detail = this.state.residentDetailCache.get(r.user_id);
+        const loading = this.state.residentDetailLoading.has(r.user_id);
+        const detailHtml = loading || !detail
+            ? `<div style="padding:16px; color:var(--text-secondary); text-align:center;">
+                 <i class="fa-solid fa-spinner fa-spin"></i> Загрузка деталей…
+               </div>`
+            : this._renderResidentDetail(detail);
+
+        return mainRow + `
+            <tr class="resident-detail-row" style="background:#fafafa;">
+                <td colspan="11" style="padding:0; border-bottom:1px solid var(--border-color);">
+                    ${detailHtml}
+                </td>
+            </tr>`;
+    },
+
+    // =====================================================
+    // РАЗВОРОТ ЖИЛЬЦА: запрос деталей + рендер панели
+    // =====================================================
+    async toggleResident(userId) {
+        if (!userId) return;
+        const st = this.state;
+        if (st.expandedResidents.has(userId)) {
+            st.expandedResidents.delete(userId);
+            this.renderSummary();
+            return;
+        }
+        st.expandedResidents.add(userId);
+        // Если данные уже в кеше и период не менялся — просто рендерим.
+        if (st.residentDetailCache.has(userId)) {
+            this.renderSummary();
+            return;
+        }
+        st.residentDetailLoading.add(userId);
+        this.renderSummary();
+        try {
+            const qs = st.selectedPeriodId ? `?period_id=${st.selectedPeriodId}` : '';
+            const data = await api.get(`/admin/residents/${userId}/finance-detail${qs}`);
+            st.residentDetailCache.set(userId, data);
+        } catch (e) {
+            st.residentDetailCache.set(userId, { __error: String(e.message || e) });
+        } finally {
+            st.residentDetailLoading.delete(userId);
+            this.renderSummary();
+        }
+    },
+
+    _renderResidentDetail(data) {
+        if (data.__error) {
+            return `<div style="padding:16px; color:var(--danger-color);">
+                Ошибка загрузки: ${esc(data.__error)}
+            </div>`;
+        }
+        return `
+            <div style="padding:16px 20px; display:grid; grid-template-columns: minmax(0,1.2fr) minmax(0,1fr); gap:20px;">
+                <div style="min-width:0;">
+                    ${this._renderMetersHistory(data)}
+                </div>
+                <div style="min-width:0;">
+                    ${this._renderContractBlock(data.contract)}
+                    ${this._renderCurrentCostBreakdown(data.current)}
+                    ${this._renderAdjustmentsBlock(data.adjustments)}
+                </div>
+            </div>`;
+    },
+
+    _renderMetersHistory(data) {
+        const hist = data.history || [];
+        if (!hist.length) {
+            return `<div style="color:var(--text-secondary); padding:10px 0;">Нет данных о показаниях.</div>`;
+        }
+        const SRC_LABEL = {
+            gsheets: 'GSheets', app: 'Приложение', baseline: 'Baseline',
+            manual: 'Вручную', one_time: 'Разовое', auto: 'Автогенер.',
+            initial: 'Начальные', meter_op: 'Счётчик',
+        };
+        const fmtNum = v => v == null ? '—' : Number(v).toLocaleString('ru-RU', {maximumFractionDigits: 2});
+        const fmtDelta = v => {
+            if (v == null) return '<span style="color:var(--text-tertiary);">—</span>';
+            const color = v > 0 ? '#059669' : v < 0 ? '#dc2626' : 'var(--text-tertiary)';
+            const sign = v > 0 ? '+' : '';
+            return `<span style="color:${color}; font-size:11px;">${sign}${fmtNum(v)}</span>`;
+        };
+        const rows = hist.map(h => {
+            const srcLbl = h.source ? (SRC_LABEL[h.source] || h.source) : '—';
+            const flagsShort = (h.flags || [])
+                .filter(f => f && f !== 'PENDING')
+                .slice(0, 2).join(', ');
+            const statusHtml = h.reading_id
+                ? (h.is_approved
+                    ? '<span style="color:#059669; font-size:11px;">утв.</span>'
+                    : '<span style="color:#f59e0b; font-size:11px;">черн.</span>')
+                : '<span style="color:var(--text-tertiary); font-size:11px;">нет</span>';
+            return `
+                <tr style="border-bottom:1px solid #e5e7eb;">
+                    <td style="padding:6px 8px; font-weight:600;">${esc(h.period_name || '—')}</td>
+                    <td style="padding:6px 8px; text-align:right; font-family:monospace;">${fmtNum(h.hot_water)}</td>
+                    <td style="padding:6px 8px; text-align:right;">${fmtDelta(h.delta_hot)}</td>
+                    <td style="padding:6px 8px; text-align:right; font-family:monospace;">${fmtNum(h.cold_water)}</td>
+                    <td style="padding:6px 8px; text-align:right;">${fmtDelta(h.delta_cold)}</td>
+                    <td style="padding:6px 8px; text-align:right; font-family:monospace;">${fmtNum(h.electricity)}</td>
+                    <td style="padding:6px 8px; text-align:right;">${fmtDelta(h.delta_elect)}</td>
+                    <td style="padding:6px 8px; font-size:11px;">${esc(srcLbl)}</td>
+                    <td style="padding:6px 8px; text-align:center;">${statusHtml}</td>
+                    <td style="padding:6px 8px; font-size:10px; color:var(--text-secondary);">${esc(flagsShort)}</td>
+                </tr>`;
+        }).join('');
+
+        return `
+            <div style="font-size:12px; font-weight:600; color:var(--text-secondary); text-transform:uppercase; margin-bottom:6px;">
+                <i class="fa-solid fa-gauge-high"></i> Показания за ${hist.length} ${hist.length === 1 ? 'период' : 'периода(ов)'}
+            </div>
+            <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:8px; overflow-x:auto;">
+                <table style="width:100%; border-collapse:collapse; font-size:12px; min-width:720px;">
+                    <thead style="background:var(--bg-page); color:var(--text-secondary); text-transform:uppercase; font-size:10px;">
+                        <tr>
+                            <th style="text-align:left; padding:6px 8px;">Период</th>
+                            <th style="text-align:right; padding:6px 8px;">ГВС</th>
+                            <th style="text-align:right; padding:6px 8px;">Δ</th>
+                            <th style="text-align:right; padding:6px 8px;">ХВС</th>
+                            <th style="text-align:right; padding:6px 8px;">Δ</th>
+                            <th style="text-align:right; padding:6px 8px;">Свет</th>
+                            <th style="text-align:right; padding:6px 8px;">Δ</th>
+                            <th style="text-align:left; padding:6px 8px;">Источник</th>
+                            <th style="text-align:center; padding:6px 8px;">Статус</th>
+                            <th style="text-align:left; padding:6px 8px;">Флаги</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>`;
+    },
+
+    _renderContractBlock(c) {
+        if (!c) {
+            return `
+                <div style="background:#fef2f2; border:1px solid #fecaca; color:#991b1b; border-radius:8px; padding:10px 12px; margin-bottom:12px; font-size:12px;">
+                    <i class="fa-solid fa-triangle-exclamation"></i> Активный договор найма не оформлен.
+                </div>`;
+        }
+        const parts = [`№ ${esc(c.number || '—')}`];
+        if (c.signed_date) {
+            parts.push(`от ${new Date(c.signed_date).toLocaleDateString('ru-RU')}`);
+        }
+        if (c.valid_until) {
+            parts.push(`до ${new Date(c.valid_until).toLocaleDateString('ru-RU')}`);
+        }
+        return `
+            <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:10px 12px; margin-bottom:12px; font-size:12px; display:flex; align-items:center; gap:8px;">
+                <i class="fa-solid fa-file-signature" style="color:#10b981;"></i>
+                <span style="font-weight:600; color:#065f46;">Договор:</span>
+                <span>${parts.join(' · ')}</span>
+                ${c.has_file ? '<span style="margin-left:auto; font-size:10px; color:#059669;"><i class="fa-solid fa-paperclip"></i> файл</span>' : ''}
+            </div>`;
+    },
+
+    _renderCurrentCostBreakdown(current) {
+        if (!current) {
+            return `
+                <div style="font-size:12px; color:var(--text-secondary); padding:10px 0; border-top:1px solid var(--border-color);">
+                    Квитанции за этот период нет.
+                </div>`;
+        }
+        const costs = current.costs || {};
+        const rows = [
+            ['Плата за жильё',     costs.cost_maintenance],
+            ['Отопление',          costs.cost_fixed_part],
+            ['Подогрев воды',      costs.cost_hot_water],
+            ['Холодная вода',      costs.cost_cold_water],
+            ['Водоотведение',      costs.cost_sewage],
+            ['Электроэнергия',     costs.cost_electricity],
+            ['Социальный наём',    costs.cost_social_rent],
+            ['ТКО',                costs.cost_waste],
+        ];
+        const rowsHtml = rows.map(([label, val]) => {
+            const v = Number(val || 0);
+            if (v === 0) return '';
+            return `
+                <div style="display:flex; justify-content:space-between; padding:4px 0; font-size:12px; border-bottom:1px dashed #e5e7eb;">
+                    <span>${esc(label)}</span>
+                    <span style="font-family:monospace;">${v.toLocaleString('ru-RU', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>
+                </div>`;
+        }).filter(Boolean).join('');
+        const totalRow = `
+            <div style="display:flex; justify-content:space-between; padding:8px 0 4px; font-size:13px; font-weight:700; border-top:2px solid var(--border-color); margin-top:4px;">
+                <span>Итого</span>
+                <span style="color:#059669; font-family:monospace;">${fmtMoney(current.total_cost)}</span>
+            </div>`;
+
+        const debtInfo = [];
+        if (current.debt_209 > 0) debtInfo.push(`долг 209: ${fmtMoney(current.debt_209)}`);
+        if (current.debt_205 > 0) debtInfo.push(`долг 205: ${fmtMoney(current.debt_205)}`);
+        if (current.overpayment_209 > 0) debtInfo.push(`переплата 209: ${fmtMoney(current.overpayment_209)}`);
+        if (current.overpayment_205 > 0) debtInfo.push(`переплата 205: ${fmtMoney(current.overpayment_205)}`);
+        const debtLine = debtInfo.length
+            ? `<div style="font-size:11px; color:var(--text-secondary); margin-top:6px;">${esc(debtInfo.join(' · '))}</div>`
+            : '';
+
+        return `
+            <div style="font-size:12px; font-weight:600; color:var(--text-secondary); text-transform:uppercase; margin-bottom:6px;">
+                <i class="fa-solid fa-file-invoice-dollar"></i> Детализация квитанции
+            </div>
+            <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:8px; padding:12px; margin-bottom:12px;">
+                ${rowsHtml || '<div style="font-size:12px; color:var(--text-tertiary);">Все статьи = 0 (baseline)</div>'}
+                ${totalRow}
+                ${debtLine}
+            </div>`;
+    },
+
+    _renderAdjustmentsBlock(adjs) {
+        if (!adjs || !adjs.length) return '';
+        const items = adjs.map(a => {
+            const d = a.created_at ? new Date(a.created_at).toLocaleDateString('ru-RU') : '';
+            const color = Number(a.amount) > 0 ? '#dc2626' : '#059669';
+            const sign = Number(a.amount) > 0 ? '+' : '';
+            return `
+                <div style="display:flex; gap:10px; padding:6px 0; border-bottom:1px dashed #e5e7eb; font-size:12px;">
+                    <div style="flex-shrink:0; width:90px; color:var(--text-secondary);">${esc(a.period_name || '')}</div>
+                    <div style="flex:1; min-width:0;">
+                        <div>${esc(a.description || '(без пояснения)')}</div>
+                        <div style="font-size:10px; color:var(--text-tertiary);">счёт ${esc(a.account_type || '')} · ${esc(d)}</div>
+                    </div>
+                    <div style="color:${color}; font-weight:700; font-family:monospace; white-space:nowrap;">
+                        ${sign}${fmtMoney(a.amount)}
+                    </div>
+                </div>`;
+        }).join('');
+        return `
+            <div style="font-size:12px; font-weight:600; color:var(--text-secondary); text-transform:uppercase; margin-bottom:6px;">
+                <i class="fa-solid fa-sliders"></i> Корректировки (${adjs.length})
+            </div>
+            <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:8px; padding:10px 12px;">
+                ${items}
+            </div>`;
     },
 
     // Блоки «Предпросмотр закрытия периода» и «Сравнение периодов» перенесены

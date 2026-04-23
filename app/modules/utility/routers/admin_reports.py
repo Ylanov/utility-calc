@@ -662,3 +662,274 @@ async def get_accountant_summary_v2(
         "dormitories": dormitories_out,
         "flag_catalog": FLAG_CATALOG,
     }
+
+
+# =========================================================================
+# ДЕТАЛИ ПО ОДНОМУ ЖИЛЬЦУ (expandable-панель в «Финансовой отчётности»)
+# =========================================================================
+# Возвращает всё, что нужно показать в развёрнутой строке:
+#   * основная квитанция за выбранный период (детализация по статьям, дельты)
+#   * история показаний за 6 последних периодов (счётчики + дельты + источник)
+#   * корректировки (Adjustment) за эти периоды с пояснениями
+#   * активный договор найма (№/дата) — чтобы не лезть в другую вкладку
+# Один запрос вместо N+1 — подтягиваем всё батчами.
+
+def _infer_source_flag(anomaly_flags):
+    if not anomaly_flags:
+        return "manual"
+    af = anomaly_flags.split(",")[0].strip().upper()
+    if "GSHEETS" in af:
+        return "gsheets"
+    if "BASELINE" in af:
+        return "baseline"
+    if "ONE_TIME_CHARGE" in af:
+        return "one_time"
+    if "AUTO_GENERATED" in af:
+        return "auto"
+    if "INITIAL_SETUP" in af:
+        return "initial"
+    if "METER_CLOSED" in af or "METER_REPLACEMENT" in af:
+        return "meter_op"
+    return "app"
+
+
+@router.get("/api/admin/residents/{user_id}/finance-detail")
+async def get_resident_finance_detail(
+    user_id: int,
+    period_id: Optional[int] = Query(None, description="Период квитанции. По умолчанию — последний."),
+    history_periods: int = Query(6, ge=1, le=24),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Детальная финансовая справка по жильцу для разворачивающейся панели.
+
+    Используется в «Финансовой отчётности» — админ кликает на строку жильца
+    и получает всю финансовую картину: текущая квитанция + история счётчиков
+    за 6 мес + корректировки + договор.
+    """
+    if current_user.role not in ("accountant", "admin", "financier"):
+        raise HTTPException(403, "Доступ запрещён")
+
+    user = (await db.execute(
+        select(User)
+        .options(selectinload(User.room))
+        .where(User.id == user_id, User.is_deleted.is_(False))
+    )).scalars().first()
+    if not user:
+        raise HTTPException(404, "Жилец не найден")
+
+    # 1) Определяем целевой период.
+    if period_id:
+        period = await db.get(BillingPeriod, period_id)
+    else:
+        period = (await db.execute(
+            select(BillingPeriod).order_by(BillingPeriod.id.desc()).limit(1)
+        )).scalars().first()
+    if not period:
+        raise HTTPException(400, "Периоды не заведены — нет данных для показа")
+
+    # 2) 6 последних периодов (включая текущий) для истории.
+    periods = (await db.execute(
+        select(BillingPeriod)
+        .where(BillingPeriod.id <= period.id)
+        .order_by(BillingPeriod.id.desc())
+        .limit(history_periods)
+    )).scalars().all()
+    period_ids = [p.id for p in periods]
+    period_name_map = {p.id: p.name for p in periods}
+
+    # 3) Одним запросом — все approved показания жильца за эти периоды.
+    #    По id-шникам забираем также `created_at` для Source-логики.
+    readings = (await db.execute(
+        select(MeterReading)
+        .where(
+            MeterReading.user_id == user_id,
+            MeterReading.period_id.in_(period_ids) if period_ids else False,
+        )
+        .order_by(MeterReading.period_id.desc())
+    )).scalars().all()
+
+    # Для дельт по счётчикам нам нужно предыдущее approved показание по КОМНАТЕ
+    # для каждого reading. Соберём всю approved-историю комнаты за охваченный
+    # диапазон + немного запаса (ещё 1 период), чтобы найти prev для самого
+    # раннего показания.
+    room_hist_raw = []
+    if user.room_id and period_ids:
+        room_hist_raw = (await db.execute(
+            select(MeterReading)
+            .where(
+                MeterReading.room_id == user.room_id,
+                MeterReading.is_approved.is_(True),
+            )
+            .order_by(MeterReading.created_at.asc())
+        )).scalars().all()
+
+    def _prev_for(reading):
+        """Ближайшее approved показание по комнате со временем СТРОГО раньше."""
+        prev = None
+        for rr in room_hist_raw:
+            if rr.created_at and reading.created_at and rr.created_at < reading.created_at and rr.is_approved:
+                prev = rr
+            elif rr.created_at and reading.created_at and rr.created_at >= reading.created_at:
+                break
+        return prev
+
+    # 4) Корректировки за эти периоды.
+    adjustments = []
+    if period_ids:
+        adj_rows = (await db.execute(
+            select(Adjustment)
+            .where(Adjustment.user_id == user_id, Adjustment.period_id.in_(period_ids))
+            .order_by(Adjustment.period_id.desc(), Adjustment.created_at.desc())
+        )).scalars().all()
+        for a in adj_rows:
+            adjustments.append({
+                "id": a.id,
+                "period_id": a.period_id,
+                "period_name": period_name_map.get(a.period_id),
+                "amount": float(a.amount or 0),
+                "description": a.description or "",
+                "account_type": a.account_type or "209",
+                "created_at": a.created_at.isoformat() if a.created_at else None,
+            })
+
+    # 5) Договор найма — активный.
+    from app.modules.utility.models import RentalContract
+    contract_row = (await db.execute(
+        select(RentalContract)
+        .where(
+            RentalContract.user_id == user_id,
+            RentalContract.is_active.is_(True),
+        )
+        .limit(1)
+    )).scalars().first()
+    contract_data = None
+    if contract_row:
+        contract_data = {
+            "id": contract_row.id,
+            "number": contract_row.number,
+            "signed_date": contract_row.signed_date.isoformat() if contract_row.signed_date else None,
+            "valid_until": contract_row.valid_until.isoformat() if contract_row.valid_until else None,
+            "has_file": bool(contract_row.file_s3_key),
+            "file_name": contract_row.file_name,
+        }
+
+    # 6) Сборка истории показаний (6 периодов).
+    readings_by_period = {r.period_id: r for r in readings}
+    history = []
+    for p in periods:
+        r = readings_by_period.get(p.id)
+        if r is None:
+            history.append({
+                "period_id": p.id,
+                "period_name": p.name,
+                "reading_id": None,
+                "is_approved": False,
+                "has_pdf": False,
+                "source": None,
+                "flags": [],
+                "hot_water": None, "cold_water": None, "electricity": None,
+                "delta_hot": None, "delta_cold": None, "delta_elect": None,
+                "total_cost": None, "total_209": None, "total_205": None,
+            })
+            continue
+        prev = _prev_for(r)
+        p_hot = float(prev.hot_water or 0) if prev else 0.0
+        p_cold = float(prev.cold_water or 0) if prev else 0.0
+        p_elect = float(prev.electricity or 0) if prev else 0.0
+        cur_hot = float(r.hot_water or 0)
+        cur_cold = float(r.cold_water or 0)
+        cur_elect = float(r.electricity or 0)
+        flags_list = [f.strip() for f in (r.anomaly_flags or "").split(",") if f.strip()]
+        history.append({
+            "period_id": p.id,
+            "period_name": p.name,
+            "reading_id": r.id,
+            "is_approved": bool(r.is_approved),
+            "has_pdf": bool(getattr(r, "pdf_s3_key", None)),
+            "source": _infer_source_flag(r.anomaly_flags),
+            "flags": flags_list,
+            "hot_water": cur_hot,
+            "cold_water": cur_cold,
+            "electricity": cur_elect,
+            "delta_hot": cur_hot - p_hot if prev else None,
+            "delta_cold": cur_cold - p_cold if prev else None,
+            "delta_elect": cur_elect - p_elect if prev else None,
+            "total_cost": float(r.total_cost or 0),
+            "total_209": float(r.total_209 or 0),
+            "total_205": float(r.total_205 or 0),
+        })
+
+    # 7) Детализация текущей квитанции.
+    cur = readings_by_period.get(period.id)
+    current = None
+    if cur:
+        prev = _prev_for(cur)
+        current = {
+            "reading_id": cur.id,
+            "is_approved": bool(cur.is_approved),
+            "source": _infer_source_flag(cur.anomaly_flags),
+            "anomaly_flags": cur.anomaly_flags,
+            "anomaly_score": int(cur.anomaly_score or 0),
+            "hot_water": float(cur.hot_water or 0),
+            "cold_water": float(cur.cold_water or 0),
+            "electricity": float(cur.electricity or 0),
+            "prev_hot": float(prev.hot_water or 0) if prev else 0.0,
+            "prev_cold": float(prev.cold_water or 0) if prev else 0.0,
+            "prev_elect": float(prev.electricity or 0) if prev else 0.0,
+            "delta_hot": float((cur.hot_water or 0) - (prev.hot_water or 0)) if prev else None,
+            "delta_cold": float((cur.cold_water or 0) - (prev.cold_water or 0)) if prev else None,
+            "delta_elect": float((cur.electricity or 0) - (prev.electricity or 0)) if prev else None,
+            "total_cost": float(cur.total_cost or 0),
+            "total_209": float(cur.total_209 or 0),
+            "total_205": float(cur.total_205 or 0),
+            "debt_209": float(cur.debt_209 or 0),
+            "debt_205": float(cur.debt_205 or 0),
+            "overpayment_209": float(cur.overpayment_209 or 0),
+            "overpayment_205": float(cur.overpayment_205 or 0),
+            "hot_correction": float(cur.hot_correction or 0),
+            "cold_correction": float(cur.cold_correction or 0),
+            "electricity_correction": float(cur.electricity_correction or 0),
+            "sewage_correction": float(cur.sewage_correction or 0),
+            "costs": {
+                "cost_hot_water": float(cur.cost_hot_water or 0),
+                "cost_cold_water": float(cur.cost_cold_water or 0),
+                "cost_sewage": float(cur.cost_sewage or 0),
+                "cost_electricity": float(cur.cost_electricity or 0),
+                "cost_maintenance": float(cur.cost_maintenance or 0),
+                "cost_social_rent": float(cur.cost_social_rent or 0),
+                "cost_waste": float(cur.cost_waste or 0),
+                "cost_fixed_part": float(cur.cost_fixed_part or 0),
+            },
+            "has_pdf": bool(getattr(cur, "pdf_s3_key", None)),
+        }
+
+    return {
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "full_name": user.full_name,
+            "role": user.role,
+            "residents_count": user.residents_count or 1,
+            "resident_type": getattr(user, "resident_type", "family"),
+            "billing_mode": getattr(user, "billing_mode", "by_meter"),
+            "room": (
+                {
+                    "id": user.room.id,
+                    "dormitory_name": user.room.dormitory_name,
+                    "room_number": user.room.room_number,
+                    "apartment_area": float(user.room.apartment_area or 0),
+                    "total_room_residents": user.room.total_room_residents or 1,
+                    "hw_meter_serial": getattr(user.room, "hw_meter_serial", None),
+                    "cw_meter_serial": getattr(user.room, "cw_meter_serial", None),
+                    "el_meter_serial": getattr(user.room, "el_meter_serial", None),
+                }
+                if user.room else None
+            ),
+        },
+        "period": {"id": period.id, "name": period.name},
+        "current": current,
+        "history": history,  # от свежих к старым
+        "adjustments": adjustments,
+        "contract": contract_data,
+    }
