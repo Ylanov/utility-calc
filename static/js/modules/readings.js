@@ -197,21 +197,24 @@ export const ReadingsModule = {
     },
 
     renderStats(s) {
-        const card = (bg, color, icon, value, label) => `
-            <div style="background:${bg}; border:1px solid ${color}33; border-radius:10px; padding:10px 12px;">
-                <div style="display:flex; align-items:center; gap:6px; color:${color}; font-size:11px; text-transform:uppercase; letter-spacing:0.3px; margin-bottom:3px;">
-                    <span>${icon}</span>${escapeHtml(label)}
-                </div>
-                <div style="font-size:18px; font-weight:700; color:#111827;">${value}</div>
+        // Компактные «pill»-карточки: значок + число + подпись в ОДНУ строку.
+        // Раньше были вертикальные карточки ~90px высоты — для реестра над
+        // таблицей это было слишком громоздко. Теперь ~36px.
+        const pill = (bg, color, icon, value, label) => `
+            <div style="background:${bg}; border:1px solid ${color}33; border-radius:8px; padding:6px 12px;
+                        display:flex; align-items:center; gap:8px; white-space:nowrap; line-height:1.2;">
+                <span style="font-size:14px;">${icon}</span>
+                <span style="font-size:15px; font-weight:700; color:${color};">${value}</span>
+                <span style="font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.3px;">${escapeHtml(label)}</span>
             </div>
         `;
         this.dom.kpis.innerHTML = [
-            card('#eff6ff', '#2563eb', '📋', s.total, 'Всего ждут'),
-            card('#ecfdf5', '#10b981', '🟢', s.clean, 'Чистые'),
-            card('#fef3c7', '#f59e0b', '🟡', s.suspicious, 'Подозрительные'),
-            card('#fef2f2', '#dc2626', '🔴', s.critical, 'Критичные'),
-            card('#fff7ed', '#ea580c', '⚠️', s.anomalies, 'С флагами'),
-            card('#f5f3ff', '#7c3aed', '💰', fmtMoney(s.sum_cost) + ' ₽', 'К начислению'),
+            pill('#eff6ff', '#2563eb', '📋', s.total, 'ждут'),
+            pill('#ecfdf5', '#10b981', '🟢', s.clean, 'чистые'),
+            pill('#fef3c7', '#f59e0b', '🟡', s.suspicious, 'подозр.'),
+            pill('#fef2f2', '#dc2626', '🔴', s.critical, 'крит.'),
+            pill('#fff7ed', '#ea580c', '⚠️', s.anomalies, 'с флагами'),
+            pill('#f5f3ff', '#7c3aed', '💰', fmtMoney(s.sum_cost) + ' ₽', 'к начисл.'),
         ].join('');
     },
 

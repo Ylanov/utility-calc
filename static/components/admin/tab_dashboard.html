@@ -191,9 +191,11 @@
                         </div>
                     </div>
 
-                    <!-- KPI-строка волны 1: счётчики по рискам + суммы -->
-                    <div id="readingsKPIs" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(130px, 1fr)); gap:10px;">
-                        <div style="padding:12px; text-align:center; color:var(--text-secondary); grid-column:1/-1;">
+                    <!-- KPI-строка волны 1: компактные pill-счётчики по рискам.
+                         flex-wrap: контейнер сам обтекает на узких экранах,
+                         пиллы сохраняют естественную ширину (без растяжки). -->
+                    <div id="readingsKPIs" style="display:flex; flex-wrap:wrap; gap:8px;">
+                        <div style="padding:8px 12px; color:var(--text-secondary);">
                             <i class="fa-solid fa-spinner fa-spin"></i> Загрузка аналитики…
                         </div>
                     </div>
