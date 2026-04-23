@@ -130,26 +130,51 @@ class CertificateRequestOut(BaseModel):
 # PROFILE
 # =========================================================================
 
+async def _load_user_with_room(db: AsyncSession, user_id: int) -> User:
+    """Загружает User + eager-load комнаты.
+    get_current_user в нашем проекте не подгружает room (это SELECT User
+    без JOIN). Обращение к `current_user.room` в async-контексте ломает
+    SQLAlchemy через MissingGreenlet → 500. Поэтому в любом endpoint,
+    где нужна комната, пере-запрашиваем юзера с selectinload."""
+    from sqlalchemy.orm import selectinload as _selectinload
+    stmt = (
+        select(User)
+        .options(_selectinload(User.room))
+        .where(User.id == user_id)
+    )
+    res = await db.execute(stmt)
+    user = res.scalars().first()
+    if not user:
+        raise HTTPException(404, "Жилец не найден")
+    return user
+
+
 @router.get("/api/me/profile", response_model=ProfileResponse)
-async def get_my_profile(current_user: User = Depends(get_current_user)):
+async def get_my_profile(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    # Перезагружаем с eager-load комнаты — иначе current_user.room триггерит
+    # lazy-load и падает с MissingGreenlet в async-контексте.
+    user = await _load_user_with_room(db, current_user.id)
     room = None
-    if current_user.room:
+    if user.room:
         room = {
-            "id": current_user.room.id,
-            "dormitory_name": current_user.room.dormitory_name,
-            "room_number": current_user.room.room_number,
-            "apartment_area": float(current_user.room.apartment_area or 0),
+            "id": user.room.id,
+            "dormitory_name": user.room.dormitory_name,
+            "room_number": user.room.room_number,
+            "apartment_area": float(user.room.apartment_area or 0),
         }
     return ProfileResponse(
-        id=current_user.id,
-        username=current_user.username,
-        full_name=current_user.full_name,
-        position=current_user.position,
-        passport_series=current_user.passport_series,
-        passport_number=current_user.passport_number,
-        passport_issued_by=current_user.passport_issued_by,
-        passport_issued_at=current_user.passport_issued_at,
-        registration_date=current_user.registration_date,
+        id=user.id,
+        username=user.username,
+        full_name=user.full_name,
+        position=user.position,
+        passport_series=user.passport_series,
+        passport_number=user.passport_number,
+        passport_issued_by=user.passport_issued_by,
+        passport_issued_at=user.passport_issued_at,
+        registration_date=user.registration_date,
         room=room,
     )
 
@@ -162,12 +187,15 @@ async def update_my_profile(
 ):
     """Жилец сам заполняет паспортные данные и должность.
     Админ может позже поправить через другой endpoint (волна 3)."""
+    # Подгружаем с eager room (тот же селект что в get_my_profile).
+    user = await _load_user_with_room(db, current_user.id)
     upd = data.model_dump(exclude_unset=True)
     for k, v in upd.items():
-        setattr(current_user, k, v)
+        setattr(user, k, v)
     await db.commit()
-    await db.refresh(current_user)
-    return await get_my_profile(current_user)
+    await db.refresh(user)
+    # Возвращаем через тот же формат, что и GET
+    return await get_my_profile(current_user, db)
 
 
 # =========================================================================
