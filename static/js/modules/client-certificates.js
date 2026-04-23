@@ -1,15 +1,15 @@
 // static/js/modules/client-certificates.js
 //
-// Логика клиентской вкладки «Справки» + блок «Персональные данные» на
-// вкладке «Профиль». Жилец:
-//   1) Заполняет ФИО + паспорт + дату регистрации (для заказа справок).
-//   2) Добавляет семью (супруг(а), дети) — прикладывается к справкам.
-//   3) Заказывает справку из каталога (сейчас один тип: ФЛС).
-//   4) Видит историю заявок и скачивает готовый PDF.
+// Вкладка «Справки» клиентского портала. Персональные данные (паспорт,
+// ФИО, регистрация) и семья теперь живут ВНУТРИ модалки заказа справки
+// как сворачиваемые секции — жилец заполняет их один раз при первом
+// заказе, после чего просто вводит «период + куда» и получает PDF.
 //
-// Принцип: данные грузятся ЛЕНИВО — только при клике на вкладку, или
-// когда открывается модалка заказа. Не нагружаем /api/me/... на каждой
-// загрузке страницы.
+// Секции в модалке заказа:
+//   1. Предупреждение «нужно заполнить» / баннер «всё готово»
+//   2. <details> «Мои данные» — паспорт, должность, регистрация
+//   3. <details> «Состав семьи» — необязательно
+//   4. Форма заказа — период + куда, кнопка активна только если профиль ОК
 
 import { api } from '../core/api.js';
 import { toast } from '../core/dom.js';
@@ -51,21 +51,17 @@ export const ClientCertificates = {
     init() {
         if (this.isInitialized) return;
         this.cacheDOM();
-        if (!this.dom.certTab || !this.dom.profileForm) {
-            // На портале может не быть нужной разметки (старая версия
-            // index.html — тогда просто молчим, ничего не инициализируем).
+        if (!this.dom.certTab) {
+            // Старая версия HTML без вкладки «Справки» — молчим.
             return;
         }
         this.bindEvents();
         this.isInitialized = true;
 
-        // Загружаем профиль + семью сразу — они нужны и для вкладки Профиль,
-        // и для pre-flight проверки при заказе справки.
-        this.loadProfile();
-        this.loadFamily();
-
-        // Если при старте юзер оказался на вкладке «Справки» (через hash или
-        // deep-link) — сразу подгружаем список заявок.
+        // Профиль грузим ЛЕНИВО — только при открытии модалки заказа
+        // или при первом клике на вкладку «Справки». Раньше он тянулся
+        // сразу на старте и давал 500 если таблица users ещё без новых
+        // колонок.
         if (document.getElementById('tab-certificates')?.classList.contains('active')) {
             this.loadCerts();
         }
@@ -73,27 +69,27 @@ export const ClientCertificates = {
 
     cacheDOM() {
         this.dom = {
-            // Табы
             certTab: document.getElementById('tab-certificates'),
             certTabBtn: document.querySelector('.tab-btn[data-tab="tab-certificates"]'),
-
-            // Каталог и список заявок
             catalog: document.getElementById('certCatalog'),
             certsList: document.getElementById('certsList'),
             btnRefreshCerts: document.getElementById('btnRefreshCerts'),
 
-            // Модалка заказа ФЛС
+            // Модалка ФЛС
             flcModal: document.getElementById('certFlcModal'),
-            flcForm: document.getElementById('certFlcForm'),
             flcPurpose: document.getElementById('certPurpose'),
             flcFrom: document.getElementById('certPeriodFrom'),
             flcTo: document.getElementById('certPeriodTo'),
             flcContractBlock: document.getElementById('certContractBlock'),
             flcContractInfo: document.getElementById('certContractInfo'),
             flcWarn: document.getElementById('certProfileWarn'),
+            flcOk: document.getElementById('certProfileOk'),
+            flcSubmit: document.getElementById('btnSubmitCertOrder'),
 
-            // Форма персональных данных
-            profileForm: document.getElementById('profileDataForm'),
+            // Секция «Мои данные» — inline-форма профиля
+            profileSection: document.getElementById('certProfileSection'),
+            profileHint: document.getElementById('certProfileHint'),
+            profileForm: document.getElementById('certProfileForm'),
             profFullName: document.getElementById('profFullName'),
             profPosition: document.getElementById('profPosition'),
             profPassSeries: document.getElementById('profPassSeries'),
@@ -102,8 +98,9 @@ export const ClientCertificates = {
             profPassIssuedAt: document.getElementById('profPassIssuedAt'),
             profRegDate: document.getElementById('profRegDate'),
 
-            // Семья
+            // Секция «Семья»
             familyList: document.getElementById('familyList'),
+            familyCount: document.getElementById('certFamilyCount'),
             btnAddFamily: document.getElementById('btnAddFamilyMember'),
             familyModal: document.getElementById('familyMemberModal'),
             familyForm: document.getElementById('familyMemberForm'),
@@ -112,24 +109,20 @@ export const ClientCertificates = {
             familyRole: document.getElementById('familyRole'),
             familyFullName: document.getElementById('familyFullName'),
             familyBirthDate: document.getElementById('familyBirthDate'),
-            familyPassSeries: document.getElementById('familyPassSeries'),
-            familyPassNumber: document.getElementById('familyPassNumber'),
-            familyRegDate: document.getElementById('familyRegDate'),
         };
     },
 
     bindEvents() {
-        // Клик по табу «Справки» — первая ленивая загрузка списка заявок.
+        // Ленивая загрузка списка при переключении на вкладку
         this.dom.certTabBtn?.addEventListener('click', () => {
             if (!this.certsLoaded) this.loadCerts();
         });
 
-        // Клик по карточке каталога — открыть модалку соответствующего типа.
+        // Открытие заказа из каталога
         this.dom.catalog?.addEventListener('click', (e) => {
             const card = e.target.closest('.cert-card[data-cert-type]');
             if (!card) return;
-            const type = card.dataset.certType;
-            if (type === 'flc') this.openFlcModal();
+            if (card.dataset.certType === 'flc') this.openFlcModal();
         });
 
         // Закрытие модалки ФЛС
@@ -138,16 +131,15 @@ export const ClientCertificates = {
                 this.dom.flcModal.classList.remove('open');
             }
         });
-        this.dom.flcForm?.addEventListener('submit', (e) => this.submitFlcOrder(e));
 
+        // Кнопки в модалке
+        this.dom.flcSubmit?.addEventListener('click', () => this.submitFlcOrder());
+        this.dom.profileForm?.addEventListener('submit', (e) => this.saveProfileInline(e));
         this.dom.btnRefreshCerts?.addEventListener('click', () => this.loadCerts());
         this.dom.certsList?.addEventListener('click', (e) => {
             const btn = e.target.closest('[data-cert-download]');
             if (btn) this.downloadCert(Number(btn.dataset.certDownload));
         });
-
-        // Форма профиля
-        this.dom.profileForm?.addEventListener('submit', (e) => this.submitProfile(e));
 
         // Семья
         this.dom.btnAddFamily?.addEventListener('click', () => this.openFamilyModal(null));
@@ -169,14 +161,15 @@ export const ClientCertificates = {
     },
 
     // =====================================================
-    // PROFILE
+    // PROFILE (ленивая загрузка)
     // =====================================================
     async loadProfile() {
         try {
             this.profile = await api.get('/me/profile');
-            this.populateProfileForm();
         } catch (e) {
-            toast('Не удалось загрузить профиль: ' + e.message, 'error');
+            // Нет профиля / 500 — не блокируем вкладку, просто покажем форму.
+            this.profile = null;
+            console.warn('Profile load failed:', e.message);
         }
     },
 
@@ -192,7 +185,7 @@ export const ClientCertificates = {
         if (d.profRegDate)     d.profRegDate.value     = p.registration_date || '';
     },
 
-    async submitProfile(e) {
+    async saveProfileInline(e) {
         e.preventDefault();
         const payload = {
             full_name: this.dom.profFullName.value.trim() || null,
@@ -204,22 +197,75 @@ export const ClientCertificates = {
             registration_date: this.dom.profRegDate.value || null,
         };
         const btn = this.dom.profileForm.querySelector('button[type="submit"]');
-        const originalHtml = btn.innerHTML;
+        const orig = btn.innerHTML;
         btn.disabled = true;
         btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Сохранение…';
         try {
             this.profile = await api.put('/me/profile', payload);
             toast('Данные сохранены', 'success');
+            // После сохранения обновляем баннер + скрываем секцию
+            this.updateModalState();
         } catch (err) {
             toast('Ошибка сохранения: ' + err.message, 'error');
         } finally {
             btn.disabled = false;
-            btn.innerHTML = originalHtml;
+            btn.innerHTML = orig;
+        }
+    },
+
+    // Проверка «всё ли готово для заказа»
+    _missingFields() {
+        const p = this.profile || {};
+        const missing = [];
+        if (!(p.full_name || p.username)) missing.push('ФИО');
+        if (!p.passport_series || !p.passport_number) missing.push('паспорт (серия и номер)');
+        if (!p.registration_date) missing.push('дата регистрации');
+        return missing;
+    },
+
+    updateModalState() {
+        const missing = this._missingFields();
+        const ready = missing.length === 0;
+
+        // Баннеры
+        if (this.dom.flcWarn) {
+            if (ready) {
+                this.dom.flcWarn.style.display = 'none';
+            } else {
+                this.dom.flcWarn.style.display = 'block';
+                this.dom.flcWarn.innerHTML = `
+                    <b><i class="fa-solid fa-circle-exclamation"></i> Заполните данные для заказа</b>
+                    <div style="margin-top:6px;">
+                        Недостающие поля: <b>${missing.map(esc).join(', ')}</b>.
+                        Раскройте секцию «Мои данные» ниже и заполните — потом сможете заказать справку.
+                    </div>
+                `;
+            }
+        }
+        if (this.dom.flcOk) {
+            this.dom.flcOk.style.display = ready ? 'block' : 'none';
+        }
+
+        // Секция профиля: если не готов — открыта; если готов — свёрнута
+        if (this.dom.profileSection) {
+            this.dom.profileSection.open = !ready;
+        }
+        if (this.dom.profileHint) {
+            this.dom.profileHint.textContent = ready
+                ? '— сохранено, можно менять'
+                : '— заполняется один раз';
+        }
+
+        // Кнопка заказа
+        if (this.dom.flcSubmit) {
+            this.dom.flcSubmit.disabled = !ready;
+            this.dom.flcSubmit.style.opacity = ready ? '1' : '0.5';
+            this.dom.flcSubmit.style.cursor = ready ? 'pointer' : 'not-allowed';
         }
     },
 
     // =====================================================
-    // FAMILY
+    // FAMILY (ленивая, внутри модалки)
     // =====================================================
     async loadFamily() {
         if (!this.dom.familyList) return;
@@ -228,39 +274,38 @@ export const ClientCertificates = {
             this.renderFamily();
         } catch (e) {
             this.dom.familyList.innerHTML =
-                `<div style="padding:16px; color:var(--danger-color);">Ошибка: ${esc(e.message)}</div>`;
+                `<div style="padding:10px; color:var(--danger-color); font-size:12px;">Ошибка: ${esc(e.message)}</div>`;
         }
     },
 
     renderFamily() {
+        if (this.dom.familyCount) {
+            this.dom.familyCount.textContent = `— (${this.family.length})`;
+        }
         if (!this.family.length) {
             this.dom.familyList.innerHTML = `
-                <div style="padding:20px; text-align:center; color:var(--text-secondary); font-size:13px;">
-                    Пока нет записей. Добавьте супруга(у), детей или других членов семьи,
-                    чтобы их данные попадали в справки.
+                <div style="padding:10px; color:var(--text-secondary); font-size:12px; font-style:italic;">
+                    Пока никого не добавлено.
                 </div>`;
             return;
         }
         this.dom.familyList.innerHTML = `
-            <div style="display:flex; flex-direction:column; gap:8px;">
+            <div style="display:flex; flex-direction:column; gap:6px;">
                 ${this.family.map(m => `
-                    <div style="display:flex; align-items:center; gap:12px; padding:12px 14px;
-                                background:var(--bg-page); border-radius:8px; border:1px solid var(--border-color);">
-                        <div style="width:40px; height:40px; border-radius:50%; background:var(--primary-bg);
-                                    display:flex; align-items:center; justify-content:center; flex-shrink:0;">
-                            <i class="fa-solid fa-user" style="color:var(--primary-color);"></i>
-                        </div>
+                    <div style="display:flex; align-items:center; gap:10px; padding:8px 10px;
+                                background:var(--bg-page); border-radius:6px; border:1px solid var(--border-color);">
+                        <i class="fa-solid fa-user" style="color:var(--primary-color); font-size:14px;"></i>
                         <div style="flex:1; min-width:0;">
-                            <div style="font-weight:600; color:var(--text-main);">${esc(m.full_name)}</div>
-                            <div style="font-size:12px; color:var(--text-secondary); margin-top:2px;">
+                            <div style="font-weight:600; font-size:13px;">${esc(m.full_name)}</div>
+                            <div style="font-size:11px; color:var(--text-secondary);">
                                 ${esc(ROLE_LABEL[m.role] || m.role)}${m.birth_date ? ' · ' + esc(fmtDate(m.birth_date)) + ' г.р.' : ''}
                             </div>
                         </div>
-                        <button class="icon-btn" data-family-edit="${m.id}" title="Редактировать">
+                        <button class="icon-btn" data-family-edit="${m.id}" title="Редактировать" style="padding:4px;">
                             <i class="fa-solid fa-pen"></i>
                         </button>
                         <button class="icon-btn" data-family-delete="${m.id}" title="Удалить"
-                                style="color:var(--danger-color);">
+                                style="padding:4px; color:var(--danger-color);">
                             <i class="fa-solid fa-trash"></i>
                         </button>
                     </div>
@@ -273,14 +318,11 @@ export const ClientCertificates = {
         const d = this.dom;
         d.familyForm.reset();
         if (member) {
-            d.familyModalTitle.textContent = 'Редактировать члена семьи';
+            d.familyModalTitle.textContent = 'Редактировать';
             d.familyId.value = String(member.id);
             d.familyRole.value = member.role;
             d.familyFullName.value = member.full_name || '';
             d.familyBirthDate.value = member.birth_date || '';
-            d.familyPassSeries.value = member.passport_series || '';
-            d.familyPassNumber.value = member.passport_number || '';
-            d.familyRegDate.value = member.registration_date || '';
         } else {
             d.familyModalTitle.textContent = 'Добавить члена семьи';
             d.familyId.value = '';
@@ -295,20 +337,14 @@ export const ClientCertificates = {
             role: this.dom.familyRole.value,
             full_name: this.dom.familyFullName.value.trim(),
             birth_date: this.dom.familyBirthDate.value || null,
-            passport_series: this.dom.familyPassSeries.value.trim() || null,
-            passport_number: this.dom.familyPassNumber.value.trim() || null,
-            registration_date: this.dom.familyRegDate.value || null,
         };
         const btn = this.dom.familyForm.querySelector('button[type="submit"]');
-        const originalHtml = btn.innerHTML;
+        const orig = btn.innerHTML;
         btn.disabled = true;
-        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Сохранение…';
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
         try {
-            if (id) {
-                await api.put(`/me/family/${id}`, payload);
-            } else {
-                await api.post('/me/family', payload);
-            }
+            if (id) await api.put(`/me/family/${id}`, payload);
+            else await api.post('/me/family', payload);
             toast('Сохранено', 'success');
             this.dom.familyModal.classList.remove('open');
             this.loadFamily();
@@ -316,7 +352,7 @@ export const ClientCertificates = {
             toast('Ошибка: ' + err.message, 'error');
         } finally {
             btn.disabled = false;
-            btn.innerHTML = originalHtml;
+            btn.innerHTML = orig;
         }
     },
 
@@ -332,7 +368,7 @@ export const ClientCertificates = {
     },
 
     // =====================================================
-    // CERTIFICATES — заказ и история
+    // CERTIFICATES
     // =====================================================
     async loadCerts() {
         if (!this.dom.certsList) return;
@@ -401,40 +437,26 @@ export const ClientCertificates = {
     },
 
     // =====================================================
-    // МОДАЛКА ЗАКАЗА ФЛС
+    // МОДАЛКА ЗАКАЗА — теперь включает inline-профиль/семью
     // =====================================================
     async openFlcModal() {
-        this.dom.flcForm.reset();
-        this.dom.flcWarn.style.display = 'none';
-        this.dom.flcContractBlock.style.display = 'none';
+        // Открываем модалку сразу, грузим данные параллельно
+        this.dom.flcModal.classList.add('open');
+        this.dom.flcPurpose.value = '';
+        this.dom.flcFrom.value = '';
+        this.dom.flcTo.value = '';
 
-        // Pre-flight: проверяем профиль и подгружаем договор.
-        // Если чего-то не хватает — показываем красный баннер СРАЗУ в модалке,
-        // вместо того чтобы пустить формы и получить 400 от бекенда.
-        if (!this.profile) {
-            await this.loadProfile();
-        }
-        const p = this.profile || {};
-        const missing = [];
-        if (!p.full_name && !p.username) missing.push('ФИО');
-        if (!p.passport_series || !p.passport_number) missing.push('паспорт (серия и номер)');
-        if (!p.registration_date) missing.push('дата регистрации');
-
-        if (missing.length) {
-            this.dom.flcWarn.style.display = 'block';
-            this.dom.flcWarn.innerHTML = `
-                <b><i class="fa-solid fa-circle-exclamation"></i> Заполните профиль перед заказом</b>
-                <div style="margin-top:6px;">
-                    Недостающие данные: <b>${missing.map(esc).join(', ')}</b>.
-                    Перейдите на вкладку «Профиль», заполните и вернитесь.
-                </div>
-            `;
-        }
-
-        // Показываем инфо о договоре найма, если есть.
+        // Грузим профиль + семью + договор параллельно
+        const tasks = [this.loadProfile(), this.loadFamily()];
         try {
-            this.contracts = await api.get('/me/rental-contracts');
-        } catch { this.contracts = []; }
+            tasks.push(api.get('/me/rental-contracts').then(r => { this.contracts = r; }).catch(() => {}));
+        } catch {}
+        await Promise.all(tasks);
+
+        this.populateProfileForm();
+        this.updateModalState();
+
+        // Договор найма — если есть активный, показываем инфо-блок
         const active = this.contracts.find(c => c.is_active) || this.contracts[0];
         if (active) {
             this.dom.flcContractBlock.style.display = 'block';
@@ -450,50 +472,48 @@ export const ClientCertificates = {
                 Поля «дата/№ договора» в справке останутся пустыми — админ может дозаполнить.
             `;
         }
-
-        this.dom.flcModal.classList.add('open');
     },
 
-    async submitFlcOrder(e) {
-        e.preventDefault();
+    async submitFlcOrder() {
+        // Финальная проверка
+        if (this._missingFields().length > 0) {
+            toast('Сначала заполните «Мои данные»', 'warning');
+            this.updateModalState();
+            this.dom.profileSection.open = true;
+            return;
+        }
+
+        const purpose = this.dom.flcPurpose.value.trim();
+        if (!purpose) return toast('Укажите куда предоставить справку', 'error');
+
         const payload = {
             type: 'flc',
             period_from: this.dom.flcFrom.value || null,
             period_to: this.dom.flcTo.value || null,
-            purpose: this.dom.flcPurpose.value.trim(),
+            purpose,
         };
-        if (!payload.purpose) return toast('Укажите куда предоставить справку', 'error');
-
-        const btn = this.dom.flcForm.querySelector('button[type="submit"]');
-        const originalHtml = btn.innerHTML;
+        const btn = this.dom.flcSubmit;
+        const orig = btn.innerHTML;
         btn.disabled = true;
-        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Генерируем PDF…';
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Генерация PDF…';
         try {
             const cert = await api.post('/me/certificates', payload);
             this.dom.flcModal.classList.remove('open');
             toast('Заявка принята — PDF готов', 'success');
             await this.loadCerts();
-            // Автоматически скачиваем — чтобы жилец сразу получил документ.
-            if (cert.has_pdf) {
-                this.downloadCert(cert.id);
-            }
+            if (cert.has_pdf) this.downloadCert(cert.id);
         } catch (err) {
-            // Если backend вернул структурированный detail с missing_fields
-            // (профиль не заполнен) — показываем в баннере модалки.
             const data = err.data;
             if (data?.detail?.missing_fields) {
-                this.dom.flcWarn.style.display = 'block';
-                this.dom.flcWarn.innerHTML = `
-                    <b><i class="fa-solid fa-circle-exclamation"></i> ${esc(data.detail.message)}</b>
-                    <div style="margin-top:6px;">
-                        Не заполнено: <b>${data.detail.missing_fields.map(esc).join(', ')}</b>
-                    </div>`;
+                toast('Не заполнено: ' + data.detail.missing_fields.join(', '), 'error');
+                this.updateModalState();
+                this.dom.profileSection.open = true;
             } else {
                 toast('Ошибка: ' + err.message, 'error');
             }
         } finally {
             btn.disabled = false;
-            btn.innerHTML = originalHtml;
+            btn.innerHTML = orig;
         }
     },
 };

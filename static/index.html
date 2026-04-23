@@ -252,51 +252,167 @@
             </div>
         </div>
 
-        <!-- МОДАЛКА: ЗАКАЗ СПРАВКИ ФЛС -->
+        <!-- МОДАЛКА: ЗАКАЗ СПРАВКИ ФЛС.
+             Структура многосекционная:
+               1) Баннер «нужно заполнить» — показывается если профиля нет
+               2) «Мои данные» (паспорт, ФИО, регистрация) — раскрыта если пусто
+               3) «Семья» — необязательна, сворачиваемая
+               4) «Заказ» — всегда внизу, кнопка активируется когда профиль готов
+             После первого заказа поля профиля не показываются —
+             автоматически сворачиваются. -->
         <div id="certFlcModal" class="modal-overlay">
-            <div class="modal-window" style="width:560px;">
+            <div class="modal-window" style="width:620px;">
                 <div class="modal-header" style="background:#eff6ff; border-bottom:1px solid #bfdbfe;">
                     <h3 style="color:#1d4ed8;">
                         <i class="fa-solid fa-receipt"></i> Заказ справки: выписка из ФЛС
                     </h3>
                     <button class="close-btn close-icon" data-cert-close>&times;</button>
                 </div>
-                <form id="certFlcForm" class="styled-form">
-                    <div class="modal-form" style="padding-top:16px;">
-                        <!-- Предпроверка профиля — если каких-то данных нет,
-                             показываем красный баннер со списком недостающего. -->
-                        <div id="certProfileWarn" style="display:none; padding:12px 14px; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; color:#991b1b; font-size:13px; margin-bottom:14px;">
+                <div class="modal-form" style="padding-top:14px;">
+                    <!-- Предпроверка профиля -->
+                    <div id="certProfileWarn" style="display:none; padding:12px 14px; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; color:#991b1b; font-size:13px; margin-bottom:14px;">
+                    </div>
+                    <div id="certProfileOk" style="display:none; padding:10px 14px; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; color:#065f46; font-size:13px; margin-bottom:14px;">
+                        <i class="fa-solid fa-circle-check"></i> Ваши данные сохранены — можно сразу заказывать.
+                    </div>
+
+                    <!-- СЕКЦИЯ «МОИ ДАННЫЕ» (inline форма профиля) -->
+                    <details id="certProfileSection" class="cert-section">
+                        <summary style="cursor:pointer; padding:10px 12px; background:var(--bg-page); border-radius:8px; font-weight:600; font-size:14px; color:#7c3aed;">
+                            <i class="fa-solid fa-id-card"></i> Мои данные (паспорт, ФИО)
+                            <span id="certProfileHint" style="font-weight:normal; color:var(--text-secondary); font-size:12px; margin-left:6px;">— заполняется один раз</span>
+                        </summary>
+                        <form id="certProfileForm" class="styled-form" style="padding:14px 4px 4px;">
+                            <div class="form-grid-2 mb-3">
+                                <div class="form-group">
+                                    <label>ФИО <span style="color:var(--danger-color);">*</span></label>
+                                    <input type="text" id="profFullName" placeholder="Иванов Иван Иванович" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>Должность</label>
+                                    <input type="text" id="profPosition" placeholder="Например: ведущий специалист">
+                                </div>
+                            </div>
+                            <h4 style="margin:8px 0; font-size:12px; color:var(--text-secondary); text-transform:uppercase;">Паспорт</h4>
+                            <div class="form-grid-2 mb-3">
+                                <div class="form-group">
+                                    <label>Серия <span style="color:var(--danger-color);">*</span></label>
+                                    <input type="text" id="profPassSeries" placeholder="4500" maxlength="20" inputmode="numeric">
+                                </div>
+                                <div class="form-group">
+                                    <label>Номер <span style="color:var(--danger-color);">*</span></label>
+                                    <input type="text" id="profPassNumber" placeholder="123456" maxlength="20" inputmode="numeric">
+                                </div>
+                            </div>
+                            <div class="form-group mb-3">
+                                <label>Кем выдан</label>
+                                <input type="text" id="profPassIssuedBy" placeholder="УФМС России по г. Москве">
+                            </div>
+                            <div class="form-grid-2 mb-3">
+                                <div class="form-group">
+                                    <label>Дата выдачи</label>
+                                    <input type="date" id="profPassIssuedAt">
+                                </div>
+                                <div class="form-group">
+                                    <label>Дата регистрации <span style="color:var(--danger-color);">*</span></label>
+                                    <input type="date" id="profRegDate" required>
+                                </div>
+                            </div>
+                            <div style="text-align:right;">
+                                <button type="submit" class="action-btn primary-btn" style="padding:6px 14px; font-size:13px;">
+                                    <i class="fa-solid fa-floppy-disk"></i> Сохранить
+                                </button>
+                            </div>
+                        </form>
+                    </details>
+
+                    <!-- СЕКЦИЯ «СЕМЬЯ» — необязательная -->
+                    <details class="cert-section" style="margin-top:10px;">
+                        <summary style="cursor:pointer; padding:10px 12px; background:var(--bg-page); border-radius:8px; font-weight:600; font-size:14px; color:#10b981;">
+                            <i class="fa-solid fa-people-group"></i> Состав семьи <span id="certFamilyCount" style="font-weight:normal; font-size:12px; color:var(--text-secondary);">— (0)</span>
+                            <span style="font-weight:normal; color:var(--text-secondary); font-size:12px; margin-left:6px;">— необязательно</span>
+                        </summary>
+                        <div style="padding:10px 4px;">
+                            <p class="hint-text" style="font-size:12px; margin:0 0 10px;">
+                                Для ФЛС необязательно, но для некоторых справок нужен состав семьи.
+                            </p>
+                            <div id="familyList"></div>
+                            <button type="button" id="btnAddFamilyMember" class="action-btn success-btn" style="padding:5px 12px; font-size:12px; margin-top:6px;">
+                                <i class="fa-solid fa-plus"></i> Добавить
+                            </button>
                         </div>
+                    </details>
 
-                        <p class="hint-text" style="font-size:13px; margin:0 0 14px;">
-                            Мы автоматически подставим ваше ФИО, паспортные данные и номер
-                            активного договора найма. Вам нужно указать только <b>период</b>
-                            и <b>куда</b> предоставить справку.
-                        </p>
+                    <!-- СЕКЦИЯ «ЗАКАЗ» — всегда открыта, но кнопка disabled
+                         пока профиль не заполнен -->
+                    <div style="margin-top:16px; padding-top:14px; border-top:1px dashed var(--border-color);">
+                        <h4 style="margin:0 0 10px; font-size:14px; color:#1d4ed8;">
+                            <i class="fa-solid fa-paper-plane"></i> Параметры заказа
+                        </h4>
+                        <form id="certFlcForm" class="styled-form">
+                            <div class="form-group mb-3">
+                                <label>Период <span style="color:var(--text-secondary); font-weight:normal;">(опционально)</span></label>
+                                <div class="form-grid-2">
+                                    <input type="date" id="certPeriodFrom" placeholder="с">
+                                    <input type="date" id="certPeriodTo" placeholder="по">
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Куда предоставить <span style="color:var(--danger-color);">*</span></label>
+                                <input type="text" id="certPurpose" required minlength="2" maxlength="500"
+                                       placeholder="Например: в школу №15, в пенсионный фонд, в банк ВТБ">
+                            </div>
+                            <div class="form-group" id="certContractBlock" style="display:none;">
+                                <label>Активный договор найма</label>
+                                <div id="certContractInfo" style="padding:10px 12px; background:var(--bg-page); border-radius:8px; font-size:13px; color:var(--text-secondary);"></div>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="action-btn secondary-btn" data-cert-close>Отмена</button>
+                    <button type="button" id="btnSubmitCertOrder" class="action-btn primary-btn">
+                        <i class="fa-solid fa-file-pdf"></i> Заказать и получить PDF
+                    </button>
+                </div>
+            </div>
+        </div>
 
-                        <div class="form-group mb-3">
-                            <label>Период <span style="color:var(--text-secondary); font-weight:normal;">(опционально — если не указать, возьмём все месяцы)</span></label>
-                            <div class="form-grid-2">
-                                <input type="date" id="certPeriodFrom" placeholder="с">
-                                <input type="date" id="certPeriodTo" placeholder="по">
+        <!-- МОДАЛКА: добавить/редактировать члена семьи — живёт внутри
+             tab-certificates, открывается из inline-секции «Семья». -->
+        <div id="familyMemberModal" class="modal-overlay">
+            <div class="modal-window" style="width:460px;">
+                <div class="modal-header">
+                    <h3 id="familyModalTitle">Добавить члена семьи</h3>
+                    <button class="close-btn close-icon" data-family-close>&times;</button>
+                </div>
+                <form id="familyMemberForm" class="styled-form">
+                    <input type="hidden" id="familyMemberId">
+                    <div class="modal-form" style="padding-top:16px;">
+                        <div class="form-grid-2 mb-3">
+                            <div class="form-group">
+                                <label>Отношение</label>
+                                <select id="familyRole" required>
+                                    <option value="spouse">Супруг(а)</option>
+                                    <option value="child">Ребёнок</option>
+                                    <option value="parent">Родитель</option>
+                                    <option value="other">Другое</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Дата рождения</label>
+                                <input type="date" id="familyBirthDate">
                             </div>
                         </div>
-
-                        <div class="form-group">
-                            <label>Куда предоставить <span style="color:var(--danger-color);">*</span></label>
-                            <input type="text" id="certPurpose" required minlength="2" maxlength="500"
-                                   placeholder="Например: в школу №15, в пенсионный фонд, в банк ВТБ">
-                        </div>
-
-                        <div class="form-group" id="certContractBlock" style="display:none;">
-                            <label>Активный договор найма</label>
-                            <div id="certContractInfo" style="padding:10px 12px; background:var(--bg-page); border-radius:8px; font-size:13px; color:var(--text-secondary);"></div>
+                        <div class="form-group mb-3">
+                            <label>ФИО полностью <span style="color:var(--danger-color);">*</span></label>
+                            <input type="text" id="familyFullName" required minlength="2" placeholder="Иванова Анна Петровна">
                         </div>
                     </div>
                     <div class="modal-footer">
-                        <button type="button" class="action-btn secondary-btn" data-cert-close>Отмена</button>
+                        <button type="button" class="action-btn secondary-btn" data-family-close>Отмена</button>
                         <button type="submit" class="action-btn primary-btn">
-                            <i class="fa-solid fa-file-pdf"></i> Заказать и получить PDF
+                            <i class="fa-solid fa-floppy-disk"></i> Сохранить
                         </button>
                     </div>
                 </form>
@@ -330,133 +446,11 @@
             </div>
         </div>
 
-        <!-- Персональные данные — нужны для заказа справок.
-             Жилец заполняет сам, админ может корректировать. -->
-        <div class="card mt-20">
-            <div class="card-header">
-                <h3><i class="fa-solid fa-id-card" style="color:#7c3aed; margin-right:8px;"></i> Персональные данные</h3>
-                <div class="header-controls">
-                    <span style="font-size:12px; color:var(--text-secondary);">Нужны для справок</span>
-                </div>
-            </div>
-            <form id="profileDataForm" class="styled-form">
-                <div class="form-grid-2 mb-3">
-                    <div class="form-group">
-                        <label>ФИО <span style="color:var(--danger-color);">*</span></label>
-                        <input type="text" id="profFullName" placeholder="Иванов Иван Иванович" required>
-                    </div>
-                    <div class="form-group">
-                        <label>Должность</label>
-                        <input type="text" id="profPosition" placeholder="Например: ведущий специалист">
-                    </div>
-                </div>
-                <h4 style="margin:12px 0; font-size:13px; color:var(--text-secondary); text-transform:uppercase;">Паспорт</h4>
-                <div class="form-grid-2 mb-3">
-                    <div class="form-group">
-                        <label>Серия</label>
-                        <input type="text" id="profPassSeries" placeholder="4500" maxlength="20" inputmode="numeric">
-                    </div>
-                    <div class="form-group">
-                        <label>Номер</label>
-                        <input type="text" id="profPassNumber" placeholder="123456" maxlength="20" inputmode="numeric">
-                    </div>
-                </div>
-                <div class="form-group mb-3">
-                    <label>Кем и когда выдан</label>
-                    <input type="text" id="profPassIssuedBy" placeholder="УФМС России по г. Москве">
-                </div>
-                <div class="form-grid-2 mb-3">
-                    <div class="form-group">
-                        <label>Дата выдачи паспорта</label>
-                        <input type="date" id="profPassIssuedAt">
-                    </div>
-                    <div class="form-group">
-                        <label>Дата регистрации <span style="color:var(--danger-color);">*</span></label>
-                        <input type="date" id="profRegDate">
-                    </div>
-                </div>
-                <div style="text-align:right;">
-                    <button type="submit" class="action-btn primary-btn">
-                        <i class="fa-solid fa-floppy-disk"></i> Сохранить данные
-                    </button>
-                </div>
-            </form>
-        </div>
+        <!-- Секции «Персональные данные» и «Семья» переехали в модалку
+             заказа справки (tab-certificates). Жилец заполняет их один раз
+             при первом заказе — так проще и не загружает «Профиль» полями,
+             которые нужны только для справок. -->
 
-        <!-- Семья -->
-        <div class="card mt-20">
-            <div class="card-header">
-                <h3><i class="fa-solid fa-people-group" style="color:#10b981; margin-right:8px;"></i> Семья</h3>
-                <div class="header-controls">
-                    <button type="button" id="btnAddFamilyMember" class="action-btn success-btn" style="padding:6px 12px; font-size:12px;">
-                        <i class="fa-solid fa-plus"></i> Добавить
-                    </button>
-                </div>
-            </div>
-            <p class="hint-text" style="font-size:13px; margin:0 0 14px;">
-                Супруг(а) и дети — их данные прикрепляются к справкам, где нужен состав семьи.
-            </p>
-            <div id="familyList">
-                <div style="padding:20px; text-align:center; color:var(--text-secondary);">
-                    <i class="fa-solid fa-spinner fa-spin"></i> Загрузка…
-                </div>
-            </div>
-        </div>
-
-        <!-- МОДАЛКА: добавить / редактировать члена семьи -->
-        <div id="familyMemberModal" class="modal-overlay">
-            <div class="modal-window" style="width:460px;">
-                <div class="modal-header">
-                    <h3 id="familyModalTitle">Добавить члена семьи</h3>
-                    <button class="close-btn close-icon" data-family-close>&times;</button>
-                </div>
-                <form id="familyMemberForm" class="styled-form">
-                    <input type="hidden" id="familyMemberId">
-                    <div class="modal-form" style="padding-top:16px;">
-                        <div class="form-grid-2 mb-3">
-                            <div class="form-group">
-                                <label>Отношение</label>
-                                <select id="familyRole" required>
-                                    <option value="spouse">Супруг(а)</option>
-                                    <option value="child">Ребёнок</option>
-                                    <option value="parent">Родитель</option>
-                                    <option value="other">Другое</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label>Дата рождения</label>
-                                <input type="date" id="familyBirthDate">
-                            </div>
-                        </div>
-                        <div class="form-group mb-3">
-                            <label>ФИО полностью <span style="color:var(--danger-color);">*</span></label>
-                            <input type="text" id="familyFullName" required minlength="2" placeholder="Иванова Анна Петровна">
-                        </div>
-                        <h4 style="margin:10px 0; font-size:12px; color:var(--text-secondary); text-transform:uppercase;">Паспорт / регистрация (опционально)</h4>
-                        <div class="form-grid-2 mb-3">
-                            <div class="form-group">
-                                <label>Серия</label>
-                                <input type="text" id="familyPassSeries" maxlength="20">
-                            </div>
-                            <div class="form-group">
-                                <label>Номер</label>
-                                <input type="text" id="familyPassNumber" maxlength="20">
-                            </div>
-                        </div>
-                        <div class="form-group">
-                            <label>Дата регистрации</label>
-                            <input type="date" id="familyRegDate">
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="action-btn secondary-btn" data-family-close>Отмена</button>
-                        <button type="submit" class="action-btn primary-btn">
-                            <i class="fa-solid fa-floppy-disk"></i> Сохранить
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
 
         <!-- ============================================== -->
         <!-- МОБИЛЬНОЕ ПРИЛОЖЕНИЕ                            -->
