@@ -574,8 +574,123 @@ def sync_gsheets(
             stats["errors"] += 1
 
     db.commit()
+
+    # Сразу после импорта продвигаем auto_approved → MeterReading.
+    # Без этого 1000+ строк висят в статусе "автоутверждено" и не попадают
+    # в сводку / расчёты, потому что фактического MeterReading нет.
+    try:
+        promoted = promote_auto_approved_rows(db)
+        stats["promoted_readings"] = promoted.get("created", 0)
+        stats["promote_skipped"]   = promoted.get("skipped", 0)
+    except Exception as e:
+        logger.warning(f"[GSHEETS] promote_auto_approved_rows failed: {e}")
+        stats["promoted_readings"] = 0
+
     logger.info(f"[GSHEETS] Sync finished: {stats}")
     return stats
+
+
+# =======================================================================
+# PROMOTE AUTO_APPROVED → MeterReading
+# =======================================================================
+# Gsheets помечает строки status="auto_approved", но сам по себе этот
+# статус ничего не создаёт в таблице readings. Раньше админ должен был
+# кликать «утвердить» вручную, и тысячи строк просто лежали невидимыми
+# для отчётности. Эта функция обходит все auto_approved с reading_id=NULL
+# и создаёт под них MeterReading (минимальный, total=0 — расчёт подхватит
+# потом пересчёт периода). Идемпотентно по (user_id, period_id).
+
+def promote_auto_approved_rows(db: Session) -> dict:
+    """Продвигает GSheetsImportRow со статусом auto_approved в MeterReading.
+
+    Возвращает {'created': N, 'skipped': M}.
+    """
+    from decimal import Decimal as _Dec
+    from datetime import datetime as _dt
+    from app.modules.utility.models import (
+        BillingPeriod, MeterReading, GSheetsImportRow,
+    )
+
+    # Активный период — показания привязываются к нему.
+    active_period = db.query(BillingPeriod).filter(
+        BillingPeriod.is_active.is_(True)
+    ).first()
+    if not active_period:
+        return {"created": 0, "skipped": 0, "reason": "no_active_period"}
+
+    # Все auto_approved без reading_id
+    rows = db.query(GSheetsImportRow).filter(
+        GSheetsImportRow.status == "auto_approved",
+        GSheetsImportRow.reading_id.is_(None),
+        GSheetsImportRow.matched_user_id.is_not(None),
+        GSheetsImportRow.hot_water.is_not(None),
+        GSheetsImportRow.cold_water.is_not(None),
+    ).all()
+
+    if not rows:
+        return {"created": 0, "skipped": 0}
+
+    created = 0
+    skipped = 0
+
+    for row in rows:
+        user = db.query(User).filter(User.id == row.matched_user_id).first()
+        if not user or user.is_deleted or not user.room_id:
+            skipped += 1
+            continue
+
+        # Холостяк (per_capita) не подаёт показания — пропускаем.
+        if getattr(user, "billing_mode", "by_meter") == "per_capita":
+            skipped += 1
+            continue
+
+        # Защита от дублей: в этом периоде уже может быть утверждённое.
+        dup = db.query(MeterReading).filter(
+            MeterReading.user_id == user.id,
+            MeterReading.period_id == active_period.id,
+            MeterReading.is_approved.is_(True),
+        ).first()
+        if dup:
+            # Прикрепим row к существующему reading и закроем строку
+            row.reading_id = dup.id
+            row.processed_at = _dt.utcnow()
+            skipped += 1
+            continue
+
+        # Последнее показание электричества по жильцу (в gsheets нет колонки
+        # электричества — повторяем предыдущее значение, «расход 0»).
+        prev_elect = db.query(MeterReading.electricity).filter(
+            MeterReading.user_id == user.id,
+            MeterReading.is_approved.is_(True),
+        ).order_by(MeterReading.created_at.desc()).first()
+        electricity_value = (
+            prev_elect[0] if prev_elect and prev_elect[0] is not None else _Dec("0")
+        )
+
+        reading = MeterReading(
+            user_id=user.id,
+            room_id=user.room_id,
+            period_id=active_period.id,
+            hot_water=row.hot_water,
+            cold_water=row.cold_water,
+            electricity=electricity_value,
+            is_approved=True,
+            anomaly_flags="GSHEETS_AUTO",
+            anomaly_score=0,
+            total_cost=_Dec("0"),
+            total_209=_Dec("0"),
+            total_205=_Dec("0"),
+        )
+        db.add(reading)
+        db.flush()
+
+        row.reading_id = reading.id
+        row.processed_at = _dt.utcnow()
+        created += 1
+
+    db.commit()
+    logger.info(f"[GSHEETS-PROMOTE] created={created}, skipped={skipped}")
+    return {"created": created, "skipped": skipped}
 
 
 # =======================================================================

@@ -121,6 +121,30 @@ async def trigger_sync(
 
 
 # =========================================================================
+# PROMOTE AUTO-APPROVED — продвижение auto_approved в реальные MeterReading
+# =========================================================================
+# Обычно это делается автоматически в конце sync, но если старые данные
+# ещё лежат без reading_id — этот endpoint можно дёрнуть вручную из UI.
+@router.post("/promote-auto-approved")
+async def trigger_promote_auto_approved(
+    current_user: User = Depends(get_current_user),
+):
+    """Синхронно (через celery sync-session) создаёт MeterReading для всех
+    GSheetsImportRow со статусом auto_approved и reading_id=NULL.
+    Возвращает кол-во созданных / пропущенных."""
+    require_admin(current_user)
+
+    # sync-сессия живёт в tasks.py (общая для celery-задач и
+    # ad-hoc sync-операций из endpoint'ов).
+    from app.modules.utility.tasks import sync_db_session
+    from app.modules.utility.services.gsheets_sync import promote_auto_approved_rows
+
+    with sync_db_session() as db:
+        result = promote_auto_approved_rows(db)
+    return result
+
+
+# =========================================================================
 # STATS
 # =========================================================================
 @router.get("/stats")

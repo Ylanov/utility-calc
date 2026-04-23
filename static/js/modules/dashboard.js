@@ -84,10 +84,41 @@ export const DashboardModule = {
             btnPrev: document.getElementById('btnAuditPrev'),
             btnNext: document.getElementById('btnAuditNext'),
             pageInfo: document.getElementById('auditPageInfo'),
+            // Свёртывание журнала
+            btnHideAudit: document.getElementById('btnHideAudit'),
+            btnShowAudit: document.getElementById('btnShowAudit'),
+            dashboardLayout: document.querySelector('.dashboard-layout'),
         };
     },
 
+    // Состояние «журнал скрыт» сохраняем в localStorage — чтобы админ
+    // при следующей загрузке не видел его снова, если скрыл намеренно.
+    AUDIT_HIDDEN_KEY: 'dashboard_audit_hidden',
+
+    applyAuditHiddenState() {
+        if (!this.dom.dashboardLayout) return;
+        const hidden = localStorage.getItem(this.AUDIT_HIDDEN_KEY) === '1';
+        this.dom.dashboardLayout.classList.toggle('audit-hidden', hidden);
+    },
+
+    setAuditHidden(hidden) {
+        if (!this.dom.dashboardLayout) return;
+        this.dom.dashboardLayout.classList.toggle('audit-hidden', hidden);
+        localStorage.setItem(this.AUDIT_HIDDEN_KEY, hidden ? '1' : '0');
+        // Если только что раскрыли — перечитаем журнал, т.к. данные могли
+        // устареть за время пока он был свёрнут.
+        if (!hidden) {
+            this.auditState.page = 1;
+            this.loadAuditLog();
+        }
+    },
+
     bindEvents() {
+        // Применяем сохранённое состояние (скрыт/показан) при первом биндинге.
+        this.applyAuditHiddenState();
+        this.dom.btnHideAudit?.addEventListener('click', () => this.setAuditHidden(true));
+        this.dom.btnShowAudit?.addEventListener('click', () => this.setAuditHidden(false));
+
         if (this.dom.btnRefresh) this.dom.btnRefresh.addEventListener('click', () => {
             this.loadKPI();
             this.loadGsheetsWidget();

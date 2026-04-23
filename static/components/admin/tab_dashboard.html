@@ -267,17 +267,24 @@
 
         </section>
 
+        <!-- Компактная кнопка показать журнал — появляется когда aside свёрнут.
+             Абсолютно позиционирована в верхнем правом углу dashboard-layout. -->
+        <button id="btnShowAudit" class="action-btn secondary-btn audit-show-btn" style="display:none;" title="Показать журнал действий">
+            <i class="fa-solid fa-scroll"></i> Журнал
+        </button>
+
         <!-- =========================================
              БОКОВАЯ ПАНЕЛЬ: ЖУРНАЛ ДЕЙСТВИЙ (справа)
              ========================================= -->
         <aside class="dashboard-side">
             <div class="card">
                 <div class="card-header" style="flex-direction:column; align-items:stretch; gap:12px; padding-bottom:14px; margin-bottom:14px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center;">
-                        <h3 style="margin:0; font-size:15px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:4px;">
+                        <h3 style="margin:0; font-size:15px; flex:1; min-width:0;">
                             <i class="fa-solid fa-scroll" style="color:#6366f1; margin-right:8px;"></i> Журнал действий
                         </h3>
                         <button id="btnRefreshAudit" class="icon-btn" title="Обновить"><i class="fa-solid fa-rotate-right"></i></button>
+                        <button id="btnHideAudit" class="icon-btn" title="Скрыть журнал"><i class="fa-solid fa-xmark"></i></button>
                     </div>
                     <div style="display:flex; flex-direction:column; gap:8px;">
                         <select id="auditFilterAction" style="width:100%; font-size:12px;">

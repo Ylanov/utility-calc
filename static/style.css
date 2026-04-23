@@ -281,6 +281,30 @@ a:hover {
     grid-template-columns: minmax(0, 1fr) var(--side-panel-width);
     gap: 24px;
     align-items: start;
+    position: relative;
+}
+
+/* Свёрнутое состояние журнала — растягиваем основную колонку на всю ширину.
+   Состояние переключает JS (dashboard.js), сохраняется в localStorage, чтобы
+   журнал оставался скрыт между перезагрузками. */
+.dashboard-layout.audit-hidden {
+    grid-template-columns: 1fr;
+}
+.dashboard-layout.audit-hidden .dashboard-side {
+    display: none;
+}
+
+/* Кнопка «Журнал» в углу, появляется только когда aside свёрнут. */
+.audit-show-btn {
+    position: absolute;
+    top: 0;
+    right: 0;
+    padding: 6px 12px !important;
+    font-size: 12px !important;
+    z-index: 2;
+}
+.dashboard-layout.audit-hidden #btnShowAudit {
+    display: inline-flex !important;
 }
 
 .dashboard-main {
