@@ -123,7 +123,7 @@ async def get_recalc_job(job_id: int, db: AsyncSession = Depends(get_db)):
     return _job_to_dict(job)
 
 
-@router.post("/recalc-jobs/{job_id}/apply", dependencies=[Depends(allow_admin)])
+@router.post("/recalc-jobs/{job_id}/apply", dependencies=[Depends(allow_management)])
 async def apply_recalc(
     job_id: int,
     db: AsyncSession = Depends(get_db),

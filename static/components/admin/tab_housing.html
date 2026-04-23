@@ -106,6 +106,79 @@
         </div>
     </div>
 
+    <!-- Hub-модалка действий по комнате — аналог userActionsModal для жильцов.
+         Открывается по клику на номер комнаты; удаление остаётся в строке
+         отдельной иконкой (так же, как в «Жильцах»). -->
+    <div id="roomActionsModal" class="modal-overlay">
+        <div class="modal-window" style="width: 520px;">
+            <div class="modal-header" style="background:#eef2ff; border-bottom:1px solid #c7d2fe;">
+                <h3 style="color:#4338ca;">
+                    <i class="fa-solid fa-door-open"></i>
+                    <span id="roomHubTitle">Комната</span>
+                </h3>
+                <button class="close-btn close-icon" data-room-hub-close>&times;</button>
+            </div>
+            <div class="modal-form" style="padding:16px 20px;">
+                <div id="roomHubSummary" style="background:var(--bg-page); border-radius:10px; padding:12px 14px; margin-bottom:16px; font-size:13px;">
+                    <!-- заполняется JS: адрес, площадь, вместимость, счётчики -->
+                </div>
+
+                <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap:10px;">
+                    <button type="button" class="room-hub-btn" data-room-action="edit"
+                            style="display:flex; flex-direction:column; align-items:flex-start; gap:6px; padding:14px; border:1px solid var(--border-color); border-radius:10px; background:var(--bg-card); cursor:pointer; text-align:left;">
+                        <div style="display:flex; align-items:center; gap:10px; width:100%;">
+                            <div style="width:36px; height:36px; border-radius:8px; background:#eff6ff; color:#1d4ed8; display:flex; align-items:center; justify-content:center;">
+                                <i class="fa-solid fa-pen"></i>
+                            </div>
+                            <strong style="font-size:14px;">Редактировать</strong>
+                        </div>
+                        <div style="font-size:11px; color:var(--text-secondary); line-height:1.4;">
+                            Общежитие, номер, площадь, вместимость, серийники.
+                        </div>
+                    </button>
+
+                    <button type="button" class="room-hub-btn" data-room-action="initial"
+                            style="display:flex; flex-direction:column; align-items:flex-start; gap:6px; padding:14px; border:1px solid var(--border-color); border-radius:10px; background:var(--bg-card); cursor:pointer; text-align:left;">
+                        <div style="display:flex; align-items:center; gap:10px; width:100%;">
+                            <div style="width:36px; height:36px; border-radius:8px; background:#eef2ff; color:#4338ca; display:flex; align-items:center; justify-content:center;">
+                                <i class="fa-solid fa-gauge-simple-high"></i>
+                            </div>
+                            <strong style="font-size:14px;">Начальные показания</strong>
+                        </div>
+                        <div style="font-size:11px; color:var(--text-secondary); line-height:1.4;">
+                            Зафиксировать стартовые значения счётчиков (baseline).
+                        </div>
+                    </button>
+
+                    <button type="button" class="room-hub-btn" data-room-action="meter"
+                            style="display:flex; flex-direction:column; align-items:flex-start; gap:6px; padding:14px; border:1px solid var(--border-color); border-radius:10px; background:var(--bg-card); cursor:pointer; text-align:left; grid-column: span 2;">
+                        <div style="display:flex; align-items:center; gap:10px; width:100%;">
+                            <div style="width:36px; height:36px; border-radius:8px; background:#f0fdf4; color:#166534; display:flex; align-items:center; justify-content:center;">
+                                <i class="fa-solid fa-arrows-rotate"></i>
+                            </div>
+                            <strong style="font-size:14px;">Замена счётчика</strong>
+                        </div>
+                        <div style="font-size:11px; color:var(--text-secondary); line-height:1.4;">
+                            Закрыть старый счётчик, установить новый с корректным серийником и начальными показаниями.
+                        </div>
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="action-btn secondary-btn" data-room-hub-close>Закрыть</button>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        .room-hub-btn:hover {
+            border-color: var(--primary-color) !important;
+            box-shadow: 0 4px 10px rgba(26,115,232,0.1);
+            transform: translateY(-1px);
+            transition: all .15s ease;
+        }
+    </style>
+
     <!-- МОДАЛКА: ДОБАВЛЕНИЕ / РЕДАКТИРОВАНИЕ ПОМЕЩЕНИЯ -->
     <div id="roomModal" class="modal-overlay">
         <div class="modal-window" style="width: 600px;">

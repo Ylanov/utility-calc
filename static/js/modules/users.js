@@ -299,9 +299,33 @@ export const UsersModule = {
                     ? el('span', { title: 'Койко-место (фикс. сумма)', class: 'chip', style: { background: '#ede9fe', color: '#5b21b6', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '600' } }, '🛏 Койко')
                     : el('span', { title: 'По счётчикам', class: 'chip', style: { background: '#d1fae5', color: '#065f46', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '600' } }, '📊 Счёт.');
 
+                // Кликабельная ячейка с ФИО — открывает Hub-модалку со всеми
+                // действиями (редактирование / переезд / договоры). Раньше
+                // эти три действия были отдельными иконками в каждой строке,
+                // что визуально перегружало таблицу. Оставлена только иконка
+                // удаления — её выносить в модалку опасно (случайный клик
+                // в «хабе» с горячей клавиатурой может удалить жильца).
+                const nameCell = el('td', {},
+                    el('button', {
+                        class: 'link-btn',
+                        title: 'Открыть действия',
+                        onclick: () => this.openActionsHub(user),
+                        style: {
+                            background: 'transparent',
+                            border: 'none',
+                            padding: '0',
+                            fontWeight: '600',
+                            color: 'var(--primary-color)',
+                            cursor: 'pointer',
+                            textAlign: 'left',
+                            fontSize: '14px',
+                        },
+                    }, user.username)
+                );
+
                 return el('tr', { class: 'hover:bg-gray-50 transition-colors' },
                     el('td', { class: 'text-gray-500 text-sm' }, `#${user.id}`),
-                    el('td', {}, el('div', { style: { fontWeight: '600' } }, user.username)),
+                    nameCell,
                     el('td', {}, el('span', { class: `role-badge ${user.role}` }, user.role)),
                     el('td', { class: 'text-center' }, typeChip),
                     el('td', { class: 'text-center' }, modeChip),
@@ -310,25 +334,6 @@ export const UsersModule = {
                     el('td', { class: 'text-center text-sm' }, `${user.residents_count} / ${totalResidents}`),
                     el('td', {}, user.workplace || '-'),
                     el('td', { class: 'text-center' },
-                        // Единая кнопка: Выселение / Переезд
-                        el('button', {
-                            class: 'btn-icon',
-                            title: 'Выселение / Переезд',
-                            style: { marginRight: '5px', background: '#eff6ff', color: '#1e40af', borderColor: '#bfdbfe' },
-                            onclick: () => openRelocateModal(user, this.rel, this.dormsCache)
-                        }, '🚚'),
-                        el('button', {
-                            class: 'btn-icon',
-                            title: 'Договоры найма',
-                            style: { marginRight: '5px', background: '#f5f3ff', color: '#7c3aed', borderColor: '#ddd6fe' },
-                            onclick: () => this.openContractsModal(user)
-                        }, '📄'),
-                        el('button', {
-                            class: 'btn-icon btn-edit',
-                            title: 'Редактировать',
-                            style: { marginRight: '5px' },
-                            onclick: () => this.openEditModal(user.id)
-                        }, '✎'),
                         el('button', {
                             class: 'btn-icon btn-delete',
                             title: 'Удалить',
@@ -511,6 +516,69 @@ export const UsersModule = {
         } catch (error) {
             toast(error.message, 'error');
         }
+    },
+
+    // =====================================================================
+    // HUB ДЕЙСТВИЙ ПО ЖИЛЬЦУ — открывается по клику на ФИО в таблице.
+    // Внутри — сводка + крупные кнопки: Редактировать / Переезд / Договоры.
+    // Удаление сюда не выносим — остаётся отдельной иконкой в строке, чтобы
+    // снизить риск случайного клика.
+    // =====================================================================
+    _hubBound: false,
+    _hubUser: null,
+
+    openActionsHub(user) {
+        const modal = document.getElementById('userActionsModal');
+        if (!modal) return;
+        this._hubUser = user;
+
+        // Заполняем шапку и сводку
+        document.getElementById('hubUserName').textContent = user.username;
+        const addr = user.room ? `${user.room.dormitory_name}, ком. ${user.room.room_number}` : '—';
+        const rt = user.resident_type === 'single' ? 'Холостяк' : 'Семья';
+        const bm = user.billing_mode === 'per_capita' ? 'койко-место' : 'по счётчикам';
+        const area = user.room?.apartment_area
+            ? `${Number(user.room.apartment_area).toFixed(1)} м²` : '—';
+        const residents = `${user.residents_count} / ${user.room?.total_room_residents || 1}`;
+        document.getElementById('hubSummary').innerHTML = `
+            <div style="display:flex; justify-content:space-between; gap:14px; flex-wrap:wrap;">
+                <div>
+                    <div style="font-weight:600; font-size:13px;">${this._escape(addr)}</div>
+                    <div style="color:var(--text-secondary); font-size:11px; margin-top:2px;">
+                        ${this._escape(rt)} · ${this._escape(bm)} · ${this._escape(area)} · ${this._escape(residents)} чел.
+                    </div>
+                </div>
+                <div style="text-align:right;">
+                    <div style="font-size:11px; color:var(--text-secondary);">Роль</div>
+                    <span class="role-badge ${this._escape(user.role || '')}" style="margin-top:2px;">
+                        ${this._escape(user.role || '—')}
+                    </span>
+                </div>
+            </div>
+        `;
+
+        // Биндим обработчики один раз — флаг сохраняется на самом модуле
+        if (!this._hubBound) {
+            modal.addEventListener('click', (e) => {
+                if (e.target.closest('[data-hub-close]') || e.target === modal) {
+                    modal.classList.remove('open');
+                    return;
+                }
+                const actBtn = e.target.closest('[data-hub-action]');
+                if (!actBtn) return;
+                const action = actBtn.dataset.hubAction;
+                const u = this._hubUser;
+                if (!u) return;
+                // Закрываем хаб и запускаем нужный поток.
+                modal.classList.remove('open');
+                if (action === 'edit')      this.openEditModal(u.id);
+                if (action === 'relocate')  openRelocateModal(u, this.rel, this.dormsCache);
+                if (action === 'contracts') this.openContractsModal(u);
+            });
+            this._hubBound = true;
+        }
+
+        modal.classList.add('open');
     },
 
     // =====================================================================

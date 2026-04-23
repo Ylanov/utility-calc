@@ -238,6 +238,28 @@ export const HousingModule = {
             onclick: (e) => { e.stopPropagation(); this.toggleExpand(room); },
         }, isOpen ? '▼' : '▶');
 
+        // Кликабельный номер комнаты — открывает Hub-модалку с действиями
+        // (редактирование / начальные показания / замена счётчика).
+        // Раньше эти три действия были отдельными иконками в каждой строке,
+        // и при 300+ комнатах таблица была перегружена. Удаление остаётся
+        // отдельной иконкой, чтобы не удалить случайно из «хаба».
+        const numberCell = el('td', {},
+            el('button', {
+                class: 'link-btn',
+                title: 'Действия по комнате',
+                onclick: () => this.openActionsHub(room),
+                style: {
+                    background: 'transparent',
+                    border: 'none',
+                    padding: '0',
+                    fontWeight: 'bold',
+                    color: 'var(--primary-color)',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                },
+            }, room.room_number)
+        );
+
         const row = el('tr', {
             class: 'hover:bg-gray-50 transition-colors',
             'data-room-id': String(room.id),
@@ -246,28 +268,13 @@ export const HousingModule = {
             el('td', { class: 'text-center' }, chevron),
             el('td', { class: 'text-gray-500 text-sm' }, `#${room.id}`),
             el('td', { style: { fontWeight: 'bold', color: '#1f2937' } }, room.dormitory_name),
-            el('td', { style: { fontWeight: 'bold', color: '#374151' } }, room.room_number),
+            numberCell,
             el('td', {}, `${Number(room.apartment_area).toFixed(1)} м²`),
             el('td', { class: 'text-center' }, String(cap)),
             el('td', { class: 'text-sm font-mono', style: { color: room.hw_meter_serial ? '#dc2626' : '#9ca3af' } }, room.hw_meter_serial || '—'),
             el('td', { class: 'text-sm font-mono', style: { color: room.cw_meter_serial ? '#2563eb' : '#9ca3af' } }, room.cw_meter_serial || '—'),
             el('td', { class: 'text-sm font-mono', style: { color: room.el_meter_serial ? '#d97706' : '#9ca3af' } }, room.el_meter_serial || '—'),
             el('td', { class: 'text-center' },
-                el('button', {
-                    class: 'btn-icon', title: 'Начальные показания',
-                    style: { marginRight: '5px', background: '#eef2ff', color: '#4338ca', borderColor: '#c7d2fe' },
-                    onclick: () => this.openInitialModal(room)
-                }, '📊'),
-                el('button', {
-                    class: 'btn-icon', title: 'Замена счетчика',
-                    style: { marginRight: '5px', background: '#f0fdf4', color: '#166534', borderColor: '#bbf7d0' },
-                    onclick: () => this.openMeterModal(room)
-                }, '🔄'),
-                el('button', {
-                    class: 'btn-icon btn-edit', title: 'Редактировать',
-                    style: { marginRight: '5px' },
-                    onclick: () => this.openModal(room)
-                }, '✎'),
                 el('button', {
                     class: 'btn-icon btn-delete', title: 'Удалить',
                     onclick: () => this.deleteRoom(room.id)
@@ -276,6 +283,87 @@ export const HousingModule = {
         );
 
         return row;
+    },
+
+    // =====================================================================
+    // HUB ДЕЙСТВИЙ ПО КОМНАТЕ — открывается кликом по номеру комнаты.
+    // Внутри — сводка + 3 крупные кнопки (Редактировать / Начальные показания /
+    // Замена счётчика). Удаление сюда не выносим намеренно.
+    // =====================================================================
+    _roomHubBound: false,
+    _roomHubCurrent: null,
+
+    openActionsHub(room) {
+        const modal = document.getElementById('roomActionsModal');
+        if (!modal) return;
+        this._roomHubCurrent = room;
+
+        // Шапка
+        const title = `${room.dormitory_name}, ком. ${room.room_number}`;
+        document.getElementById('roomHubTitle').textContent = title;
+
+        // Сводка по комнате
+        const area = Number(room.apartment_area || 0).toFixed(1);
+        const cap = Number(room.total_room_residents || 0);
+        const meterBadge = (label, val, color) => {
+            const filled = !!val;
+            return `<span style="display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; margin-right:4px; background:${filled ? color + '22' : '#f3f4f6'}; color:${filled ? color : '#9ca3af'};">
+                ${label}: ${filled ? `<span style="font-family:monospace;">${room.hw_meter_serial && label === 'ГВС' ? room.hw_meter_serial : (room.cw_meter_serial && label === 'ХВС' ? room.cw_meter_serial : (room.el_meter_serial && label === 'Свет' ? room.el_meter_serial : val))}</span>` : '—'}
+            </span>`;
+        };
+        const esc = s => { if (s == null) return ''; const d = document.createElement('div'); d.textContent = String(s); return d.innerHTML; };
+
+        document.getElementById('roomHubSummary').innerHTML = `
+            <div style="display:flex; gap:14px; flex-wrap:wrap; justify-content:space-between; margin-bottom:10px;">
+                <div>
+                    <div style="font-size:11px; color:var(--text-secondary);">Площадь</div>
+                    <div style="font-weight:600;">${area} м²</div>
+                </div>
+                <div>
+                    <div style="font-size:11px; color:var(--text-secondary);">Вместимость</div>
+                    <div style="font-weight:600;">${cap} мест</div>
+                </div>
+                <div>
+                    <div style="font-size:11px; color:var(--text-secondary);">ID</div>
+                    <div style="font-weight:600; font-family:monospace;">#${room.id}</div>
+                </div>
+            </div>
+            <div style="font-size:11px; color:var(--text-secondary); margin-bottom:4px;">Серийные номера счётчиков:</div>
+            <div style="display:flex; flex-wrap:wrap; gap:4px;">
+                <span style="display:inline-block; padding:3px 10px; border-radius:10px; font-size:11px; font-weight:600; background:${room.hw_meter_serial ? '#fee2e2' : '#f3f4f6'}; color:${room.hw_meter_serial ? '#991b1b' : '#9ca3af'};">
+                    ГВС: <span style="font-family:monospace;">${esc(room.hw_meter_serial || '—')}</span>
+                </span>
+                <span style="display:inline-block; padding:3px 10px; border-radius:10px; font-size:11px; font-weight:600; background:${room.cw_meter_serial ? '#dbeafe' : '#f3f4f6'}; color:${room.cw_meter_serial ? '#1e40af' : '#9ca3af'};">
+                    ХВС: <span style="font-family:monospace;">${esc(room.cw_meter_serial || '—')}</span>
+                </span>
+                <span style="display:inline-block; padding:3px 10px; border-radius:10px; font-size:11px; font-weight:600; background:${room.el_meter_serial ? '#fef3c7' : '#f3f4f6'}; color:${room.el_meter_serial ? '#92400e' : '#9ca3af'};">
+                    Свет: <span style="font-family:monospace;">${esc(room.el_meter_serial || '—')}</span>
+                </span>
+            </div>
+        `;
+
+        // Биндим обработчики один раз
+        if (!this._roomHubBound) {
+            modal.addEventListener('click', (e) => {
+                if (e.target.closest('[data-room-hub-close]') || e.target === modal) {
+                    modal.classList.remove('open');
+                    return;
+                }
+                const btn = e.target.closest('[data-room-action]');
+                if (!btn) return;
+                const action = btn.dataset.roomAction;
+                const r = this._roomHubCurrent;
+                if (!r) return;
+                // Закрываем хаб и сразу открываем нужную модалку
+                modal.classList.remove('open');
+                if (action === 'edit')    this.openModal(r);
+                if (action === 'initial') this.openInitialModal(r);
+                if (action === 'meter')   this.openMeterModal(r);
+            });
+            this._roomHubBound = true;
+        }
+
+        modal.classList.add('open');
     },
 
     async toggleExpand(room) {

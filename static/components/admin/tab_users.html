@@ -181,6 +181,82 @@
         </div>
     </div>
 
+    <!-- Hub-модалка: открывается по клику на ФИО жильца.
+         Содержит карточку жильца и 3 крупные кнопки действий — «Редактировать»,
+         «Переезд», «Договоры найма». Удаление НЕ здесь: оно — отдельная
+         иконка в строке, чтобы случайно не удалить через «хаб». -->
+    <div id="userActionsModal" class="modal-overlay">
+        <div class="modal-window" style="width: 520px;">
+            <div class="modal-header" style="background:#eff6ff; border-bottom:1px solid #bfdbfe;">
+                <h3 style="color:#1d4ed8;">
+                    <i class="fa-solid fa-user-gear"></i>
+                    <span id="hubUserName">Жилец</span>
+                </h3>
+                <button class="close-btn close-icon" data-hub-close>&times;</button>
+            </div>
+            <div class="modal-form" style="padding:16px 20px;">
+                <!-- Сводка по жильцу -->
+                <div id="hubSummary" style="background:var(--bg-page); border-radius:10px; padding:12px 14px; margin-bottom:16px; font-size:13px;">
+                    <!-- заполняется JS: роль, комната, тип/режим, долг/переплата -->
+                </div>
+
+                <!-- Действия — крупные плитки (grid 2x2, но у нас 3 кнопки) -->
+                <div style="display:grid; grid-template-columns: repeat(2, 1fr); gap:10px;">
+                    <button type="button" class="hub-action-btn" data-hub-action="edit"
+                            style="display:flex; flex-direction:column; align-items:flex-start; gap:6px; padding:14px; border:1px solid var(--border-color); border-radius:10px; background:var(--bg-card); cursor:pointer; text-align:left;">
+                        <div style="display:flex; align-items:center; gap:10px; width:100%;">
+                            <div style="width:36px; height:36px; border-radius:8px; background:#eff6ff; color:#1d4ed8; display:flex; align-items:center; justify-content:center;">
+                                <i class="fa-solid fa-pen"></i>
+                            </div>
+                            <strong style="font-size:14px;">Редактировать</strong>
+                        </div>
+                        <div style="font-size:11px; color:var(--text-secondary); line-height:1.4;">
+                            Логин, роль, тариф, работа, тип жильца, режим оплаты.
+                        </div>
+                    </button>
+
+                    <button type="button" class="hub-action-btn" data-hub-action="relocate"
+                            style="display:flex; flex-direction:column; align-items:flex-start; gap:6px; padding:14px; border:1px solid var(--border-color); border-radius:10px; background:var(--bg-card); cursor:pointer; text-align:left;">
+                        <div style="display:flex; align-items:center; gap:10px; width:100%;">
+                            <div style="width:36px; height:36px; border-radius:8px; background:#eff6ff; color:#1e40af; display:flex; align-items:center; justify-content:center;">
+                                <i class="fa-solid fa-truck-moving"></i>
+                            </div>
+                            <strong style="font-size:14px;">Выезд / Переезд</strong>
+                        </div>
+                        <div style="font-size:11px; color:var(--text-secondary); line-height:1.4;">
+                            Оформить выселение или переселение в другую комнату.
+                        </div>
+                    </button>
+
+                    <button type="button" class="hub-action-btn" data-hub-action="contracts"
+                            style="display:flex; flex-direction:column; align-items:flex-start; gap:6px; padding:14px; border:1px solid var(--border-color); border-radius:10px; background:var(--bg-card); cursor:pointer; text-align:left; grid-column: span 2;">
+                        <div style="display:flex; align-items:center; gap:10px; width:100%;">
+                            <div style="width:36px; height:36px; border-radius:8px; background:#f5f3ff; color:#7c3aed; display:flex; align-items:center; justify-content:center;">
+                                <i class="fa-solid fa-file-signature"></i>
+                            </div>
+                            <strong style="font-size:14px;">Договоры найма</strong>
+                        </div>
+                        <div style="font-size:11px; color:var(--text-secondary); line-height:1.4;">
+                            Список договоров жильца, загрузка PDF/сканов, активация актуального.
+                        </div>
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="action-btn secondary-btn" data-hub-close>Закрыть</button>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        .hub-action-btn:hover {
+            border-color: var(--primary-color) !important;
+            box-shadow: 0 4px 10px rgba(26,115,232,0.1);
+            transform: translateY(-1px);
+            transition: all .15s ease;
+        }
+    </style>
+
     <!-- Модалка редактирования жильца -->
     <div id="userEditModal" class="modal-overlay">
         <div class="modal-window" style="width: 700px;">
