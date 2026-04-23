@@ -123,13 +123,16 @@ async def get_recalc_job(job_id: int, db: AsyncSession = Depends(get_db)):
     return _job_to_dict(job)
 
 
-@router.post("/recalc-jobs/{job_id}/apply", dependencies=[Depends(allow_management)])
+@router.post("/recalc-jobs/{job_id}/apply")
 async def apply_recalc(
     job_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(RoleChecker(["admin"])),
+    # Применение разрешено и бухгалтеру, и админу — симметрично
+    # со start/cancel. Отдельный RoleChecker в сигнатуре (а не только
+    # в dependencies) нужен ради current_user для audit_log.
+    current_user: User = Depends(allow_management),
 ):
-    """Применяет результаты preview к БД. Только админ — это ответственная операция."""
+    """Применяет результаты preview к БД. Разрешено accountant и admin."""
     job = await db.get(RecalcJob, job_id)
     if not job:
         raise HTTPException(404, "Задача не найдена")

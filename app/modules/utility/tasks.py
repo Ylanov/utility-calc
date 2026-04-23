@@ -786,10 +786,17 @@ def _recalc_run(job_id: int, apply: bool):
                         # ломаные данные — пропускаем
                         continue
 
+                    # prev ищется ПО ПАРЕ (user_id, room_id), а не только
+                    # по комнате. Иначе при смене жильца в комнате (или при
+                    # импорте GSHEETS_AUTO от другого жильца) дельта будет
+                    # посчитана относительно чужих цифр — получается
+                    # квитанция на сотни тысяч рублей. Каждый жилец имеет
+                    # свой baseline при первой подаче.
                     prev = (
                         db.query(MeterReading)
                         .filter(
-                            MeterReading.room_id == room.id,
+                            MeterReading.user_id == r.user_id,
+                            MeterReading.room_id == r.room_id,
                             MeterReading.is_approved.is_(True),
                             MeterReading.created_at < r.created_at,
                         )

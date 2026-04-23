@@ -61,22 +61,30 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
     room_ids = [row[2].id for row in drafts_rows]
     user_ids = [row[1].id for row in drafts_rows]
 
-    # Загружаем предыдущие показания для расчета дельты
+    # Предыдущее approved показание считаем ПО ПАРЕ (user_id, room_id),
+    # а не по комнате в целом. Жилец может переехать в комнату, где уже
+    # есть история от прошлого жильца — в таком случае его первая подача
+    # на новом месте должна быть baseline, а не дельтой от чужих цифр.
     subq_max_date = select(
+        MeterReading.user_id,
         MeterReading.room_id,
         func.max(MeterReading.created_at).label("max_created")
     ).where(
+        MeterReading.user_id.in_(user_ids),
         MeterReading.room_id.in_(room_ids),
-        MeterReading.is_approved.is_(True)
-    ).group_by(MeterReading.room_id).subquery()
+        MeterReading.is_approved.is_(True),
+    ).group_by(MeterReading.user_id, MeterReading.room_id).subquery()
 
-    prev_readings_map = {r.room_id: r for r in (await db.execute(
+    prev_rows = (await db.execute(
         select(MeterReading).join(
             subq_max_date,
+            (MeterReading.user_id == subq_max_date.c.user_id) &
             (MeterReading.room_id == subq_max_date.c.room_id) &
             (MeterReading.created_at == subq_max_date.c.max_created)
         )
-    )).scalars().all()}
+    )).scalars().all()
+    # Ключ — (user_id, room_id), значит та же пара нужна для lookup ниже.
+    prev_readings_map = {(r.user_id, r.room_id): r for r in prev_rows}
 
     # Загружаем корректировки (долги / скидки)
     adj_res = await db.execute(
@@ -101,12 +109,18 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
 
     # Расчет в памяти
     for reading, user, room in drafts_rows:
-        prev = prev_readings_map.get(room.id)
+        # prev_readings_map теперь ключ по (user_id, room_id).
+        # Если текущее показание — это и есть max_created для этой пары
+        # (например, один черновик на жильца), prev будет равен самому
+        # reading → считаем как baseline.
+        prev = prev_readings_map.get((user.id, room.id))
+        if prev is not None and prev.id == reading.id:
+            prev = None
 
-        # BASELINE — если у комнаты ещё нет утверждённого показания.
-        # При запуске системы счётчики уже могут иметь огромные накопленные
-        # значения. Считать от нуля нельзя — получится счёт в миллионы.
-        # Первая подача = baseline, все cost_* = 0. Расчёт пойдёт со следующей.
+        # BASELINE — первая в жизни подача жильца в этой комнате.
+        # Без него счётчики с огромными накопленными значениями дали бы
+        # квитанцию на миллионы. Первая подача = baseline, cost_* = 0.
+        # При переезде в другую комнату baseline сработает заново.
         if prev is None:
             zero_costs = {
                 "cost_hot_water": ZERO, "cost_cold_water": ZERO, "cost_sewage": ZERO,
@@ -240,19 +254,28 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
     t = tariff_cache.get_effective_tariff(user=user, room=room) or \
         (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().first()
 
+    # Ищем предыдущее утверждённое ПО ЖИЛЬЦУ В ЭТОЙ КОМНАТЕ, не по комнате
+    # в целом. Иначе если до этого жильца в комнате кто-то уже подавал
+    # показания (старый жилец, GSHEETS_AUTO с огромными цифрами и т.п.),
+    # дельта посчитается относительно чужих значений — получатся миллионы.
     prev = (await db.execute(
         select(MeterReading)
-        .where(MeterReading.room_id == room.id, MeterReading.is_approved)
+        .where(
+            MeterReading.user_id == user.id,
+            MeterReading.room_id == room.id,
+            MeterReading.is_approved,
+            MeterReading.id != reading.id,
+        )
         .order_by(MeterReading.created_at.desc()).limit(1)
     )).scalars().first()
 
-    # БАЗОВОЕ ПОКАЗАНИЕ — если у комнаты НИ ОДНОГО утверждённого раньше не было.
-    # На старте системы у жильцов счётчики могут быть с огромными значениями
-    # (накопление за годы жизни счётчика до внедрения). Если посчитать от нуля —
-    # получится квитанция на миллионы рублей за первый месяц. Поэтому первую
-    # подачу регистрируем как baseline: абсолютные значения сохраняем
-    # (они нужны для расчёта следующего периода), а все cost_* = 0.
-    # Расчёт пойдёт уже начиная со следующего показания.
+    # BASELINE — первая в жизни ЖИЛЬЦА подача в этой комнате.
+    # Счётчики уже могут быть накопленные (десятки тысяч за годы), и
+    # считать от нуля нельзя — получится квитанция на миллионы. Поэтому
+    # первую подачу регистрируем как baseline: абсолютные значения
+    # сохраняем (они нужны для расчёта следующего периода), а все cost_* = 0.
+    # При переезде в другую комнату снова срабатывает baseline — счётчики
+    # там другие, история не применима.
     is_baseline = prev is None
 
     if is_baseline:

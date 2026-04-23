@@ -753,11 +753,14 @@ async def get_resident_finance_detail(
     # для каждого reading. Соберём всю approved-историю комнаты за охваченный
     # диапазон + немного запаса (ещё 1 период), чтобы найти prev для самого
     # раннего показания.
+    # История approved ЖИЛЬЦА В ЭТОЙ КОМНАТЕ — не всей комнаты.
+    # При смене жильца prev другого жильца не должен влиять на дельту.
     room_hist_raw = []
     if user.room_id and period_ids:
         room_hist_raw = (await db.execute(
             select(MeterReading)
             .where(
+                MeterReading.user_id == user_id,
                 MeterReading.room_id == user.room_id,
                 MeterReading.is_approved.is_(True),
             )
@@ -765,7 +768,7 @@ async def get_resident_finance_detail(
         )).scalars().all()
 
     def _prev_for(reading):
-        """Ближайшее approved показание по комнате со временем СТРОГО раньше."""
+        """Ближайшее approved показание этого жильца в этой комнате со временем СТРОГО раньше."""
         prev = None
         for rr in room_hist_raw:
             if rr.created_at and reading.created_at and rr.created_at < reading.created_at and rr.is_approved:

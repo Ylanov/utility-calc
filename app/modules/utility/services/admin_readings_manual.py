@@ -30,8 +30,15 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
     t = tariff_cache.get_effective_tariff(user=user, room=room) or \
         (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().first()
 
+    # История считается ПО ЖИЛЬЦУ В ЭТОЙ КОМНАТЕ, не по комнате в целом.
+    # Если до этого жильца тут были показания (старый жилец, GSHEETS_AUTO
+    # и т.п.), их учитывать нельзя — получились бы миллионы.
     history = (await db.execute(
-        select(MeterReading).where(MeterReading.room_id == room.id, MeterReading.is_approved)
+        select(MeterReading).where(
+            MeterReading.user_id == user.id,
+            MeterReading.room_id == room.id,
+            MeterReading.is_approved,
+        )
         .order_by(MeterReading.created_at.desc()).limit(6)
     )).scalars().all()
 
@@ -127,8 +134,13 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
     t = tariff_cache.get_effective_tariff(user=user, room=room) or \
         (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().first()
 
+    # История по ЖИЛЬЦУ В ЭТОЙ КОМНАТЕ (см. save_manual_entry выше).
     history = (await db.execute(
-        select(MeterReading).where(MeterReading.room_id == room.id, MeterReading.is_approved)
+        select(MeterReading).where(
+            MeterReading.user_id == user.id,
+            MeterReading.room_id == room.id,
+            MeterReading.is_approved,
+        )
         .order_by(MeterReading.created_at.desc()).limit(6)
     )).scalars().all()
 

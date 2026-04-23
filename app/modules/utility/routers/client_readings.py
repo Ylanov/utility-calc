@@ -219,10 +219,17 @@ async def save_reading(
             detail="Показания для вашей комнаты уже переданы другим жильцом."
         )
 
-    # 3. История показаний КОМНАТЫ (для расчёта расхода)
+    # 3. История показаний ЖИЛЬЦА В ЭТОЙ КОМНАТЕ (для расчёта расхода).
+    # Не по комнате в целом — если в комнате были показания от прошлого
+    # жильца (переезд, GSHEETS_AUTO с чужими большими цифрами и т.п.),
+    # дельта посчиталась бы относительно чужих значений и дала миллионы.
+    # Первая подача жильца в конкретной комнате = baseline (cost=0).
     history_task = db.execute(
         select(MeterReading)
-        .where(MeterReading.room_id == user.room_id)
+        .where(
+            MeterReading.user_id == user.id,
+            MeterReading.room_id == user.room_id,
+        )
         .order_by(MeterReading.created_at.desc())
         .limit(12)
     )
