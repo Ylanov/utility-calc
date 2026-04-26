@@ -87,6 +87,7 @@ from app.modules.gsm import (
 # =====================================================================
 from app.core.request_context import RequestIdFilter, JsonFormatter
 from app.core.middleware.request_id import RequestIdMiddleware
+from app.core.sentry_init import setup_sentry
 
 # JSON-логи в production (агрегация в Loki/CloudWatch/Sentry breadcrumbs),
 # текстовые — в development для читаемости в IDE-консоли.
@@ -133,9 +134,9 @@ APP_MODE = os.environ.get("APP_MODE", "all")
 # =====================================================================
 # SENTRY
 # =====================================================================
-# Инициализируем ПОСЛЕ logging.basicConfig — чтобы LoggingIntegration
+# Вызываем ПОСЛЕ logging.basicConfig — чтобы LoggingIntegration
 # подхватила настроенные хендлеры/уровни (иначе breadcrumbs не работают).
-from app.core.sentry_init import setup_sentry
+# Сам импорт setup_sentry — на верху файла, рядом с остальными app.core.*.
 setup_sentry(component="web")
 
 
