@@ -130,6 +130,54 @@ class ApiClient {
     delete(endpoint) { return this._request(endpoint, { method: 'DELETE' }); }
 
     /**
+     * GET с TTL-кешем в sessionStorage. Используется для редко меняющихся
+     * данных: тарифы, релизы, settings — они не меняются десятки раз за сессию,
+     * нет смысла дёргать сервер при каждом ремонте модуля.
+     *
+     * Семантика:
+     *   - Кеш-ключ: `api:cache:${endpoint}` (привязан к окну/вкладке).
+     *   - Кеш чистится при logout (Auth.logout удаляет sessionStorage).
+     *   - При ошибке сети/парсинга — fallback на свежий fetch (без кеша).
+     *   - options.bypassCache = true → принудительно идём в сеть.
+     *
+     * @param {string} endpoint
+     * @param {{ttlSeconds?: number, bypassCache?: boolean} & object} options
+     */
+    async getCached(endpoint, options = {}) {
+        const ttl = (options.ttlSeconds ?? 300) * 1000;
+        const key = `api:cache:${endpoint}`;
+        if (!options.bypassCache) {
+            try {
+                const raw = sessionStorage.getItem(key);
+                if (raw) {
+                    const cached = JSON.parse(raw);
+                    if (cached && (Date.now() - cached.t) < ttl) {
+                        return cached.v;
+                    }
+                }
+            } catch { /* битый кеш — просто идём в сеть */ }
+        }
+        const data = await this.get(endpoint, options);
+        try {
+            sessionStorage.setItem(key, JSON.stringify({ t: Date.now(), v: data }));
+        } catch { /* sessionStorage полон/выключен — это нормально */ }
+        return data;
+    }
+
+    /** Сброс кеша по точному endpoint или по префиксу (для invalidation после mutate). */
+    invalidateCache(endpointOrPrefix) {
+        const prefix = `api:cache:${endpointOrPrefix}`;
+        try {
+            const keys = [];
+            for (let i = 0; i < sessionStorage.length; i++) {
+                const k = sessionStorage.key(i);
+                if (k && k.startsWith(prefix)) keys.push(k);
+            }
+            keys.forEach(k => sessionStorage.removeItem(k));
+        } catch { /* sessionStorage недоступен — silent */ }
+    }
+
+    /**
      * Метод для скачивания файлов (Blob).
      *
      * Отличается от _request тем, что на 401 только сообщает пользователю

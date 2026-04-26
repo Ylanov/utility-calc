@@ -61,9 +61,20 @@ export const ToolsModule = {
     },
 
     open(section) {
+        const wasOpen = section.classList.contains('open');
         section.classList.add('open');
         const header = section.querySelector('.accordion-header');
         if (header) header.setAttribute('aria-expanded', 'true');
+        // Кастомное событие — позволяет app.js лениво инициализировать
+        // модуль секции только при её первом раскрытии (а не при загрузке
+        // вкладки «Операции»). Сильно экономит API-запросы для случая,
+        // когда оператор пользуется только одной секцией.
+        if (!wasOpen) {
+            section.dispatchEvent(new CustomEvent('tools:section-opened', {
+                bubbles: true,
+                detail: { section: section.dataset.section },
+            }));
+        }
     },
 
     close(section) {

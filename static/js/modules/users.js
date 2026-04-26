@@ -219,15 +219,9 @@ export const UsersModule = {
 
     async loadTariffs() {
         try {
-            const cached = sessionStorage.getItem('tariffs_cache');
-            if (cached) {
-                this.tariffs = JSON.parse(cached);
-                this.populateTariffSelects();
-                return;
-            }
-
-            this.tariffs = await api.get('/tariffs');
-            sessionStorage.setItem('tariffs_cache', JSON.stringify(this.tariffs));
+            // 5-минутный TTL: тарифы редко меняются, но не «навсегда» —
+            // если админ обновил тариф в другой вкладке, через 5 мин подхватится.
+            this.tariffs = await api.getCached('/tariffs', { ttlSeconds: 300 });
             this.populateTariffSelects();
         } catch (error) {
             toast('Не удалось загрузить список тарифов', 'error');
@@ -244,7 +238,10 @@ export const UsersModule = {
 
     async loadDormitories() {
         try {
-            this.dormsCache = await api.get('/rooms/dormitories');
+            // 5-минутный TTL: список общежитий меняется крайне редко.
+            // Раньше эндпоинт дёргался при КАЖДОМ открытии формы создания/редакта
+            // жильца — выливалось в десятки лишних запросов в админке за сессию.
+            this.dormsCache = await api.getCached('/rooms/dormitories', { ttlSeconds: 300 });
             const options = '<option value="">-- Выберите общежитие --</option>' +
                             this.dormsCache.map(d => `<option value="${d}">${d}</option>`).join('');
 

@@ -24,7 +24,11 @@ const STATUS_META = {
     rejected:       { label: 'Отклонено',    color: '#6b7280', bg: '#f3f4f6' },
 };
 
-const AUTO_REFRESH_INTERVAL_MS = 30_000;
+// 60 секунд — компромисс между «свежесть данных» и «нагрузка на API».
+// При активной работе оператор и так делает refresh-after-action (после
+// approve/reject/reassign — оптимистичный апдейт + явный refresh). Авто-тик
+// нужен только для подхвата фоновых изменений (новые подачи через celery beat).
+const AUTO_REFRESH_INTERVAL_MS = 60_000;
 
 function fmtDateTime(iso) {
     if (!iso) return '—';
@@ -43,6 +47,21 @@ function fmtNum(v) {
     const n = Number(v);
     if (isNaN(n)) return String(v);
     return n.toFixed(3).replace(/\.?0+$/, '');
+}
+
+// HTTPException(detail=...) с бэка может прийти строкой ИЛИ объектом
+// (см. _apply_approve в admin_gsheets.py — при дубликате detail = dict
+// с ключами message/conflict). Формат "[object Object]" в toast'е был именно
+// из-за этого. Возвращаем человекочитаемое сообщение для любого случая.
+function reasonText(r) {
+    if (r == null) return 'неизвестная ошибка';
+    if (typeof r === 'string') return r;
+    if (typeof r === 'object') {
+        if (typeof r.message === 'string' && r.message) return r.message;
+        if (typeof r.detail === 'string' && r.detail) return r.detail;
+        try { return JSON.stringify(r); } catch { return String(r); }
+    }
+    return String(r);
 }
 
 function escapeHtml(s) {
@@ -98,6 +117,7 @@ export const GSheetsModule = {
             search: document.getElementById('gsheetsSearch'),
             selectAll: document.getElementById('gsheetsSelectAll'),
             btnSync: document.getElementById('btnGsheetsSync'),
+            btnPromote: document.getElementById('btnGsheetsPromote'),
             btnRefresh: document.getElementById('btnGsheetsRefresh'),
             btnBulkApprove: document.getElementById('btnBulkApprove'),
             tbody: document.getElementById('gsheetsTableBody'),
@@ -116,6 +136,7 @@ export const GSheetsModule = {
 
     bindEvents() {
         this.dom.btnSync?.addEventListener('click', () => this.triggerSync());
+        this.dom.btnPromote?.addEventListener('click', () => this.triggerPromote());
         this.dom.btnRefresh?.addEventListener('click', () => this.refresh());
         this.dom.btnBulkApprove?.addEventListener('click', () => this.bulkApprove());
 
@@ -256,7 +277,23 @@ export const GSheetsModule = {
         if (this._isFetching) return;
         this._isFetching = true;
         try {
-            await Promise.all([this.loadStats(), this.loadRows(options)]);
+            // Один комбинированный запрос /dashboard вместо двух (stats + rows).
+            // Снижает число RTT в 2 раза при auto-tick. Если эндпоинт упал/не задеплоен —
+            // прозрачно фолбэчим на старые два эндпоинта (для старых билдов API).
+            const params = this._buildRowsParams(options);
+            try {
+                const data = await api.get(`/admin/gsheets/dashboard?${params.toString()}`);
+                if (data.stats) {
+                    this.state.stats = data.stats;
+                    this.renderStats(data.stats);
+                }
+                if (data.rows) {
+                    this._applyRowsPayload(data.rows, options);
+                }
+            } catch (e) {
+                console.warn('[gsheets] /dashboard fallback to /stats+/rows:', e?.message);
+                await Promise.all([this.loadStats(), this.loadRows(options)]);
+            }
         } finally {
             this._isFetching = false;
         }
@@ -307,9 +344,7 @@ export const GSheetsModule = {
         `;
     },
 
-    async loadRows(options = {}) {
-        // В grouped-режиме поднимаем лимит, чтобы все подачи одного жильца
-        // оказались на одной странице (иначе "цепочка" разорвётся между страницами).
+    _buildRowsParams() {
         const limit = this.state.viewMode === 'grouped'
             ? this.state.groupedLimit
             : this.state.limit;
@@ -320,13 +355,24 @@ export const GSheetsModule = {
         });
         if (this.state.status) params.set('status', this.state.status);
         if (this.state.search) params.set('search', this.state.search);
+        return params;
+    },
+
+    _applyRowsPayload(data) {
+        this.state.total = data.total;
+        this.state.rows = data.items || [];
+        this.renderRows();
+        this.renderPagination();
+    },
+
+    async loadRows(options = {}) {
+        // В grouped-режиме поднимаем лимит, чтобы все подачи одного жильца
+        // оказались на одной странице (иначе "цепочка" разорвётся между страницами).
+        const params = this._buildRowsParams();
 
         try {
             const data = await api.get(`/admin/gsheets/rows?${params.toString()}`);
-            this.state.total = data.total;
-            this.state.rows = data.items || [];
-            this.renderRows();
-            this.renderPagination();
+            this._applyRowsPayload(data);
         } catch (e) {
             if (!options.silent) {
                 const errHtml = `<div style="padding:20px; text-align:center; color:var(--danger-color);">${escapeHtml(e.message)}</div>`;
@@ -711,7 +757,7 @@ export const GSheetsModule = {
             const msg = `Утверждено: ${data.approved}${data.failed?.length ? `, ошибок: ${data.failed.length}` : ''}`;
             toast(msg, data.failed?.length ? 'warning' : 'success');
             if (data.failed?.length) {
-                data.failed.slice(0, 3).forEach(f => toast(`#${f.row_id}: ${f.reason}`, 'error'));
+                data.failed.slice(0, 3).forEach(f => toast(`#${f.row_id}: ${reasonText(f.reason)}`, 'error'));
             }
             this.refresh();
         } catch (e) {
@@ -753,6 +799,42 @@ export const GSheetsModule = {
             setTimeout(() => this.refresh(), 15000);
         } catch (e) {
             toast('Не удалось запустить: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    },
+
+    // Прогон promote_auto_approved_rows — для случаев, когда auto_approved
+    // строки висят без MeterReading (sync падал, активного периода не было,
+    // и т.п.). Endpoint синхронный — большой объём может занять до минуты.
+    async triggerPromote() {
+        const btn = this.dom.btnPromote;
+        if (!btn) return;
+        if (!confirm('Создать MeterReading для всех auto_approved строк без reading_id?\n\n' +
+                     'Это безопасная операция: дубли не создаются, обработанные строки просто закрываются.')) {
+            return;
+        }
+        btn.disabled = true;
+        const originalHTML = btn.innerHTML;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Промоушн…';
+        try {
+            const data = await api.post('/admin/gsheets/promote-auto-approved', {});
+            const created = data?.created ?? 0;
+            const bound = data?.bound ?? 0;
+            const skipped = data?.skipped ?? 0;
+            const periodLabel = data?.period_name ? ` в период «${data.period_name}»` : '';
+            toast(
+                `Создано MeterReading: ${created}${periodLabel}. ` +
+                `Привязано к существующим: ${bound}. Пропущено: ${skipped}.`,
+                created > 0 ? 'success' : 'info'
+            );
+            if (data?.errors?.length) {
+                console.warn('Промоушн — ошибки:', data.errors);
+            }
+            this.refresh();
+        } catch (e) {
+            toast('Промоушн не удался: ' + e.message, 'error');
         } finally {
             btn.disabled = false;
             btn.innerHTML = originalHTML;
@@ -1263,7 +1345,7 @@ export const GSheetsModule = {
                 console.warn('Ошибки при массовом утверждении:', data.failed);
                 // Показываем первые 3 ошибки в toast
                 data.failed.slice(0, 3).forEach(f => {
-                    toast(`Строка #${f.row_id}: ${f.reason}`, 'error');
+                    toast(`Строка #${f.row_id}: ${reasonText(f.reason)}`, 'error');
                 });
             }
             this.refresh();

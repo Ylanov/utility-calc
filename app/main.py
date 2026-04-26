@@ -5,7 +5,6 @@ import logging
 from contextlib import asynccontextmanager
 from typing import List
 
-import sentry_sdk
 import redis.asyncio as redis
 
 from fastapi import FastAPI, Request, HTTPException
@@ -21,8 +20,6 @@ from fastapi_cache.backends.redis import RedisBackend
 from sqlalchemy.future import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from passlib.context import CryptContext
-
-from prometheus_fastapi_instrumentator import Instrumentator
 
 # === CORE ===
 from app.core.config import settings
@@ -88,12 +85,22 @@ from app.modules.gsm import (
 # в каждой строке. Это даёт сквозную трассировку HTTP-запроса по логам:
 # можно `grep <request_id>` и увидеть всю цепочку обработки.
 # =====================================================================
-from app.core.request_context import RequestIdFilter
+from app.core.request_context import RequestIdFilter, JsonFormatter
 from app.core.middleware.request_id import RequestIdMiddleware
 
-_LOG_FORMAT = "%(asctime)s %(levelname)s [%(name)s] [req:%(request_id)s] %(message)s"
+# JSON-логи в production (агрегация в Loki/CloudWatch/Sentry breadcrumbs),
+# текстовые — в development для читаемости в IDE-консоли.
+# Переключение через env LOG_FORMAT=text|json (default: json в production).
+_LOG_FORMAT_KIND = os.environ.get(
+    "LOG_FORMAT",
+    "json" if settings.ENVIRONMENT == "production" else "text",
+).lower()
 _root_handler = logging.StreamHandler()
-_root_handler.setFormatter(logging.Formatter(_LOG_FORMAT))
+if _LOG_FORMAT_KIND == "json":
+    _root_handler.setFormatter(JsonFormatter())
+else:
+    _TEXT_FORMAT = "%(asctime)s %(levelname)s [%(name)s] [req:%(request_id)s] %(message)s"
+    _root_handler.setFormatter(logging.Formatter(_TEXT_FORMAT))
 _root_handler.addFilter(RequestIdFilter())
 
 # Заменяем дефолтные хендлеры root-логгера на наш с фильтром.
@@ -126,12 +133,10 @@ APP_MODE = os.environ.get("APP_MODE", "all")
 # =====================================================================
 # SENTRY
 # =====================================================================
-if settings.SENTRY_DSN:
-    sentry_sdk.init(
-        dsn=settings.SENTRY_DSN,
-        environment=settings.ENVIRONMENT,
-        traces_sample_rate=settings.SENTRY_TRACES_SAMPLE_RATE,
-    )
+# Инициализируем ПОСЛЕ logging.basicConfig — чтобы LoggingIntegration
+# подхватила настроенные хендлеры/уровни (иначе breadcrumbs не работают).
+from app.core.sentry_init import setup_sentry
+setup_sentry(component="web")
 
 
 # =====================================================================
@@ -234,8 +239,6 @@ app = FastAPI(
     redoc_url=None,
     openapi_url=None if IS_PRODUCTION else "/openapi.json",
 )
-
-Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
 
 # =====================================================================

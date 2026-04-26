@@ -147,7 +147,7 @@ export const TariffsModule = {
 
     async loadSchedule() {
         try {
-            const data = await api.get('/settings/submission-period');
+            const data = await api.getCached('/settings/submission-period', { ttlSeconds: 600 });
             document.getElementById('setStartDay').value = data.start_day;
             document.getElementById('setEndDay').value = data.end_day;
         } catch (e) {
@@ -169,6 +169,7 @@ export const TariffsModule = {
         setLoading(btn, true, 'Сохранение...');
         try {
             await api.post('/settings/submission-period', { start_day: start, end_day: end });
+            api.invalidateCache('/settings/submission-period');
             toast('График успешно обновлен', 'success');
         } catch (e) {
             toast(e.message, 'error');
@@ -535,6 +536,9 @@ export const TariffsModule = {
 
         try {
             const savedTariff = await api.post('/tariffs', data);
+            // После создания/обновления тарифа кеш в users.js / housing.js
+            // протух — сбрасываем все ключи `/tariffs*`.
+            api.invalidateCache('/tariffs');
 
             const isScheduled = data.effective_from && new Date(data.effective_from) > new Date();
             if (isScheduled) {
@@ -592,8 +596,9 @@ export const TariffsModule = {
                 toast('Тарифный профиль удален', 'success');
             }
 
-            // ВАЖНО: Очищаем кэш тарифов
+            // ВАЖНО: Очищаем кэш тарифов (старый ключ + новый getCached-ключ).
             sessionStorage.removeItem('tariffs_cache');
+            api.invalidateCache('/tariffs');
 
             // Перезагружаем и переключаемся на базовый тариф (id=1)
             this.load(1);

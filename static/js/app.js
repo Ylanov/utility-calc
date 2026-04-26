@@ -346,55 +346,106 @@ async function initModule(tabId) {
                 }
                 loadedModules.debts.init();
                 break;
-            // Операции — объединяет Ручной ввод, Тарифы, Сводку и GSheets
-            // в accordion-секциях. Инициализируются 5 модулей:
-            //  - ManualModule (ввод показаний за жильца)
-            //  - TariffsModule (профили + график)
-            //  - SummaryModule (сравнение, предпросмотр закрытия, финансовый отчёт)
-            //  - GSheetsModule (импорт из Google Sheets с fuzzy-match и утверждением)
-            //  - ToolsModule — только раскрытие/сворачивание секций.
-            case 'tools':
-                if (!loadedModules.manual) {
-                    const { ManualModule } = await import('./modules/manual.js');
-                    loadedModules.manual = ManualModule;
-                }
-                if (!loadedModules.tariffs) {
-                    const { TariffsModule } = await import('./modules/tariffs.js');
-                    loadedModules.tariffs = TariffsModule;
-                }
-                if (!loadedModules.summary) {
-                    const { SummaryModule } = await import('./modules/summary.js');
-                    loadedModules.summary = SummaryModule;
-                }
-                if (!loadedModules.gsheets) {
-                    const { GSheetsModule } = await import('./modules/gsheets.js');
-                    loadedModules.gsheets = GSheetsModule;
-                }
-                if (!loadedModules.appReleases) {
-                    const { AppReleasesModule } = await import('./modules/app_releases.js');
-                    loadedModules.appReleases = AppReleasesModule;
-                }
-                if (!loadedModules.analyzer) {
-                    const { AnalyzerModule } = await import('./modules/analyzer.js');
-                    loadedModules.analyzer = AnalyzerModule;
-                }
-                if (!loadedModules.recalc) {
-                    const { RecalcModule } = await import('./modules/recalc.js');
-                    loadedModules.recalc = RecalcModule;
-                }
+            // Операции — accordion из 7 секций. Раньше все 7 модулей
+            // инициализировались при открытии вкладки → 7 параллельных
+            // волн API-запросов даже когда оператору нужна одна секция.
+            // Теперь — eager init ТОЛЬКО для уже открытых секций (по умолчанию
+            // первая, manual), остальные — лениво по событию tools:section-opened.
+            case 'tools': {
+                // Tools-контроллер всегда нужен — он обрабатывает аккордеон.
                 if (!loadedModules.tools) {
                     const { ToolsModule } = await import('./modules/tools.js');
                     loadedModules.tools = ToolsModule;
                 }
-                loadedModules.manual.init();
-                loadedModules.tariffs.init();
-                loadedModules.summary.init();
-                loadedModules.gsheets.init();
-                loadedModules.appReleases.init();
-                loadedModules.analyzer.init();
-                loadedModules.recalc.init();
                 loadedModules.tools.init();
+
+                // Маппинг секции → импорт модуля. Динамические импорты
+                // выполняются только при первом раскрытии секции.
+                const sectionLoaders = {
+                    manual: async () => {
+                        if (!loadedModules.manual) {
+                            const { ManualModule } = await import('./modules/manual.js');
+                            loadedModules.manual = ManualModule;
+                        }
+                        loadedModules.manual.init();
+                    },
+                    schedule: async () => {
+                        // График подачи живёт внутри модуля Tariffs (общая секция настроек).
+                        if (!loadedModules.tariffs) {
+                            const { TariffsModule } = await import('./modules/tariffs.js');
+                            loadedModules.tariffs = TariffsModule;
+                        }
+                        loadedModules.tariffs.init();
+                    },
+                    tariffs: async () => {
+                        if (!loadedModules.tariffs) {
+                            const { TariffsModule } = await import('./modules/tariffs.js');
+                            loadedModules.tariffs = TariffsModule;
+                        }
+                        loadedModules.tariffs.init();
+                    },
+                    summary: async () => {
+                        if (!loadedModules.summary) {
+                            const { SummaryModule } = await import('./modules/summary.js');
+                            loadedModules.summary = SummaryModule;
+                        }
+                        loadedModules.summary.init();
+                    },
+                    gsheets: async () => {
+                        if (!loadedModules.gsheets) {
+                            const { GSheetsModule } = await import('./modules/gsheets.js');
+                            loadedModules.gsheets = GSheetsModule;
+                        }
+                        loadedModules.gsheets.init();
+                    },
+                    'app-releases': async () => {
+                        if (!loadedModules.appReleases) {
+                            const { AppReleasesModule } = await import('./modules/app_releases.js');
+                            loadedModules.appReleases = AppReleasesModule;
+                        }
+                        loadedModules.appReleases.init();
+                    },
+                    analyzer: async () => {
+                        if (!loadedModules.analyzer) {
+                            const { AnalyzerModule } = await import('./modules/analyzer.js');
+                            loadedModules.analyzer = AnalyzerModule;
+                        }
+                        loadedModules.analyzer.init();
+                    },
+                    recalc: async () => {
+                        if (!loadedModules.recalc) {
+                            const { RecalcModule } = await import('./modules/recalc.js');
+                            loadedModules.recalc = RecalcModule;
+                        }
+                        loadedModules.recalc.init();
+                    },
+                };
+
+                const initialized = new Set();
+                const initSection = async (name) => {
+                    if (!name || initialized.has(name)) return;
+                    const loader = sectionLoaders[name];
+                    if (!loader) return;
+                    initialized.add(name);
+                    try { await loader(); }
+                    catch (e) { console.error(`[tools] section "${name}" init failed:`, e); }
+                };
+
+                // 1) Eager: уже открытые секции (.open) — обычно одна (manual).
+                document
+                    .querySelectorAll('#toolsAccordion .accordion-section.open')
+                    .forEach(s => initSection(s.dataset.section));
+
+                // 2) Lazy: подписка на раскрытие секций (idempotent — тег на элементе).
+                const root = document.getElementById('toolsAccordion');
+                if (root && !root.dataset.lazyInitBound) {
+                    root.dataset.lazyInitBound = '1';
+                    root.addEventListener('tools:section-opened', (e) => {
+                        initSection(e.detail?.section);
+                    });
+                }
                 break;
+            }
             // Админская вкладка «Справки» (волна 3 фичи заказа справок).
             case 'certs':
                 if (!loadedModules.certs) {

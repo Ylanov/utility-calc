@@ -129,19 +129,24 @@ async def trigger_sync(
 async def trigger_promote_auto_approved(
     current_user: User = Depends(get_current_user),
 ):
-    """Синхронно (через celery sync-session) создаёт MeterReading для всех
-    GSheetsImportRow со статусом auto_approved и reading_id=NULL.
-    Возвращает кол-во созданных / пропущенных."""
+    """Создаёт MeterReading для всех GSheetsImportRow со статусом
+    auto_approved и reading_id=NULL.
+
+    Запускается в отдельном thread-е (sync SQLAlchemy session), чтобы не
+    блокировать event loop FastAPI на тысячах строк. Endpoint синхронен —
+    клиент дожидается результата (создано/привязано/пропущено).
+    """
     require_admin(current_user)
 
-    # sync-сессия живёт в tasks.py (общая для celery-задач и
-    # ad-hoc sync-операций из endpoint'ов).
+    import asyncio
     from app.modules.utility.tasks import sync_db_session
     from app.modules.utility.services.gsheets_sync import promote_auto_approved_rows
 
-    with sync_db_session() as db:
-        result = promote_auto_approved_rows(db)
-    return result
+    def _run():
+        with sync_db_session() as db:
+            return promote_auto_approved_rows(db)
+
+    return await asyncio.to_thread(_run)
 
 
 # =========================================================================
@@ -182,6 +187,109 @@ async def get_stats(
 # Статусы, которые админу надо обработать (всё, что не approved/rejected).
 ACTIVE_STATUSES = ("pending", "unmatched", "conflict")
 ARCHIVE_STATUSES = ("approved", "auto_approved", "rejected")
+
+
+# =========================================================================
+# DASHBOARD — объединённый stats + rows одним запросом
+# =========================================================================
+# Раньше UI делал Promise.all([loadStats(), loadRows()]) — два HTTP-запроса
+# на каждый refresh (включая авто-тик каждую минуту). Теперь один endpoint
+# одной транзакцией возвращает оба набора. Фронт остаётся на старых /stats
+# и /rows для совместимости (history-модалка, флатовая страница и т.п.).
+@router.get("/dashboard")
+async def get_dashboard(
+    status: Optional[str] = Query(None),
+    active_only: bool = Query(True),
+    search: Optional[str] = Query(None),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Возвращает {stats, rows} одним вызовом."""
+    require_admin(current_user)
+
+    # --- STATS (тот же код, что в /stats) ---
+    stats_rows_q = (await db.execute(
+        select(GSheetsImportRow.status, func.count(GSheetsImportRow.id))
+        .group_by(GSheetsImportRow.status)
+    )).all()
+    by_status = {s: c for s, c in stats_rows_q}
+    last_ts = (await db.execute(
+        select(func.max(GSheetsImportRow.created_at))
+    )).scalar_one_or_none()
+    last_sheet_ts = (await db.execute(
+        select(func.max(GSheetsImportRow.sheet_timestamp))
+    )).scalar_one_or_none()
+
+    stats_payload = {
+        "total": sum(by_status.values()),
+        "by_status": by_status,
+        "last_import_at": last_ts,
+        "last_sheet_timestamp": last_sheet_ts,
+        "sheet_id_configured": bool(settings.GSHEETS_SHEET_ID),
+        "auto_sync_interval_min": settings.GSHEETS_SYNC_INTERVAL_MINUTES,
+    }
+
+    # --- ROWS (тот же код, что в /rows) ---
+    base = (
+        select(GSheetsImportRow)
+        .options(
+            selectinload(GSheetsImportRow.matched_user).selectinload(User.room),
+            selectinload(GSheetsImportRow.matched_room),
+        )
+    )
+    count_q = select(func.count(GSheetsImportRow.id))
+
+    if status:
+        base = base.where(GSheetsImportRow.status == status)
+        count_q = count_q.where(GSheetsImportRow.status == status)
+    elif active_only:
+        base = base.where(GSheetsImportRow.status.in_(ACTIVE_STATUSES))
+        count_q = count_q.where(GSheetsImportRow.status.in_(ACTIVE_STATUSES))
+
+    if search:
+        pat = f"%{search.strip()}%"
+        cond = (GSheetsImportRow.raw_fio.ilike(pat)) | (GSheetsImportRow.raw_room_number.ilike(pat))
+        base = base.where(cond)
+        count_q = count_q.where(cond)
+
+    total = (await db.execute(count_q)).scalar_one()
+    offset = (page - 1) * limit
+    rows = (await db.execute(
+        base.order_by(
+            (GSheetsImportRow.status == "pending").desc(),
+            (GSheetsImportRow.status == "conflict").desc(),
+            GSheetsImportRow.sheet_timestamp.desc().nulls_last(),
+            GSheetsImportRow.created_at.desc(),
+        ).offset(offset).limit(limit)
+    )).scalars().all()
+
+    items = [{
+        "id": r.id,
+        "sheet_timestamp": r.sheet_timestamp,
+        "raw_fio": r.raw_fio,
+        "raw_dormitory": r.raw_dormitory,
+        "raw_room_number": r.raw_room_number,
+        "hot_water": r.hot_water,
+        "cold_water": r.cold_water,
+        "matched_user_id": r.matched_user_id,
+        "matched_username": r.matched_user.username if r.matched_user else None,
+        "matched_room": (
+            f"{r.matched_user.room.dormitory_name}, ком. {r.matched_user.room.room_number}"
+            if r.matched_user and r.matched_user.room else None
+        ),
+        "match_score": r.match_score or 0,
+        "status": r.status,
+        "conflict_reason": r.conflict_reason,
+        "reading_id": r.reading_id,
+        "created_at": r.created_at,
+    } for r in rows]
+
+    return {
+        "stats": stats_payload,
+        "rows": {"total": total, "page": page, "size": limit, "items": items},
+    }
 
 
 # =========================================================================

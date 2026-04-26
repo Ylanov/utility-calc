@@ -104,6 +104,15 @@ async def get_current_user(
     if user is None:
         raise credentials_exception
 
+    # Помечаем все логи и Sentry-events этим request'ом — user_id жильца.
+    from app.core.request_context import current_user_id
+    current_user_id.set(user.id)
+    try:
+        import sentry_sdk
+        sentry_sdk.set_user({"id": user.id, "username": user.username, "role": user.role})
+    except Exception:
+        pass
+
     return user
 
 

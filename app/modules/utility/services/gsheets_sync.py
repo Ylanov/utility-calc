@@ -600,25 +600,67 @@ def sync_gsheets(
 # и создаёт под них MeterReading (минимальный, total=0 — расчёт подхватит
 # потом пересчёт периода). Идемпотентно по (user_id, period_id).
 
+_MONTH_NAMES_RU = [
+    "", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+    "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+]
+
+
+def _ensure_active_period(db: Session):
+    """Возвращает активный BillingPeriod, создавая его при необходимости.
+
+    Раньше promote_auto_approved_rows возвращал no_active_period и тысячи
+    auto_approved строк висели без MeterReading — невидимые в финотчёте.
+    Теперь если активного периода нет — создаём по текущему месяцу
+    («Апрель 2026»). Идемпотентно: если период с таким именем уже есть,
+    активируем его.
+    """
+    from app.modules.utility.models import BillingPeriod
+    from datetime import date as _date
+
+    active = db.query(BillingPeriod).filter(BillingPeriod.is_active.is_(True)).first()
+    if active:
+        return active
+
+    today = _date.today()
+    name = f"{_MONTH_NAMES_RU[today.month]} {today.year}"
+    existing = db.query(BillingPeriod).filter(BillingPeriod.name == name).first()
+    if existing:
+        existing.is_active = True
+        db.flush()
+        logger.info(f"[GSHEETS-PROMOTE] reactivated existing period '{name}'")
+        return existing
+
+    period = BillingPeriod(name=name, is_active=True)
+    db.add(period)
+    db.flush()
+    logger.info(f"[GSHEETS-PROMOTE] auto-created active period '{name}'")
+    return period
+
+
 def promote_auto_approved_rows(db: Session) -> dict:
     """Продвигает GSheetsImportRow со статусом auto_approved в MeterReading.
 
-    Возвращает {'created': N, 'skipped': M}.
+    Логика:
+      1. Группируем все auto_approved строки без reading_id по жильцу.
+      2. Для каждого жильца берём ОДНУ строку с максимальным sheet_timestamp
+         (последняя поданная подача — самые свежие показания счётчика).
+         Раньше использовалась произвольная «первая попавшаяся» из .all() —
+         иногда подавалось старое значение, а более свежая запись в gsheets
+         висела без MeterReading.
+      3. Создаём MeterReading на активный период; остальные сестринские строки
+         того же жильца биндим к тому же reading_id (закрываем как обработанные).
+
+    Возвращает {'created': N, 'skipped': M, 'bound': K, 'errors': [...]}.
     """
     from decimal import Decimal as _Dec
     from datetime import datetime as _dt
     from app.modules.utility.models import (
-        BillingPeriod, MeterReading, GSheetsImportRow,
+        MeterReading, GSheetsImportRow,
     )
 
-    # Активный период — показания привязываются к нему.
-    active_period = db.query(BillingPeriod).filter(
-        BillingPeriod.is_active.is_(True)
-    ).first()
-    if not active_period:
-        return {"created": 0, "skipped": 0, "reason": "no_active_period"}
+    active_period = _ensure_active_period(db)
 
-    # Все auto_approved без reading_id
     rows = db.query(GSheetsImportRow).filter(
         GSheetsImportRow.status == "auto_approved",
         GSheetsImportRow.reading_id.is_(None),
@@ -628,37 +670,57 @@ def promote_auto_approved_rows(db: Session) -> dict:
     ).all()
 
     if not rows:
-        return {"created": 0, "skipped": 0}
+        return {"created": 0, "skipped": 0, "bound": 0, "errors": []}
+
+    # Группируем по жильцу + выбираем самую свежую подачу как «основную».
+    by_user: dict[int, list] = {}
+    for r in rows:
+        by_user.setdefault(r.matched_user_id, []).append(r)
+    for uid, lst in by_user.items():
+        lst.sort(
+            key=lambda r: (r.sheet_timestamp or _dt.min, r.id),
+            reverse=True,  # самые свежие первыми
+        )
 
     created = 0
     skipped = 0
+    bound = 0
+    errors: list[dict] = []
 
-    for row in rows:
-        user = db.query(User).filter(User.id == row.matched_user_id).first()
+    for uid, user_rows in by_user.items():
+        user = db.query(User).filter(User.id == uid).first()
         if not user or user.is_deleted or not user.room_id:
-            skipped += 1
+            skipped += len(user_rows)
+            errors.append({"user_id": uid, "reason": "user_missing_or_no_room",
+                           "rows": [r.id for r in user_rows]})
             continue
 
-        # Холостяк (per_capita) не подаёт показания — пропускаем.
+        # Холостяк (per_capita) не подаёт показания счётчика — все его строки
+        # помечаем как обработанные (без reading), чтобы не висели в auto_approved.
         if getattr(user, "billing_mode", "by_meter") == "per_capita":
-            skipped += 1
+            skipped += len(user_rows)
+            errors.append({"user_id": uid, "reason": "per_capita_no_meter",
+                           "rows": [r.id for r in user_rows]})
             continue
 
-        # Защита от дублей: в этом периоде уже может быть утверждённое.
+        # Если в текущем периоде уже есть утверждённый MeterReading — биндим
+        # ВСЕ строки жильца к нему (закрываем «висящие» auto_approved).
         dup = db.query(MeterReading).filter(
             MeterReading.user_id == user.id,
             MeterReading.period_id == active_period.id,
             MeterReading.is_approved.is_(True),
         ).first()
         if dup:
-            # Прикрепим row к существующему reading и закроем строку
-            row.reading_id = dup.id
-            row.processed_at = _dt.utcnow()
-            skipped += 1
+            for r in user_rows:
+                r.reading_id = dup.id
+                r.processed_at = _dt.utcnow()
+            bound += len(user_rows)
             continue
 
-        # Последнее показание электричества по жильцу (в gsheets нет колонки
-        # электричества — повторяем предыдущее значение, «расход 0»).
+        # Берём САМУЮ СВЕЖУЮ подачу (первая в отсортированном списке).
+        primary = user_rows[0]
+
+        # Электричество в gsheets не передаётся — берём последнее известное.
         prev_elect = db.query(MeterReading.electricity).filter(
             MeterReading.user_id == user.id,
             MeterReading.is_approved.is_(True),
@@ -671,8 +733,8 @@ def promote_auto_approved_rows(db: Session) -> dict:
             user_id=user.id,
             room_id=user.room_id,
             period_id=active_period.id,
-            hot_water=row.hot_water,
-            cold_water=row.cold_water,
+            hot_water=primary.hot_water,
+            cold_water=primary.cold_water,
             electricity=electricity_value,
             is_approved=True,
             anomaly_flags="GSHEETS_AUTO",
@@ -684,13 +746,24 @@ def promote_auto_approved_rows(db: Session) -> dict:
         db.add(reading)
         db.flush()
 
-        row.reading_id = reading.id
-        row.processed_at = _dt.utcnow()
+        for r in user_rows:
+            r.reading_id = reading.id
+            r.processed_at = _dt.utcnow()
         created += 1
+        bound += len(user_rows) - 1  # primary не считаем как «привязанный к чужому»
 
     db.commit()
-    logger.info(f"[GSHEETS-PROMOTE] created={created}, skipped={skipped}")
-    return {"created": created, "skipped": skipped}
+    logger.info(
+        f"[GSHEETS-PROMOTE] users={len(by_user)} created={created} "
+        f"bound_extra={bound} skipped_rows={skipped} errors={len(errors)}"
+    )
+    return {
+        "created": created,
+        "skipped": skipped,
+        "bound": bound,
+        "errors": errors[:20],  # обрезаем чтобы не раздуть payload
+        "period_name": active_period.name,
+    }
 
 
 # =======================================================================

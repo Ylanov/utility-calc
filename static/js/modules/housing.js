@@ -476,7 +476,7 @@ export const HousingModule = {
 
     async loadTariffs() {
         try {
-            this.tariffs = await api.get('/tariffs');
+            this.tariffs = await api.getCached('/tariffs', { ttlSeconds: 300 });
         } catch {
             this.tariffs = [];
         }

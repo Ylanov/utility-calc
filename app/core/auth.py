@@ -3,6 +3,7 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import sentry_sdk
 from fastapi import Depends, HTTPException, status, Request
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError
@@ -165,6 +166,15 @@ async def get_current_user(
     # до сих пор работал бы — теперь такой токен будет отклонён.
     if token_role and token_role != user.role:
         raise credentials_exception
+
+    # Сохраняем user_id в contextvar — все логи в рамках запроса будут с
+    # ним помечены, удобно фильтровать в Sentry/Loki по конкретному жильцу.
+    from app.core.request_context import current_user_id
+    current_user_id.set(user.id)
+    try:
+        sentry_sdk.set_user({"id": user.id, "username": user.username, "role": user.role})
+    except Exception:
+        pass  # sentry_sdk может быть не инициализирован — это нормально
 
     return user
 
