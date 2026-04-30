@@ -8,14 +8,10 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
-  # Принудительно запускаем JS-actions на Node 24 вместо deprecated Node 20.
-  # Таким образом warnings про "Node.js 20 actions are deprecated" пропадут
-  # ещё до того, как GitHub сделает Node 24 дефолтом (ожидается 2 июня 2026).
-  # Если какая-то конкретная action не поддержит Node 24 — упадёт в конкретном
-  # шаге, это будет сразу видно. Пока с текущим набором (checkout@v4,
-  # setup-python@v5, cache@v4, sonarqube-scan@v6, docker/*@v3-v5) проблем нет.
-  # Следующим этапом планируется апгрейд major-версий actions до N@v5+.
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  # Все JS-actions обновлены до major-версий с native Node 24 поддержкой
+  # (apr 2026): checkout@v5, setup-python@v6, cache@v5, docker/*@v4-v7.
+  # Раньше тут стоял `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true` как
+  # переходная мера — она больше не нужна и убрана.
 
 concurrency:
   group: production-deploy
@@ -46,10 +42,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.13"
 
@@ -78,12 +74,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache: pip
@@ -104,7 +100,7 @@ jobs:
         run: pip-audit --ignore-vuln CVE-2024-23342 --ignore-vuln CVE-2026-4539 --ignore-vuln CVE-2026-3219
 
       - name: Cache Trivy database
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/trivy
           key: trivy-db
@@ -165,10 +161,10 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Login to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -176,7 +172,7 @@ jobs:
 
       - name: Extract Docker metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
@@ -184,10 +180,10 @@ jobs:
             type=sha
 
       - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           push: true
@@ -222,7 +218,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Prepare project directory
         run: |
@@ -243,7 +239,7 @@ jobs:
         run: echo "${{ secrets.PROD_ENV_FILE }}" > .env
 
       - name: Login to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
