@@ -227,18 +227,16 @@ async def delete_reading(db: AsyncSession, reading_id: int):
          либо None (404), либо TypeError (500). Заменили на explicit
          SELECT WHERE id=:id (id всё равно уникален из-за SERIAL).
 
-      2. На readings.id ссылается gsheets_import_rows.reading_id
-         БЕЗ ondelete-правила. Если жилец одобрился через Google Sheets,
-         его reading связан с одной или несколькими строками
-         gsheets_import_rows — попытка DELETE падала с FK violation
-         (PostgreSQL 23503), которую ORM показывал как 500.
-         Теперь перед удалением reading отвязываем все gsheets-строки
-         (reading_id=NULL, processed_at=NULL, status='auto_approved'
-         сохраняем — следующий promote_auto_approved_rows подхватит
-         их и создаст новый reading автоматически).
-
-    NB: правильный долгосрочный фикс для (2) — миграция, добавляющая
-    ondelete='SET NULL' к FK. Сделана отдельной миграцией perf_002 / TODO.
+      2. На уровне БД FK от gsheets_import_rows.reading_id к readings.id
+         ФИЗИЧЕСКИ НЕ СОЗДАН — readings партиционированная и PostgreSQL
+         не разрешает FK на партиционированные таблицы (см. комментарий
+         в миграции gsheets_001_import_rows). Поэтому DROP не падает на
+         FK violation — но логически gsheets-строки могут остаться
+         «висеть» с reading_id, указывающим на удалённый reading.
+         Чтобы такого orphan'а не было, явно обнуляем reading_id:
+         status='auto_approved' сохраняем — следующий
+         promote_auto_approved_rows() подхватит строки и создаст
+         для них новый MeterReading автоматически.
     """
     from app.modules.utility.models import GSheetsImportRow
     from sqlalchemy import update
@@ -251,7 +249,7 @@ async def delete_reading(db: AsyncSession, reading_id: int):
         raise HTTPException(status_code=404, detail="Запись не найдена")
 
     # Отвязываем gsheets-строки, которые ссылались на это reading.
-    # Без этого PG вернёт 23503 (FK violation) и весь delete упадёт.
+    # Без этого orphan-ссылки запутают админский UI и promote-задачу.
     await db.execute(
         update(GSheetsImportRow)
         .where(GSheetsImportRow.reading_id == reading_id)

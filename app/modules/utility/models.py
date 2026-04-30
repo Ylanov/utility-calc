@@ -455,15 +455,12 @@ class GSheetsImportRow(Base):
     conflict_reason = Column(Text, nullable=True)
 
     # Ссылка на созданный MeterReading (если approved).
-    # ondelete='SET NULL' — при удалении reading через админку gsheets-строка
-    # отвязывается, статус остаётся 'auto_approved' и следующий
-    # promote_auto_approved_rows() создаст новый MeterReading.
-    # См. миграцию perf_002_gsheets_reading_set_null.
-    reading_id = Column(
-        Integer,
-        ForeignKey("readings.id", ondelete="SET NULL"),
-        nullable=True,
-    )
+    # FK на readings нет на уровне БД (readings — партиционированная
+    # таблица, PG это не любит), оставляем ORM-FK для удобства SQLAlchemy
+    # и валидации в коде. См. миграцию gsheets_001_import_rows.
+    # Отвязывание при удалении reading делается явно в коде —
+    # admin_readings_manual.delete_reading.
+    reading_id = Column(Integer, ForeignKey("readings.id"), nullable=True)
 
     # Уникальный хэш строки — защита от дублей при повторном импорте
     row_hash = Column(String(32), unique=True, nullable=False, index=True)
