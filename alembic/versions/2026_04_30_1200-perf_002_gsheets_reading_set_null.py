@@ -1,6 +1,6 @@
 """gsheets_import_rows.reading_id: ondelete=SET NULL — NOOP
 
-Revision ID: perf_002_gsheets_reading_set_null
+Revision ID: perf_002_gsheets_reading_null
 Revises: perf_001_readings_compound
 Create Date: 2026-04-30 12:00:00.000000
 
@@ -22,11 +22,16 @@ Create Date: 2026-04-30 12:00:00.000000
 кодом в admin_readings_manual.delete_reading: перед удалением reading
 явно отвязываются связанные gsheets_import_rows
 (reading_id=NULL, processed_at=NULL).
+
+Прежняя ревизия называлась `perf_002_gsheets_reading_set_null` — 33
+символа, а alembic_version.version_num это VARCHAR(32). Это валило
+финальный UPDATE alembic_version с
+StringDataRightTruncationError. Имя сокращено до 28 символов.
 """
 from alembic import op  # noqa: F401
 
 
-revision = 'perf_002_gsheets_reading_set_null'
+revision = 'perf_002_gsheets_reading_null'
 down_revision = 'perf_001_readings_compound'
 branch_labels = None
 depends_on = None
