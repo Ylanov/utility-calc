@@ -218,8 +218,46 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
 
 
 async def delete_reading(db: AsyncSession, reading_id: int):
-    reading = await db.get(MeterReading, reading_id)
-    if not reading: raise HTTPException(status_code=404, detail="Запись не найдена")
+    """Удаление утверждённого/чернового MeterReading.
+
+    ИСПРАВЛЕНИЕ 500-ОШИБКИ (apr 2026):
+      1. Раньше использовался `db.get(MeterReading, reading_id)` — но PK
+         у MeterReading составной (id + created_at, models.py:289-290),
+         и db.get для составного PK ожидает tuple, а не scalar. В итоге
+         либо None (404), либо TypeError (500). Заменили на explicit
+         SELECT WHERE id=:id (id всё равно уникален из-за SERIAL).
+
+      2. На readings.id ссылается gsheets_import_rows.reading_id
+         БЕЗ ondelete-правила. Если жилец одобрился через Google Sheets,
+         его reading связан с одной или несколькими строками
+         gsheets_import_rows — попытка DELETE падала с FK violation
+         (PostgreSQL 23503), которую ORM показывал как 500.
+         Теперь перед удалением reading отвязываем все gsheets-строки
+         (reading_id=NULL, processed_at=NULL, status='auto_approved'
+         сохраняем — следующий promote_auto_approved_rows подхватит
+         их и создаст новый reading автоматически).
+
+    NB: правильный долгосрочный фикс для (2) — миграция, добавляющая
+    ondelete='SET NULL' к FK. Сделана отдельной миграцией perf_002 / TODO.
+    """
+    from app.modules.utility.models import GSheetsImportRow
+    from sqlalchemy import update
+
+    res = await db.execute(
+        select(MeterReading).where(MeterReading.id == reading_id)
+    )
+    reading = res.scalars().first()
+    if not reading:
+        raise HTTPException(status_code=404, detail="Запись не найдена")
+
+    # Отвязываем gsheets-строки, которые ссылались на это reading.
+    # Без этого PG вернёт 23503 (FK violation) и весь delete упадёт.
+    await db.execute(
+        update(GSheetsImportRow)
+        .where(GSheetsImportRow.reading_id == reading_id)
+        .values(reading_id=None, processed_at=None)
+    )
+
     await db.delete(reading)
     await db.commit()
     return {"status": "deleted"}
