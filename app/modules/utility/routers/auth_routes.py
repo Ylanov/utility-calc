@@ -38,19 +38,25 @@ class PasswordResetRequest(BaseModel):
     apartment_area: float  # Контрольный вопрос: площадь помещения
 
 
-def set_auth_cookie(response: Response, token: str):
-    """
-    Устанавливает HttpOnly куку с токеном доступа.
-    Автоматически включает Secure флаг в продакшене.
-    """
-    response.set_cookie(
-        key="access_token",
-        value=token,
-        httponly=True,
-        max_age=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
-        samesite="strict",
-        secure=(settings.ENVIRONMENT == "production")
-    )
+# ИСПРАВЛЕНИЕ MIXING-БАГА (apr 2026):
+# Раньше login ставил HttpOnly cookie access_token (max_age=120 мин,
+# browser-wide), а oauth2_scheme имел fallback на этот cookie если
+# Authorization-заголовок отсутствовал. Это давало смешивание сессий
+# на одном устройстве: после закрытия tab у юзера A cookie оставался,
+# и юзер B на той же машине открывал портал → backend читал cookie
+# юзера A и возвращал его данные.
+#
+# Cookie auth теперь полностью убран:
+# - oauth2_scheme читает только Authorization: Bearer (api/core/auth.py).
+# - login и verify_2fa cookie больше не ставят.
+# - logout cookie не удаляет (нечего удалять).
+#
+# Подробное обоснование — в OAuth2PasswordBearerWithCookie.__call__
+# в app/core/auth.py.
+#
+# Чтобы зачистить «зависший» cookie у уже залогинившихся пользователей
+# после деплоя, добавлен явный `delete_cookie` на /api/logout — старые
+# браузеры сами протухнут не позднее, чем через 120 мин.
 
 
 # =====================================================================
@@ -144,7 +150,6 @@ async def login(
     access_token = create_access_token(
         data={"sub": user.username, "role": user.role, "scope": "full"}
     )
-    set_auth_cookie(response, access_token)
 
     await write_audit_log(
         db, user.id, user.username,
@@ -218,7 +223,6 @@ async def verify_2fa_login(
     user.last_login_at = now
 
     access_token = create_access_token(data={"sub": user.username, "role": user.role, "scope": "full"})
-    set_auth_cookie(response, access_token)
 
     await write_audit_log(
         db, user.id, user.username,
@@ -268,7 +272,17 @@ async def activate_2fa(
 # --- 5. ВЫХОД (Без изменений) ---
 @router.post("/api/logout")
 async def logout(response: Response):
-    response.delete_cookie(key="access_token", samesite="lax", httponly=True, secure=(settings.ENVIRONMENT == "production"))
+    # delete_cookie оставлен для безопасности: после деплоя у части
+    # пользователей в браузере ещё валиден старый HttpOnly cookie с
+    # max_age=2 часа от прошлой login-сессии. Этот вызов гарантированно
+    # его удалит при первом logout. Сам cookie новые login'ы больше не
+    # ставят (см. комментарий выше set_auth_cookie).
+    response.delete_cookie(
+        key="access_token",
+        samesite="strict",
+        httponly=True,
+        secure=(settings.ENVIRONMENT == "production"),
+    )
     return {"status": "success", "message": "Успешный выход"}
 
 

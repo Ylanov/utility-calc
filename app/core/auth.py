@@ -43,28 +43,42 @@ def get_password_hash(password: str) -> str:
 
 class OAuth2PasswordBearerWithCookie(OAuth2PasswordBearer):
     """
-    Извлекает токен из запроса.
-    Порядок приоритета:
-    1. HTTP-заголовок Authorization: Bearer <token>  (основной способ после перехода на sessionStorage)
-    2. HttpOnly Cookie access_token                   (обратная совместимость / Swagger)
+    Извлекает токен из Authorization: Bearer <token>.
+
+    ИСПРАВЛЕНИЕ MIXING-БАГА (apr 2026):
+    Раньше был fallback на HttpOnly Cookie access_token, что приводило
+    к смешиванию сессий между разными пользователями на одном устройстве:
+
+      1. User A логинится → cookie (max_age=120 мин, browser-wide) +
+         sessionStorage (per-tab).
+      2. User A закрывает tab — sessionStorage умирает, cookie живёт
+         ещё 2 часа.
+      3. На том же физическом устройстве User B открывает портал в
+         новой вкладке → пустой sessionStorage → JS не отправляет
+         Authorization → backend читает cookie от A → User B видит
+         данные User A.
+
+    Cookie auth уже не нужен:
+    - Frontend (api.js) ВСЕГДА шлёт Bearer header из sessionStorage.
+    - Mobile Flutter app использует только Bearer.
+    - Swagger UI отключён в production (docs_url=None).
+    - Direct PDF/file links все идут через api.download (тот же header).
+
+    Если захотим вернуть cookie-auth для XSS hardening — это будет
+    отдельная задача (см. этап 2A/2B плана) с правильным lifecycle:
+    cookie set/delete синхронизированы с sessionStorage, и НЕТ
+    fallback при отсутствии header — авторизация одна, а не две.
     """
 
     async def __call__(self, request: Request) -> Optional[str]:
-        # 1. Заголовок Authorization (приоритет)
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
             token = auth_header.split(" ", 1)[1].strip()
             if token:
                 return token
 
-        # 2. HttpOnly Cookie (fallback)
-        token = request.cookies.get("access_token")
-        if token:
-            if token.startswith("Bearer "):
-                return token.split(" ", 1)[1].strip()
-            return token
-
-        # 3. Стандартный OAuth2 (для Swagger UI)
+        # Стандартный OAuth2 (для Swagger UI в dev — в production Swagger
+        # отключён, так что это путь не сработает).
         return await super().__call__(request)
 
 

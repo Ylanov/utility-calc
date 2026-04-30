@@ -22,28 +22,19 @@ logger = logging.getLogger(__name__)
 
 class OAuth2PasswordBearerWithCookie(OAuth2PasswordBearer):
     """
-    Расширение стандартного OAuth2:
-    1. Читает токен из Authorization: Bearer header (основной способ после перехода на sessionStorage)
-    2. Читает токен из HttpOnly Cookie access_token (обратная совместимость)
-    3. Стандартный OAuth2 fallback (Swagger UI)
+    Извлекает токен из Authorization: Bearer <token>.
+    См. полное обоснование в app/core/auth.py — там подробно о mixing-баге,
+    который заставил убрать cookie fallback. Здесь — копия логики, потому
+    что эта зависимость импортируется в роутерах через dependencies.py.
     """
 
     async def __call__(self, request: Request) -> Optional[str]:
-        # 1. Заголовок Authorization (приоритет)
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
             token = auth_header.split(" ", 1)[1].strip()
             if token:
                 return token
 
-        # 2. Cookie (обратная совместимость)
-        token = request.cookies.get("access_token")
-        if token:
-            if token.startswith("Bearer "):
-                return token.split(" ", 1)[1].strip()
-            return token
-
-        # 3. Стандартный OAuth2 для Swagger
         return await super().__call__(request)
 
 

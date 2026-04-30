@@ -19,24 +19,18 @@ pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 
 def _extract_token(request: Request) -> str | None:
     """
-    Извлекает JWT-токен из запроса.
-    Порядок приоритета:
-    1. HTTP-заголовок Authorization: Bearer <token>  (используется после перехода на sessionStorage)
-    2. HttpOnly Cookie access_token                   (обратная совместимость)
+    Извлекает JWT-токен из Authorization: Bearer header.
+
+    ИСПРАВЛЕНИЕ MIXING-БАГА (apr 2026): раньше был fallback на HttpOnly
+    Cookie access_token, что давало смешивание сессий между разными
+    пользователями Arsenal на одном устройстве. Подробное обоснование
+    — в app/core/auth.py (OAuth2PasswordBearerWithCookie).
     """
-    # 1. Заголовок Authorization
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
         token = auth_header.split(" ", 1)[1].strip()
         if token:
             return token
-
-    # 2. Cookie (обратная совместимость)
-    token = request.cookies.get("access_token")
-    if token:
-        if token.startswith("Bearer "):
-            token = token.split(" ", 1)[1].strip()
-        return token
 
     return None
 
