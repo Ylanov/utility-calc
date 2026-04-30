@@ -383,6 +383,51 @@ async def list_rows(
 # =========================================================================
 # APPROVE (создаёт MeterReading)
 # =========================================================================
+_MONTH_NAMES_RU = [
+    "", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+    "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+]
+
+
+async def _resolve_period_for_row(
+    db: AsyncSession, row: GSheetsImportRow,
+) -> Optional[BillingPeriod]:
+    """Возвращает BillingPeriod, к которому привязать создаваемый MeterReading.
+
+    Ранее использовался активный период (одинаковый для всех строк) —
+    при импорте исторических подач (например, импорт 34-х подач Неметуллаевой
+    за разные месяцы 2025-2026) ВСЕ они пытались встать в текущий
+    «Апрель 2026» и конфликтовали duplicate-проверкой после первой.
+
+    Теперь period выводится из sheet_timestamp:
+      * найден period с именем «{Месяц} {Год}» — используем его;
+      * нет — создаём неактивный (is_active=False), чтобы он не нарушил
+        unique-partial-индекс «один активный период»;
+      * sheet_timestamp пуст — fallback на текущий активный период
+        (старое поведение).
+
+    Это позволяет bulk-approve массово закрывать исторический импорт.
+    """
+    if not row.sheet_timestamp:
+        return (await db.execute(
+            select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
+        )).scalars().first()
+
+    ts = row.sheet_timestamp
+    period_name = f"{_MONTH_NAMES_RU[ts.month]} {ts.year}"
+
+    existing = (await db.execute(
+        select(BillingPeriod).where(BillingPeriod.name == period_name)
+    )).scalars().first()
+    if existing:
+        return existing
+
+    period = BillingPeriod(name=period_name, is_active=False)
+    db.add(period)
+    await db.flush()
+    return period
+
+
 async def _apply_approve(
     db: AsyncSession,
     row: GSheetsImportRow,
@@ -479,10 +524,14 @@ async def _apply_approve(
             ),
         )
 
-    # Текущий активный период — к нему привяжем показание.
-    active_period = (await db.execute(
-        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
-    )).scalars().first()
+    # Период, к которому привяжем показание.
+    # ИСПРАВЛЕНИЕ (apr 2026): раньше брался активный период (одинаковый для
+    # всех approvals). Это ломало bulk-approve исторических подач — например,
+    # 34 строки Неметуллаевой за разные месяцы 2025-2026 пытались все попасть
+    # в текущий «Апрель 2026», и со второй начинался 409 conflict.
+    # Теперь period выводится из sheet_timestamp; если его нет — fallback
+    # на активный (старое поведение). См. _resolve_period_for_row.
+    target_period = await _resolve_period_for_row(db, row)
 
     # ЗАЩИТА ОТ ДУБЛЕЙ: если в этом периоде у жильца уже есть утверждённое
     # показание, не создаём второе. Отдаём 409 со структурой conflict.
@@ -492,11 +541,11 @@ async def _apply_approve(
     # вместо MeterReading, и внешний approve_row падал с AttributeError при
     # попытке прочитать .id (и bulk_approve считал такой «возврат» как success).
     # HTTPException корректно всплывает через любой вызывающий код.
-    if active_period:
+    if target_period:
         duplicate = (await db.execute(
             select(MeterReading).where(
                 MeterReading.user_id == user.id,
-                MeterReading.period_id == active_period.id,
+                MeterReading.period_id == target_period.id,
                 MeterReading.is_approved.is_(True),
             ).limit(1)
         )).scalars().first()
@@ -506,12 +555,12 @@ async def _apply_approve(
                 detail={
                     "message": (
                         f"У жильца уже есть утверждённое показание за период "
-                        f"«{active_period.name}» (id={duplicate.id}). "
+                        f"«{target_period.name}» (id={duplicate.id}). "
                         "Отклоните эту строку или удалите существующее показание."
                     ),
                     "conflict": {
                         "user_username": user.username,
-                        "period_name": active_period.name,
+                        "period_name": target_period.name,
                         "row_id": row.id,
                         "existing": {
                             "id": duplicate.id,
@@ -546,7 +595,7 @@ async def _apply_approve(
     reading = MeterReading(
         user_id=user.id,
         room_id=user.room_id,
-        period_id=active_period.id if active_period else None,
+        period_id=target_period.id if target_period else None,
         hot_water=row.hot_water,
         cold_water=row.cold_water,
         electricity=electricity_value,
