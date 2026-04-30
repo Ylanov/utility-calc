@@ -285,7 +285,11 @@ def sync_import_debts_process(
             updates_list = []
             for r in updates_dict.values():
                 updates_list.append({
+                    # MeterReading PK составной (id + created_at) — оба обязательны
+                    # в bulk_update_mappings (legacy 1.x style тихо не обновляет
+                    # без полного PK, 2.0 style рейзит ошибку). См. models.py:289-290.
                     "id": r.id,
+                    "created_at": r.created_at,
                     "debt_209": r.debt_209,
                     "overpayment_209": r.overpayment_209,
                     "debt_205": r.debt_205,

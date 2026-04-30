@@ -455,16 +455,22 @@ def check_auto_period_task():
                 is_after_end = current_day > end_day
                 is_new_month = current_day < start_day
                 if is_after_end or is_new_month:
+                    # ИСПРАВЛЕНИЕ (apr 2026): раньше check_auto_period_task САМ ставил
+                    # lock через `redis_client.set(... nx=True, ex=1800)` и потом
+                    # вызывал close_period_task.delay(...). Сама close_period_task
+                    # на старте делает такой же `set nx=True` — и видит уже занятый
+                    # lock, возвращает skipped. Итог: автозакрытие никогда не
+                    # отрабатывало, плюс lock висел 1800 сек после каждого Beat-тика.
+                    # Теперь: только наблюдательная проверка (read-only `get`),
+                    # реальный atomic lock делает сама close_period_task.
                     redis_client = Redis.from_url(settings.REDIS_URL)
-                    lock_key = "lock:close_period"
-                    lock_acquired = redis_client.set(lock_key, "1", nx=True, ex=1800)
-                    if lock_acquired:
+                    if redis_client.get("lock:close_period"):
+                        logger.info("[AUTO] Close already running, skip duplicate")
+                    else:
                         admin = db.query(User).filter_by(username="admin").first()
                         if admin:
                             close_period_task.delay(admin.id)
                             logger.info(f"[AUTO] Triggered closing task for period '{active.name}'")
-                    else:
-                        logger.info("[AUTO] Close already running, skip duplicate")
     except Exception:
         logger.exception("[AUTO] Automation failed")
 
@@ -517,7 +523,7 @@ def activate_scheduled_tariffs_task():
         return {"activated": 0, "error": "task failed"}
 
 
-@celery.task(name="run_arsenal_analyzer_task", queue="default")
+@celery.task(name="run_arsenal_analyzer_task", queue="arsenal_gsm_default")
 def run_arsenal_analyzer_task():
     """Периодическая проверка данных арсенала на нарушения / фрод-паттерны.
     Запускается Celery Beat'ом (раз в час — настраивается в worker.py).

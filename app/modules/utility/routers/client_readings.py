@@ -225,7 +225,13 @@ async def save_reading(
     # жильца (переезд, GSHEETS_AUTO с чужими большими цифрами и т.п.),
     # дельта посчиталась бы относительно чужих значений и дала миллионы.
     # Первая подача жильца в конкретной комнате = baseline (cost=0).
-    history_task = db.execute(
+    #
+    # ИСПРАВЛЕНИЕ (apr 2026): раньше эти два запроса выполнялись через
+    # asyncio.gather на одной AsyncSession — SQLAlchemy AsyncSession НЕ
+    # concurrent-safe (одна connection в session, нельзя посылать два
+    # параллельных query). Под нагрузкой давало intermittent ошибки
+    # "another operation is in progress". Теперь — последовательно.
+    history_res = await db.execute(
         select(MeterReading)
         .where(
             MeterReading.user_id == user.id,
@@ -234,13 +240,11 @@ async def save_reading(
         .order_by(MeterReading.created_at.desc())
         .limit(12)
     )
-    adj_task = db.execute(
+    adj_res = await db.execute(
         select(Adjustment.account_type, func.sum(Adjustment.amount))
         .where(Adjustment.user_id == user.id, Adjustment.period_id == period.id)
         .group_by(Adjustment.account_type)
     )
-
-    history_res, adj_res = await asyncio.gather(history_task, adj_task)
 
     readings = history_res.scalars().all()
     adj_map = {a[0]: (a[1] or Decimal("0.00")) for a in adj_res.all()}

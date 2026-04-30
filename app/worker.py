@@ -50,19 +50,20 @@ celery.conf.update(
     # =====================================================
     task_default_queue="default",
     task_routes={
-        # ТЯЖЕЛЫЕ ЗАДАЧИ ЖКХ (PDF, ZIP, 1C) -> Уходят в контейнер worker_jkh_heavy
-        "app.modules.utility.tasks.generate_receipt_task": {"queue": "heavy"},
-        "app.modules.utility.tasks.create_zip_archive_task": {"queue": "heavy"},
-        "app.modules.utility.tasks.start_bulk_receipt_generation": {"queue": "heavy"},
-        "app.modules.utility.tasks.import_debts_task": {"queue": "heavy"},
-        "app.modules.utility.tasks.close_period_task": {"queue": "heavy"},
+        # ИСПРАВЛЕНИЕ (apr 2026): раньше пути были dotted —
+        # "app.modules.utility.tasks.generate_receipt_task". Но Celery routes
+        # сравнивают с task.name, а у нас @celery.task(name="generate_receipt_task")
+        # переопределяет dotted на короткое. Итог: routes никогда не матчили,
+        # heavy-задачи (PDF, импорт долгов) уходили в default queue.
+        # Теперь — короткие имена, точно как в @celery.task(name=...).
+        #
+        # NB: задачи с queue=... в @celery.task декораторе игнорируют этот
+        # fallback (start_bulk_receipt_generation, close_period_task — heavy;
+        # run_arsenal_analyzer_task — arsenal_gsm_default).
+        "generate_receipt_task": {"queue": "heavy"},
+        "import_debts_task": {"queue": "heavy"},
 
-        # ЗАДАЧИ АРСЕНАЛА -> Уходят в изолированный контейнер worker_arsenal_gsm.
-        # Имя очереди "arsenal_gsm_default" сохранено как историческое — после
-        # удаления модуля ГСМ (apr 2026) очередь обслуживает только Arsenal.
-        "app.modules.arsenal.tasks.*": {"queue": "arsenal_gsm_default"},
-
-        # ВСЕ ОСТАЛЬНЫЕ ЗАДАЧИ (Легкие задачи ЖКХ) -> Уходят в worker_jkh_default
+        # ВСЕ ОСТАЛЬНЫЕ ЗАДАЧИ (легкие ЖКХ) -> default queue.
         "*": {"queue": "default"},
     }
 )

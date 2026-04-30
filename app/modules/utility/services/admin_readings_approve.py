@@ -128,7 +128,11 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
                 "cost_waste": ZERO, "cost_fixed_part": ZERO, "total_cost": ZERO,
             }
             update_mappings.append({
+                # MeterReading PK составной (id + created_at) — оба обязательны
+                # в bulk-update mappings, иначе SQLAlchemy 2.0 рейзит ошибку
+                # "primary key value(s) required". См. models.py:289-290.
                 "id": reading.id,
+                "created_at": reading.created_at,
                 "is_approved": True,
                 "total_cost": ZERO,
                 "total_209": ZERO,
@@ -181,9 +185,11 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
         total_209 = cost_utils_209 + (reading.debt_209 or ZERO) - (reading.overpayment_209 or ZERO) + user_adjs['209']
         total_205 = cost_rent_205 + (reading.debt_205 or ZERO) - (reading.overpayment_205 or ZERO) + user_adjs['205']
 
-        # Подготавливаем словари для bulk_update
+        # Подготавливаем словари для bulk_update.
+        # MeterReading PK составной (id + created_at) — оба обязательны.
         update_mappings.append({
             "id": reading.id,
+            "created_at": reading.created_at,
             "is_approved": True,
             "total_cost": total_209 + total_205,
             "total_209": total_209,
@@ -362,11 +368,14 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
     await db.commit()
 
     # ---> ОТПРАВЛЯЕМ ПУШ КОНКРЕТНОМУ ЖИЛЬЦУ <---
-    # Используем asyncio.create_task для фоновой отправки без блокировки ответа
+    # ИСПРАВЛЕНИЕ (apr 2026): раньше передавался request-scoped `db` напрямую.
+    # После `return` request lifecycle закрывает sessions через зависимость
+    # get_db в database.py — фоновая задача обращалась к закрытой сессии,
+    # пуши тихо падали, dead device tokens не чистились.
+    # Теперь — открываем свежую AsyncSession внутри background helper'а.
     final_sum = total_209 + total_205
     asyncio.create_task(
-        send_push_to_user(
-            db,
+        _send_push_background(
             user_id=user.id,
             title="✅ Квитанция проверена",
             body=f"Бухгалтерия утвердила ваши показания. Итого к оплате: {final_sum} руб."
@@ -374,3 +383,24 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
     )
 
     return {"status": "approved", "new_total": final_sum}
+
+
+async def _send_push_background(user_id: int, title: str, body: str):
+    """Открывает собственную AsyncSession для фоновой отправки пуша.
+
+    Привязка к request-scoped session не работает: к моменту выполнения
+    background-task'а исходный request lifecycle уже закрыл сессию.
+    """
+    from app.core.database import AsyncSessionLocal
+    import logging
+    _log = logging.getLogger(__name__)
+    try:
+        async with AsyncSessionLocal() as bg_db:
+            try:
+                await send_push_to_user(bg_db, user_id=user_id, title=title, body=body)
+            except Exception as e:
+                _log.warning(f"[PUSH] send_push_to_user failed for user_id={user_id}: {e}")
+    except Exception as e:
+        # Двойной try — на случай если AsyncSessionLocal сам падает (Redis/DB down).
+        # Ни в коем случае не валим пользовательский request — он уже завершён.
+        _log.warning(f"[PUSH] background session init failed: {e}")

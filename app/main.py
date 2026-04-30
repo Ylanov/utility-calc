@@ -208,6 +208,15 @@ async def lifespan(app: FastAPI):
         logger.info("Redis connected")
     except Exception as error:
         logger.error(f"Redis connection failed: {error}")
+        # ИСПРАВЛЕНИЕ (apr 2026): раньше exception тут просто логгировался
+        # и приложение продолжало стартовать. /health возвращал 200, но
+        # любой endpoint с RateLimiter (например /api/token, /api/auth/reset-password)
+        # затем падал с 500 — limiter не инициализирован. Это давало
+        # обманчивую картину «сервис здоров» при недоступном Redis.
+        # В production падаем сразу, чтобы Docker restart-policy перезапустил
+        # контейнер; в dev продолжаем стартовать (удобно работать без Redis).
+        if settings.ENVIRONMENT == "production":
+            raise
 
     # APP_MODE "arsenal_gsm" сохранён как историческое имя — после удаления
     # модуля GSM (apr 2026) фактически создаём админа только для Arsenal.
