@@ -30,10 +30,15 @@ MAX_REQUESTS_JITTER=${GUNICORN_MAX_REQUESTS_JITTER:-200}
 
 echo "Workers: $WORKERS | Threads: $THREADS | CPU: $CPU_COUNT"
 
+# Явно используем app.core.uvicorn_worker.UvloopWorker — это subclass
+# uvicorn.workers.UvicornWorker с зафиксированными loop=uvloop и http=httptools.
+# Стандартный UvicornWorker имеет loop="auto" — обычно берёт uvloop, но при
+# конфликте версий asyncio/h11 может откатываться на std-loop незаметно.
+# Явная фиксация — подстраховка от деградации.
 exec gunicorn app.main:app \
   --workers=$WORKERS \
   --threads=$THREADS \
-  --worker-class=uvicorn.workers.UvicornWorker \
+  --worker-class=app.core.uvicorn_worker.UvloopWorker \
   --bind=0.0.0.0:8000 \
   --timeout=$TIMEOUT \
   --keep-alive=$KEEP_ALIVE \

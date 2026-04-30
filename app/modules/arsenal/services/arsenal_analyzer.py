@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timedelta
+from app.core.time_utils import utcnow
 from typing import Optional
 
 from sqlalchemy import and_, func, or_, select
@@ -81,7 +82,7 @@ def _upsert_flag(db, *, rule_code, severity, title, entity_type, entity_id, deta
     """Атомарный upsert: UNIQUE (rule_code, entity_type, entity_id).
     При повторном найденном — обновляем last_seen_at и detaills (могли измениться).
     """
-    now = datetime.utcnow()
+    now = utcnow()
     stmt = pg_insert(ArsenalAnomalyFlag).values(
         rule_code=rule_code,
         severity=severity,
@@ -109,7 +110,7 @@ def _upsert_flag(db, *, rule_code, severity, title, entity_type, entity_id, deta
 def _resolve_unseen(db, rule_code: str, seen_keys: set[tuple]):
     """Все активные флаги этого правила, которых нет в seen_keys, считаем
     resolved (ситуация исправилась)."""
-    now = datetime.utcnow()
+    now = utcnow()
     active = db.query(ArsenalAnomalyFlag).filter(
         ArsenalAnomalyFlag.rule_code == rule_code,
         ArsenalAnomalyFlag.resolved_at.is_(None),
@@ -141,9 +142,17 @@ def check_duplicate_serial(db):
         WeaponRegistry.serial_number, WeaponRegistry.nomenclature_id
     ).having(func.count(WeaponRegistry.id) > 1).all()
 
+    # ОПТИМИЗАЦИЯ N+1: preload Nomenclature одним IN-запросом вместо первой
+    # выборки на каждую группу.
+    nom_ids = list({nom_id for _, nom_id, _ in rows})
+    nom_by_id = {
+        n.id: n
+        for n in db.query(Nomenclature).filter(Nomenclature.id.in_(nom_ids)).all()
+    } if nom_ids else {}
+
     seen = set()
     for serial, nom_id, cnt in rows:
-        nom = db.query(Nomenclature).filter(Nomenclature.id == nom_id).first()
+        nom = nom_by_id.get(nom_id)
         # entity_id = nom_id, чтобы получить ровно один флаг на (nom, serial)
         title = f"Серийник «{serial}» активен в {cnt} местах ({nom.name if nom else '?'})"
         details = {
@@ -167,7 +176,7 @@ def check_stale_stock(db):
     if not _get_bool(db, "rule.stale_stock.enabled", True):
         return 0
     months = _get_int(db, "rule.stale_stock.months", 24)
-    cutoff = datetime.utcnow() - timedelta(days=30 * months)
+    cutoff = utcnow() - timedelta(days=30 * months)
     code = "STALE_STOCK"
 
     # Подзапрос: для каждой единицы — когда последний раз её трогали в DocumentItem.
@@ -195,7 +204,7 @@ def check_stale_stock(db):
     seen = set()
     for weapon, last_op in rows:
         ref_date = last_op or weapon.created_at
-        days = (datetime.utcnow() - ref_date).days if ref_date else None
+        days = (utcnow() - ref_date).days if ref_date else None
         title = f"Без движения {days} дн." if days else "Без движения"
         details = {
             "weapon_id": weapon.id,
@@ -222,7 +231,7 @@ def check_suspicious_burst(db):
         return 0
     threshold = _get_int(db, "rule.suspicious_burst.threshold_per_day", 20)
     code = "SUSPICIOUS_BURST"
-    cutoff = datetime.utcnow() - timedelta(hours=24)
+    cutoff = utcnow() - timedelta(hours=24)
 
     rows = db.query(
         Document.author_id,
@@ -278,9 +287,16 @@ def check_ghost_serial(db):
         DocumentItem.nomenclature_id, DocumentItem.serial_number,
     ).limit(500).all()
 
+    # ОПТИМИЗАЦИЯ N+1: preload Nomenclature одним IN-запросом.
+    nom_ids = list({nom_id for nom_id, _, _, _ in rows})
+    nom_by_id = {
+        n.id: n
+        for n in db.query(Nomenclature).filter(Nomenclature.id.in_(nom_ids)).all()
+    } if nom_ids else {}
+
     seen = set()
     for nom_id, serial, cnt, last_doc in rows:
-        nom = db.query(Nomenclature).filter(Nomenclature.id == nom_id).first()
+        nom = nom_by_id.get(nom_id)
         if nom and not nom.is_numbered:
             # Партионный учёт — не номер ствола, а номер партии. Это нормально
             # что его нет в реестре (партия могла быть полностью списана).
@@ -350,7 +366,7 @@ def check_overdue_shipment(db):
         return 0
     days = _get_int(db, "rule.overdue_shipment.days", 14)
     code = "OVERDUE_SHIPMENT"
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = utcnow() - timedelta(days=days)
 
     shipments = db.query(Document).filter(
         Document.operation_type.in_(["Отправка", "Перемещение"]),
@@ -359,18 +375,26 @@ def check_overdue_shipment(db):
         Document.target_id.is_not(None),
     ).limit(500).all()
 
+    # ОПТИМИЗАЦИЯ N+1: раньше для каждого shipment делался отдельный SELECT
+    # на проверку "есть ли позднейший приём". На 500 shipments = 500 запросов.
+    # Теперь один запрос за все приёмки в нужных target_id, в Python проверяем.
+    target_ids = list({s.target_id for s in shipments if s.target_id})
+    receives_by_target: dict[int, list] = {}
+    if target_ids:
+        for d in db.query(Document.target_id, Document.operation_date).filter(
+            Document.operation_type == "Прием",
+            Document.target_id.in_(target_ids),
+            Document.is_reversed.is_(False),
+        ).all():
+            receives_by_target.setdefault(d.target_id, []).append(d.operation_date)
+
     seen = set()
     for ship in shipments:
-        # Есть ли позже приём в target?
-        later_receive = db.query(Document.id).filter(
-            Document.operation_type == "Прием",
-            Document.target_id == ship.target_id,
-            Document.operation_date >= ship.operation_date,
-            Document.is_reversed.is_(False),
-        ).first()
-        if later_receive:
+        # Есть ли позже приём в target? Линейный поиск в небольшом списке.
+        receives = receives_by_target.get(ship.target_id, [])
+        if any(rd >= ship.operation_date for rd in receives):
             continue
-        age_days = (datetime.utcnow() - ship.operation_date).days
+        age_days = (utcnow() - ship.operation_date).days
         title = f"Отправка #{ship.doc_number} без приёма {age_days} дн."
         details = {
             "document_id": ship.id,

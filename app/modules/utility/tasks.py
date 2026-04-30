@@ -182,6 +182,11 @@ def start_bulk_receipt_generation(period_id: int):
 
         failed_ids = []
 
+        # Импорт tariff_cache вынесен из горячего цикла (раньше делался на каждой
+        # квитанции). Сам кеш Singleton — повторный import дешёвый, но синтаксический
+        # шум в hot path неприятен.
+        from app.modules.utility.services.tariff_cache import tariff_cache
+
         with tempfile.TemporaryDirectory() as tmpdirname:
             zip_local_path = os.path.join(tmpdirname, zip_name)
 
@@ -196,23 +201,47 @@ def start_bulk_receipt_generation(period_id: int):
                         selectinload(MeterReading.user).selectinload(User.room)
                     ).filter(MeterReading.id.in_(chunk_ids)).all()
 
+                    # ОПТИМИЗАЦИЯ N+1 (apr 2026): раньше внутри цикла делалось
+                    # 2 запроса на КАЖДУЮ квитанцию (Adjustment + prev MeterReading).
+                    # На 1000 квитанций = 2000 round-trip'ов до Postgres.
+                    # Теперь preload одним батчем на весь chunk:
+                    #   - Adjustments по (user_id IN chunk_users, period_id == period)
+                    #   - prev_readings по (room_id IN chunk_rooms, is_approved, asc by created_at)
+                    chunk_user_ids = list({r.user_id for r in readings})
+                    chunk_room_ids = list({r.room_id for r in readings if r.room_id})
+
+                    adjustments_by_user: dict[int, list] = {}
+                    if chunk_user_ids:
+                        for adj in db.query(Adjustment).filter(
+                            Adjustment.user_id.in_(chunk_user_ids),
+                            Adjustment.period_id == period_id,
+                        ).all():
+                            adjustments_by_user.setdefault(adj.user_id, []).append(adj)
+
+                    # Все approved readings для нужных комнат — в Python для каждого r
+                    # ищем последний reading с created_at < r.created_at. Список заранее
+                    # отсортирован по created_at ASC, поэтому идём с конца.
+                    readings_by_room: dict[int, list] = {}
+                    if chunk_room_ids:
+                        for mr in db.query(MeterReading).filter(
+                            MeterReading.room_id.in_(chunk_room_ids),
+                            MeterReading.is_approved.is_(True),
+                        ).order_by(MeterReading.room_id, MeterReading.created_at).all():
+                            readings_by_room.setdefault(mr.room_id, []).append(mr)
+
                     for r in readings:
                         try:
-                            # Получаем корректировки
-                            adjustments = db.query(Adjustment).filter(
-                                Adjustment.user_id == r.user_id,
-                                Adjustment.period_id == period_id
-                            ).all()
+                            adjustments = adjustments_by_user.get(r.user_id, [])
 
-                            # Предыдущее показание
-                            prev_reading = db.query(MeterReading).filter(
-                                MeterReading.room_id == r.room_id,
-                                MeterReading.is_approved.is_(True),
-                                MeterReading.created_at < r.created_at
-                            ).order_by(MeterReading.created_at.desc()).first()
+                            # Предыдущее показание: последний approved в той же комнате
+                            # СТРОГО ДО r.created_at.
+                            prev_reading = None
+                            for cand in reversed(readings_by_room.get(r.room_id, [])):
+                                if cand.created_at < r.created_at:
+                                    prev_reading = cand
+                                    break
 
                             # Через единый кеш: Room.tariff_id → User.tariff_id → default
-                            from app.modules.utility.services.tariff_cache import tariff_cache
                             tariff = tariff_cache.get_effective_tariff(user=r.user, room=r.user.room) or default_tariff
 
                             # Генерируем PDF локально
@@ -774,10 +803,26 @@ def _recalc_run(job_id: int, apply: bool):
                 if not chunk:
                     break
 
-                # Соберём prev-reading для всех комнат в чанке одним запросом.
-                # Для пересчёта нужен последний approved reading по комнате
-                # строго ДО created_at текущего. Аккуратно — в рамках одного
-                # периода берём «предыдущий» по created_at в пределах комнаты.
+                # ОПТИМИЗАЦИЯ N+1 (apr 2026): раньше для каждой записи в chunk
+                # делался отдельный SELECT на prev MeterReading по паре
+                # (user_id, room_id). На 5000 readings = 5000 round-trip'ов до БД.
+                # Теперь один запрос за весь chunk, in-memory поиск prev для
+                # каждой записи. Список заранее отсортирован по created_at ASC,
+                # ищем с конца до первого с created_at < r.created_at.
+                chunk_user_ids = list({r.user_id for r in chunk if r.user_id})
+                chunk_room_ids = list({r.room_id for r in chunk if r.room_id})
+
+                prev_by_pair: dict[tuple[int, int], list] = {}
+                if chunk_user_ids and chunk_room_ids:
+                    for mr in db.query(MeterReading).filter(
+                        MeterReading.user_id.in_(chunk_user_ids),
+                        MeterReading.room_id.in_(chunk_room_ids),
+                        MeterReading.is_approved.is_(True),
+                    ).order_by(
+                        MeterReading.user_id, MeterReading.room_id, MeterReading.created_at
+                    ).all():
+                        prev_by_pair.setdefault((mr.user_id, mr.room_id), []).append(mr)
+
                 updates = []
                 for r in chunk:
                     user = r.user
@@ -792,17 +837,11 @@ def _recalc_run(job_id: int, apply: bool):
                     # посчитана относительно чужих цифр — получается
                     # квитанция на сотни тысяч рублей. Каждый жилец имеет
                     # свой baseline при первой подаче.
-                    prev = (
-                        db.query(MeterReading)
-                        .filter(
-                            MeterReading.user_id == r.user_id,
-                            MeterReading.room_id == r.room_id,
-                            MeterReading.is_approved.is_(True),
-                            MeterReading.created_at < r.created_at,
-                        )
-                        .order_by(MeterReading.created_at.desc())
-                        .first()
-                    )
+                    prev = None
+                    for cand in reversed(prev_by_pair.get((r.user_id, r.room_id), [])):
+                        if cand.created_at < r.created_at:
+                            prev = cand
+                            break
 
                     new_fields = _recalc_compute_one(db, r, user, room, prev, fallback_tariff)
 

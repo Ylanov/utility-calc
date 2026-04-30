@@ -23,6 +23,7 @@ import logging
 import os
 import re
 from datetime import datetime
+from app.core.time_utils import utcnow
 from typing import Optional
 
 from fastapi import (
@@ -295,7 +296,7 @@ async def upload_release(
     # AndroidManifest, и только потом понять какое имя дать файлу
     # (jkh-lider-android-<version>.apk берёт версию из APK, не из формы).
     os.makedirs(APPS_DIR, exist_ok=True)
-    tmp_path = os.path.join(APPS_DIR, f".upload-{current_user.id}-{datetime.utcnow().timestamp()}.tmp")
+    tmp_path = os.path.join(APPS_DIR, f".upload-{current_user.id}-{utcnow().timestamp()}.tmp")
 
     sha = hashlib.sha256()
     written = 0

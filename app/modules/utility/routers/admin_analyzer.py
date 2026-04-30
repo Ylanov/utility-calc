@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from app.core.time_utils import utcnow
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -57,7 +58,7 @@ async def analyzer_dashboard(
 ):
     """Сводка состояния всех анализаторов за последние N дней."""
     _require_admin(current_user)
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = utcnow() - timedelta(days=days)
 
     # 1) Аномалии: разложение по типу флага.
     # MeterReading.anomaly_flags хранится как 'SPIKE_HOT,FROZEN_COLD,...'
@@ -245,7 +246,7 @@ async def update_setting(
     if not changes:
         return {"status": "noop", "key": key}
 
-    setting.updated_at = datetime.utcnow()
+    setting.updated_at = utcnow()
     setting.updated_by_id = current_user.id
 
     await write_audit_log(
@@ -509,7 +510,7 @@ async def cleanup_gsheets_now(
 
     # Выполняем ту же логику, что и Celery-задача, но в рамках async-сессии.
     from datetime import datetime, timedelta
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = utcnow() - timedelta(days=days)
     terminal = ("approved", "auto_approved", "rejected")
 
     # Считаем сколько будет удалено (для audit_log) + удаляем пачкой

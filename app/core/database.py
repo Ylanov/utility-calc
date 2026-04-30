@@ -18,7 +18,6 @@ ISOLATION_LEVEL = "READ COMMITTED"
 # Определение базовых классов моделей
 Base = declarative_base()          # ЖКХ
 ArsenalBase = declarative_base()   # Арсенал
-GsmBase = declarative_base()       # ГСМ
 
 # Аргументы подключения asyncpg (критично для PgBouncer)
 asyncpg_connect_args = {
@@ -168,52 +167,9 @@ ArsenalSessionLocalSync = sessionmaker(
 
 
 # =========================================================================
-# 3. GSM DB
-#
-# ИСПРАВЛЕНИЕ P0: Ранее gsm_engine использовал settings.ARSENAL_DATABASE_URL_ASYNC.
-# Все операции модуля ГСМ (топливо, масла, накладные) читали и писали в базу Арсенала.
-# Теперь ГСМ использует собственный URL: settings.GSM_DATABASE_URL_ASYNC.
-#
-# Если ГСМ и Арсенал живут в одной БД — задайте GSM_DB_NAME=arsenal_db в .env.
-# =========================================================================
-
-gsm_engine = create_async_engine(
-    settings.GSM_DATABASE_URL_ASYNC,
-    echo=False,
-    future=True,
-    isolation_level=ISOLATION_LEVEL,
-    connect_args=asyncpg_connect_args,
-    **_get_async_pool_kwargs()
-)
-
-GsmSessionLocal = sessionmaker(
-    bind=gsm_engine,
-    class_=AsyncSession,
-    expire_on_commit=False,
-    autoflush=False
-)
-
-
-async def get_gsm_db():
-    async with GsmSessionLocal() as session:
-        try:
-            yield session
-        except Exception:
-            await session.rollback()
-            raise
-        finally:
-            await session.close()
-
-
-async def close_gsm_engine():
-    await gsm_engine.dispose()
-
-
-# =========================================================================
 # Логирование конфигурации при импорте (для отладки)
 # =========================================================================
 _pool_mode = "NullPool (PgBouncer)" if settings.USE_PGBOUNCER else f"QueuePool (size={settings.DB_POOL_SIZE})"
 logger.info(f"Database pool strategy: {_pool_mode}")
 logger.info(f"Utility DB: {settings.DB_NAME}")
 logger.info(f"Arsenal DB: {settings.ARSENAL_DB_NAME}")
-logger.info(f"GSM DB: {settings.GSM_DB_NAME}")

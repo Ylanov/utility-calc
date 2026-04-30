@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from datetime import datetime, timedelta
+from app.core.time_utils import utcnow
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -499,7 +500,7 @@ async def inventory_report(
     elapsed_min = None
     scans_per_min = None
     if inv.started_at:
-        elapsed_seconds = (datetime.utcnow() - inv.started_at).total_seconds()
+        elapsed_seconds = (utcnow() - inv.started_at).total_seconds()
         if elapsed_seconds > 0:
             elapsed_min = round(elapsed_seconds / 60, 1)
             if len(inv.items) > 0:
@@ -668,7 +669,7 @@ async def close_inventory(
                     operation_type = "Списание"
                     source_id = inv.object_id
                     target_id = None
-                    operation_date = datetime.utcnow()
+                    operation_date = utcnow()
                     comment = f"Инвентаризация #{inv.id}: недостача"
                     disposal_reason_id = reason_id
 
@@ -702,7 +703,7 @@ async def close_inventory(
                     operation_type = "Первичный ввод"
                     source_id = None
                     target_id = inv.object_id
-                    operation_date = datetime.utcnow()
+                    operation_date = utcnow()
                     comment = f"Инвентаризация #{inv.id}: излишек / оприходование"
                     disposal_reason_id = None
 
@@ -738,7 +739,7 @@ async def close_inventory(
             }
 
     inv.status = "closed"
-    inv.closed_at = datetime.utcnow()
+    inv.closed_at = utcnow()
     inv.closed_by_id = current_user.id
     if p.note:
         inv.note = (inv.note or "") + ("\n" if inv.note else "") + p.note
@@ -780,7 +781,7 @@ async def cancel_inventory(
     if inv.status != "open":
         raise HTTPException(409, f"Инвентаризация уже {inv.status!r}")
     inv.status = "cancelled"
-    inv.closed_at = datetime.utcnow()
+    inv.closed_at = utcnow()
     inv.closed_by_id = current_user.id
 
     from app.modules.arsenal.services.audit import write_arsenal_audit
@@ -947,16 +948,16 @@ async def create_password_reset_link(
         select(ArsenalPasswordResetToken).where(
             ArsenalPasswordResetToken.user_id == user_id,
             ArsenalPasswordResetToken.used_at.is_(None),
-            ArsenalPasswordResetToken.expires_at > datetime.utcnow(),
+            ArsenalPasswordResetToken.expires_at > utcnow(),
         )
     )).scalars().all()
     for t in old:
-        t.used_at = datetime.utcnow()
+        t.used_at = utcnow()
 
     record = ArsenalPasswordResetToken(
         user_id=user_id,
         token_hash=token_hash,
-        expires_at=datetime.utcnow() + timedelta(hours=24),
+        expires_at=utcnow() + timedelta(hours=24),
         created_by_id=current_user.id,
     )
     db.add(record)
@@ -999,7 +1000,7 @@ async def submit_password_reset(
         raise HTTPException(404, "Недействительная ссылка сброса")
     if record.used_at is not None:
         raise HTTPException(410, "Эта ссылка уже использована")
-    if record.expires_at < datetime.utcnow():
+    if record.expires_at < utcnow():
         raise HTTPException(410, "Срок действия ссылки истёк")
 
     user = await db.get(ArsenalUser, record.user_id)
@@ -1007,7 +1008,7 @@ async def submit_password_reset(
         raise HTTPException(404, "Пользователь не найден")
 
     user.hashed_password = get_password_hash(data.new_password)
-    record.used_at = datetime.utcnow()
+    record.used_at = utcnow()
 
     from app.modules.arsenal.services.audit import write_arsenal_audit
     await write_arsenal_audit(

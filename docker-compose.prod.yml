@@ -42,7 +42,7 @@ services:
     command: >
       sh -c "
       echo '---> Running Utility DB migrations...' && alembic upgrade head &&
-      echo '---> Running Arsenal/GSM DB migrations...' && alembic -c alembic_arsenal.ini upgrade head &&
+      echo '---> Running Arsenal DB migrations...' && alembic -c alembic_arsenal.ini upgrade head &&
       echo '---> Seeding initial data...' && python -m app.core.initial_data &&
       echo '---> Migrations complete'
       "
@@ -162,16 +162,32 @@ services:
         limits:
           memory: 3G
 
-  watchtower:
-    image: containrrr/watchtower
-    container_name: utility_calc_watchtower
-    restart: always
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /root/.docker/config.json:/config.json:ro
-    command: --interval 300 --cleanup
-    networks:
-      - utility_net
+  # =========================================================================
+  # SECURITY HARDENING (apr 2026):
+  #
+  # 1. Watchtower — УДАЛЁН. Раньше с доступом к /var/run/docker.sock и
+  #    --cleanup он автоматически тянул :latest и перерисовывал контейнеры.
+  #    Любая компрометация одного из upstream-образов (ghcr/minio/etc)
+  #    давала auto-pull и полный захват prod. Деплой теперь — ручной
+  #    `docker compose pull && docker compose up -d`.
+  #
+  # 2. MinIO ports — забинжены на 127.0.0.1 (только локальный доступ).
+  #    Раньше "9000:9000" / "9001:9001" слушали на 0.0.0.0 — наружный мир
+  #    мог достучаться до S3-API и Console напрямую (только TLS-firewall
+  #    стоял между ним и default minioadmin/minioadmin). Теперь S3-доступ
+  #    только из контейнеров через utility_net, наружу — никак.
+  #
+  # 3. Default minioadmin/minioadmin fallback убран. Если S3_ACCESS_KEY /
+  #    S3_SECRET_KEY не заданы в .env — контейнер не стартует и пишет ошибку.
+  #    Раньше docker-compose молча подставлял "minioadmin" — config.py
+  #    это уже ловит на старте Python-приложения, но fallback в compose
+  #    означал, что MinIO сам стартовал с дефолтом.
+  #
+  # TODO: запинить теги версий (minio/minio, edoburu/pgbouncer, etc) сразу
+  # же когда определимся с актуальными prod-версиями. :latest без
+  # Watchtower не даёт auto-update, но при первом `pull` всё равно
+  # подтянет «свежее».
+  # =========================================================================
 
   minio:
     image: minio/minio:latest
@@ -179,11 +195,11 @@ services:
     restart: always
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: $${S3_ACCESS_KEY:-minioadmin}
-      MINIO_ROOT_PASSWORD: $${S3_SECRET_KEY:-minioadmin}
+      MINIO_ROOT_USER: $${S3_ACCESS_KEY:?S3_ACCESS_KEY must be set in .env}
+      MINIO_ROOT_PASSWORD: $${S3_SECRET_KEY:?S3_SECRET_KEY must be set in .env}
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - minio_data:/data
     networks:

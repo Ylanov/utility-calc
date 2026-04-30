@@ -57,9 +57,10 @@ celery.conf.update(
         "app.modules.utility.tasks.import_debts_task": {"queue": "heavy"},
         "app.modules.utility.tasks.close_period_task": {"queue": "heavy"},
 
-        # ЗАДАЧИ АРСЕНАЛА И ГСМ -> Уходят в изолированный контейнер worker_arsenal_gsm
+        # ЗАДАЧИ АРСЕНАЛА -> Уходят в изолированный контейнер worker_arsenal_gsm.
+        # Имя очереди "arsenal_gsm_default" сохранено как историческое — после
+        # удаления модуля ГСМ (apr 2026) очередь обслуживает только Arsenal.
         "app.modules.arsenal.tasks.*": {"queue": "arsenal_gsm_default"},
-        "app.modules.gsm.tasks.*": {"queue": "arsenal_gsm_default"},
 
         # ВСЕ ОСТАЛЬНЫЕ ЗАДАЧИ (Легкие задачи ЖКХ) -> Уходят в worker_jkh_default
         "*": {"queue": "default"},
@@ -111,10 +112,9 @@ celery.conf.beat_schedule = {
 # ИМПОРТЫ ЗАДАЧ
 celery.conf.imports = [
     "app.modules.utility.tasks",
-    # Если в будущем появятся фоновые задачи у Арсенала или ГСМ,
-    # нужно будет создать там файлы tasks.py и раскомментировать строки ниже:
+    # Если в будущем появятся фоновые задачи у Арсенала, нужно создать
+    # tasks.py и раскомментировать строку ниже:
     # "app.modules.arsenal.tasks",
-    # "app.modules.gsm.tasks"
 ]
 
 # Наблюдаемость для Celery — через Sentry (CeleryIntegration). Метрики

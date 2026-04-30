@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from app.core.time_utils import utcnow
 from fastapi import APIRouter, Depends, HTTPException, Request, status, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,7 +27,7 @@ async def arsenal_login(
     result = await db.execute(select(ArsenalUser).where(ArsenalUser.username == form_data.username))
     user = result.scalars().first()
 
-    now = datetime.utcnow()
+    now = utcnow()
 
     # Ошибки авторизации: общее сообщение без раскрытия «пользователь есть / нет»,
     # но отдельные 403 для отключённой учётки и залоченной (после перебора) —

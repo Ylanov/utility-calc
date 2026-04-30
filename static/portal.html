@@ -9,6 +9,7 @@
     <!-- Быстрая загрузка шрифтов -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
@@ -40,14 +41,9 @@
                 <div class="card-desc">Автоматизированная система ведения номерного учета вооружения</div>
             </a>
 
-            <!-- Кнопка 3: СТРОБ ГСМ -->
-            <a href="gsm_login.html" class="portal-card">
-                <div class="card-icon" style="color: var(--warning-color);">
-                    <i class="fa-solid fa-gas-pump"></i>
-                </div>
-                <div class="card-title">СТРОБ ГСМ</div>
-                <div class="card-desc">Учет горюче-смазочных материалов, талонов и путевых листов</div>
-            </a>
+            <!-- Раньше здесь была карточка «СТРОБ ГСМ» (модуль учёта
+                 горюче-смазочных материалов). Модуль удалён из платформы
+                 в apr 2026, карточка убрана. -->
         </div>
 
         <!-- ========================================
@@ -104,73 +100,8 @@
         </footer>
     </div>
 
-    <!-- Загружаем метаданные о последней опубликованной версии. Без модулей,
-         минимальный inline-скрипт чтобы не тащить ESM-стек на portal.html. -->
-    <script>
-    (async function() {
-        const link = document.getElementById('portalAppDownloadLink');
-        const label = document.getElementById('portalAppVersionLabel');
-        const qrBlock = document.getElementById('portalAppQR');
-        const block = document.getElementById('portalAppBlock');
-
-        // Показываем заглушку «временно недоступно» вместо тихого молчания —
-        // раньше юзер не знал, есть приложение или нет, а href="#" давал
-        // скачивание мусорного 110-байтного JSON-404 с обычным браузером.
-        const showUnavailable = (reason) => {
-            if (label) label.textContent = 'Временно недоступно';
-            if (link) {
-                link.href = '#';
-                link.removeAttribute('download');
-                link.style.background = '#9aa0a6';
-                link.style.cursor = 'not-allowed';
-                link.onclick = (e) => { e.preventDefault(); };
-                link.title = reason || 'Админ ещё не опубликовал APK';
-            }
-            if (qrBlock) {
-                qrBlock.innerHTML = '<span style="color:#a0aec0; font-size:11px;">QR недоступен</span>';
-            }
-            if (block) block.style.display = 'block';
-        };
-
-        try {
-            const resp = await fetch('/api/app/latest?platform=android', { credentials: 'omit' });
-            if (!resp.ok) {
-                // /latest теперь фильтрует релизы, у которых файл пропал с диска.
-                // 404 тут = «нет ни одной живой публикации» — показываем заглушку.
-                showUnavailable('Публикаций с доступным файлом нет');
-                return;
-            }
-            const info = await resp.json();
-            if (!info || !info.download_url) {
-                showUnavailable();
-                return;
-            }
-
-            link.href = info.download_url;
-            link.setAttribute('download', info.download_url.split('/').pop());
-            label.textContent = 'Скачать APK · v' + info.version;
-
-            // QR генерится нашим бэком — не нарушает CSP (img-src 'self')
-            // и не зависит от внешних сервисов вроде quickchart.io.
-            const fullUrl = window.location.origin + info.download_url;
-            const qrSrc = '/api/qr?text=' + encodeURIComponent(fullUrl) + '&box_size=6&border=2';
-            const img = document.createElement('img');
-            img.src = qrSrc;
-            img.alt = 'QR-код для скачивания APK';
-            img.style.width = '100%';
-            img.style.height = '100%';
-            img.style.display = 'block';
-            img.loading = 'lazy';
-            qrBlock.innerHTML = '';  // убираем placeholder «QR-код»
-            qrBlock.appendChild(img);
-
-            block.style.display = 'block';
-        } catch (e) {
-            // Сетевая ошибка / парсинг JSON — тоже показываем заглушку,
-            // чтобы не было «серой» кнопки с битой ссылкой.
-            showUnavailable('Ошибка загрузки');
-        }
-    })();
-    </script>
+    <!-- Логика «Скачать APK» вынесена в external js/portal.js —
+         раньше была inline, мешала убрать 'unsafe-inline' из CSP. -->
+    <script src="js/portal.js" defer></script>
 </body>
 </html>

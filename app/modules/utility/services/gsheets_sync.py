@@ -509,6 +509,14 @@ def sync_gsheets(
         "errors": 0,
     }
 
+    # ОПТИМИЗАЦИЯ N+1 (apr 2026): раньше для каждой строки делали отдельный
+    # pg_insert(...).on_conflict_do_nothing() — на 1000+ строк это 1000 round-trip
+    # до Postgres внутри одной задачи (Sentry ловит как N+1). Теперь сначала
+    # парсим/матчим всё в памяти, потом батчами по 500 делаем один INSERT
+    # с values=[...] и RETURNING row_hash чтобы понять inserted vs duplicate.
+    auto_approve_thr = _auto_approve_threshold()
+
+    records: list[dict] = []
     for row in raw_rows:
         try:
             ts = parse_timestamp(row["timestamp"])
@@ -530,48 +538,73 @@ def sync_gsheets(
                 status = "unmatched"
             elif conflict:
                 status = "conflict"
-            elif score >= _auto_approve_threshold():
+            elif score >= auto_approve_thr:
                 status = "auto_approved"
             else:
                 status = "pending"
 
-            # UPSERT по row_hash — идемпотентно
-            stmt = pg_insert(GSheetsImportRow).values(
-                sheet_timestamp=ts,
-                raw_fio=row["fio"] or "",
-                raw_dormitory=row["dormitory"],
-                raw_room_number=row["room"],
-                raw_hot_water=row["hot"],
-                raw_cold_water=row["cold"],
-                hot_water=hot,
-                cold_water=cold,
-                matched_user_id=user_info["id"] if user_info else None,
-                matched_room_id=user_info["room_id"] if user_info else None,
-                match_score=score,
-                status=status,
-                conflict_reason=conflict,
-                row_hash=row_hash,
-            ).on_conflict_do_nothing(index_elements=["row_hash"])
-
-            result = db.execute(stmt)
-            # В SQLAlchemy rowcount=0 означает «конфликт → ничего не сделали»
-            if result.rowcount and result.rowcount > 0:
-                stats["inserted"] += 1
-                if status == "unmatched":
-                    stats["unmatched"] += 1
-                elif status == "conflict":
-                    stats["conflicts"] += 1
-                elif status == "auto_approved":
-                    stats["auto_approved"] += 1
-                    stats["matched"] += 1
-                else:
-                    stats["matched"] += 1
-            else:
-                stats["duplicate"] += 1
+            records.append({
+                "sheet_timestamp": ts,
+                "raw_fio": row["fio"] or "",
+                "raw_dormitory": row["dormitory"],
+                "raw_room_number": row["room"],
+                "raw_hot_water": row["hot"],
+                "raw_cold_water": row["cold"],
+                "hot_water": hot,
+                "cold_water": cold,
+                "matched_user_id": user_info["id"] if user_info else None,
+                "matched_room_id": user_info["room_id"] if user_info else None,
+                "match_score": score,
+                "status": status,
+                "conflict_reason": conflict,
+                "row_hash": row_hash,
+            })
 
         except Exception as e:
             logger.warning(f"[GSHEETS] Row {row.get('_index')} failed: {e}")
             stats["errors"] += 1
+
+    # Дедуп внутри батча: если в CSV одна и та же строка встречается дважды,
+    # оба попадут в records, но в pg_insert.values(...) duplicate row_hash
+    # внутри одного INSERT даст constraint error. Оставляем первое вхождение.
+    seen_hashes: set[str] = set()
+    deduped: list[dict] = []
+    for r in records:
+        if r["row_hash"] in seen_hashes:
+            stats["duplicate"] += 1
+            continue
+        seen_hashes.add(r["row_hash"])
+        deduped.append(r)
+
+    CHUNK = 500
+    inserted_hashes: set[str] = set()
+    for i in range(0, len(deduped), CHUNK):
+        batch = deduped[i:i + CHUNK]
+        stmt = (
+            pg_insert(GSheetsImportRow)
+            .values(batch)
+            .on_conflict_do_nothing(index_elements=["row_hash"])
+            .returning(GSheetsImportRow.row_hash)
+        )
+        for (h,) in db.execute(stmt):
+            inserted_hashes.add(h)
+
+    # Агрегируем статистику по in-memory данным.
+    for r in deduped:
+        if r["row_hash"] in inserted_hashes:
+            stats["inserted"] += 1
+            status = r["status"]
+            if status == "unmatched":
+                stats["unmatched"] += 1
+            elif status == "conflict":
+                stats["conflicts"] += 1
+            elif status == "auto_approved":
+                stats["auto_approved"] += 1
+                stats["matched"] += 1
+            else:
+                stats["matched"] += 1
+        else:
+            stats["duplicate"] += 1
 
     db.commit()
 
@@ -682,13 +715,58 @@ def promote_auto_approved_rows(db: Session) -> dict:
             reverse=True,  # самые свежие первыми
         )
 
+    # ОПТИМИЗАЦИЯ N+1 (apr 2026): раньше внутри цикла на каждого жильца
+    # делалось 3 отдельных запроса (User, dup MeterReading, prev electricity).
+    # Теперь — 3 batch-запроса до цикла по всем user_id сразу.
+    from sqlalchemy import func as _sa_func
+    user_ids = list(by_user.keys())
+
+    users_by_id_local: dict[int, User] = {
+        u.id: u
+        for u in db.query(User).filter(User.id.in_(user_ids)).all()
+    }
+
+    existing_dup_by_user: dict[int, MeterReading] = {
+        mr.user_id: mr
+        for mr in db.query(MeterReading).filter(
+            MeterReading.user_id.in_(user_ids),
+            MeterReading.period_id == active_period.id,
+            MeterReading.is_approved.is_(True),
+        ).all()
+    }
+
+    # «Последнее известное electricity» по каждому жильцу: окно DISTINCT ON
+    # через row_number() — один запрос вместо N.
+    elect_subq = (
+        db.query(
+            MeterReading.user_id.label("uid"),
+            MeterReading.electricity.label("elect"),
+            _sa_func.row_number().over(
+                partition_by=MeterReading.user_id,
+                order_by=MeterReading.created_at.desc(),
+            ).label("rn"),
+        )
+        .filter(
+            MeterReading.user_id.in_(user_ids),
+            MeterReading.is_approved.is_(True),
+        )
+        .subquery()
+    )
+    prev_elect_by_user: dict[int, _Dec] = {
+        uid: elect
+        for uid, elect, rn in db.query(
+            elect_subq.c.uid, elect_subq.c.elect, elect_subq.c.rn
+        ).filter(elect_subq.c.rn == 1).all()
+        if elect is not None
+    }
+
     created = 0
     skipped = 0
     bound = 0
     errors: list[dict] = []
 
     for uid, user_rows in by_user.items():
-        user = db.query(User).filter(User.id == uid).first()
+        user = users_by_id_local.get(uid)
         if not user or user.is_deleted or not user.room_id:
             skipped += len(user_rows)
             errors.append({"user_id": uid, "reason": "user_missing_or_no_room",
@@ -705,11 +783,7 @@ def promote_auto_approved_rows(db: Session) -> dict:
 
         # Если в текущем периоде уже есть утверждённый MeterReading — биндим
         # ВСЕ строки жильца к нему (закрываем «висящие» auto_approved).
-        dup = db.query(MeterReading).filter(
-            MeterReading.user_id == user.id,
-            MeterReading.period_id == active_period.id,
-            MeterReading.is_approved.is_(True),
-        ).first()
+        dup = existing_dup_by_user.get(uid)
         if dup:
             for r in user_rows:
                 r.reading_id = dup.id
@@ -721,13 +795,7 @@ def promote_auto_approved_rows(db: Session) -> dict:
         primary = user_rows[0]
 
         # Электричество в gsheets не передаётся — берём последнее известное.
-        prev_elect = db.query(MeterReading.electricity).filter(
-            MeterReading.user_id == user.id,
-            MeterReading.is_approved.is_(True),
-        ).order_by(MeterReading.created_at.desc()).first()
-        electricity_value = (
-            prev_elect[0] if prev_elect and prev_elect[0] is not None else _Dec("0")
-        )
+        electricity_value = prev_elect_by_user.get(uid, _Dec("0"))
 
         reading = MeterReading(
             user_id=user.id,

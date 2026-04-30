@@ -12,16 +12,10 @@ class Settings(BaseSettings):
     DB_PORT: str = "5432"
     DB_NAME: str = "utility_db"
     ARSENAL_DB_NAME: str = "arsenal_db"
-    # ИСПРАВЛЕНИЕ P0: Добавлено отдельное имя БД для ГСМ.
-    # Ранее GSM engine использовал ARSENAL_DATABASE_URL_ASYNC — все данные ГСМ
-    # читались и писались в базу Арсенала. Если ГСМ живёт в той же БД что и Арсенал,
-    # задайте GSM_DB_NAME = "arsenal_db" в .env. По умолчанию — отдельная БД.
-    GSM_DB_NAME: str = "gsm_db"
 
     SECRET_KEY: str
 
     ENCRYPTION_KEY: str = "gR8g_2t9R2YwO9yZ0qEa7L_M4-c8Kx2mJ1rYvW4PZ7o="
-    TELEGRAM_BOT_TOKEN: Optional[str] = None
 
     ALGORITHM: str = "HS256"
     # Раньше было 1440 минут (24 часа) — украденный токен работал сутки.
@@ -108,21 +102,6 @@ class Settings(BaseSettings):
         return (
             f"postgresql://{self.DB_USER}:{self.DB_PASS}"
             f"@{self.DB_HOST}:{self.DB_PORT}/{self.ARSENAL_DB_NAME}"
-        )
-
-    # ИСПРАВЛЕНИЕ P0: Отдельные URL для ГСМ
-    @property
-    def GSM_DATABASE_URL_ASYNC(self) -> str:
-        return (
-            f"postgresql+asyncpg://{self.DB_USER}:{self.DB_PASS}"
-            f"@{self.DB_HOST}:{self.DB_PORT}/{self.GSM_DB_NAME}"
-        )
-
-    @property
-    def GSM_DATABASE_URL_SYNC(self) -> str:
-        return (
-            f"postgresql://{self.DB_USER}:{self.DB_PASS}"
-            f"@{self.DB_HOST}:{self.DB_PORT}/{self.GSM_DB_NAME}"
         )
 
     @field_validator("SECRET_KEY")

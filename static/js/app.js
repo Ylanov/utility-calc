@@ -164,6 +164,15 @@ function setupAdminProfile() {
         });
     }
 
+    // 2b. Закрытие модалки профиля по крестику.
+    // Раньше в admin.html было onclick="document.getElementById(...).classList.remove('open')"
+    // — мешало убрать 'unsafe-inline' из CSP. Теперь — через data-атрибут.
+    if (profileModal) {
+        profileModal.querySelectorAll('[data-close-admin-profile]').forEach(btn => {
+            btn.addEventListener('click', () => profileModal.classList.remove('open'));
+        });
+    }
+
     // 3. Форма смены пароля/логина внутри профиля
     const changeCredsForm = document.getElementById('adminChangeCredsForm');
     if (changeCredsForm) {

@@ -4,6 +4,7 @@ import asyncio
 import logging
 from decimal import Decimal
 from datetime import datetime, timezone
+from app.core.time_utils import utcnow
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from fastapi.responses import StreamingResponse
@@ -425,7 +426,7 @@ async def debts_export(
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    fname = f"debts_{datetime.utcnow().strftime('%Y%m%d_%H%M')}.xlsx"
+    fname = f"debts_{utcnow().strftime('%Y%m%d_%H%M')}.xlsx"
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -546,7 +547,7 @@ async def debts_undo_import(
         )
 
     log.status = "reverted"
-    log.reverted_at = datetime.utcnow()
+    log.reverted_at = utcnow()
 
     await db.commit()
 

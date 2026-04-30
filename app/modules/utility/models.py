@@ -111,7 +111,6 @@ class User(Base):
 
     is_deleted = Column(Boolean, default=False, index=True)
     is_initial_setup_done = Column(Boolean, default=False)
-    telegram_id = Column(String, unique=True, nullable=True, index=True)
 
     # Brute-force защита. Инкрементируется при неверном пароле;
     # при достижении порога (3) выставляется locked_until = now + 15 мин.

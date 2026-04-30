@@ -9,6 +9,7 @@
     <!-- Быстрая загрузка шрифтов -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
     <!-- Иконки и стили -->
@@ -81,14 +82,17 @@
                     </div>
                 </form>
 
-                <!-- Блок успешного сброса -->
+                <!-- Блок успешного сброса.
+                     Раньше тут показывался plaintext-пароль с сервера —
+                     это убрано: пароль теперь генерирует только админ
+                     через /api/admin/users/{id}/reset-password и передаёт
+                     жильцу out-of-band (по телефону / лично). -->
                 <div id="resetSuccess" class="hide">
                     <div style="background: var(--success-bg); border: 1px solid #cce8d6; padding: 24px; text-align: center; border-radius: var(--radius-sm); margin-bottom: 24px;">
-                        <p style="margin: 0 0 12px 0; font-size: 13px; color: var(--success-color); font-weight: 500;">Ваш временный пароль:</p>
-                        <div id="tempPasswordDisplay" style="font-size: 32px; font-weight: 700; color: #0d652d; letter-spacing: 4px; font-family: monospace;">123456</div>
-                        <p style="margin: 12px 0 0 0; font-size: 12px; color: var(--text-secondary);">Запишите его. Система попросит сменить пароль при входе.</p>
+                        <p style="margin: 0 0 12px 0; font-size: 14px; color: var(--success-color); font-weight: 600;">Заявка зарегистрирована</p>
+                        <p style="margin: 0; font-size: 13px; color: var(--text-secondary); line-height: 1.5;">Свяжитесь с бухгалтерией для получения нового пароля. Сотрудник передаст его вам лично или по телефону.</p>
                     </div>
-                    <button type="button" id="btnCloseSuccess" class="action-btn success-btn full-width" style="padding: 12px;">Перейти ко входу</button>
+                    <button type="button" id="btnCloseSuccess" class="action-btn success-btn full-width" style="padding: 12px;">Понятно</button>
                 </div>
             </div>
         </div>

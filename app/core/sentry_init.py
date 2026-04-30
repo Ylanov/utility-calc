@@ -52,6 +52,10 @@ _SCRUB_KEYS = frozenset({
     "authorization", "cookie", "x-api-key", "x-auth-token",
     "password", "secret", "token", "totp_code", "totp_secret",
     "csrf_token", "encryption_key", "sentry_dsn",
+    # apr 2026: admin-reset endpoint возвращает temp_password в response —
+    # это intended, но если когда-нибудь exception словит body или extras,
+    # ключ должен быть в скрабе. Точное совпадение, не substring.
+    "temp_password", "new_password", "old_password",
 })
 
 

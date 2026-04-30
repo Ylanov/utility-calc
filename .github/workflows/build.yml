@@ -288,6 +288,8 @@ jobs:
             echo "Deployment failed!"
 
             docker compose logs --tail 100 web_jkh || true
+            # Сервис web_arsenal_gsm теперь обслуживает только Arsenal
+            # (модуль GSM удалён в apr 2026), но имя контейнера сохранено.
             docker compose logs --tail 100 web_arsenal_gsm || true
             docker compose logs --tail 100 nginx || true
 

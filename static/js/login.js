@@ -20,7 +20,6 @@ document.addEventListener('DOMContentLoaded', () => {
     const btnCloseIconReset = document.getElementById('btnCloseIconReset');
     const btnSubmitReset = document.getElementById('btnSubmitReset');
     const btnCloseSuccess = document.getElementById('btnCloseSuccess');
-    const tempPasswordDisplay = document.getElementById('tempPasswordDisplay');
 
     // ==========================================
     // ЛОГИКА ВХОДА В СИСТЕМУ
@@ -116,16 +115,18 @@ document.addEventListener('DOMContentLoaded', () => {
         setLoading(btnSubmitReset, true, 'Проверка...');
 
         try {
-            // Запрос через api.js
-            const result = await api.post('/auth/reset-password', {
+            // Заявка на сброс пароля. Сервер больше не возвращает plaintext —
+            // пароль генерирует админ через /api/admin/users/{id}/reset-password
+            // и передаёт жильцу out-of-band. Здесь просто показываем
+            // подтверждение, что заявка зарегистрирована (anti-enumeration —
+            // одно и то же сообщение даже при невалидных данных).
+            await api.post('/auth/reset-password', {
                 username: resetUsername,
                 apartment_area: resetArea
             });
 
-            // Скрываем форму, показываем блок с новым паролем
             resetForm.classList.add('hide');
             resetSuccess.classList.remove('hide');
-            tempPasswordDisplay.textContent = result.temp_password;
 
         } catch (error) {
             toast(error.message, 'error');
@@ -134,14 +135,13 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // 4. Закрытие модалки после успеха и подстановка данных для входа
+    // 4. Закрытие модалки после успеха.
+    // Раньше здесь автозаполнялся пароль из tempPasswordDisplay в форму логина —
+    // больше нет, потому что пароль вообще не отдаётся пользователю клиентом.
     btnCloseSuccess.addEventListener('click', () => {
         closeResetModal();
-
-        // Автоматически вставляем сгенерированные данные в форму логина
         usernameInput.value = document.getElementById('resetUsername').value.trim();
-        passwordInput.value = tempPasswordDisplay.textContent;
-        passwordInput.focus();
+        usernameInput.focus();
     });
 
     // 5. Закрытие по клику вне модального окна

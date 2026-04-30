@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta
+from app.core.time_utils import utcnow
 from typing import Annotated, Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -370,7 +371,7 @@ async def top_moving(
     current_user: ArsenalUser = Depends(get_current_arsenal_user),
 ):
     """Топ-N наиболее активных позиций (по кол-ву движений) за последние N дней."""
-    cutoff = datetime.utcnow() - timedelta(days=days)
+    cutoff = utcnow() - timedelta(days=days)
     rows = (await db.execute(
         select(
             Nomenclature.id,

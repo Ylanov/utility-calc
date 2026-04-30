@@ -9,6 +9,7 @@
     <!-- 1. Быстрая загрузка шрифтов (без блокировки рендера) -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
     <!-- Иконки FontAwesome (для красивых кнопок) -->
@@ -127,7 +128,9 @@
         <div class="modal-window">
             <div class="modal-header">
                 <h3>Настройки профиля</h3>
-                <button class="close-icon" onclick="document.getElementById('adminProfileModal').classList.remove('open')">&times;</button>
+                <!-- Раньше был onclick="..." — убран ради CSP без 'unsafe-inline'.
+                     Закрытие подвешено в app.js (setupAdminProfile). -->
+                <button class="close-icon" data-close-admin-profile>&times;</button>
             </div>
             <div class="modal-form">
                 <div style="background: var(--bg-page); padding: 20px; border-radius: var(--radius-md); border: 1px solid var(--border-color); margin-bottom: 24px;">

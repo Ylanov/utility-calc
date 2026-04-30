@@ -12,6 +12,7 @@ POST  /api/admin/gsheets/rows/bulk-approve    — массовое утверж�
 """
 import re
 from datetime import datetime
+from app.core.time_utils import utcnow
 from decimal import Decimal
 from typing import Optional
 
@@ -561,7 +562,7 @@ async def _apply_approve(
 
     row.status = "approved"
     row.reading_id = reading.id
-    row.processed_at = datetime.utcnow()
+    row.processed_at = utcnow()
     row.processed_by_id = current_user.id
 
     await write_audit_log(
@@ -654,7 +655,7 @@ async def reject_row(
         raise HTTPException(status_code=404, detail="Строка не найдена")
 
     row.status = "rejected"
-    row.processed_at = datetime.utcnow()
+    row.processed_at = utcnow()
     row.processed_by_id = current_user.id
 
     await write_audit_log(
@@ -1288,7 +1289,7 @@ async def user_history(
 
     # Реальные утверждённые показания за последний год
     from datetime import timedelta
-    cutoff = datetime.utcnow() - timedelta(days=400)
+    cutoff = utcnow() - timedelta(days=400)
     readings = (await db.execute(
         select(MeterReading)
         .options(selectinload(MeterReading.period))

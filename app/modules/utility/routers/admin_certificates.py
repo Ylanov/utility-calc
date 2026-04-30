@@ -16,6 +16,7 @@
 Здесь все endpoint-ы требуют роль accountant/admin.
 """
 from datetime import date, datetime
+from app.core.time_utils import utcnow
 from typing import Optional, List, Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
@@ -316,7 +317,7 @@ async def update_cert(
     if status_changed:
         cert.status = upd["status"]
         cert.processed_by_id = current_user.id
-        cert.processed_at = datetime.utcnow()
+        cert.processed_at = utcnow()
         await write_audit_log(
             db, user_id=current_user.id, username=current_user.username,
             action="cert_status_change", entity_type="certificate_request", entity_id=cert.id,
@@ -374,7 +375,7 @@ async def regenerate_cert_pdf(
         if cert.status == "pending":
             cert.status = "generated"
         cert.processed_by_id = current_user.id
-        cert.processed_at = datetime.utcnow()
+        cert.processed_at = utcnow()
 
         await write_audit_log(
             db, user_id=current_user.id, username=current_user.username,

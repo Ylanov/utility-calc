@@ -1,6 +1,7 @@
 from typing import List, Optional
 from pydantic import BaseModel, validator
 from datetime import datetime
+from app.core.time_utils import utcnow
 
 class ObjCreate(BaseModel):
     name: str
@@ -38,7 +39,7 @@ class DocCreate(BaseModel):
     @validator("operation_date", pre=True, always=True)
     def normalize_date(cls, value):
         if not value:
-            return datetime.utcnow()
+            return utcnow()
         if isinstance(value, str):
             if len(value) == 10:
                 return datetime.strptime(value, "%Y-%m-%d")

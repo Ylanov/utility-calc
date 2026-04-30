@@ -5,6 +5,7 @@ import logging
 import os
 from decimal import Decimal
 from datetime import datetime
+from app.core.time_utils import utcnow
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -309,7 +310,7 @@ async def save_reading(
             "hot": str(draft.hot_water),
             "cold": str(draft.cold_water),
             "elect": str(draft.electricity),
-            "date": datetime.utcnow().strftime("%d.%m.%Y %H:%M")
+            "date": utcnow().strftime("%d.%m.%Y %H:%M")
         }
         history_list = draft.edit_history if draft.edit_history else []
         draft.edit_history = history_list + [old_record]

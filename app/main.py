@@ -8,7 +8,7 @@ from typing import List
 import redis.asyncio as redis
 
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, ORJSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -23,11 +23,10 @@ from passlib.context import CryptContext
 
 # === CORE ===
 from app.core.config import settings
-from app.core.database import ArsenalSessionLocal, GsmSessionLocal
+from app.core.database import ArsenalSessionLocal
 
 # === MODELS ===
 from app.modules.arsenal.models import ArsenalUser
-from app.modules.gsm.models import GsmUser
 
 # === ЖКХ ===
 from app.modules.utility.routers import (
@@ -54,7 +53,6 @@ from app.modules.utility.routers import (
     qr,
 )
 
-from app.modules.telegram import telegram_app
 # === АРСЕНАЛ ===
 from app.modules.arsenal.routers import (
     system as arsenal_system,
@@ -68,13 +66,6 @@ from app.modules.arsenal import (
     reports as arsenal_reports,
     routes as arsenal_routes,
     auth as arsenal_auth,
-)
-
-# === ГСМ ===
-from app.modules.gsm import (
-    routes as gsm_routes,
-    auth as gsm_auth,
-    reports as gsm_reports,
 )
 
 # =====================================================================
@@ -218,9 +209,12 @@ async def lifespan(app: FastAPI):
     except Exception as error:
         logger.error(f"Redis connection failed: {error}")
 
+    # APP_MODE "arsenal_gsm" сохранён как историческое имя — после удаления
+    # модуля GSM (apr 2026) фактически создаём админа только для Arsenal.
+    # Переименование значения = каскадные изменения в docker-compose/CI без
+    # реального профита.
     if APP_MODE in ("all", "arsenal_gsm"):
         await ensure_admin_exists_safe(ArsenalSessionLocal, ArsenalUser, "Arsenal")
-        await ensure_admin_exists_safe(GsmSessionLocal, GsmUser, "GSM")
 
     yield
 
@@ -239,6 +233,10 @@ app = FastAPI(
     docs_url=None if IS_PRODUCTION else "/docs",
     redoc_url=None,
     openapi_url=None if IS_PRODUCTION else "/openapi.json",
+    # orjson быстрее стандартного json.dumps в 2-3 раза на больших списках
+    # (readings, отчёты, дашборд). orjson лежит в requirements.txt с самого
+    # начала, но FastAPI его не использовал — этот флаг включает.
+    default_response_class=ORJSONResponse,
 )
 
 
@@ -313,10 +311,23 @@ async def security_headers(request: Request, call_next):
     # ===============================================================
     # НАСТРОЙКА CSP (CONTENT SECURITY POLICY)
     # ===============================================================
-    # Строгая политика для всей системы (по умолчанию)
-    base_csp = (
+    # Хардкоринг XSS-защиты (apr 2026):
+    # script-src больше не разрешает 'unsafe-inline' для utility-страниц
+    # (admin.html, index.html, login.html, portal.html). Это значит, что
+    # любая попытка XSS-инъекции через innerHTML с тегом <script>
+    # БУДЕТ ЗАБЛОКИРОВАНА БРАУЗЕРОМ.
+    # Inline scripts вынесены в external js/portal.js, inline onclick=
+    # в admin.html заменён на addEventListener в app.js.
+    #
+    # style-src 'unsafe-inline' пока остаётся: в HTML много `style="..."`
+    # атрибутов, чистка их — отдельная большая задача. Style-src инъекции
+    # дают только косметический ущерб (CSS injection), не RCE.
+    #
+    # Arsenal/GSM используют Tailwind Play CDN, который требует
+    # 'unsafe-inline' для script-src — у них отдельная loose CSP.
+    strict_csp = (
         "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline' cdnjs.cloudflare.com; "
+        "script-src 'self' cdnjs.cloudflare.com; "
         "style-src 'self' 'unsafe-inline' fonts.googleapis.com cdnjs.cloudflare.com; "
         "font-src 'self' fonts.gstatic.com cdnjs.cloudflare.com data:; "
         "img-src 'self' data: blob:; "
@@ -324,9 +335,12 @@ async def security_headers(request: Request, call_next):
         "frame-ancestors 'none';"
     )
 
-    # Политика для модуля Арсенал (разрешаем CDN Tailwind Play)
-    # connect-src нужен т.к. Tailwind Play CDN делает fetch-запросы в runtime
-    arsenal_csp = (
+    # Политика для модуля Арсенал/ГСМ (разрешаем CDN Tailwind Play)
+    # connect-src нужен т.к. Tailwind Play CDN делает fetch-запросы в runtime.
+    # 'unsafe-inline' для script-src оставлен — у Tailwind Play в HTML
+    # сидит инлайновый <script src="cdn.tailwindcss.com">, и в коде arsenal
+    # ещё много inline onclick-handlers (отдельная задача — переписать).
+    loose_csp = (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline' cdnjs.cloudflare.com https://cdn.tailwindcss.com; "
         "style-src 'self' 'unsafe-inline' fonts.googleapis.com cdnjs.cloudflare.com https://cdn.tailwindcss.com; "
@@ -336,11 +350,11 @@ async def security_headers(request: Request, call_next):
         "frame-ancestors 'none';"
     )
 
-    # Проверяем, обращается ли пользователь к файлам Арсенала
-    if "arsenal" in request.url.path.lower():
-        response.headers["Content-Security-Policy"] = arsenal_csp
+    path_lower = request.url.path.lower()
+    if "arsenal" in path_lower:
+        response.headers["Content-Security-Policy"] = loose_csp
     else:
-        response.headers["Content-Security-Policy"] = base_csp
+        response.headers["Content-Security-Policy"] = strict_csp
 
     return response
 
@@ -372,7 +386,6 @@ app.include_router(admin_adjustments.router)
 app.include_router(admin_user_ops.router)
 app.include_router(financier.router)
 app.include_router(settings_router.router)
-app.include_router(telegram_app.router)
 app.include_router(admin_dashboard.router)
 
 app.include_router(admin_initial_readings.router)
@@ -390,13 +403,6 @@ app.include_router(qr.router)
 app.include_router(arsenal_auth.router)
 app.include_router(arsenal_routes.router)
 app.include_router(arsenal_reports.router)
-
-# =====================================================================
-# ROUTES — ГСМ
-# =====================================================================
-app.include_router(gsm_auth.router)
-app.include_router(gsm_routes.router)
-app.include_router(gsm_reports.router)
 
 # =====================================================================
 # CRAWLER / WELL-KNOWN 404 STUBS

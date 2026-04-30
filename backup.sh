@@ -25,7 +25,10 @@ MONTHLY_RETENTION_DAYS=180
 # Минимальный допустимый размер бэкапа в байтах. Меньше = подозрение на сбой.
 MIN_BACKUP_SIZE_BYTES="${MIN_BACKUP_SIZE_BYTES:-10240}"   # 10 KB
 
-DATABASES=("${PGDB:-utility_db}" "arsenal_db" "gsm_db")
+# Модуль ГСМ удалён из платформы (apr 2026); раньше в этом списке была
+# ещё база gsm_db. Если у тебя на сервере она физически осталась —
+# её можно дропнуть вручную: psql -c "DROP DATABASE gsm_db;".
+DATABASES=("${PGDB:-utility_db}" "arsenal_db")
 
 DATE=$(date +%Y-%m-%d_%H-%M-%S)
 DAY_OF_WEEK=$(date +%u)   # 1..7, воскресенье = 7

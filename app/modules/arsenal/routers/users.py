@@ -19,6 +19,7 @@ from __future__ import annotations
 import secrets
 import string
 from datetime import datetime
+from app.core.time_utils import utcnow
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -100,7 +101,7 @@ async def list_users(
         )).all()
         docs_count_by_user = {uid: int(cnt) for uid, cnt in rows}
 
-    now = datetime.utcnow()
+    now = utcnow()
     response = []
     for u in users:
         locked = bool(u.locked_until and u.locked_until > now)
@@ -340,7 +341,7 @@ async def update_user(
             u.deactivated_by_id = None
             u.deactivation_reason = None
         else:
-            u.deactivated_at = datetime.utcnow()
+            u.deactivated_at = utcnow()
             u.deactivated_by_id = current_user.id
 
     if not changes:
@@ -381,7 +382,7 @@ async def deactivate_user(
         return {"status": "noop"}
 
     u.is_active = False
-    u.deactivated_at = datetime.utcnow()
+    u.deactivated_at = utcnow()
     u.deactivated_by_id = current_user.id
     u.deactivation_reason = (body.reason if body else None)
 

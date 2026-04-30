@@ -18,6 +18,7 @@ admin_user_ops) в одну транзакцию.
 from __future__ import annotations
 
 from datetime import datetime
+from app.core.time_utils import utcnow
 from typing import Optional
 
 from sqlalchemy import select
@@ -53,7 +54,7 @@ async def move_user_to_room(
 
     Идемпотентно: если new_room_id == текущему room_id, ничего не делает.
     """
-    when = when or datetime.utcnow()
+    when = when or utcnow()
 
     # Шаг 1: уже там? — ничего не делаем.
     if user.room_id == new_room_id:

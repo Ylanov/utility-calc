@@ -1,5 +1,6 @@
 import random
 from datetime import datetime
+from app.core.time_utils import utcnow
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from fastapi import HTTPException
@@ -378,7 +379,7 @@ class WeaponService:
             operation_type = new_op
             source_id = rev_source_id
             target_id = rev_target_id
-            operation_date = datetime.utcnow()
+            operation_date = utcnow()
             comment = f"Отмена документа #{orig.doc_number}" + (f": {reason}" if reason else "")
             disposal_reason_id = None
 

@@ -229,7 +229,7 @@
                     </button>
 
                     <button type="button" class="hub-action-btn" data-hub-action="contracts"
-                            style="display:flex; flex-direction:column; align-items:flex-start; gap:6px; padding:14px; border:1px solid var(--border-color); border-radius:10px; background:var(--bg-card); cursor:pointer; text-align:left; grid-column: span 2;">
+                            style="display:flex; flex-direction:column; align-items:flex-start; gap:6px; padding:14px; border:1px solid var(--border-color); border-radius:10px; background:var(--bg-card); cursor:pointer; text-align:left;">
                         <div style="display:flex; align-items:center; gap:10px; width:100%;">
                             <div style="width:36px; height:36px; border-radius:8px; background:#f5f3ff; color:#7c3aed; display:flex; align-items:center; justify-content:center;">
                                 <i class="fa-solid fa-file-signature"></i>
@@ -238,6 +238,23 @@
                         </div>
                         <div style="font-size:11px; color:var(--text-secondary); line-height:1.4;">
                             Список договоров жильца, загрузка PDF/сканов, активация актуального.
+                        </div>
+                    </button>
+
+                    <!-- Сброс пароля жильца. Backend: POST /api/admin/users/{id}/reset-password.
+                         Заменил небезопасный self-service flow «логин+площадь+6 цифр» —
+                         теперь админ генерирует пароль, видит его ОДНОКРАТНО и передаёт
+                         жильцу по телефону / лично. -->
+                    <button type="button" class="hub-action-btn" data-hub-action="reset-password"
+                            style="display:flex; flex-direction:column; align-items:flex-start; gap:6px; padding:14px; border:1px solid var(--border-color); border-radius:10px; background:var(--bg-card); cursor:pointer; text-align:left;">
+                        <div style="display:flex; align-items:center; gap:10px; width:100%;">
+                            <div style="width:36px; height:36px; border-radius:8px; background:#fef3c7; color:#92400e; display:flex; align-items:center; justify-content:center;">
+                                <i class="fa-solid fa-key"></i>
+                            </div>
+                            <strong style="font-size:14px;">Сбросить пароль</strong>
+                        </div>
+                        <div style="font-size:11px; color:var(--text-secondary); line-height:1.4;">
+                            Сгенерировать новый временный пароль. Жилец будет обязан сменить его при следующем входе.
                         </div>
                     </button>
                 </div>
@@ -362,6 +379,81 @@
                     <button type="submit" class="action-btn primary-btn confirm-btn">Сохранить</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- =====================================================================
+         Модалка: Сброс пароля жильца — двушаговый flow.
+         Шаг 1 (#pwResetConfirm): подтверждение операции с предупреждением,
+         что пароль показывается ОДНОКРАТНО и должен быть передан out-of-band.
+         Шаг 2 (#pwResetResult): отображение нового пароля с кнопкой «Скопировать».
+         Текст пароля рендерится через textContent (не innerHTML) — на случай
+         если в ответе сервера окажется HTML-инъекция, он будет показан как текст.
+         ===================================================================== -->
+    <div id="passwordResetModal" class="modal-overlay">
+        <div class="modal-window" style="width: 520px;">
+            <div class="modal-header" style="background:#fef3c7; border-bottom:1px solid #fcd34d;">
+                <h3 style="color:#92400e;">
+                    <i class="fa-solid fa-key"></i>
+                    Сброс пароля — <span id="pwResetUserLabel">—</span>
+                </h3>
+                <button class="close-btn close-icon" data-pwreset-close>&times;</button>
+            </div>
+
+            <!-- Шаг 1: подтверждение -->
+            <div class="modal-form" id="pwResetConfirm" style="padding:20px;">
+                <p style="margin:0 0 16px 0; line-height:1.5; color:var(--text-main); font-size:14px;">
+                    Будет сгенерирован новый временный пароль для жильца
+                    <b id="pwResetUserLabelInline">—</b>.
+                </p>
+                <div style="background:#fffbeb; border-left:4px solid #f59e0b; padding:12px 14px; border-radius:6px; margin-bottom:16px; font-size:13px; line-height:1.5;">
+                    <strong style="color:#92400e; display:block; margin-bottom:4px;">
+                        <i class="fa-solid fa-triangle-exclamation"></i> Важно
+                    </strong>
+                    <ul style="margin:0; padding-left:18px; color:var(--text-main);">
+                        <li>Пароль будет показан <b>один раз</b> и нигде не сохранится.</li>
+                        <li>Передайте его жильцу <b>лично или по телефону</b> — не через мессенджеры/email.</li>
+                        <li>Старый пароль перестанет работать сразу после генерации.</li>
+                        <li>При следующем входе жилец будет обязан сменить пароль.</li>
+                    </ul>
+                </div>
+            </div>
+
+            <!-- Шаг 2: результат -->
+            <div class="modal-form hide" id="pwResetResult" style="padding:20px;">
+                <p style="margin:0 0 12px 0; font-size:13px; color:var(--success-color); font-weight:600;">
+                    <i class="fa-solid fa-check-circle"></i> Пароль сгенерирован
+                </p>
+                <div style="background:var(--bg-page); border:1px solid var(--border-color); padding:18px; border-radius:8px; margin-bottom:14px;">
+                    <div style="font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.5px; margin-bottom:8px;">
+                        Временный пароль
+                    </div>
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <code id="pwResetValue"
+                              style="flex:1; font-size:22px; font-weight:700; font-family:monospace;
+                                     letter-spacing:2px; user-select:all; padding:10px 14px;
+                                     background:#fff; border:1px solid var(--border-color); border-radius:6px;
+                                     word-break:break-all;">—</code>
+                        <button type="button" id="pwResetCopyBtn"
+                                class="action-btn secondary-btn" style="white-space:nowrap;">
+                            <i class="fa-solid fa-copy"></i> <span>Скопировать</span>
+                        </button>
+                    </div>
+                </div>
+                <div style="background:#fff7ed; border-left:4px solid #f97316; padding:10px 14px; border-radius:6px; font-size:12px; color:var(--text-secondary); line-height:1.5;">
+                    Закройте окно, как только передадите пароль жильцу. Повторно посмотреть его нельзя — придётся генерировать заново.
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" class="action-btn secondary-btn" data-pwreset-close id="pwResetCancelBtn">Отмена</button>
+                <button type="button" class="action-btn primary-btn" id="pwResetConfirmBtn">
+                    <i class="fa-solid fa-key"></i> Сгенерировать пароль
+                </button>
+                <button type="button" class="action-btn success-btn hide" data-pwreset-close id="pwResetDoneBtn">
+                    Готово
+                </button>
+            </div>
         </div>
     </div>
 

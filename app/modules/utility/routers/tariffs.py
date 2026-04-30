@@ -2,6 +2,7 @@
 
 import logging
 from datetime import datetime
+from app.core.time_utils import utcnow
 from decimal import Decimal
 from typing import List, Optional
 
@@ -213,7 +214,7 @@ async def create_or_update_tariff(
 
         # Обрабатываем effective_from отдельно: если задана будущая дата → тариф "запланирован"
         if data.effective_from:
-            now = datetime.utcnow()
+            now = utcnow()
             tariff.effective_from = data.effective_from.replace(tzinfo=None) if data.effective_from.tzinfo else data.effective_from
             if tariff.effective_from > now:
                 tariff.is_active = False  # Запланирован, ещё не активен

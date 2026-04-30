@@ -568,9 +568,10 @@ export const UsersModule = {
                 if (!u) return;
                 // Закрываем хаб и запускаем нужный поток.
                 modal.classList.remove('open');
-                if (action === 'edit')      this.openEditModal(u.id);
-                if (action === 'relocate')  openRelocateModal(u, this.rel, this.dormsCache);
-                if (action === 'contracts') this.openContractsModal(u);
+                if (action === 'edit')           this.openEditModal(u.id);
+                if (action === 'relocate')       openRelocateModal(u, this.rel, this.dormsCache);
+                if (action === 'contracts')      this.openContractsModal(u);
+                if (action === 'reset-password') this.openPasswordResetModal(u);
             });
             this._hubBound = true;
         }
@@ -776,6 +777,113 @@ export const UsersModule = {
             this._loadContracts();
         } catch (e) {
             toast('Ошибка: ' + e.message, 'error');
+        }
+    },
+
+    // =====================================================================
+    // СБРОС ПАРОЛЯ ЖИЛЬЦА
+    //
+    // Заменил небезопасный self-service flow «логин + площадь + 6 цифр»,
+    // где пароль возвращался прямо в API ответе и показывался пользователю
+    // на экране (любая XSS / расширение браузера = кража пароля).
+    // Теперь админ видит пароль ОДНОКРАТНО и передаёт его жильцу out-of-band.
+    //
+    // Backend: POST /api/admin/users/{user_id}/reset-password (admin/accountant only).
+    // =====================================================================
+    _pwResetUser: null,
+    _pwResetBound: false,
+
+    openPasswordResetModal(user) {
+        const modal = document.getElementById('passwordResetModal');
+        if (!modal) return;
+        this._pwResetUser = user;
+
+        // Заполняем имена через textContent — защита от XSS, если username
+        // вдруг содержит спецсимволы.
+        document.getElementById('pwResetUserLabel').textContent = user.username;
+        document.getElementById('pwResetUserLabelInline').textContent = user.username;
+
+        // Сброс состояния модалки в шаг 1 (на случай повторного открытия
+        // после успешного сброса для другого жильца).
+        document.getElementById('pwResetConfirm').classList.remove('hide');
+        document.getElementById('pwResetResult').classList.add('hide');
+        document.getElementById('pwResetConfirmBtn').classList.remove('hide');
+        document.getElementById('pwResetCancelBtn').classList.remove('hide');
+        document.getElementById('pwResetDoneBtn').classList.add('hide');
+        document.getElementById('pwResetValue').textContent = '—';
+
+        if (!this._pwResetBound) {
+            modal.addEventListener('click', (e) => {
+                if (e.target.closest('[data-pwreset-close]') || e.target === modal) {
+                    modal.classList.remove('open');
+                    this._pwResetUser = null;
+                }
+            });
+            document.getElementById('pwResetConfirmBtn').addEventListener('click', () => {
+                this._doPasswordReset();
+            });
+            document.getElementById('pwResetCopyBtn').addEventListener('click', () => {
+                this._copyPasswordToClipboard();
+            });
+            this._pwResetBound = true;
+        }
+
+        modal.classList.add('open');
+    },
+
+    async _doPasswordReset() {
+        const user = this._pwResetUser;
+        if (!user) return;
+
+        // setLoading() здесь не используем — он innerText'ом затирает <i class="..."></i>,
+        // а после восстановления иконка теряется. Делаем руками: disabled + текст-индикатор.
+        const confirmBtn = document.getElementById('pwResetConfirmBtn');
+        confirmBtn.disabled = true;
+
+        try {
+            const result = await api.post(`/admin/users/${user.id}/reset-password`);
+
+            // Переключаем модалку в режим "результат".
+            // textContent — критически важно (НЕ innerHTML): пароль может
+            // содержать спецсимволы и быть подставлен в HTML без escaping.
+            document.getElementById('pwResetValue').textContent = result.temp_password;
+            document.getElementById('pwResetConfirm').classList.add('hide');
+            document.getElementById('pwResetResult').classList.remove('hide');
+            document.getElementById('pwResetConfirmBtn').classList.add('hide');
+            document.getElementById('pwResetCancelBtn').classList.add('hide');
+            document.getElementById('pwResetDoneBtn').classList.remove('hide');
+
+            toast('Пароль сгенерирован', 'success');
+        } catch (error) {
+            toast('Ошибка сброса: ' + error.message, 'error');
+        } finally {
+            confirmBtn.disabled = false;
+        }
+    },
+
+    async _copyPasswordToClipboard() {
+        const pw = document.getElementById('pwResetValue').textContent;
+        if (!pw || pw === '—') return;
+
+        const btn = document.getElementById('pwResetCopyBtn');
+        const label = btn.querySelector('span');
+        const original = label.textContent;
+
+        try {
+            // navigator.clipboard требует Secure Context (HTTPS или localhost).
+            // На asy-tk.ru через VPN/Tailscale домен HTTPS — всё ок. Для
+            // dev-окружения по http://localhost тоже работает.
+            await navigator.clipboard.writeText(pw);
+            label.textContent = 'Скопировано';
+            btn.classList.add('success-btn');
+            btn.classList.remove('secondary-btn');
+            setTimeout(() => {
+                label.textContent = original;
+                btn.classList.remove('success-btn');
+                btn.classList.add('secondary-btn');
+            }, 2000);
+        } catch (e) {
+            toast('Не удалось скопировать. Выделите текст вручную и нажмите Ctrl+C', 'error');
         }
     },
 

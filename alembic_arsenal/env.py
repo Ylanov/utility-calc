@@ -9,12 +9,12 @@ from alembic import context
 
 from app.core.config import settings
 
-# 1. Импортируем модели Арсенала
+# Импортируем модели Арсенала.
+# Модуль ГСМ удалён из проекта (apr 2026) — раньше тут был ещё импорт
+# GsmBase из app.modules.gsm.models. Существующие миграции, создававшие
+# gsm_*-таблицы, остаются в истории; отдельная cleanup-миграция дропает
+# таблицы при следующем upgrade head.
 from app.modules.arsenal.models import ArsenalBase
-
-# 2. Импортируем модели ГСМ
-# Это обязательно, чтобы таблицы зарегистрировались в GsmBase.metadata
-from app.modules.gsm.models import GsmBase
 
 config = context.config
 
@@ -22,9 +22,7 @@ config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-# 3. ВАЖНО: Объединяем метаданные обеих систем
-# Теперь Alembic будет следить и за ArsenalBase, и за GsmBase в одной базе данных
-target_metadata = [ArsenalBase.metadata, GsmBase.metadata]
+target_metadata = ArsenalBase.metadata
 
 
 def run_migrations_offline():

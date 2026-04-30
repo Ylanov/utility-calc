@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from app.core.time_utils import utcnow
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -174,7 +175,7 @@ async def update_analyzer_setting(
     if not changes:
         return {"status": "noop"}
 
-    setting.updated_at = datetime.utcnow()
+    setting.updated_at = utcnow()
     setting.updated_by_id = current_user.id
 
     # Аудит
@@ -281,7 +282,7 @@ async def dismiss_anomaly(
     flag = await db.get(ArsenalAnomalyFlag, anomaly_id)
     if not flag:
         raise HTTPException(404, "Аномалия не найдена")
-    flag.dismissed_at = datetime.utcnow()
+    flag.dismissed_at = utcnow()
     flag.dismissed_by_id = current_user.id
     flag.dismiss_reason = (body.reason if body else None)
 
