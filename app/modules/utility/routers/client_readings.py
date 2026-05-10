@@ -324,7 +324,14 @@ async def save_reading(
         draft.total_209, draft.total_205, draft.total_cost = total_209, total_205, grand_total
         draft.anomaly_flags, draft.anomaly_score = baseline_flag, 0
 
+        # БАГ-ФИКС: иначе цикл ниже перезаписывал total_cost через
+        # setattr(draft, "total_cost", costs["total_cost"]) — на чистую
+        # сумму начислений БЕЗ долгов и корректировок, тогда как нужен
+        # grand_total = total_209 + total_205 (с учётом долгов/коррект.).
+        # CREATE-ветка ниже уже делала pop("total_cost"), а UPDATE — нет.
         for key, value in costs.items():
+            if key == "total_cost":
+                continue
             if hasattr(draft, key):
                 setattr(draft, key, value)
 
