@@ -731,7 +731,19 @@
                         <!-- Период + быстрые экспорты -->
                         <div style="display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center; gap:12px; margin-bottom:14px;">
                             <div id="summaryPeriodSelector"></div>
-                            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                            <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                                <!-- Dropdown «глубина истории» в развёртке жильца. По умолчанию 12 (год).
+                                     Меняется на лету: следующий клик «развернуть жильца» дёрнет API
+                                     с новым history_periods. -->
+                                <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--text-secondary);">
+                                    История:
+                                    <select id="summaryHistoryPeriods" style="padding:5px 8px; font-size:12px; border:1px solid var(--border-color); border-radius:6px;">
+                                        <option value="3">3 периода</option>
+                                        <option value="6">6 периодов</option>
+                                        <option value="12" selected>12 периодов (год)</option>
+                                        <option value="24">24 периода (2 года)</option>
+                                    </select>
+                                </label>
                                 <button id="btnDownloadZip" class="action-btn primary-btn" title="Архив всех квитанций PDF">
                                     <i class="fa-solid fa-file-zipper"></i> ZIP квитанций
                                 </button>

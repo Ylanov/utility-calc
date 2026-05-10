@@ -76,6 +76,26 @@
     <!-- ГЛОБАЛЬНЫЕ И ВСТРОЕННЫЕ МОДАЛЬНЫЕ ОКНА                         -->
     <!-- ============================================================== -->
 
+    <!-- Модалка: «Проверить расчёт» — детальная разбивка одного MeterReading.
+         Открывается из таблицы «Показания за N периодов» в карточке жильца
+         (кнопка <button data-explain-id="...">). Содержимое рендерит
+         summary.js:openExplainModal через /api/admin/readings/{id}/explain. -->
+    <div id="explainModal" class="modal-overlay">
+        <div class="modal-window" style="width: min(900px, 95vw); max-height: 90vh; overflow-y: auto;">
+            <div class="modal-header">
+                <h3 style="margin:0;">
+                    <i class="fa-solid fa-calculator"></i> Проверка расчёта
+                </h3>
+                <button id="btnExplainClose" class="close-icon">&times;</button>
+            </div>
+            <div id="explainModalBody" class="modal-form" style="padding-top:16px;">
+                <div style="text-align:center; padding:30px; color:var(--text-secondary);">
+                    Загрузка…
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Модалка: Ручное утверждение показаний (из readings) -->
     <div id="approveModal" class="modal-overlay">
         <div class="modal-window">

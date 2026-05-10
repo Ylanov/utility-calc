@@ -71,6 +71,9 @@ export const SummaryModule = {
         residentDetailLoading: new Set(),  // user_id -> загрузка идёт
         // Текущая загруженная сводка v2
         currentSummary: null,
+        // Глубина истории при разворачивании жильца. Меняется через
+        // dropdown #summaryHistoryPeriods. По умолчанию 12 (год).
+        historyPeriods: 12,
     },
     dom: {},
 
@@ -93,9 +96,13 @@ export const SummaryModule = {
             topRow:         document.getElementById('summaryTopRow'),
             search:         document.getElementById('summarySearch'),
             periodSelector: document.getElementById('summaryPeriodSelector'),
+            historyPeriods: document.getElementById('summaryHistoryPeriods'),
             btnRefresh:     document.getElementById('btnRefreshSummary'),
             btnExcel:       document.getElementById('btnDownloadExcel'),
             btnZip:         document.getElementById('btnDownloadZip'),
+            explainModal:   document.getElementById('explainModal'),
+            explainBody:    document.getElementById('explainModalBody'),
+            btnExplainClose: document.getElementById('btnExplainClose'),
         };
     },
 
@@ -126,6 +133,31 @@ export const SummaryModule = {
             }, 350);
         });
 
+        // Селектор глубины истории. При смене — сбросить кеш detail и
+        // перерисовать УЖЕ развёрнутых жильцов с новой глубиной.
+        this.dom.historyPeriods?.addEventListener('change', () => {
+            const n = Number(this.dom.historyPeriods.value) || 12;
+            this.state.historyPeriods = n;
+            // Очистить кеш detail и перезагрузить тех кто открыт
+            const expanded = Array.from(this.state.expandedResidents);
+            this.state.residentDetailCache.clear();
+            this.state.residentDetailLoading.clear();
+            this.state.expandedResidents.clear();
+            this.renderSummary();
+            // Заново раскрыть с новой глубиной
+            for (const uid of expanded) this.toggleResident(uid);
+        });
+
+        // Закрытие модалки «Проверить расчёт».
+        this.dom.btnExplainClose?.addEventListener('click', () => {
+            this.dom.explainModal?.classList.remove('open');
+        });
+        this.dom.explainModal?.addEventListener('mousedown', (e) => {
+            if (e.target === this.dom.explainModal) {
+                this.dom.explainModal.classList.remove('open');
+            }
+        });
+
         // Делегирование клика для раскрытия карточек общежитий и PDF
         this.dom.container?.addEventListener('click', (e) => {
             const head = e.target.closest('[data-toggle-dorm]');
@@ -145,6 +177,14 @@ export const SummaryModule = {
             const pdf = e.target.closest('button[data-pdf-id]');
             if (pdf) {
                 this.downloadReceipt(Number(pdf.dataset.pdfId));
+                return;
+            }
+
+            // Кнопка «Проверить расчёт» в строке истории.
+            const explainBtn = e.target.closest('button[data-explain-id]');
+            if (explainBtn) {
+                e.stopPropagation();  // чтобы клик не сворачивал жильца
+                this.openExplainModal(Number(explainBtn.dataset.explainId));
                 return;
             }
 
@@ -441,8 +481,10 @@ export const SummaryModule = {
         st.residentDetailLoading.add(userId);
         this.renderSummary();
         try {
-            const qs = st.selectedPeriodId ? `?period_id=${st.selectedPeriodId}` : '';
-            const data = await api.get(`/admin/residents/${userId}/finance-detail${qs}`);
+            const params = new URLSearchParams();
+            if (st.selectedPeriodId) params.set('period_id', String(st.selectedPeriodId));
+            params.set('history_periods', String(st.historyPeriods || 12));
+            const data = await api.get(`/admin/residents/${userId}/finance-detail?${params}`);
             st.residentDetailCache.set(userId, data);
         } catch (e) {
             st.residentDetailCache.set(userId, { __error: String(e.message || e) });
@@ -498,6 +540,16 @@ export const SummaryModule = {
                     ? '<span style="color:#059669; font-size:11px;">утв.</span>'
                     : '<span style="color:#f59e0b; font-size:11px;">черн.</span>')
                 : '<span style="color:var(--text-tertiary); font-size:11px;">нет</span>';
+            // Кнопка «Проверить» — открывает модалку с пересчётом и
+            // деталями каждого умножения. Показываем только если есть
+            // reading_id (нет смысла «проверять» отсутствующее).
+            const explainBtn = h.reading_id
+                ? `<button data-explain-id="${h.reading_id}" type="button"
+                          class="icon-btn" title="Проверить расчёт"
+                          style="padding:3px 7px; font-size:11px; background:var(--primary-bg); color:var(--primary-color); border:1px solid var(--primary-color); border-radius:4px; cursor:pointer;">
+                       <i class="fa-solid fa-calculator"></i> Проверить
+                   </button>`
+                : '<span style="color:var(--text-tertiary); font-size:11px;">—</span>';
             return `
                 <tr style="border-bottom:1px solid #e5e7eb;">
                     <td style="padding:6px 8px; font-weight:600;">${esc(h.period_name || '—')}</td>
@@ -510,6 +562,7 @@ export const SummaryModule = {
                     <td style="padding:6px 8px; font-size:11px;">${esc(srcLbl)}</td>
                     <td style="padding:6px 8px; text-align:center;">${statusHtml}</td>
                     <td style="padding:6px 8px; font-size:10px; color:var(--text-secondary);">${esc(flagsShort)}</td>
+                    <td style="padding:6px 8px; text-align:center;">${explainBtn}</td>
                 </tr>`;
         }).join('');
 
@@ -531,6 +584,7 @@ export const SummaryModule = {
                             <th style="text-align:left; padding:6px 8px;">Источник</th>
                             <th style="text-align:center; padding:6px 8px;">Статус</th>
                             <th style="text-align:left; padding:6px 8px;">Флаги</th>
+                            <th style="text-align:center; padding:6px 8px;">Действие</th>
                         </tr>
                     </thead>
                     <tbody>${rows}</tbody>
@@ -723,5 +777,220 @@ export const SummaryModule = {
                 }
             }, 2000);
         });
+    },
+
+    // ==========================================================
+    // ПРОВЕРКА РАСЧЁТА — модалка с разбивкой каждого умножения
+    // ==========================================================
+    async openExplainModal(readingId) {
+        if (!this.dom.explainModal || !this.dom.explainBody) return;
+        this.dom.explainBody.innerHTML = `
+            <div style="text-align:center; padding:30px; color:var(--text-secondary);">
+                <i class="fa-solid fa-spinner fa-spin" style="font-size:24px; margin-bottom:10px;"></i>
+                <div>Загрузка деталей расчёта…</div>
+            </div>`;
+        this.dom.explainModal.classList.add('open');
+
+        try {
+            const data = await api.get(`/admin/readings/${readingId}/explain`);
+            this.dom.explainBody.innerHTML = this._renderExplainModal(data);
+        } catch (e) {
+            this.dom.explainBody.innerHTML = `
+                <div style="padding:20px; color:var(--danger-color); text-align:center;">
+                    <i class="fa-solid fa-triangle-exclamation"></i>
+                    Ошибка загрузки: ${esc(e.message || String(e))}
+                </div>`;
+        }
+    },
+
+    _renderExplainModal(d) {
+        const r = d.reading || {};
+        const u = d.user || {};
+        const room = d.room || {};
+        const period = d.period || {};
+        const tariff = d.tariff || {};
+        const rates = tariff.rates || {};
+        const prev = d.previous_reading;
+        const cur = d.current_values || {};
+        const deltas = d.deltas || {};
+        const components = d.components || [];
+        const adj = d.adjustments || [];
+        const totals = d.totals || {};
+        const balances = d.balances_carried_in || {};
+
+        // Заголовок: жилец, комната, период
+        const headerHtml = `
+            <div style="background:var(--primary-bg); border-left:4px solid var(--primary-color); padding:12px 16px; margin-bottom:16px; border-radius:6px;">
+                <div style="font-size:13px; color:var(--text-secondary); margin-bottom:4px;">Reading #${esc(String(r.id))} · Период: <strong>${esc(period.name || '—')}</strong></div>
+                <div style="font-size:16px; font-weight:600;">${esc(u.username || '—')}</div>
+                <div style="font-size:12px; color:var(--text-secondary); margin-top:2px;">
+                    ${esc(room.dormitory_name || '—')}, ком. ${esc(room.room_number || '—')} ·
+                    ${esc(String(room.apartment_area))} м² ·
+                    ${esc(String(u.residents_count))} из ${esc(String(room.total_room_residents))} жильцов в комнате
+                </div>
+                ${r.is_baseline
+                    ? '<div style="margin-top:8px; padding:6px 10px; background:#fef3c7; color:#92400e; border-radius:4px; font-size:12px;"><i class="fa-solid fa-info-circle"></i> Это BASELINE — первая подача жильца, начисления = 0 намеренно.</div>'
+                    : ''}
+                ${d.calculation_error
+                    ? `<div style="margin-top:8px; padding:8px 12px; background:#fee2e2; color:#991b1b; border-radius:4px; font-size:12px;"><i class="fa-solid fa-circle-exclamation"></i> Ошибка расчёта: ${esc(d.calculation_error)}</div>`
+                    : ''}
+                ${d.sanity_warning
+                    ? `<div style="margin-top:8px; padding:8px 12px; background:#fef3c7; color:#92400e; border-radius:4px; font-size:12px;"><i class="fa-solid fa-triangle-exclamation"></i> ${esc(d.sanity_warning)}</div>`
+                    : ''}
+            </div>`;
+
+        // Тариф
+        const tariffHtml = `
+            <details style="margin-bottom:14px;">
+                <summary style="cursor:pointer; font-weight:600; padding:8px 12px; background:var(--bg-page); border-radius:6px;">
+                    <i class="fa-solid fa-receipt"></i> Применённый тариф: «${esc(tariff.name || '—')}» (id ${esc(String(tariff.id))})
+                </summary>
+                <table style="width:100%; margin-top:8px; border-collapse:collapse; font-size:12px;">
+                    <tbody>
+                        ${[
+                            ['Подача воды (₽/м³)', rates.water_supply],
+                            ['Нагрев воды (₽/м³)', rates.water_heating],
+                            ['Водоотведение (₽/м³)', rates.sewage],
+                            ['Электричество (₽/кВт·ч)', rates.electricity_rate],
+                            ['Содержание/ремонт (₽/м²)', rates.maintenance_repair],
+                            ['Социальный найм (₽/м²)', rates.social_rent],
+                            ['ТКО (₽/м²)', rates.waste_disposal],
+                            ['Отопление (₽/м²)', rates.heating],
+                            ['ОДН электро (₽/м²)', rates.electricity_per_sqm],
+                        ].map(([label, val]) => `
+                            <tr style="border-bottom:1px solid #f1f5f9;">
+                                <td style="padding:5px 10px; color:var(--text-secondary);">${esc(label)}</td>
+                                <td style="padding:5px 10px; text-align:right; font-family:monospace;">${esc(String(val))}</td>
+                            </tr>`).join('')}
+                    </tbody>
+                </table>
+            </details>`;
+
+        // Показания + дельты
+        const readingsHtml = `
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:14px;">
+                <div style="background:var(--bg-page); padding:10px 14px; border-radius:6px;">
+                    <div style="font-size:11px; color:var(--text-secondary); text-transform:uppercase; margin-bottom:6px;">Предыдущие</div>
+                    ${prev
+                        ? `<div style="font-size:12px;">
+                            <div>ГВС: <strong style="font-family:monospace;">${esc(prev.hot_water)}</strong></div>
+                            <div>ХВС: <strong style="font-family:monospace;">${esc(prev.cold_water)}</strong></div>
+                            <div>Свет: <strong style="font-family:monospace;">${esc(prev.electricity)}</strong></div>
+                            <div style="font-size:10px; color:var(--text-tertiary); margin-top:4px;">из «${esc(prev.period_name || '—')}»</div>
+                          </div>`
+                        : '<div style="font-size:12px; color:var(--text-tertiary);">Нет — это первая подача (baseline).</div>'}
+                </div>
+                <div style="background:var(--bg-page); padding:10px 14px; border-radius:6px;">
+                    <div style="font-size:11px; color:var(--text-secondary); text-transform:uppercase; margin-bottom:6px;">Текущие</div>
+                    <div style="font-size:12px;">
+                        <div>ГВС: <strong style="font-family:monospace;">${esc(cur.hot_water)}</strong> <span style="color:#dc2626;">(+${esc(deltas.hot_water)})</span></div>
+                        <div>ХВС: <strong style="font-family:monospace;">${esc(cur.cold_water)}</strong> <span style="color:var(--primary-color);">(+${esc(deltas.cold_water)})</span></div>
+                        <div>Свет: <strong style="font-family:monospace;">${esc(cur.electricity)}</strong> <span style="color:#d97706;">(+${esc(deltas.electricity)})</span></div>
+                    </div>
+                </div>
+            </div>`;
+
+        // Компоненты — главное!
+        const componentsHtml = components.length ? `
+            <div style="margin-bottom:14px;">
+                <div style="font-size:13px; font-weight:600; margin-bottom:8px;">
+                    <i class="fa-solid fa-list-ol"></i> Расчёт по компонентам
+                </div>
+                <table style="width:100%; border-collapse:collapse; font-size:12px;">
+                    <thead style="background:var(--bg-page); color:var(--text-secondary); text-transform:uppercase; font-size:10px;">
+                        <tr>
+                            <th style="text-align:left; padding:6px 8px;">Компонент</th>
+                            <th style="text-align:left; padding:6px 8px;">КБК</th>
+                            <th style="text-align:left; padding:6px 8px;">Формула / Расчёт</th>
+                            <th style="text-align:right; padding:6px 8px;">Сумма</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${components.map(c => `
+                            <tr style="border-bottom:1px solid #f1f5f9;">
+                                <td style="padding:6px 8px; font-weight:600;">${esc(c.label)}</td>
+                                <td style="padding:6px 8px;">
+                                    <span style="background:${c.kbk === '209' ? '#fef3c7' : '#dcfce7'}; padding:2px 6px; border-radius:3px; font-size:11px; font-family:monospace;">${esc(c.kbk)}</span>
+                                </td>
+                                <td style="padding:6px 8px; font-family:monospace; font-size:11px; color:var(--text-secondary);">
+                                    <div>${esc(c.formula)}</div>
+                                    <div style="color:var(--text-main); margin-top:2px;">${esc(c.calculation)}</div>
+                                </td>
+                                <td style="padding:6px 8px; text-align:right; font-family:monospace; font-weight:600;">${esc(c.result)}</td>
+                            </tr>`).join('')}
+                    </tbody>
+                </table>
+            </div>` : '';
+
+        // Корректировки
+        const adjHtml = adj.length ? `
+            <details style="margin-bottom:14px;">
+                <summary style="cursor:pointer; font-weight:600; padding:8px 12px; background:var(--bg-page); border-radius:6px;">
+                    <i class="fa-solid fa-pen-to-square"></i> Корректировки (${adj.length})
+                </summary>
+                <table style="width:100%; margin-top:8px; border-collapse:collapse; font-size:12px;">
+                    <tbody>
+                        ${adj.map(a => `
+                            <tr style="border-bottom:1px solid #f1f5f9;">
+                                <td style="padding:5px 10px;">${esc(a.description || '—')}</td>
+                                <td style="padding:5px 10px; text-align:center;"><span style="background:${a.kbk === '209' ? '#fef3c7' : '#dcfce7'}; padding:2px 6px; border-radius:3px; font-size:11px;">${esc(a.kbk)}</span></td>
+                                <td style="padding:5px 10px; text-align:right; font-family:monospace; ${Number(a.amount) < 0 ? 'color:#10b981;' : 'color:#dc2626;'}">${esc(a.amount)} ₽</td>
+                            </tr>`).join('')}
+                    </tbody>
+                </table>
+            </details>` : '';
+
+        // Балансы
+        const balancesHtml = `
+            <details style="margin-bottom:14px;">
+                <summary style="cursor:pointer; font-weight:600; padding:8px 12px; background:var(--bg-page); border-radius:6px;">
+                    <i class="fa-solid fa-scale-balanced"></i> Перенесённые балансы (долги/переплаты)
+                </summary>
+                <table style="width:100%; margin-top:8px; font-size:12px;">
+                    <tr><td style="padding:4px 10px; color:var(--text-secondary);">Долг 209:</td><td style="font-family:monospace;">${esc(balances.debt_209)} ₽</td></tr>
+                    <tr><td style="padding:4px 10px; color:var(--text-secondary);">Переплата 209:</td><td style="font-family:monospace;">${esc(balances.overpayment_209)} ₽</td></tr>
+                    <tr><td style="padding:4px 10px; color:var(--text-secondary);">Долг 205:</td><td style="font-family:monospace;">${esc(balances.debt_205)} ₽</td></tr>
+                    <tr><td style="padding:4px 10px; color:var(--text-secondary);">Переплата 205:</td><td style="font-family:monospace;">${esc(balances.overpayment_205)} ₽</td></tr>
+                </table>
+            </details>`;
+
+        // Итоги — главная сравниловка
+        const matchColor = totals.match ? '#059669' : '#dc2626';
+        const matchIcon = totals.match ? 'fa-circle-check' : 'fa-circle-xmark';
+        const matchText = totals.match ? 'РАСЧЁТ ВЕРНЫЙ' : 'РАСХОЖДЕНИЕ';
+        const totalsHtml = `
+            <div style="background:#f9fafb; border:2px solid ${matchColor}; padding:14px 18px; border-radius:8px;">
+                <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
+                    <i class="fa-solid ${matchIcon}" style="color:${matchColor}; font-size:24px;"></i>
+                    <div style="font-size:16px; font-weight:700; color:${matchColor};">${matchText}</div>
+                </div>
+                <table style="width:100%; font-size:13px;">
+                    <tr>
+                        <td style="padding:4px 10px; color:var(--text-secondary);">Пересчитано сейчас (на основе текущего тарифа и формул):</td>
+                        <td style="text-align:right; font-family:monospace; font-weight:600;">${esc(totals.calculated_total_cost || '—')} ₽</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:4px 10px; color:var(--text-secondary);">Хранится в БД (то что в квитанции):</td>
+                        <td style="text-align:right; font-family:monospace; font-weight:600;">${esc(totals.stored_total_cost)} ₽</td>
+                    </tr>
+                    ${totals.diff_calc_minus_stored ? `<tr>
+                        <td style="padding:4px 10px; color:var(--text-secondary);">Разница (пересчёт − БД):</td>
+                        <td style="text-align:right; font-family:monospace; color:${matchColor}; font-weight:600;">${esc(totals.diff_calc_minus_stored)} ₽</td>
+                    </tr>` : ''}
+                    <tr>
+                        <td style="padding:4px 10px; color:var(--text-secondary);">из них КБК 209 (коммуналка):</td>
+                        <td style="text-align:right; font-family:monospace;">${esc(totals.stored_total_209)} ₽</td>
+                    </tr>
+                    <tr>
+                        <td style="padding:4px 10px; color:var(--text-secondary);">из них КБК 205 (наём):</td>
+                        <td style="text-align:right; font-family:monospace;">${esc(totals.stored_total_205)} ₽</td>
+                    </tr>
+                </table>
+                ${!totals.match ? `<div style="margin-top:10px; padding:8px 12px; background:#fee2e2; color:#991b1b; border-radius:4px; font-size:12px;">
+                    <strong>Возможные причины:</strong> тариф изменён задним числом, ручная правка БД, либо изменена формула расчёта в коде.
+                </div>` : ''}
+            </div>`;
+
+        return headerHtml + tariffHtml + readingsHtml + componentsHtml + adjHtml + balancesHtml + totalsHtml;
     },
 };

@@ -400,6 +400,14 @@ async def get_accountant_summary_v2(
     only_anomaly: bool = Query(False),
     only_missing: bool = Query(False),
     search: Optional[str] = Query(None),
+    history_periods: int = Query(
+        12,
+        ge=1,
+        le=24,
+        description="Сколько ПРЕДЫДУЩИХ периодов показать в истории жильца "
+                    "(1-24). По умолчанию 12 — год истории. UI позволяет "
+                    "переключать через dropdown «Показать периодов»."
+    ),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -434,9 +442,11 @@ async def get_accountant_summary_v2(
     )
     rows = (await db.execute(stmt)).all()
 
-    # 3) История за 6 предыдущих периодов — для sparkline и Δ.
-    # Берём ВСЕ utility-readings этих жильцов одним запросом, фильтруем в Python:
-    # это дешевле чем N запросов по жильцам.
+    # 3) История за N предыдущих периодов — для sparkline и Δ.
+    # N приходит query-параметром history_periods (default 12 = год).
+    # Раньше было захардкожено 6; админ хотел видеть глубже — сделали
+    # настраиваемым. Берём ВСЕ utility-readings этих жильцов одним
+    # запросом, фильтруем в Python: дешевле чем N запросов по жильцам.
     user_ids = [r[0].id for r in rows]
     history_map: dict[int, list[MeterReading]] = {uid: [] for uid in user_ids}
     if user_ids:
@@ -444,7 +454,7 @@ async def get_accountant_summary_v2(
             select(BillingPeriod)
             .where(BillingPeriod.id < period.id)
             .order_by(BillingPeriod.id.desc())
-            .limit(6)
+            .limit(history_periods)
         )).scalars().all()
         prev_period_ids = [p.id for p in prev_periods]
 
@@ -954,4 +964,321 @@ async def get_resident_finance_detail(
         "history": history,  # от свежих к старым
         "adjustments": adjustments,
         "contract": contract_data,
+    }
+
+
+# =====================================================================
+# EXPLAIN — детальный пересчёт одного reading с трассировкой умножений
+# =====================================================================
+@router.get("/api/admin/readings/{reading_id}/explain")
+async def explain_reading_calculation(
+    reading_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Возвращает детальный breakdown расчёта одного MeterReading.
+
+    Цель: админ может убедиться что счёт выставлен ПРАВИЛЬНО — видит
+    каждое умножение тариф×объём, какие были предыдущие показания, какие
+    корректировки применены, и совпадает ли пересчитанный итог с тем,
+    что лежит в БД. Если не совпадает — пересчёт прав, в БД мусор.
+
+    Используется кнопкой «Проверить расчёт» в админ-UI рядом с reading.
+    """
+    if current_user.role not in ("accountant", "admin", "financier"):
+        raise HTTPException(403, "Доступ запрещён")
+
+    # 1. Reading с user, room, period
+    reading = (await db.execute(
+        select(MeterReading)
+        .options(
+            selectinload(MeterReading.user).selectinload(User.room),
+            selectinload(MeterReading.period),
+        )
+        .where(MeterReading.id == reading_id)
+    )).scalars().first()
+    if not reading:
+        raise HTTPException(404, "Reading не найден")
+
+    user = reading.user
+    room = user.room if user else None
+    if not user or not room:
+        raise HTTPException(400, "У reading'а нет связанного жильца или комнаты")
+
+    # 2. Тариф через тот же кеш что использовался при расчёте
+    from app.modules.utility.services.tariff_cache import tariff_cache
+    tariff = tariff_cache.get_effective_tariff(user=user, room=room)
+    if not tariff:
+        tariff = (await db.execute(
+            select(Tariff).where(Tariff.is_active.is_(True))
+        )).scalars().first()
+    if not tariff:
+        raise HTTPException(400, "Активный тариф не найден")
+
+    # 3. Предыдущее утверждённое показание этого жильца в этой комнате —
+    # для вычисления дельт. Берём то же что использовал боевой расчёт:
+    # последнее approved до текущего created_at, той же комнаты.
+    prev = (await db.execute(
+        select(MeterReading)
+        .where(
+            MeterReading.user_id == user.id,
+            MeterReading.room_id == room.id,
+            MeterReading.is_approved.is_(True),
+            MeterReading.created_at < reading.created_at,
+        )
+        .order_by(MeterReading.created_at.desc())
+        .limit(1)
+    )).scalars().first()
+
+    # 4. Корректировки за период reading'а
+    adj_rows = (await db.execute(
+        select(Adjustment).where(
+            Adjustment.user_id == user.id,
+            Adjustment.period_id == reading.period_id,
+        )
+    )).scalars().all()
+
+    # 5. Считаем дельты — те же формулы что в client_readings.py:
+    #    delta_hot = current - prev (или current если prev=None)
+    #    delta_sewage = delta_hot + delta_cold
+    #    delta_elect_share = (residents/total_room) × delta_elect
+    z = Decimal("0")
+    cur_hot = Decimal(str(reading.hot_water or 0))
+    cur_cold = Decimal(str(reading.cold_water or 0))
+    cur_elect = Decimal(str(reading.electricity or 0))
+    p_hot = Decimal(str(prev.hot_water or 0)) if prev else z
+    p_cold = Decimal(str(prev.cold_water or 0)) if prev else z
+    p_elect = Decimal(str(prev.electricity or 0)) if prev else z
+
+    d_hot = cur_hot - p_hot
+    d_cold = cur_cold - p_cold
+    d_elect = cur_elect - p_elect
+    d_sewage = d_hot + d_cold
+
+    residents = Decimal(user.residents_count or 1)
+    total_room = Decimal(room.total_room_residents or 1)
+    if total_room <= 0:
+        total_room = Decimal("1")
+    elect_share = (residents / total_room) * d_elect
+
+    area = Decimal(str(room.apartment_area or 0))
+
+    # 6. Пересчёт через ту же calculate_utilities (для сравнения с БД).
+    # Пробуем; если падает на CalculationError — показываем причину явно.
+    from app.modules.utility.services.calculations import (
+        calculate_utilities, CalculationError
+    )
+    calc_error = None
+    calc_result = None
+    is_baseline = prev is None
+    try:
+        if is_baseline:
+            # baseline = всё 0, расчёт не делается (см. логику в client_readings)
+            calc_result = {
+                "cost_hot_water": z, "cost_cold_water": z,
+                "cost_sewage": z, "cost_electricity": z,
+                "cost_maintenance": z, "cost_social_rent": z,
+                "cost_waste": z, "cost_fixed_part": z,
+                "total_cost": z, "sanity_warning": None,
+            }
+        else:
+            calc_result = calculate_utilities(
+                user=user, room=room, tariff=tariff,
+                volume_hot=d_hot, volume_cold=d_cold,
+                volume_sewage=d_sewage,
+                volume_electricity_share=elect_share,
+            )
+    except CalculationError as e:
+        calc_error = str(e)
+
+    # 7. Формируем breakdown — по компонентам, с явными формулами
+    def f(d):
+        """Decimal → строка с 2 знаками для ₽-сумм."""
+        return f"{Decimal(str(d)):.2f}"
+
+    def f3(d):
+        """Decimal → строка с 3 знаками для м³/кВт·ч."""
+        return f"{Decimal(str(d)):.3f}"
+
+    components = []
+    if not is_baseline and calc_result:
+        # ГВС
+        components.append({
+            "label": "Горячая вода",
+            "kbk": "209",
+            "formula": "v_hot × (water_supply + water_heating)",
+            "calculation": (
+                f"{f3(d_hot)} × ({f(tariff.water_supply)} + "
+                f"{f(tariff.water_heating)}) = {f3(d_hot)} × "
+                f"{f(Decimal(str(tariff.water_supply)) + Decimal(str(tariff.water_heating)))}"
+            ),
+            "result": f(calc_result["cost_hot_water"]) + " ₽",
+        })
+        # ХВС
+        components.append({
+            "label": "Холодная вода",
+            "kbk": "209",
+            "formula": "v_cold × water_supply",
+            "calculation": f"{f3(d_cold)} × {f(tariff.water_supply)}",
+            "result": f(calc_result["cost_cold_water"]) + " ₽",
+        })
+        # Канализация
+        components.append({
+            "label": "Водоотведение",
+            "kbk": "209",
+            "formula": "(v_hot + v_cold) × sewage_rate",
+            "calculation": f"{f3(d_sewage)} × {f(tariff.sewage)}",
+            "result": f(calc_result["cost_sewage"]) + " ₽",
+        })
+        # Электро
+        components.append({
+            "label": "Электроэнергия",
+            "kbk": "209",
+            "formula": "(жильцов / всех в комнате) × delta_elect × rate",
+            "calculation": (
+                f"({residents} / {total_room}) × {f3(d_elect)} × "
+                f"{f(tariff.electricity_rate)} = {f3(elect_share)} × "
+                f"{f(tariff.electricity_rate)}"
+            ),
+            "result": f(calc_result["cost_electricity"]) + " ₽",
+        })
+        # Содержание
+        components.append({
+            "label": "Содержание и ремонт",
+            "kbk": "205",
+            "formula": "area × maintenance_repair",
+            "calculation": f"{f(area)} × {f(tariff.maintenance_repair)}",
+            "result": f(calc_result["cost_maintenance"]) + " ₽",
+        })
+        # Наём
+        components.append({
+            "label": "Социальный найм",
+            "kbk": "205",
+            "formula": "area × social_rent",
+            "calculation": f"{f(area)} × {f(tariff.social_rent)}",
+            "result": f(calc_result["cost_social_rent"]) + " ₽",
+        })
+        # ТКО
+        components.append({
+            "label": "Вывоз ТКО",
+            "kbk": "205",
+            "formula": "area × waste_disposal",
+            "calculation": f"{f(area)} × {f(tariff.waste_disposal)}",
+            "result": f(calc_result["cost_waste"]) + " ₽",
+        })
+        # Фиксированная часть
+        t_h = Decimal(str(tariff.heating))
+        t_e_sqm = Decimal(str(tariff.electricity_per_sqm))
+        components.append({
+            "label": "Отопление + ОДН электро",
+            "kbk": "205",
+            "formula": "area × (heating + electricity_per_sqm)",
+            "calculation": (
+                f"{f(area)} × ({f(t_h)} + {f(t_e_sqm)}) = "
+                f"{f(area)} × {f(t_h + t_e_sqm)}"
+            ),
+            "result": f(calc_result["cost_fixed_part"]) + " ₽",
+        })
+
+    # 8. Сравнение пересчитанного с тем что в БД
+    stored_total = Decimal(str(reading.total_cost or 0))
+    calc_total = (
+        Decimal(str(calc_result["total_cost"])) if calc_result else None
+    )
+    match = (
+        calc_total is not None
+        and abs(calc_total - stored_total) < Decimal("0.02")
+    )
+
+    return {
+        "reading": {
+            "id": reading.id,
+            "is_approved": bool(reading.is_approved),
+            "anomaly_flags": reading.anomaly_flags,
+            "anomaly_score": reading.anomaly_score,
+            "created_at": reading.created_at.isoformat() if reading.created_at else None,
+            "is_baseline": is_baseline,
+        },
+        "user": {
+            "id": user.id,
+            "username": user.username,
+            "residents_count": user.residents_count or 1,
+            "billing_mode": getattr(user, "billing_mode", "by_meter"),
+        },
+        "room": {
+            "id": room.id,
+            "dormitory_name": room.dormitory_name,
+            "room_number": room.room_number,
+            "apartment_area": f(area),
+            "total_room_residents": room.total_room_residents or 1,
+        },
+        "period": {"id": reading.period_id, "name": reading.period.name if reading.period else None},
+        "tariff": {
+            "id": tariff.id,
+            "name": tariff.name,
+            "rates": {
+                "water_supply": f(tariff.water_supply),
+                "water_heating": f(tariff.water_heating),
+                "sewage": f(tariff.sewage),
+                "electricity_rate": f(tariff.electricity_rate),
+                "maintenance_repair": f(tariff.maintenance_repair),
+                "social_rent": f(tariff.social_rent),
+                "waste_disposal": f(tariff.waste_disposal),
+                "heating": f(tariff.heating),
+                "electricity_per_sqm": f(tariff.electricity_per_sqm),
+            },
+        },
+        "previous_reading": (
+            {
+                "reading_id": prev.id,
+                "period_name": prev.period.name if prev.period else None,
+                "hot_water": f3(p_hot),
+                "cold_water": f3(p_cold),
+                "electricity": f3(p_elect),
+                "created_at": prev.created_at.isoformat() if prev.created_at else None,
+            } if prev else None
+        ),
+        "current_values": {
+            "hot_water": f3(cur_hot),
+            "cold_water": f3(cur_cold),
+            "electricity": f3(cur_elect),
+        },
+        "deltas": {
+            "hot_water": f3(d_hot),
+            "cold_water": f3(d_cold),
+            "electricity": f3(d_elect),
+            "electricity_share": f3(elect_share),
+            "sewage": f3(d_sewage),
+        },
+        "components": components,
+        "adjustments": [
+            {
+                "id": a.id,
+                "amount": f(a.amount),
+                "description": a.description,
+                "kbk": a.account_type,
+                "created_at": a.created_at.isoformat() if a.created_at else None,
+            }
+            for a in adj_rows
+        ],
+        "balances_carried_in": {
+            "debt_209": f(reading.debt_209 or 0),
+            "overpayment_209": f(reading.overpayment_209 or 0),
+            "debt_205": f(reading.debt_205 or 0),
+            "overpayment_205": f(reading.overpayment_205 or 0),
+        },
+        "totals": {
+            "calculated_total_cost": f(calc_total) if calc_total is not None else None,
+            "stored_total_cost": f(stored_total),
+            "stored_total_209": f(reading.total_209 or 0),
+            "stored_total_205": f(reading.total_205 or 0),
+            "match": match,
+            "diff_calc_minus_stored": (
+                f(calc_total - stored_total) if calc_total is not None else None
+            ),
+        },
+        "sanity_warning": (
+            calc_result.get("sanity_warning") if calc_result else None
+        ),
+        "calculation_error": calc_error,
     }
