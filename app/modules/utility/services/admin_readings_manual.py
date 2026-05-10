@@ -8,7 +8,10 @@ from sqlalchemy.orm import selectinload
 
 from app.modules.utility.models import User, MeterReading, Room, Tariff, BillingPeriod, Adjustment
 from app.modules.utility.schemas import AdminManualReadingSchema, OneTimeChargeSchema
-from app.modules.utility.services.calculations import calculate_utilities
+from app.modules.utility.services.calculations import (
+    calculate_utilities,
+    costs_for_model_fields,
+)
 from app.modules.utility.services.anomaly_detector import check_reading_for_anomalies_v2
 
 ZERO = Decimal("0.00")
@@ -102,7 +105,6 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
     total_209 = (costs['total_cost'] - costs['cost_social_rent']) + (draft.debt_209 or ZERO if draft else ZERO) - (draft.overpayment_209 or ZERO if draft else ZERO) + adj_map.get('209', ZERO)
     total_205 = costs['cost_social_rent'] + (draft.debt_205 or ZERO if draft else ZERO) - (draft.overpayment_205 or ZERO if draft else ZERO) + adj_map.get('205', ZERO)
 
-    from app.modules.utility.services.calculations import costs_for_model_fields
     if draft:
         draft.hot_water, draft.cold_water, draft.electricity = data.hot_water, data.cold_water, data.electricity
         draft.anomaly_flags, draft.anomaly_score = flags, score
