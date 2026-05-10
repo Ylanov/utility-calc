@@ -7,6 +7,7 @@ from sqlalchemy import func, or_, desc, asc
 from typing import Optional, List
 
 from app.core.database import get_db
+from app.core.time_utils import utcnow
 from app.modules.utility.models import Room, User, MeterReading, BillingPeriod, Tariff
 from app.modules.utility.schemas import RoomCreate, RoomUpdate, RoomResponse, PaginatedResponse, ReplaceMeterSchema
 from app.core.dependencies import get_current_user, RoleChecker
@@ -408,8 +409,7 @@ async def export_rooms(
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    from datetime import datetime as _dt
-    fname = f"housing_{_dt.utcnow().strftime('%Y%m%d_%H%M')}.xlsx"
+    fname = f"housing_{utcnow().strftime('%Y%m%d_%H%M')}.xlsx"
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

@@ -288,7 +288,7 @@ export const AnalyzerModule = {
         for (const s of this.state.settings) {
             (byCat[s.category] ||= []).push(s);
         }
-        const html = Object.keys(byCat).sort().map(cat => {
+        const html = Object.keys(byCat).sort((a, b) => a.localeCompare(b, 'ru')).map(cat => {
             const meta = CATEGORY_META[cat] || { label: cat, color: '#6b7280' };
             return `
                 <div style="margin-bottom:18px; border:1px solid var(--border-color); border-radius:10px; overflow:hidden;">

@@ -29,6 +29,8 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 
+from app.core.time_utils import utcnow
+
 import httpx
 from rapidfuzz import fuzz, process
 from sqlalchemy import select
@@ -787,7 +789,7 @@ def promote_auto_approved_rows(db: Session) -> dict:
         if dup:
             for r in user_rows:
                 r.reading_id = dup.id
-                r.processed_at = _dt.utcnow()
+                r.processed_at = utcnow()
             bound += len(user_rows)
             continue
 
@@ -816,7 +818,7 @@ def promote_auto_approved_rows(db: Session) -> dict:
 
         for r in user_rows:
             r.reading_id = reading.id
-            r.processed_at = _dt.utcnow()
+            r.processed_at = utcnow()
         created += 1
         bound += len(user_rows) - 1  # primary не считаем как «привязанный к чужому»
 

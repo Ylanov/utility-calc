@@ -289,9 +289,12 @@ export const RecalcModule = {
         `;
     },
 
-    _kpiCard(label, value, color, wide = false, isHtml = false) {
+    // _wide зарезервирован под будущий wide-стиль карточки (3 вызова передают
+    // true), сейчас не применяется — underscore-префикс отмечает «намеренно
+    // не используется», вызовы не ломаются за счёт сохранённой позиции.
+    _kpiCard(label, value, color, _wide = false, isHtml = false) {
         return `
-            <div style="background:white; border:1px solid var(--border-color); border-radius:8px; padding:10px 12px; ${wide ? '' : ''}">
+            <div style="background:white; border:1px solid var(--border-color); border-radius:8px; padding:10px 12px;">
                 <div style="font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:0.3px;">${escapeHtml(label)}</div>
                 <div style="font-size:16px; font-weight:700; color:${color}; margin-top:4px;">${isHtml ? value : escapeHtml(String(value))}</div>
             </div>

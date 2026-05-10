@@ -18,6 +18,7 @@ location /static/apps/ — но публичный download идёт через 
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
@@ -300,20 +301,28 @@ async def upload_release(
 
     sha = hashlib.sha256()
     written = 0
+    # Запись APK: async-чтение чанков из UploadFile + sync write в thread pool.
+    # Прямой f.write() в async-функции блокировал event loop на больших APK
+    # (до 100 MB) — мобильный клиент в это время не мог дождаться других
+    # запросов. asyncio.to_thread выносит каждый блокирующий write в worker
+    # thread, event loop остаётся отзывчивым.
+    f = open(tmp_path, "wb")
     try:
-        with open(tmp_path, "wb") as f:
+        try:
             while chunk := await file.read(1024 * 1024):
                 written += len(chunk)
                 if written > MAX_APK_SIZE:
-                    f.close()
-                    os.remove(tmp_path)
                     raise HTTPException(
                         413,
                         f"Файл слишком большой (>{MAX_APK_SIZE // 1024 // 1024} MB)",
                     )
                 sha.update(chunk)
-                f.write(chunk)
+                await asyncio.to_thread(f.write, chunk)
+        finally:
+            f.close()
     except HTTPException:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
         raise
     except Exception as e:
         if os.path.exists(tmp_path):
@@ -322,11 +331,17 @@ async def upload_release(
 
     file_hash = sha.hexdigest()
 
-    # APK signature: первые 4 байта должны быть PK\x03\x04 (zip)
-    with open(tmp_path, "rb") as f:
-        if f.read(4) != b"PK\x03\x04":
-            os.remove(tmp_path)
-            raise HTTPException(400, "Файл не похож на корректный APK")
+    # APK signature: первые 4 байта должны быть PK\x03\x04 (zip).
+    # Открытие/чтение/закрытие — sync stdlib calls, заворачиваем целиком в
+    # to_thread чтобы не блокировать event loop на медленном диске.
+    def _read_apk_header(path: str) -> bytes:
+        with open(path, "rb") as fh:
+            return fh.read(4)
+
+    header = await asyncio.to_thread(_read_apk_header, tmp_path)
+    if header != b"PK\x03\x04":
+        os.remove(tmp_path)
+        raise HTTPException(400, "Файл не похож на корректный APK")
 
     # === Извлечение метаданных из APK ===
     try:

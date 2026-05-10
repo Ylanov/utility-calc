@@ -18,6 +18,20 @@ from app.modules.utility.routers.admin_dashboard import write_audit_log
 
 ZERO = Decimal("0.00")
 
+# Удерживаем strong-reference на fire-and-forget background tasks, иначе
+# event loop хранит только weak ref и сборщик мусора может убить таск
+# до завершения (см. CPython issue #88831 / asyncio.create_task docs).
+# Колбэк по завершении сам убирает таск из множества — утечки не будет.
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn_background(coro) -> asyncio.Task:
+    """Создаёт background-task и удерживает strong-ref до его завершения."""
+    task = asyncio.create_task(coro)
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+    return task
+
 
 async def bulk_approve_drafts(db: AsyncSession, current_user=None):
     """
@@ -374,7 +388,7 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
     # пуши тихо падали, dead device tokens не чистились.
     # Теперь — открываем свежую AsyncSession внутри background helper'а.
     final_sum = total_209 + total_205
-    asyncio.create_task(
+    _spawn_background(
         _send_push_background(
             user_id=user.id,
             title="✅ Квитанция проверена",

@@ -16,6 +16,7 @@ from fastapi.responses import StreamingResponse
 from fastapi_limiter.depends import RateLimiter
 
 from app.core.database import get_db
+from app.core.time_utils import utcnow
 from app.modules.utility.models import User, Room, BillingPeriod, MeterReading, Adjustment, Tariff, DeviceToken
 from app.modules.utility.schemas import (
     UserCreate, UserResponse, UserUpdate, PaginatedResponse,
@@ -534,8 +535,7 @@ async def export_users_list(
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    from datetime import datetime as _dt
-    fname = f"residents_{_dt.utcnow().strftime('%Y%m%d_%H%M')}.xlsx"
+    fname = f"residents_{utcnow().strftime('%Y%m%d_%H%M')}.xlsx"
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

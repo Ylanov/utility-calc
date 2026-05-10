@@ -2,6 +2,7 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
+<title>Платёжный документ — {{ period.name }}</title>
 
 <style>
 @page { size: A4; margin: 12mm; }
@@ -20,8 +21,8 @@ th { background: #eee; font-size: 9pt; text-align: center; }
 td { text-align: right; }
 .col-left { text-align: left; }
 .summary { width: 100%; margin-bottom: 15px; }
-.summary td { border: none; padding: 3px; font-size: 10pt; }
-.summary .label { text-align: right; }
+.summary td, .summary th { border: none; padding: 3px; font-size: 10pt; background: transparent; }
+.summary .label { text-align: right; font-weight: bold; }
 .summary .value { text-align: right; font-weight: bold; }
 .total-final { font-size: 15pt; font-weight: bold; text-align: right; margin: 15px 0; }
 .qr-section { display: flex; justify-content: space-between; border-top: 2px dashed #999; padding-top: 12px; margin-top: 15px; }
@@ -107,21 +108,21 @@ td { text-align: right; }
 
 <table class="summary">
     <tr>
-        <td class="label">Начальный долг:</td><td class="value">{{ total_debt|round(2) }} руб.</td>
+        <th scope="row" class="label">Начальный долг:</th><td class="value">{{ total_debt|round(2) }} руб.</td>
     </tr>
     <tr>
-        <td class="label">Начальная переплата:</td><td class="value">{{ total_overpayment|round(2) }} руб.</td>
+        <th scope="row" class="label">Начальная переплата:</th><td class="value">{{ total_overpayment|round(2) }} руб.</td>
     </tr>
     <tr>
-        <td class="label">Перерасчет (в т.ч. в этом месяце):</td><td class="value">{{ recalc|round(2) }} руб.</td>
+        <th scope="row" class="label">Перерасчет (в т.ч. в этом месяце):</th><td class="value">{{ recalc|round(2) }} руб.</td>
     </tr>
     <tr><td colspan="2" style="padding: 2px;"></td></tr>
     <tr>
-        <td class="label" style="border-top: 1px solid #ccc; padding-top: 5px;">К оплате по счету 205 (Найм):</td>
+        <th scope="row" class="label" style="border-top: 1px solid #ccc; padding-top: 5px;">К оплате по счету 205 (Найм):</th>
         <td class="value" style="border-top: 1px solid #ccc; padding-top: 5px;">{{ total_205_due|round(2) }} руб.</td>
     </tr>
     <tr>
-        <td class="label">К оплате по счету 209 (Коммуналка):</td>
+        <th scope="row" class="label">К оплате по счету 209 (Коммуналка):</th>
         <td class="value">{{ total_209_due|round(2) }} руб.</td>
     </tr>
 </table>

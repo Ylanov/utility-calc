@@ -458,7 +458,7 @@ export const ReadingsModule = {
                 </div>
             </div>
             <div style="font-size:11px; color:var(--text-secondary); margin-top:6px;">
-                по ${n.sample_size} ${n.sample_size === 1 ? 'жильцу' : (n.sample_size < 5 ? 'жильцам' : 'жильцам')} в общежитии «${escapeHtml(n.dormitory)}»
+                по ${n.sample_size} ${n.sample_size === 1 ? 'жильцу' : 'жильцам'} в общежитии «${escapeHtml(n.dormitory)}»
             </div>
         ` : `<div style="color:var(--text-secondary); font-style:italic; padding:6px 0;">Не с кем сравнить — единственная подача в общежитии за этот период.</div>`;
 

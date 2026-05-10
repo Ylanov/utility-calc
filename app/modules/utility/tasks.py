@@ -7,6 +7,8 @@ import tempfile
 import asyncio
 from contextlib import contextmanager
 from datetime import datetime, timezone
+
+from app.core.time_utils import utcnow
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
@@ -967,14 +969,14 @@ def _cleanup_gsheets_rows(retention_days: int) -> dict:
 
     Возвращает {'deleted': N, 'cutoff': 'ISO datetime'}.
     """
-    from datetime import datetime as _dt, timedelta as _td
+    from datetime import timedelta as _td
     from app.modules.utility.models import GSheetsImportRow
 
     if retention_days <= 0:
         logger.info("[GSHEETS-CLEANUP] retention_days<=0, задача пропущена")
         return {"deleted": 0, "cutoff": None, "skipped": True}
 
-    cutoff = _dt.utcnow() - _td(days=retention_days)
+    cutoff = utcnow() - _td(days=retention_days)
     terminal_statuses = ("approved", "auto_approved", "rejected")
 
     CHUNK = 1000
