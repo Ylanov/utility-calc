@@ -802,11 +802,16 @@ def promote_auto_approved_rows(db: Session) -> dict:
         ).all()
     }
 
-    # «Последнее известное electricity» по каждому жильцу: окно DISTINCT ON
-    # через row_number() — один запрос вместо N.
-    elect_subq = (
+    # Последнее утверждённое показание по каждому жильцу — для дельт при
+    # расчёте. Раньше брали только electricity (gsheets его не передаёт),
+    # но без hot/cold tariff×volume=0 не получалось бы посчитать. Теперь
+    # одним subquery достаём всё нужное (DISTINCT ON через row_number).
+    prev_subq = (
         db.query(
             MeterReading.user_id.label("uid"),
+            MeterReading.id.label("mr_id"),
+            MeterReading.hot_water.label("hot"),
+            MeterReading.cold_water.label("cold"),
             MeterReading.electricity.label("elect"),
             _sa_func.row_number().over(
                 partition_by=MeterReading.user_id,
@@ -819,13 +824,28 @@ def promote_auto_approved_rows(db: Session) -> dict:
         )
         .subquery()
     )
-    prev_elect_by_user: dict[int, _Dec] = {
-        uid: elect
-        for uid, elect, rn in db.query(
-            elect_subq.c.uid, elect_subq.c.elect, elect_subq.c.rn
-        ).filter(elect_subq.c.rn == 1).all()
-        if elect is not None
-    }
+    prev_by_user: dict[int, MeterReading] = {}
+    prev_elect_by_user: dict[int, _Dec] = {}
+    for uid, mr_id, hot, cold, elect, rn in db.query(
+        prev_subq.c.uid, prev_subq.c.mr_id,
+        prev_subq.c.hot, prev_subq.c.cold, prev_subq.c.elect, prev_subq.c.rn,
+    ).filter(prev_subq.c.rn == 1).all():
+        # Подгружаем сам MeterReading (не только id) — нужен compute_reading_breakdown.
+        mr = db.query(MeterReading).filter(MeterReading.id == mr_id).first()
+        if mr:
+            prev_by_user[uid] = mr
+        if elect is not None:
+            prev_elect_by_user[uid] = elect
+
+    # Тарифный кеш и helper расчёта — импорт здесь чтобы избежать
+    # циклических импортов при загрузке модуля.
+    from app.modules.utility.services.tariff_cache import tariff_cache
+    from app.modules.utility.services.reading_calculator import (
+        compute_reading_breakdown, CalculationError,
+    )
+    from app.modules.utility.services.calculations import (
+        costs_for_model_fields,
+    )
 
     created = 0
     skipped = 0
@@ -881,6 +901,50 @@ def promote_auto_approved_rows(db: Session) -> dict:
         # Электричество в gsheets не передаётся — берём последнее известное.
         electricity_value = prev_elect_by_user.get(uid, _Dec("0"))
 
+        # Расчёт суммы СРАЗУ при создании reading. Раньше сохранялось
+        # total_cost=0 → жилец видел нулевую квитанцию при реальной
+        # подаче, деньги физически не начислялись. См. инцидент may 2026.
+        prev_reading = prev_by_user.get(uid)
+        room_obj = db.query(Room).filter(Room.id == user.room_id).first()
+        tariff = (
+            tariff_cache.get_effective_tariff(user=user, room=room_obj)
+            if room_obj else None
+        )
+        if tariff is None:
+            # Без тарифа считать нечем — пропускаем создание reading
+            # с понятной причиной (а не молча ставим total=0).
+            skipped += len(user_rows)
+            errors.append({
+                "user_id": uid,
+                "reason": "no_active_tariff",
+                "rows": [r.id for r in user_rows],
+            })
+            continue
+
+        try:
+            breakdown = compute_reading_breakdown(
+                user=user, room=room_obj, tariff=tariff,
+                current_hot=primary.hot_water,
+                current_cold=primary.cold_water,
+                current_elect=electricity_value,
+                prev_reading=prev_reading,
+            )
+        except CalculationError as e:
+            # Тариф пустой → не создаём бракованный reading, логируем.
+            skipped += len(user_rows)
+            errors.append({
+                "user_id": uid,
+                "reason": f"calculation_error: {e}",
+                "rows": [r.id for r in user_rows],
+            })
+            continue
+
+        # cost_* поля для setattr (без total_cost / sanity_warning).
+        # is_baseline_flag отличает первую подачу от обычного auto-approve
+        # (для UI и фильтров админа).
+        is_baseline = breakdown["is_baseline"]
+        anomaly_flag = "GSHEETS_AUTO_BASELINE" if is_baseline else "GSHEETS_AUTO"
+
         reading = MeterReading(
             user_id=user.id,
             room_id=user.room_id,
@@ -889,12 +953,18 @@ def promote_auto_approved_rows(db: Session) -> dict:
             cold_water=primary.cold_water,
             electricity=electricity_value,
             is_approved=True,
-            anomaly_flags="GSHEETS_AUTO",
+            anomaly_flags=anomaly_flag,
             anomaly_score=0,
-            total_cost=_Dec("0"),
-            total_209=_Dec("0"),
-            total_205=_Dec("0"),
+            total_cost=breakdown["total_cost"],
+            total_209=breakdown["total_209"],
+            total_205=breakdown["total_205"],
+            **costs_for_model_fields(breakdown),
         )
+        if breakdown.get("sanity_warning"):
+            logger.warning(
+                "[GSHEETS-PROMOTE] user=%s sanity_warning: %s",
+                uid, breakdown["sanity_warning"],
+            )
         db.add(reading)
         db.flush()
 
