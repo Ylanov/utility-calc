@@ -43,6 +43,23 @@ logger = logging.getLogger(__name__)
 
 
 # =======================================================================
+# Sanity-порог для показаний счётчика
+# =======================================================================
+# Реальные счётчики воды/электричества в общежитии накапливают за всю
+# жизнь порядка 1 000-10 000 единиц (м³ или кВт·ч). Значения выше
+# 100 000 — это ВСЕГДА ошибка ввода (жилец записал «01427.957» как
+# «01427957», т.е. без десятичной точки). До добавления порога такие
+# показания auto-approve'ились, и в апреле 2026 это дало 47 reading'ов
+# c total_cost от 100k до 145M ₽ — KPI «Начислено» на дашборде показал
+# 1.48 МЛРД ₽ за один месяц (см. app/scripts/audit_calculations.py).
+#
+# Threshold намеренно «грубый»: всё, что выше — гарантированно мусор;
+# всё, что ниже — может быть валидным даже для сильно нагретых счётчиков.
+# Порог можно ужесточить до 50 000 без потери реальных подач.
+MAX_PLAUSIBLE_METER_VALUE = Decimal("100000")
+
+
+# =======================================================================
 # Константы
 # =======================================================================
 # Два URL для CSV-экспорта Google Sheets:
@@ -542,11 +559,31 @@ def sync_gsheets(
                 users_by_id=users_by_id, aliases_map=aliases_map,
             )
 
+            # Sanity-проверка значений ДО присвоения статуса. Жилец, скорее
+            # всего, записал «01427.957» без точки, и парсер дал 1 427 957 м³.
+            # Auto-approve таких показаний — катастрофа: расчёт корректно
+            # умножит на тариф и выдаст счёт в миллионы.
+            value_overflow: list[str] = []
+            if hot is not None and hot > MAX_PLAUSIBLE_METER_VALUE:
+                value_overflow.append(f"hot={hot}")
+            if cold is not None and cold > MAX_PLAUSIBLE_METER_VALUE:
+                value_overflow.append(f"cold={cold}")
+
             # Определяем статус (порог из конфига).
             if user_info is None:
                 status = "unmatched"
             elif conflict:
                 status = "conflict"
+            elif value_overflow:
+                # Подача матчится с жильцом и комнатой, но значения мусорные —
+                # отправляем в conflict с понятной причиной, чтобы админ
+                # увидел в админке и попросил жильца переподать.
+                status = "conflict"
+                conflict = (
+                    f"value_too_large: {', '.join(value_overflow)} "
+                    f"(max={MAX_PLAUSIBLE_METER_VALUE}). "
+                    f"Скорее всего пропущена десятичная точка."
+                )
             elif score >= auto_approve_thr:
                 status = "auto_approved"
             else:
@@ -802,6 +839,23 @@ def promote_auto_approved_rows(db: Session) -> dict:
 
         # Берём САМУЮ СВЕЖУЮ подачу (первая в отсортированном списке).
         primary = user_rows[0]
+
+        # Финальный sanity-check (defence in depth): даже если строка как-то
+        # прошла валидацию на этапе sync (старая запись, ручная вставка,
+        # будущее изменение порога) — не создаём reading с гарантированно
+        # бракованными значениями. Скрипт audit_calculations покажет такие
+        # строки с status=auto_approved + reading_id=NULL для разбора.
+        if (primary.hot_water and primary.hot_water > MAX_PLAUSIBLE_METER_VALUE) or \
+           (primary.cold_water and primary.cold_water > MAX_PLAUSIBLE_METER_VALUE):
+            skipped += len(user_rows)
+            errors.append({
+                "user_id": uid,
+                "reason": "value_too_large_skipped",
+                "rows": [r.id for r in user_rows],
+                "hot": str(primary.hot_water),
+                "cold": str(primary.cold_water),
+            })
+            continue
 
         # Электричество в gsheets не передаётся — берём последнее известное.
         electricity_value = prev_elect_by_user.get(uid, _Dec("0"))
