@@ -69,6 +69,10 @@ def generate_receipt_task(reading_id: int) -> dict:
     Используется администратором при ручном запросе конкретной квитанции.
     """
     logger.info(f"[PDF] Start generation reading_id={reading_id}")
+    # Изолированная директория с правами 700 — Sonar python:S5443
+    # («publicly writable /tmp»). Чистится в finally независимо от того,
+    # вернулся ли таск нормально или поднял исключение.
+    temp_dir = tempfile.mkdtemp(prefix="utility_pdf_")
     try:
         with sync_db_session() as db:
             reading = (
@@ -118,7 +122,6 @@ def generate_receipt_task(reading_id: int) -> dict:
                 .all()
             )
 
-            temp_dir = "/tmp"
             final_path = generate_receipt_pdf(
                 user=user,
                 room=room,
@@ -152,6 +155,11 @@ def generate_receipt_task(reading_id: int) -> dict:
     except Exception:
         logger.exception(f"[PDF] Generation failed for reading_id={reading_id}")
         raise
+    finally:
+        # На S3-success файла уже нет (os.remove выше); на S3-fail он
+        # перемещён shutil.move в static. В обоих случаях dir пуста или
+        # содержит остатки при exception — rmtree всё прибирает.
+        shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 @celery.task(name="start_bulk_receipt_generation", queue="heavy")

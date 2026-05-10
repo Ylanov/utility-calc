@@ -2,9 +2,12 @@
 
 import io
 import os
+import shutil
+import tempfile
 import uuid
 import asyncio
 import logging
+from starlette.background import BackgroundTask
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse, FileResponse
@@ -70,27 +73,33 @@ async def get_receipt_pdf(
         select(Adjustment).where(Adjustment.user_id == user.id, Adjustment.period_id == reading.period_id)
     )).scalars().all()
 
+    # tempfile.TemporaryDirectory вместо хардкода "/tmp" — Sonar
+    # python:S5443. Изолированная dir с правами 700, удаление при выходе
+    # автоматическое (включая случай exception). Возврат JSON, не
+    # FileResponse, поэтому файл уже не нужен после return — БЕЗОПАСНО
+    # очистить здесь же.
     try:
-        pdf_path = await asyncio.to_thread(
-            generate_receipt_pdf,
-            user=user, room=room, reading=reading, period=reading.period,
-            tariff=tariff, prev_reading=prev, adjustments=adjustments, output_dir="/tmp"
-        )
-        s3_key = f"receipts/{reading.period.id}/admin_view_{user.id}_{uuid.uuid4().hex[:8]}.pdf"
+        with tempfile.TemporaryDirectory(prefix="utility_pdf_") as output_dir:
+            pdf_path = await asyncio.to_thread(
+                generate_receipt_pdf,
+                user=user, room=room, reading=reading, period=reading.period,
+                tariff=tariff, prev_reading=prev, adjustments=adjustments, output_dir=output_dir
+            )
+            s3_key = f"receipts/{reading.period.id}/admin_view_{user.id}_{uuid.uuid4().hex[:8]}.pdf"
 
-        if await asyncio.to_thread(s3_service.upload_file, pdf_path, s3_key):
-            await asyncio.to_thread(os.remove, pdf_path)
-            download_url = await asyncio.to_thread(s3_service.get_presigned_url, s3_key, 300)
-            return {"status": "success", "url": download_url}
-        else:
-            # S3 недоступен — перемещаем PDF в статику и отдаём прямую ссылку
-            import shutil
-            static_dir = "/app/static/generated_files"
-            await asyncio.to_thread(os.makedirs, static_dir, exist_ok=True)
-            filename = os.path.basename(pdf_path)
-            static_path = os.path.join(static_dir, filename)
-            await asyncio.to_thread(shutil.move, pdf_path, static_path)
-            return {"status": "success", "url": f"/generated_files/{filename}"}
+            if await asyncio.to_thread(s3_service.upload_file, pdf_path, s3_key):
+                # TemporaryDirectory сам удалит локальную копию, явный os.remove не нужен.
+                download_url = await asyncio.to_thread(s3_service.get_presigned_url, s3_key, 300)
+                return {"status": "success", "url": download_url}
+            else:
+                # S3 недоступен — копируем PDF в статику. Используем copy
+                # (не move): TemporaryDirectory корректно удалит исходник.
+                static_dir = "/app/static/generated_files"
+                await asyncio.to_thread(os.makedirs, static_dir, exist_ok=True)
+                filename = os.path.basename(pdf_path)
+                static_path = os.path.join(static_dir, filename)
+                await asyncio.to_thread(shutil.copy, pdf_path, static_path)
+                return {"status": "success", "url": f"/generated_files/{filename}"}
 
     except HTTPException:
         raise
@@ -157,17 +166,25 @@ async def stream_admin_receipt(
         )
     )).scalars().all()
 
+    # mkdtemp + BackgroundTask вместо "/tmp": Sonar python:S5443 +
+    # попутно фикс утечки PDF в /tmp (раньше после стрима файл не
+    # удалялся). FileResponse читает файл АСИНХРОННО уже после возврата
+    # из эндпоинта, поэтому with TemporaryDirectory здесь не подходит —
+    # директория удалилась бы до того, как клиент успел скачать файл.
+    output_dir = tempfile.mkdtemp(prefix="utility_pdf_")
     try:
         pdf_path = await asyncio.to_thread(
             generate_receipt_pdf,
             user=user, room=room, reading=reading, period=reading.period,
-            tariff=tariff, prev_reading=prev, adjustments=adjustments, output_dir="/tmp",
+            tariff=tariff, prev_reading=prev, adjustments=adjustments, output_dir=output_dir,
         )
     except Exception as e:
+        shutil.rmtree(output_dir, ignore_errors=True)
         logger.error(f"PDF generation failed for reading_id={reading_id}: {e}", exc_info=True)
         raise HTTPException(500, "Ошибка генерации квитанции. Попробуйте позже.")
 
     if not os.path.exists(pdf_path):
+        shutil.rmtree(output_dir, ignore_errors=True)
         raise HTTPException(500, "Не удалось получить файл квитанции на сервере")
 
     username_safe = (user.username.split("_deleted_")[0] if user.is_deleted else user.username)
@@ -185,6 +202,8 @@ async def stream_admin_receipt(
                 f"attachment; filename*=utf-8''{encoded_filename}",
             "Cache-Control": "no-store, must-revalidate",
         },
+        # Cleanup срабатывает после того как Starlette отстримит весь файл клиенту.
+        background=BackgroundTask(shutil.rmtree, output_dir, ignore_errors=True),
     )
 
 

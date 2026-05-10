@@ -179,8 +179,11 @@ def parse_room_number(raw: str) -> Optional[str]:
     s = str(raw).strip()
     if not s:
         return None
-    # Если это чисто число с ведущими нулями — убираем их
-    if re.fullmatch(r"0*\d+", s):
+    # Если это чисто число с ведущими нулями — убираем их.
+    # str.isdigit() заменил re.fullmatch(r"0*\d+", s): семантически
+    # эквивалентно для практических входов (номера комнат — ASCII), но
+    # без regex-движка → нет даже теоретического risk на ReDoS.
+    if s.isdigit():
         s = s.lstrip("0") or "0"
     return s
 
@@ -198,7 +201,11 @@ def compute_row_hash(ts: Optional[datetime], fio: str, room: str,
     """
     ts_str = ts.isoformat() if ts else ""
     raw = f"{ts_str}|{fio.strip()}|{room.strip()}|{hot.strip()}|{cold.strip()}"
-    return hashlib.md5(raw.encode("utf-8")).hexdigest()
+    # usedforsecurity=False — явно говорим Python (3.9+) что MD5 здесь
+    # используется НЕ для крипто, а для идемпотентного dedup-ключа: это
+    # снимает Sonar/Bandit warning про слабую крипту и не меняет хеш —
+    # обратная совместимость с уже сохранёнными в БД row_hash сохраняется.
+    return hashlib.md5(raw.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 # =======================================================================
