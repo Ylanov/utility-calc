@@ -60,7 +60,28 @@ from app.modules.utility.services.tariff_cache import tariff_cache
 ZERO = Decimal("0.00")
 
 
-async def find_targets(db, period_id: Optional[int]) -> list[MeterReading]:
+async def find_targets(
+    db,
+    period_id: Optional[int],
+    include_all_flags: bool = False,
+) -> list[MeterReading]:
+    """Находит approved-reading'и с total_cost=0, которые могут требовать пересчёта.
+
+    По умолчанию (включено для обратной совместимости) — только
+    anomaly_flags LIKE 'GSHEETS_AUTO%'. Это узкий случай: gsheets-promote
+    создал reading с total=0 без вызова calculate_utilities.
+
+    С --include-all-flags ловит ВСЕ approved-reading'и с total=0:
+    включая GSHEETS_IMPORT (созданные при ручном admin approve gsheets-строк),
+    AUTO_GENERATED (Начальный период — для них пересчёт даст 0 = baseline,
+    безопасно), и без флага вообще (мобильные подачи которые как-то стали 0).
+
+    Безопасно вызывать второй вариант: если у reading'а нет prev (или prev =
+    тоже AUTO_GENERATED с total=0), compute_reading_breakdown вернёт
+    is_baseline=True и total остаётся 0 — UPDATE пройдёт без изменений.
+    Реально меняются только reading'и где есть нормальный prev из прошлого
+    периода с total > 0.
+    """
     stmt = (
         select(MeterReading)
         .options(
@@ -70,9 +91,10 @@ async def find_targets(db, period_id: Optional[int]) -> list[MeterReading]:
         .where(
             MeterReading.is_approved.is_(True),
             MeterReading.total_cost == ZERO,
-            MeterReading.anomaly_flags.like("GSHEETS_AUTO%"),
         )
     )
+    if not include_all_flags:
+        stmt = stmt.where(MeterReading.anomaly_flags.like("GSHEETS_AUTO%"))
     if period_id is not None:
         stmt = stmt.where(MeterReading.period_id == period_id)
     return list((await db.execute(stmt)).scalars().all())
@@ -117,11 +139,22 @@ async def main() -> int:
         default=None,
         help="Ограничить конкретным period_id. По умолчанию — все периоды.",
     )
+    parser.add_argument(
+        "--include-all-flags",
+        action="store_true",
+        help="Захватывать ВСЕ approved-readings с total=0 (не только "
+             "GSHEETS_AUTO). Используется для подачи через ручной admin "
+             "approve gsheets-строк (anomaly_flags=GSHEETS_IMPORT) — они "
+             "не попадают под основной фильтр.",
+    )
     args = parser.parse_args()
 
     async with AsyncSessionLocal() as db:
-        targets = await find_targets(db, args.period_id)
-        print(f"Найдено GSHEETS_AUTO-readings с total_cost=0: {len(targets)}")
+        targets = await find_targets(
+            db, args.period_id, include_all_flags=args.include_all_flags
+        )
+        scope = "ВСЕ approved-readings" if args.include_all_flags else "GSHEETS_AUTO-readings"
+        print(f"Найдено {scope} с total_cost=0: {len(targets)}")
         if args.period_id is not None:
             print(f"(фильтр period_id={args.period_id})")
         print()
