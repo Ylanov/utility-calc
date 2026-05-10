@@ -8,9 +8,12 @@ from pathlib import Path
 from typing import Optional, List
 
 from jinja2 import Environment, FileSystemLoader
-from weasyprint import HTML
 
-# ИЗМЕНЕНИЕ: Добавляем импорт Room
+# WeasyPrint импортируется лениво внутри generate_receipt_pdf — на Windows
+# без GTK runtime даже простой `from weasyprint import HTML` падает с
+# OSError на libgobject-2.0-0. Делаем импорт по требованию, чтобы
+# pytest/CLI/dev-окружение могли импортировать модуль и использовать
+# helpers (generate_qr_base64, quantize_money) без установки GTK.
 from app.modules.utility.models import User, MeterReading, Tariff, BillingPeriod, Adjustment, Room
 
 # =========================
@@ -186,6 +189,7 @@ def generate_receipt_pdf(
     filepath = os.path.join(target_dir, filename)
 
     try:
+        from weasyprint import HTML
         HTML(string=html).write_pdf(filepath)
     except Exception as e:
         raise RuntimeError(f"Ошибка генерации PDF: {str(e)}")

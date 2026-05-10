@@ -119,7 +119,12 @@ class Settings(BaseSettings):
         return value
 
     model_config = ConfigDict(
-        env_file=".env",
+        # Кортеж: pydantic-settings читает файлы по очереди, последний перекрывает.
+        # Локальная разработка кладёт .env.local рядом с прод-`.env`, чтобы
+        # ENVIRONMENT/SENTRY_DSN/прочие dev-настройки переопределили прод
+        # без правки самого `.env` (который уезжает в Docker на сервер).
+        # На сервере `.env.local` отсутствует — кортеж тихо пропускает его.
+        env_file=(".env", ".env.local"),
         env_file_encoding="utf-8",
         extra="ignore"
     )
