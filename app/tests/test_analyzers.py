@@ -16,6 +16,12 @@ from app.modules.utility.services.anomaly_detector import (
     analyze_resource,
     check_reading_for_anomalies_v2,
 )
+from app.modules.utility.services.cohort_analyzer import (
+    ALLOWED_METRICS,
+    _area_bucket,
+    _family_bucket,
+    _stats,
+)
 from app.modules.utility.services.finance_analyzer import (
     _FLAG_SCORES,
     analyze_finance,
@@ -281,14 +287,6 @@ def test_finance_high_bill_per_person():
 # ============================================================
 # cohort_analyzer: pure helpers (без БД)
 # ============================================================
-
-from app.modules.utility.services.cohort_analyzer import (
-    _family_bucket,
-    _area_bucket,
-    _stats,
-    ALLOWED_METRICS,
-)
-
 
 def test_family_bucket_solo():
     assert _family_bucket(0) == "1 (одиночка)"
