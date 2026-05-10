@@ -140,4 +140,44 @@ def compute_reading_breakdown(
     }
 
 
-__all__ = ["compute_reading_breakdown", "CalculationError"]
+def find_chronological_prev_reading_sync(db_session, *, user_id: int, room_id: int, before_period_id: int) -> Optional[MeterReading]:
+    """Находит предыдущее (по биллинговому периоду) approved-reading жильца.
+
+    КРИТИЧНО: ищем по period.id, а НЕ по MeterReading.created_at.
+
+    Почему это важно (инцидент may 2026):
+      Жилец подавал показания за разные месяцы в разное время через
+      гугл-таблицу. В БД получалось:
+        Апрель 2026: hot=151.5, created_at=2026-04-15 (импорт в апреле)
+        Февраль 2026: hot=142.89, created_at=2026-05-10 (исторический
+                       импорт админом в мае)
+      Поиск prev по created_at давал для февральского reading'а
+      «предыдущим» апрельский (который ХРОНОЛОГИЧЕСКИ позже!), и
+      дельта получалась 142.89 - 151.5 = -8.6. safe_positive() обнулял,
+      total_cost=0, в PDF «-8.60 м³ × 40.0000 = 0.00».
+
+      Поиск по period_id строго отражает хронологию биллинга (при
+      условии что period_id монотонно возрастает по времени, что
+      обеспечивается check_auto_period_task: каждый новый месяц —
+      новый период с +1 к id).
+
+    Sync-версия для использования из Celery / scripts (sync_db_session).
+    """
+    return (
+        db_session.query(MeterReading)
+        .filter(
+            MeterReading.user_id == user_id,
+            MeterReading.room_id == room_id,
+            MeterReading.is_approved.is_(True),
+            MeterReading.period_id < before_period_id,
+        )
+        .order_by(MeterReading.period_id.desc())
+        .first()
+    )
+
+
+__all__ = [
+    "compute_reading_breakdown",
+    "CalculationError",
+    "find_chronological_prev_reading_sync",
+]

@@ -806,6 +806,11 @@ def promote_auto_approved_rows(db: Session) -> dict:
     # расчёте. Раньше брали только electricity (gsheets его не передаёт),
     # но без hot/cold tariff×volume=0 не получалось бы посчитать. Теперь
     # одним subquery достаём всё нужное (DISTINCT ON через row_number).
+    #
+    # КРИТИЧНО: order_by period_id.desc(), а НЕ created_at.desc(). Жильцы
+    # импортируют исторические подачи задним числом, и created_at не
+    # отражает биллинговую хронологию. Берём period_id < active_period.id —
+    # т.е. строго ПРОШЛЫЕ периоды, и среди них самый свежий.
     prev_subq = (
         db.query(
             MeterReading.user_id.label("uid"),
@@ -815,12 +820,13 @@ def promote_auto_approved_rows(db: Session) -> dict:
             MeterReading.electricity.label("elect"),
             _sa_func.row_number().over(
                 partition_by=MeterReading.user_id,
-                order_by=MeterReading.created_at.desc(),
+                order_by=MeterReading.period_id.desc(),
             ).label("rn"),
         )
         .filter(
             MeterReading.user_id.in_(user_ids),
             MeterReading.is_approved.is_(True),
+            MeterReading.period_id < active_period.id,
         )
         .subquery()
     )

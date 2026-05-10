@@ -79,17 +79,26 @@ async def find_targets(db, period_id: Optional[int]) -> list[MeterReading]:
 
 
 async def find_prev(db, reading: MeterReading) -> Optional[MeterReading]:
-    """Находит предыдущее utility-approved-reading жильца в той же комнате."""
+    """Находит предыдущее utility-approved-reading жильца в той же комнате.
+
+    КРИТИЧНО: ищем по period_id, а НЕ по created_at (см. инцидент may 2026 —
+    жильцы импортируют исторические подачи задним числом, created_at не
+    отражает биллинговую хронологию).
+    """
+    if reading.period_id is None:
+        return None
     res = await db.execute(
         select(MeterReading)
         .where(
             MeterReading.user_id == reading.user_id,
             MeterReading.room_id == reading.room_id,
             MeterReading.is_approved.is_(True),
-            MeterReading.created_at < reading.created_at,
-            MeterReading.total_cost > ZERO,  # не берём другие zero-broken
+            MeterReading.period_id < reading.period_id,
+            # total > 0 — пропускаем другие сломанные zero-readings, чтобы
+            # не получить «дельту от неправильного prev» цепочкой.
+            MeterReading.total_cost > ZERO,
         )
-        .order_by(MeterReading.created_at.desc())
+        .order_by(MeterReading.period_id.desc())
         .limit(1)
     )
     return res.scalars().first()

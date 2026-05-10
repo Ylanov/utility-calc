@@ -251,13 +251,20 @@ async def save_reading(
     # concurrent-safe (одна connection в session, нельзя посылать два
     # параллельных query). Под нагрузкой давало intermittent ошибки
     # "another operation is in progress". Теперь — последовательно.
+    # ИСПРАВЛЕНИЕ (may 2026): order_by period_id.desc(), а НЕ created_at.
+    # Жильцы импортируют исторические подачи задним числом — created_at
+    # не отражает биллинговую хронологию. Если жилец в мае подал за
+    # февраль (через гугл-таблицу), его reading получает свежий
+    # created_at, но логически идёт ПЕРЕД апрельским. По period_id всё
+    # выстраивается правильно: предыдущий — это предыдущий БИЛЛИНГОВЫЙ
+    # период, не предыдущий по дате создания записи в БД.
     history_res = await db.execute(
         select(MeterReading)
         .where(
             MeterReading.user_id == user.id,
             MeterReading.room_id == user.room_id,
         )
-        .order_by(MeterReading.created_at.desc())
+        .order_by(MeterReading.period_id.desc())
         .limit(12)
     )
     adj_res = await db.execute(
@@ -269,10 +276,18 @@ async def save_reading(
     readings = history_res.scalars().all()
     adj_map = {a[0]: (a[1] or Decimal("0.00")) for a in adj_res.all()}
 
-    # 4. Предыдущие реальные показания (не авто-сгенерированные)
-    prev_latest = next((r for r in readings if r.is_approved and r.period_id != period.id), None)
+    # 4. Предыдущие реальные показания. period_id < period.id — строго
+    # хронологически предыдущий период. readings уже отсортированы
+    # period_id.desc(), так что first match — самый свежий из прошлых.
+    prev_latest = next(
+        (r for r in readings
+         if r.is_approved and r.period_id and r.period_id < period.id),
+        None
+    )
     prev_manual = next(
-        (r for r in readings if r.is_approved and r.period_id != period.id and r.anomaly_flags != "AUTO_GENERATED"),
+        (r for r in readings
+         if r.is_approved and r.period_id and r.period_id < period.id
+         and r.anomaly_flags != "AUTO_GENERATED"),
         None
     )
 
