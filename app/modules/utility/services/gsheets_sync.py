@@ -95,6 +95,20 @@ def _ambiguity_band() -> int:
     return config.get_int("gsheets.ambiguity_band", 2)
 
 
+# Максимальный возраст gsheets-строки, которую имеет смысл импортировать.
+# Жильцы оставляют в таблице многолетнюю историю — без этого фильтра sync
+# тащит подачи 2023-2024 годов, забивает gsheets_import_rows, и админ
+# видит сотни «зависших» строк за давно закрытые периоды. По умолчанию
+# 90 дней (3 месяца — текущий + предыдущий + запас на поздние подачи).
+# Меняется через analyzer_config: ключ "gsheets.max_age_days".
+DEFAULT_GSHEETS_MAX_AGE_DAYS = 90
+
+
+def _max_age_days() -> int:
+    from app.modules.utility.services.analyzer_config import config
+    return config.get_int("gsheets.max_age_days", DEFAULT_GSHEETS_MAX_AGE_DAYS)
+
+
 # =======================================================================
 # Парсеры
 # =======================================================================
@@ -521,7 +535,17 @@ def sync_gsheets(
         "matched": 0, "unmatched": 0,
         "conflicts": 0, "auto_approved": 0,
         "errors": 0,
+        "skipped_too_old": 0,
     }
+
+    # Cutoff для отсечения исторических подач: жилец мог оставлять
+    # показания в гугл-таблице 2-3 года, а нам нужны только последние
+    # ~3 месяца (текущий + предыдущий + запас на поздние подачи).
+    # Без этого фильтра gsheets_import_rows растёт неограниченно, и
+    # админ видит сотни «зависших» подач за давно закрытые периоды.
+    from datetime import timedelta as _td
+    max_age_days = _max_age_days()
+    age_cutoff = utcnow() - _td(days=max_age_days)
 
     # ОПТИМИЗАЦИЯ N+1 (apr 2026): раньше для каждой строки делали отдельный
     # pg_insert(...).on_conflict_do_nothing() — на 1000+ строк это 1000 round-trip
@@ -534,6 +558,16 @@ def sync_gsheets(
     for row in raw_rows:
         try:
             ts = parse_timestamp(row["timestamp"])
+
+            # Отсекаем старые подачи ДО любого парсинга и матчинга —
+            # чтобы не тратить CPU на rapidfuzz и не засорять БД.
+            # Если timestamp не распарсился (None) — пропускаем фильтр,
+            # пусть строка залетает с status='conflict' (без даты её
+            # сложно валидно обработать дальше).
+            if ts is not None and ts < age_cutoff:
+                stats["skipped_too_old"] += 1
+                continue
+
             hot = parse_decimal(row["hot"])
             cold = parse_decimal(row["cold"])
 
