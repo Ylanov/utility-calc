@@ -988,6 +988,23 @@ async def explain_reading_calculation(
     if current_user.role not in ("accountant", "admin", "financier"):
         raise HTTPException(403, "Доступ запрещён")
 
+    # Весь основной блок завернём в try/except — если что-то падает на
+    # подзадаче (битый тариф, отсутствующий period, etc), вернём 200 с
+    # ключом explain_error вместо 500. UI тогда покажет красную плашку
+    # с объяснением вместо обвинения «ошибка загрузки».
+    try:
+        return await _build_explain_response(reading_id, db)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"explain failed for reading_id={reading_id}: {e}")
+        return {
+            "explain_error": f"{type(e).__name__}: {e}",
+            "reading_id": reading_id,
+        }
+
+
+async def _build_explain_response(reading_id: int, db: AsyncSession) -> dict:
     # 1. Reading с user, room, period
     reading = (await db.execute(
         select(MeterReading)
@@ -1091,26 +1108,49 @@ async def explain_reading_calculation(
     except CalculationError as e:
         calc_error = str(e)
 
-    # 7. Формируем breakdown — по компонентам, с явными формулами
+    # 7. Формируем breakdown — по компонентам, с явными формулами.
+    # Null-safe: tariff-поля могут быть None для редких/тестовых тарифов,
+    # без guard это даёт Decimal('None') → InvalidOperation → 500.
     def f(d):
-        """Decimal → строка с 2 знаками для ₽-сумм."""
-        return f"{Decimal(str(d)):.2f}"
+        """Decimal/None/число → строка с 2 знаками для ₽-сумм."""
+        if d is None:
+            return "0.00"
+        try:
+            return f"{Decimal(str(d)):.2f}"
+        except Exception:
+            return str(d)
 
     def f3(d):
-        """Decimal → строка с 3 знаками для м³/кВт·ч."""
-        return f"{Decimal(str(d)):.3f}"
+        """Decimal/None/число → строка с 3 знаками для м³/кВт·ч."""
+        if d is None:
+            return "0.000"
+        try:
+            return f"{Decimal(str(d)):.3f}"
+        except Exception:
+            return str(d)
+
+    def _dec_or_zero(value):
+        """Безопасный Decimal: None и невалидные → ZERO."""
+        if value is None:
+            return ZERO
+        try:
+            return Decimal(str(value))
+        except Exception:
+            return ZERO
 
     components = []
     if not is_baseline and calc_result:
         # ГВС
+        t_w_sup = _dec_or_zero(tariff.water_supply)
+        t_w_heat = _dec_or_zero(tariff.water_heating)
         components.append({
             "label": "Горячая вода",
             "kbk": "209",
             "formula": "v_hot × (water_supply + water_heating)",
             "calculation": (
-                f"{f3(d_hot)} × ({f(tariff.water_supply)} + "
-                f"{f(tariff.water_heating)}) = {f3(d_hot)} × "
-                f"{f(Decimal(str(tariff.water_supply)) + Decimal(str(tariff.water_heating)))}"
+                f"{f3(d_hot)} × ({f(t_w_sup)} + "
+                f"{f(t_w_heat)}) = {f3(d_hot)} × "
+                f"{f(t_w_sup + t_w_heat)}"
             ),
             "result": f(calc_result["cost_hot_water"]) + " ₽",
         })
@@ -1119,56 +1159,60 @@ async def explain_reading_calculation(
             "label": "Холодная вода",
             "kbk": "209",
             "formula": "v_cold × water_supply",
-            "calculation": f"{f3(d_cold)} × {f(tariff.water_supply)}",
+            "calculation": f"{f3(d_cold)} × {f(t_w_sup)}",
             "result": f(calc_result["cost_cold_water"]) + " ₽",
         })
         # Канализация
+        t_sewage = _dec_or_zero(tariff.sewage)
         components.append({
             "label": "Водоотведение",
             "kbk": "209",
             "formula": "(v_hot + v_cold) × sewage_rate",
-            "calculation": f"{f3(d_sewage)} × {f(tariff.sewage)}",
+            "calculation": f"{f3(d_sewage)} × {f(t_sewage)}",
             "result": f(calc_result["cost_sewage"]) + " ₽",
         })
         # Электро
+        t_el = _dec_or_zero(tariff.electricity_rate)
         components.append({
             "label": "Электроэнергия",
             "kbk": "209",
             "formula": "(жильцов / всех в комнате) × delta_elect × rate",
             "calculation": (
                 f"({residents} / {total_room}) × {f3(d_elect)} × "
-                f"{f(tariff.electricity_rate)} = {f3(elect_share)} × "
-                f"{f(tariff.electricity_rate)}"
+                f"{f(t_el)} = {f3(elect_share)} × {f(t_el)}"
             ),
             "result": f(calc_result["cost_electricity"]) + " ₽",
         })
         # Содержание
+        t_maint = _dec_or_zero(tariff.maintenance_repair)
         components.append({
             "label": "Содержание и ремонт",
             "kbk": "205",
             "formula": "area × maintenance_repair",
-            "calculation": f"{f(area)} × {f(tariff.maintenance_repair)}",
+            "calculation": f"{f(area)} × {f(t_maint)}",
             "result": f(calc_result["cost_maintenance"]) + " ₽",
         })
         # Наём
+        t_rent = _dec_or_zero(tariff.social_rent)
         components.append({
             "label": "Социальный найм",
             "kbk": "205",
             "formula": "area × social_rent",
-            "calculation": f"{f(area)} × {f(tariff.social_rent)}",
+            "calculation": f"{f(area)} × {f(t_rent)}",
             "result": f(calc_result["cost_social_rent"]) + " ₽",
         })
         # ТКО
+        t_waste = _dec_or_zero(tariff.waste_disposal)
         components.append({
             "label": "Вывоз ТКО",
             "kbk": "205",
             "formula": "area × waste_disposal",
-            "calculation": f"{f(area)} × {f(tariff.waste_disposal)}",
+            "calculation": f"{f(area)} × {f(t_waste)}",
             "result": f(calc_result["cost_waste"]) + " ₽",
         })
-        # Фиксированная часть
-        t_h = Decimal(str(tariff.heating))
-        t_e_sqm = Decimal(str(tariff.electricity_per_sqm))
+        # Фиксированная часть (отопление + ОДН по электричеству)
+        t_h = _dec_or_zero(tariff.heating)
+        t_e_sqm = _dec_or_zero(tariff.electricity_per_sqm)
         components.append({
             "label": "Отопление + ОДН электро",
             "kbk": "205",

@@ -541,17 +541,19 @@ export const SummaryModule = {
                     : '<span style="color:#f59e0b; font-size:11px;">черн.</span>')
                 : '<span style="color:var(--text-tertiary); font-size:11px;">нет</span>';
             // Кнопка «Проверить» — открывает модалку с пересчётом и
-            // деталями каждого умножения. Показываем только если есть
-            // reading_id (нет смысла «проверять» отсутствующее).
+            // деталями каждого умножения. Поставлена ПЕРВОЙ колонкой —
+            // без неё админ должен горизонтально скроллить таблицу.
+            // Только иконка-калькулятор, текст в title.
             const explainBtn = h.reading_id
                 ? `<button data-explain-id="${h.reading_id}" type="button"
-                          class="icon-btn" title="Проверить расчёт"
-                          style="padding:3px 7px; font-size:11px; background:var(--primary-bg); color:var(--primary-color); border:1px solid var(--primary-color); border-radius:4px; cursor:pointer;">
-                       <i class="fa-solid fa-calculator"></i> Проверить
+                          title="Проверить расчёт — открыть детальную разбивку"
+                          style="padding:4px 8px; font-size:13px; background:var(--primary-color); color:#fff; border:none; border-radius:4px; cursor:pointer;">
+                       <i class="fa-solid fa-calculator"></i>
                    </button>`
                 : '<span style="color:var(--text-tertiary); font-size:11px;">—</span>';
             return `
                 <tr style="border-bottom:1px solid #e5e7eb;">
+                    <td style="padding:6px 8px; text-align:center; width:40px;">${explainBtn}</td>
                     <td style="padding:6px 8px; font-weight:600;">${esc(h.period_name || '—')}</td>
                     <td style="padding:6px 8px; text-align:right; font-family:monospace;">${fmtNum(h.hot_water)}</td>
                     <td style="padding:6px 8px; text-align:right;">${fmtDelta(h.delta_hot)}</td>
@@ -562,7 +564,6 @@ export const SummaryModule = {
                     <td style="padding:6px 8px; font-size:11px;">${esc(srcLbl)}</td>
                     <td style="padding:6px 8px; text-align:center;">${statusHtml}</td>
                     <td style="padding:6px 8px; font-size:10px; color:var(--text-secondary);">${esc(flagsShort)}</td>
-                    <td style="padding:6px 8px; text-align:center;">${explainBtn}</td>
                 </tr>`;
         }).join('');
 
@@ -574,6 +575,7 @@ export const SummaryModule = {
                 <table style="width:100%; border-collapse:collapse; font-size:12px; min-width:720px;">
                     <thead style="background:var(--bg-page); color:var(--text-secondary); text-transform:uppercase; font-size:10px;">
                         <tr>
+                            <th style="text-align:center; padding:6px 8px; width:40px;" title="Проверить расчёт"><i class="fa-solid fa-calculator"></i></th>
                             <th style="text-align:left; padding:6px 8px;">Период</th>
                             <th style="text-align:right; padding:6px 8px;">ГВС</th>
                             <th style="text-align:right; padding:6px 8px;">Δ</th>
@@ -584,7 +586,6 @@ export const SummaryModule = {
                             <th style="text-align:left; padding:6px 8px;">Источник</th>
                             <th style="text-align:center; padding:6px 8px;">Статус</th>
                             <th style="text-align:left; padding:6px 8px;">Флаги</th>
-                            <th style="text-align:center; padding:6px 8px;">Действие</th>
                         </tr>
                     </thead>
                     <tbody>${rows}</tbody>
@@ -804,6 +805,25 @@ export const SummaryModule = {
     },
 
     _renderExplainModal(d) {
+        // Бэкенд может вернуть { explain_error: "..." } если внутри что-то
+        // упало — показываем красную плашку с текстом ошибки вместо
+        // развалившегося интерфейса.
+        if (d && d.explain_error) {
+            return `
+                <div style="padding:24px; text-align:center;">
+                    <div style="font-size:32px; color:var(--danger-color); margin-bottom:12px;">
+                        <i class="fa-solid fa-triangle-exclamation"></i>
+                    </div>
+                    <div style="font-size:14px; font-weight:600; color:var(--danger-color); margin-bottom:8px;">
+                        Не удалось пересчитать
+                    </div>
+                    <div style="font-size:13px; color:var(--text-secondary); font-family:monospace; background:var(--bg-page); padding:10px; border-radius:6px; text-align:left; word-break:break-word;">
+                        ${esc(d.explain_error)}
+                    </div>
+                    ${d.reading_id ? `<div style="font-size:11px; color:var(--text-tertiary); margin-top:8px;">Reading #${esc(String(d.reading_id))}</div>` : ''}
+                </div>`;
+        }
+
         const r = d.reading || {};
         const u = d.user || {};
         const room = d.room || {};
