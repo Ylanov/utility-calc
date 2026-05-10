@@ -262,12 +262,24 @@ async def save_reading(
     p_cold_man = prev_manual.cold_water if prev_manual and prev_manual.cold_water is not None else zero
     p_elect_man = prev_manual.electricity if prev_manual and prev_manual.electricity is not None else zero
 
-    if hot < p_hot_man or cold < p_cold_man or elect < p_elect_man:
-        raise HTTPException(400, "Новые показания не могут быть меньше последних показаний по этому помещению.")
-
     p_hot = prev_latest.hot_water if prev_latest else zero
     p_cold = prev_latest.cold_water if prev_latest else zero
     p_elect = prev_latest.electricity if prev_latest else zero
+
+    # Единая валидация (см. reading_validators.py). Раньше тут была только
+    # проверка монотонности — этого недостаточно: жилец мог ввести 99 999
+    # м³ воды и оно проходило, calculate_utilities дисциплинированно
+    # умножал на тариф и получал миллионы. Теперь валидатор ловит overflow,
+    # отрицательные значения, и аномально большие месячные дельты.
+    from app.modules.utility.services.reading_validators import validate_meter_reading
+    is_baseline = prev_latest is None
+    vresult = validate_meter_reading(
+        hot=hot, cold=cold, elect=elect,
+        prev_hot=p_hot_man, prev_cold=p_cold_man, prev_elect=p_elect_man,
+        is_baseline=is_baseline,
+    )
+    if not vresult.ok:
+        raise HTTPException(400, "; ".join(vresult.errors))
 
     # 5. Расчёт стоимостей.
     # BASELINE: если у комнаты НЕТ ни одного утверждённого показания раньше —
@@ -276,7 +288,7 @@ async def save_reading(
     # на сотни тысяч. Поэтому первую подачу регистрируем как baseline —
     # все cost_* = 0, дельт нет; реальные расчёты пойдут со следующего месяца.
     # Идентично логике approve_single / bulk_approve_drafts / _recalc_compute_one.
-    is_baseline = prev_latest is None
+    # is_baseline уже посчитан выше (в блоке валидации).
     ZERO_MONEY = Decimal("0.00")
     if is_baseline:
         costs = {

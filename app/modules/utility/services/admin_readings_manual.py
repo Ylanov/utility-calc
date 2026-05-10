@@ -47,8 +47,17 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
 
     p_hot_man, p_cold_man, p_elect_man = prev_manual.hot_water if prev_manual else ZERO, prev_manual.cold_water if prev_manual else ZERO, prev_manual.electricity if prev_manual else ZERO
 
-    if data.hot_water < p_hot_man or data.cold_water < p_cold_man or data.electricity < p_elect_man:
-        raise HTTPException(400, "Новые показания не могут быть меньше реально переданных ранее!")
+    # Единая sanity-валидация (см. reading_validators.py): абсолютные пороги,
+    # неотрицательность, монотонность, разумные дельты. Защита от случая
+    # когда админ вводил гигантские значения (тестирование, пропущенная точка).
+    from app.modules.utility.services.reading_validators import validate_meter_reading
+    _vresult = validate_meter_reading(
+        hot=data.hot_water, cold=data.cold_water, elect=data.electricity,
+        prev_hot=p_hot_man, prev_cold=p_cold_man, prev_elect=p_elect_man,
+        is_baseline=(prev_latest is None),
+    )
+    if not _vresult.ok:
+        raise HTTPException(400, "; ".join(_vresult.errors))
 
     p_hot, p_cold, p_elect = prev_latest.hot_water if prev_latest else ZERO, prev_latest.cold_water if prev_latest else ZERO, prev_latest.electricity if prev_latest else ZERO
     d_hot, d_cold, d_elect = data.hot_water - p_hot, data.cold_water - p_cold, data.electricity - p_elect
@@ -149,8 +158,17 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
 
     p_hot_man, p_cold_man, p_elect_man = prev_manual.hot_water if prev_manual else ZERO, prev_manual.cold_water if prev_manual else ZERO, prev_manual.electricity if prev_manual else ZERO
 
-    if data.hot_water < p_hot_man or data.cold_water < p_cold_man or data.electricity < p_elect_man:
-        raise HTTPException(400, "Новые показания не могут быть меньше реально переданных ранее!")
+    # Единая sanity-валидация (см. reading_validators.py): абсолютные пороги,
+    # неотрицательность, монотонность, разумные дельты. Защита от случая
+    # когда админ вводил гигантские значения (тестирование, пропущенная точка).
+    from app.modules.utility.services.reading_validators import validate_meter_reading
+    _vresult = validate_meter_reading(
+        hot=data.hot_water, cold=data.cold_water, elect=data.electricity,
+        prev_hot=p_hot_man, prev_cold=p_cold_man, prev_elect=p_elect_man,
+        is_baseline=(prev_latest is None),
+    )
+    if not _vresult.ok:
+        raise HTTPException(400, "; ".join(_vresult.errors))
 
     p_hot, p_cold, p_elect = prev_latest.hot_water if prev_latest else ZERO, prev_latest.cold_water if prev_latest else ZERO, prev_latest.electricity if prev_latest else ZERO
     d_hot, d_cold, d_elect = data.hot_water - p_hot, data.cold_water - p_cold, data.electricity - p_elect

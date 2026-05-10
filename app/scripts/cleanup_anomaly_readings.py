@@ -47,24 +47,36 @@ import sys
 from argparse import ArgumentParser
 from decimal import Decimal
 
-from sqlalchemy import select, update
+from sqlalchemy import select, update, or_
 
 from app.core.database import AsyncSessionLocal
 from app.modules.utility.models import GSheetsImportRow, MeterReading
-
-# Должен совпадать с константой в gsheets_sync.py — иначе разные правила
-# на input vs cleanup будут «протекать».
-MAX_PLAUSIBLE_METER_VALUE = Decimal("100000")
+from app.modules.utility.services.reading_validators import (
+    MAX_WATER_METER_VALUE,
+    MAX_ELECTRICITY_METER_VALUE,
+    MAX_TOTAL_COST_PER_READING,
+)
 
 
 async def find_anomalies(db) -> list[MeterReading]:
-    """Находит approved readings, у которых хотя бы одно из показаний
-    счётчика превышает порог. Это и есть «1.48 млрд ₽» из дашборда.
+    """Находит approved readings с хотя бы одним из признаков аномалии:
+      - hot_water или cold_water превышает MAX_WATER_METER_VALUE
+        (overflow от пропущенной десятичной точки в показаниях);
+      - electricity превышает MAX_ELECTRICITY_METER_VALUE
+        (тест-данные, опечатки);
+      - total_cost превышает MAX_TOTAL_COST_PER_READING — даже если
+        отдельные показания «в пределах», их комбинация выдаёт счёт
+        который физически невозможен для квартиры в общежитии (типичный
+        счёт 3-8k ₽, потолок 15k для больших семей).
     """
     result = await db.execute(
         select(MeterReading).where(
-            (MeterReading.hot_water > MAX_PLAUSIBLE_METER_VALUE)
-            | (MeterReading.cold_water > MAX_PLAUSIBLE_METER_VALUE)
+            or_(
+                MeterReading.hot_water > MAX_WATER_METER_VALUE,
+                MeterReading.cold_water > MAX_WATER_METER_VALUE,
+                MeterReading.electricity > MAX_ELECTRICITY_METER_VALUE,
+                MeterReading.total_cost > MAX_TOTAL_COST_PER_READING,
+            )
         )
     )
     return list(result.scalars().all())
@@ -82,9 +94,10 @@ async def main() -> int:
     async with AsyncSessionLocal() as db:
         anomalies = await find_anomalies(db)
 
-        print(f"Найдено readings с overflow: {len(anomalies)}")
-        print("(порог: hot_water или cold_water > "
-              f"{MAX_PLAUSIBLE_METER_VALUE} единиц)")
+        print(f"Найдено readings с аномалиями: {len(anomalies)}")
+        print(f"(критерий: hot/cold > {MAX_WATER_METER_VALUE} ИЛИ "
+              f"elect > {MAX_ELECTRICITY_METER_VALUE} ИЛИ "
+              f"total_cost > {MAX_TOTAL_COST_PER_READING} ₽)")
         print()
 
         if not anomalies:
@@ -156,10 +169,10 @@ async def main() -> int:
                 status="conflict",
                 processed_at=None,
                 conflict_reason=(
-                    "value_too_large_data_overflow: "
-                    "показание счётчика > "
-                    f"{MAX_PLAUSIBLE_METER_VALUE}, "
-                    "проверьте формат (вероятно пропущена точка)."
+                    "data_overflow_cleanup: показания или итог превысили "
+                    "санитарные пороги (вода >10000, электр. >50000, "
+                    "total_cost >100000 ₽). Проверьте формат — вероятно "
+                    "пропущена десятичная точка в показании счётчика."
                 ),
             )
         )
