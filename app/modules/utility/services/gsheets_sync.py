@@ -38,16 +38,13 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.modules.utility.models import GSheetsImportRow, Room, User
-
-logger = logging.getLogger(__name__)
-
-
 # Пороги вынесены в reading_validators.py — единый источник правды для
 # всех 4 точек входа MeterReading (mobile/gsheets/manual/approve).
 from app.modules.utility.services.reading_validators import (
     MAX_WATER_METER_VALUE,
-    MAX_ELECTRICITY_METER_VALUE,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # =======================================================================
