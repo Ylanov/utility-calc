@@ -78,6 +78,25 @@
 
         <!-- ФОРМА ВВОДА ПОКАЗАНИЙ -->
         <fieldset id="meterFieldset" style="border: none; padding: 0; margin: 0;">
+            <!-- Подсказка по формату ввода счётчиков. Подгружается из
+                 /api/readings/state (поле meter_instructions, настраивается
+                 админом в /api/settings/meter-format). По умолчанию скрыта,
+                 показывается JS-ом если есть валидные данные. Защита от
+                 случая когда жилец вводит «01427.957» как «01427957» —
+                 это даёт расход в миллион кубов воды и счёт в миллионы. -->
+            <div id="meterFormatHint" class="hide" style="margin-bottom: 20px; padding: 14px 16px; background: var(--primary-bg); border-left: 4px solid var(--primary-color); border-radius: var(--radius-sm);">
+                <div style="display: flex; align-items: flex-start; gap: 12px;">
+                    <i class="fa-solid fa-circle-info" style="color: var(--primary-color); font-size: 18px; margin-top: 2px;"></i>
+                    <div style="flex: 1;">
+                        <div style="font-weight: 600; font-size: 13px; color: var(--text-main); margin-bottom: 6px;">Как записать показания</div>
+                        <div id="meterFormatInstructions" style="font-size: 13px; color: var(--text-secondary); line-height: 1.5;"></div>
+                        <div style="font-size: 12px; color: var(--text-secondary); margin-top: 8px;">
+                            Пример валидного значения: <code id="meterFormatExample" style="background: white; padding: 2px 6px; border-radius: 4px; font-family: monospace; color: var(--primary-color);"></code>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <form id="meterForm">
                 <div class="meter-cards">
                     <!-- ГВС -->

@@ -1,0 +1,6 @@
+# Test-only зависимости. Не входят в build runtime образа кроме как
+# через явный install в Dockerfile после requirements.txt — это даёт
+# возможность запускать pytest на проде через docker exec, не раздувая
+# образ при этом каким-то монстрами вроде coverage.py и сложных плагинов.
+pytest
+pytest-asyncio

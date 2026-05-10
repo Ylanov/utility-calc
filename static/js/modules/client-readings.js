@@ -119,9 +119,28 @@ export const ClientReadings = {
             this.renderStatus(data);
             this.renderMeters(data);
             this.renderResults(data);
+            this.renderMeterFormatHint(data);
         } catch (e) {
             console.warn('Ошибка загрузки состояния показаний', e);
         }
+    },
+
+    renderMeterFormatHint(data) {
+        // Показывает админскую инструкцию по формату ввода показаний
+        // (см. /api/settings/meter-format). Поля приходят в state-ответе.
+        // Если бэк не вернул данные — оставляем блок скрытым: лучше пусто,
+        // чем показать пустую панель «Как записать показания».
+        const wrap = document.getElementById('meterFormatHint');
+        const instr = document.getElementById('meterFormatInstructions');
+        const example = document.getElementById('meterFormatExample');
+        if (!wrap || !instr || !example) return;
+        if (!data.meter_instructions) {
+            wrap.classList.add('hide');
+            return;
+        }
+        instr.textContent = data.meter_instructions;
+        example.textContent = data.meter_example || '';
+        wrap.classList.remove('hide');
     },
 
     renderStatus(data) {

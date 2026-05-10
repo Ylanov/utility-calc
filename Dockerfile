@@ -30,8 +30,14 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
 # Копируем файл с зависимостями и устанавливаем их.
 # Этот слой кешируется и не будет пересобираться, если requirements.txt не изменился.
-COPY requirements.txt ./
+COPY requirements.txt requirements-test.txt ./
 RUN uv pip install --system --no-cache -r requirements.txt
+# pytest+pytest-asyncio в проде нужны для запуска внутреннего набора
+# тестов на живом сервере (`docker exec ... pytest app/tests/`) — без
+# этого тесты на проде запустить нельзя, и стабильность ядра расчётов
+# проверяется только локально. Объём добавки ~5 MB, отдельный файл
+# чтобы не ронять кеш слоя при изменениях основного requirements.txt.
+RUN uv pip install --system --no-cache -r requirements-test.txt
 
 # ==========================================
 # ===== STAGE 2: FINAL =====================
