@@ -1034,16 +1034,21 @@ async def _build_explain_response(reading_id: int, db: AsyncSession) -> dict:
 
     # 3. Предыдущее утверждённое показание этого жильца в этой комнате —
     # для вычисления дельт. Берём то же что использовал боевой расчёт:
-    # последнее approved до текущего created_at, той же комнаты.
+    # последнее approved до текущего period_id, той же комнаты.
+    # ВАЖНО: ищем по period_id (а не created_at) — см. инцидент may 2026
+    # с подачами заднего числа через гугл-таблицу. selectinload(period) —
+    # eager-load чтобы prev.period.name не дёргал lazy-load в async-сессии
+    # (это даёт MissingGreenlet error).
     prev = (await db.execute(
         select(MeterReading)
+        .options(selectinload(MeterReading.period))
         .where(
             MeterReading.user_id == user.id,
             MeterReading.room_id == room.id,
             MeterReading.is_approved.is_(True),
-            MeterReading.created_at < reading.created_at,
+            MeterReading.period_id < reading.period_id,
         )
-        .order_by(MeterReading.created_at.desc())
+        .order_by(MeterReading.period_id.desc())
         .limit(1)
     )).scalars().first()
 
