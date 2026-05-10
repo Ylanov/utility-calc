@@ -546,3 +546,60 @@ async def cleanup_gsheets_now(
         "cutoff": cutoff.isoformat(),
         "retention_days": days,
     }
+
+
+# =========================================================================
+# RECALC DRIFT — батчевая проверка расхождений «текущий пересчёт vs БД»
+# =========================================================================
+@router.get("/recalc-drift")
+async def get_recalc_drift(
+    period_id: int = Query(..., description="ID периода для проверки"),
+    threshold: float = Query(0.01, ge=0, description="Порог расхождения в ₽"),
+    limit: Optional[int] = Query(None, ge=1, le=5000, description="Ограничить выборку"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Анализирует расхождение между сохранённым total_cost и пересчётом
+    по текущим формулам/тарифам для всех approved-readings периода.
+
+    Полезно после:
+      - изменения тарифа задним числом (часть reading'ов «уехала»)
+      - багфиксов формул (как баг с 1.48 млрд в мае 2026)
+      - подозрений на ручные правки БД
+    """
+    _require_admin(current_user)
+    from decimal import Decimal as _Dec
+    from app.modules.utility.services.recalc_drift_analyzer import (
+        detect_drift_in_period,
+    )
+    return await detect_drift_in_period(
+        db=db,
+        period_id=period_id,
+        threshold=_Dec(str(threshold)),
+        limit=limit,
+    )
+
+
+# =========================================================================
+# TELEMETRY — сводная статистика подач по периоду
+# =========================================================================
+@router.get("/telemetry")
+async def get_period_telemetry(
+    period_id: int = Query(..., description="ID периода для сводки"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Сводка по периоду: источники подач (gsheets/мобилка/ручной),
+    % с аномалиями, распределение по дням, p95/median сумм, топ флагов.
+
+    Отвечает на вопросы:
+      - откуда вообще приходят показания (доля каждого канала)
+      - когда люди подают (равномерно или в последний день)
+      - какой % требует внимания админа (anomaly score > 0)
+      - какие типы аномалий встречаются чаще всего
+    """
+    _require_admin(current_user)
+    from app.modules.utility.services.telemetry_analyzer import (
+        collect_period_telemetry,
+    )
+    return await collect_period_telemetry(db=db, period_id=period_id)

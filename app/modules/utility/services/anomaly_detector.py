@@ -35,6 +35,43 @@ def D(val) -> Decimal:
     return Decimal(str(val))
 
 
+# Точное соответствие «флаг → сколько score добавляет». Раньше self-learning
+# вычитал фиксированные 20 score за КАЖДЫЙ dismissed-флаг — это неточно
+# (флаги дают от 10 до 100 score). Теперь — точная коррекция.
+def _flag_score(flag: str) -> int:
+    """Возвращает score, который данный флаг прибавил к total_score.
+
+    Поддерживает префиксные имена (SPIKE_HOT → 40 как у любого SPIKE_*)
+    и точные совпадения для уникальных флагов (HOT_GT_COLD, GAP_RECOVERY).
+    """
+    if flag.startswith("NEGATIVE_"):           return 100
+    if flag.startswith("DROP_AFTER_SPIKE_"):   return 40
+    if flag.startswith("SPIKE_"):              return 40
+    if flag.startswith("FLAT_"):               return 35
+    if flag.startswith("FROZEN_"):             return 30
+    if flag.startswith("TREND_UP_"):           return 30
+    if flag.startswith("ZERO_"):               return 25
+    if flag.startswith("HIGH_VS_PEERS_"):      return 20
+    if flag.startswith("HIGH_PER_PERSON_"):    return 25
+    if flag.startswith("HIGH_"):               return 20
+    if flag.startswith("ROUND_NUMBER_"):       return 10
+    if flag == "HOT_GT_COLD":                  return 30
+    if flag == "COPY_NEIGHBOR":                return 35
+    if flag == "COPY_NEIGHBOR_PARTIAL":        return 15
+    if flag == "GAP_RECOVERY":                 return 25
+    if flag == "COMBO_SUSPICIOUS":             return 25
+    return 20  # fallback для будущих флагов
+
+
+# Список «подозрительных» флагов, комбинации которых дают доп. бонус
+# (см. COMBO_SUSPICIOUS ниже). Это флаги где КАЖДЫЙ сам по себе мягкий,
+# но 3+ одновременно — почти наверняка подделка.
+_SUSPICIOUS_PREFIXES = (
+    "FLAT_", "ROUND_NUMBER_", "DROP_AFTER_SPIKE_", "ZERO_", "FROZEN_",
+)
+_SUSPICIOUS_EXACT = ("COPY_NEIGHBOR", "COPY_NEIGHBOR_PARTIAL", "HOT_GT_COLD")
+
+
 def mad(data: List[Decimal]) -> Decimal:
     """Median Absolute Deviation — устойчивая к выбросам статистика."""
     if not data:
@@ -105,9 +142,13 @@ def analyze_resource(
 
     # 7. DROP_AFTER_SPIKE — анти-чит сброс после высокой подачи
     if len(hist_deltas) >= 2:
+        # Раньше захардкожено 3.0 / 0.3 — теперь через config, чтобы админ
+        # мог тюнить чувствительность для конкретного общежития.
+        high_factor = Decimal(str(config.get_float("anomaly.drop_after_spike.high_factor", 3.0)))
+        low_factor = Decimal(str(config.get_float("anomaly.drop_after_spike.low_factor", 0.3)))
         if (
-            hist_deltas[-1] > med * Decimal("3")
-            and current_delta < med * Decimal("0.3")
+            hist_deltas[-1] > med * high_factor
+            and current_delta < med * low_factor
         ):
             flags.append(f"DROP_AFTER_SPIKE_{name}")
             score += 40
@@ -125,14 +166,15 @@ def analyze_resource(
 # НОВЫЕ ПРАВИЛА (v3) — каждое under-control через rule.<name>.enabled
 # ---------------------------------------------------------------------------
 def _check_round_number(current_deltas: Dict[str, Decimal]) -> Tuple[List[str], int]:
-    """Подозрение на округление: целое число без дробной части и delta>=2.
+    """Подозрение на округление: целое число без дробной части и delta >= порога.
     Реальный счётчик никогда не показывает ровные числа — это всегда «на глаз».
-    Малые значения (<2 м³) пропускаем — слишком много ложных срабатываний."""
+    Малые значения пропускаем — слишком много ложных срабатываний."""
     if not config.is_rule_enabled("rule.round_number"):
         return [], 0
+    min_value = Decimal(str(config.get_float("anomaly.round_number.min_value", 2.0)))
     flags: list[str] = []
     for name, delta in current_deltas.items():
-        if delta >= Decimal("2.0") and delta == delta.to_integral_value():
+        if delta >= min_value and delta == delta.to_integral_value():
             flags.append(f"ROUND_NUMBER_{name}")
     return flags, 10 * len(flags)  # +10 за каждый — мягкий сигнал, не критично
 
@@ -146,8 +188,8 @@ def _check_hot_gt_cold(current_deltas: Dict[str, Decimal]) -> Tuple[List[str], i
     hot = current_deltas.get("HOT", Decimal("0"))
     cold = current_deltas.get("COLD", Decimal("0"))
     # Допускаем равенство — бывает у одиночек с одной точкой водозабора.
-    # Жёстче: HOT > COLD * 1.2 — заметное расхождение.
-    if cold > 0 and hot > cold * Decimal("1.2"):
+    factor = Decimal(str(config.get_float("anomaly.hot_gt_cold.factor", 1.2)))
+    if cold > 0 and hot > cold * factor:
         return ["HOT_GT_COLD"], 30
     return [], 0
 
@@ -157,7 +199,7 @@ def _check_gap_recovery(
     history: List[MeterReading],
     current_deltas: Dict[str, Decimal],
 ) -> Tuple[List[str], int]:
-    """Если жилец не подавал 3+ месяца, а затем сразу пришёл с большой подачей —
+    """Если жилец не подавал N+ месяцев, а затем сразу пришёл с большой подачей —
     подозрительно. Может быть честным накопленным расходом (был в отъезде, потом
     включил), а может — попыткой перекинуть высокий расход на «спокойный» период."""
     if not config.is_rule_enabled("rule.gap_recovery"):
@@ -168,11 +210,13 @@ def _check_gap_recovery(
     if not last.created_at or not current_reading.created_at:
         return [], 0
     gap_days = (current_reading.created_at - last.created_at).days
-    if gap_days < 90:
+    min_days = config.get_int("anomaly.gap_recovery.min_days", 90)
+    if gap_days < min_days:
         return [], 0
-    # Любой ресурс с дельтой > 8 м³ за период «накопленный» большой подачей —
-    # сигнал. Цифра 8 — порог «обычного» месяца.
-    big_resources = [k for k, v in current_deltas.items() if v >= Decimal("8.0")]
+    # Порог «накопленного» расхода — любой ресурс с дельтой больше этого
+    # значения считается «большой подачей» в gap-recovery.
+    min_volume = Decimal(str(config.get_float("anomaly.gap_recovery.min_volume", 8.0)))
+    big_resources = [k for k, v in current_deltas.items() if v >= min_volume]
     if big_resources:
         return ["GAP_RECOVERY"], 25
     return [], 0
@@ -271,12 +315,24 @@ def check_reading_for_anomalies_v2(
 
     # --- 3. КОНТЕКСТНЫЙ АНАЛИЗ ---
     if user and getattr(user, "residents_count", 1) > 0:
-        per_person_limit = Decimal(str(
+        rc = Decimal(str(user.residents_count))
+        # COLD per person (исторически было только это)
+        per_person_cold_limit = Decimal(str(
             config.get_float("anomaly.high_per_person_cold", 12.0)
         ))
-        per_person = current_deltas["COLD"] / Decimal(str(user.residents_count))
-        if per_person > per_person_limit:
+        per_person_cold = current_deltas["COLD"] / rc
+        if per_person_cold > per_person_cold_limit:
             flags.append("HIGH_PER_PERSON_COLD")
+            total_score += 25
+        # ELECT per person — симметрия (раньше была только для воды).
+        # 200 кВт·ч/чел/мес — реалистичный потолок жилого потребления;
+        # выше — серверная ферма, грязный счётчик или ошибка ввода.
+        per_person_elect_limit = Decimal(str(
+            config.get_float("anomaly.high_per_person_elect", 200.0)
+        ))
+        per_person_elect = current_deltas["ELECT"] / rc
+        if per_person_elect > per_person_elect_limit:
+            flags.append("HIGH_PER_PERSON_ELECT")
             total_score += 25
 
     # --- 4. НОВЫЕ ПРАВИЛА v3 ---
@@ -291,20 +347,34 @@ def check_reading_for_anomalies_v2(
         total_score += s
 
     # --- 5. SELF-LEARNING: убираем dismissed-флаги ---
-    # Если для этого жильца админ пометил флаг как «не аномалия» — выкидываем.
+    # Раньше отнимали +20 score за каждый dismissed-флаг — но реальные
+    # флаги дают от 10 (ROUND_NUMBER) до 100 (NEGATIVE), это давало
+    # неточный score. Теперь _flag_score возвращает точную «цену»
+    # каждого флага, и при dismissal вычитаем именно её.
     user_id = getattr(current_reading, "user_id", None) or getattr(user, "id", None)
     filtered_flags: list[str] = []
     removed_score = 0
     for flag in flags:
         if dismissals.is_dismissed(user_id, flag):
-            # Возвращаем балл который этот флаг бы добавил. Грубо: усреднённо
-            # отнимаем 25 — точнее не получится без рефактора, и для UX это
-            # не критично (важен сам факт «не флагуем»).
-            removed_score += 20
+            removed_score += _flag_score(flag)
         else:
             filtered_flags.append(flag)
     flags = filtered_flags
     total_score = max(0, total_score - removed_score)
+
+    # --- 6. COMBO BONUS: 3+ «подозрительных» флагов одновременно ---
+    # Каждый flag сам по себе мягкий (FLAT, ROUND_NUMBER, COPY_NEIGHBOR_PARTIAL)
+    # — обычный человек может случайно совпасть один-два раза. Но три и
+    # больше за один период — почти точно подделка. Добавляем COMBO_SUSPICIOUS
+    # как отдельный флаг для UI и +25 к score.
+    suspicious_count = sum(
+        1 for f in flags
+        if f in _SUSPICIOUS_EXACT
+        or any(f.startswith(p) for p in _SUSPICIOUS_PREFIXES)
+    )
+    if suspicious_count >= 3:
+        flags.append("COMBO_SUSPICIOUS")
+        total_score += 25
 
     total_score = min(total_score, 100)
 

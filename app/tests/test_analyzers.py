@@ -1,0 +1,278 @@
+"""Тесты для анализаторов: anomaly_detector + finance_analyzer.
+
+Покрытие минимально, но защищает критическую логику scoring и self-learning
+от регрессий — особенно после рефактора may 2026 (точный _flag_score
+вместо «-15/-20 за каждый dismissed»).
+
+Recalc-drift и telemetry тестируются интеграционно через endpoint и
+требуют БД, поэтому тут не покрыты — добавятся отдельным контуром
+performance-tests.
+"""
+from decimal import Decimal
+from unittest.mock import patch
+
+from app.modules.utility.services.anomaly_detector import (
+    _flag_score,
+    analyze_resource,
+    check_reading_for_anomalies_v2,
+)
+from app.modules.utility.services.finance_analyzer import (
+    _FLAG_SCORES,
+    analyze_finance,
+)
+
+
+# ============================================================
+# anomaly_detector: _flag_score
+# ============================================================
+
+def test_flag_score_known_critical():
+    """NEGATIVE_X — самый тяжёлый флаг, 100 баллов."""
+    assert _flag_score("NEGATIVE_HOT") == 100
+    assert _flag_score("NEGATIVE_COLD") == 100
+    assert _flag_score("NEGATIVE_ELECT") == 100
+
+
+def test_flag_score_spike_family():
+    """SPIKE_*, DROP_AFTER_SPIKE_* — 40."""
+    assert _flag_score("SPIKE_HOT") == 40
+    assert _flag_score("DROP_AFTER_SPIKE_COLD") == 40
+
+
+def test_flag_score_v3_rules():
+    """Правила v3 — каждое со своим score."""
+    assert _flag_score("HOT_GT_COLD") == 30
+    assert _flag_score("COPY_NEIGHBOR") == 35
+    assert _flag_score("COPY_NEIGHBOR_PARTIAL") == 15
+    assert _flag_score("GAP_RECOVERY") == 25
+    assert _flag_score("COMBO_SUSPICIOUS") == 25
+
+
+def test_flag_score_unknown_fallback():
+    """Неизвестный флаг получает fallback 20 баллов — не падает."""
+    assert _flag_score("FUTURE_RULE_X") == 20
+    assert _flag_score("WHATEVER") == 20
+
+
+def test_flag_score_high_disambiguation():
+    """HIGH_VS_PEERS_X должен возвращать 20, а HIGH_X (просто) тоже 20,
+    HIGH_PER_PERSON_X — 25 (особый случай)."""
+    assert _flag_score("HIGH_HOT") == 20  # soft spike
+    assert _flag_score("HIGH_VS_PEERS_HOT") == 20
+    assert _flag_score("HIGH_PER_PERSON_COLD") == 25
+    assert _flag_score("HIGH_PER_PERSON_ELECT") == 25
+
+
+# ============================================================
+# anomaly_detector: analyze_resource
+# ============================================================
+
+def test_analyze_resource_no_history():
+    """Без истории — никаких флагов и score=0."""
+    flags, score = analyze_resource(Decimal("5"), [], "HOT")
+    assert flags == []
+    assert score == 0
+
+
+def test_analyze_resource_zero_with_history():
+    """ZERO_X срабатывает когда дельта 0 при ненулевой истории."""
+    flags, score = analyze_resource(
+        current_delta=Decimal("0"),
+        hist_deltas=[Decimal("3"), Decimal("4"), Decimal("3.5")],
+        name="HOT",
+    )
+    assert "ZERO_HOT" in flags
+    assert score >= 25
+
+
+def test_analyze_resource_frozen():
+    """4 нуля подряд (3 в истории + текущий) — FROZEN."""
+    flags, score = analyze_resource(
+        current_delta=Decimal("0"),
+        hist_deltas=[Decimal("0"), Decimal("0"), Decimal("0")],
+        name="COLD",
+    )
+    # FROZEN ставится если ВСЕ history нули И текущая 0.
+    # ZERO ставится только если med > 1, тут med=0, не сработает.
+    assert "FROZEN_COLD" in flags
+
+
+def test_analyze_resource_normal_no_flags():
+    """Дельта в пределах median — никаких флагов."""
+    flags, score = analyze_resource(
+        current_delta=Decimal("4.5"),
+        hist_deltas=[Decimal("4"), Decimal("5"), Decimal("4.5"), Decimal("5"), Decimal("4")],
+        name="HOT",
+    )
+    assert flags == []
+    assert score == 0
+
+
+# ============================================================
+# anomaly_detector: end-to-end (минимум)
+# ============================================================
+
+class _FakeReading:
+    def __init__(self, hot=0, cold=0, elect=0, user_id=1, created_at=None):
+        self.hot_water = Decimal(str(hot))
+        self.cold_water = Decimal(str(cold))
+        self.electricity = Decimal(str(elect))
+        self.user_id = user_id
+        self.created_at = created_at
+
+
+class _FakeUser:
+    def __init__(self, residents=2, uid=1):
+        self.id = uid
+        self.residents_count = residents
+
+
+def test_check_reading_no_history_returns_none():
+    """Нет истории → анализатор молчит."""
+    cur = _FakeReading(hot=10, cold=20, elect=100)
+    flags, score = check_reading_for_anomalies_v2(cur, history=[])
+    assert flags is None
+    assert score == 0
+
+
+def test_check_reading_negative_delta_critical():
+    """Если новые показания МЕНЬШЕ — NEGATIVE_X с score 100."""
+    history = [
+        _FakeReading(hot=100, cold=200, elect=500),
+        _FakeReading(hot=95, cold=190, elect=480),
+    ]
+    cur = _FakeReading(hot=90, cold=180, elect=470)  # отрицательная дельта
+    flags, score = check_reading_for_anomalies_v2(cur, history=history)
+    assert flags is not None
+    assert "NEGATIVE_HOT" in flags
+    # score достигает 100 (cap)
+    assert score == 100
+
+
+# ============================================================
+# finance_analyzer: _FLAG_SCORES
+# ============================================================
+
+def test_finance_flag_scores_complete():
+    """Все 8 финансовых флагов имеют score в _FLAG_SCORES."""
+    expected = {
+        "MISSING_RECEIPT", "ZERO_BILL", "DEBT_GROWING", "BILL_SPIKE",
+        "BILL_DROP", "HIGH_BILL_PER_PERSON", "WRONG_BILLING_MODE", "OVERPAY_SUSPECT",
+    }
+    assert expected.issubset(set(_FLAG_SCORES.keys()))
+
+
+def test_finance_flag_scores_ordering():
+    """Severity отражена в score: high > medium > low."""
+    # MISSING_RECEIPT (high) должен быть >= BILL_SPIKE (medium)
+    assert _FLAG_SCORES["MISSING_RECEIPT"] >= _FLAG_SCORES["BILL_SPIKE"]
+    # BILL_SPIKE (medium) > OVERPAY_SUSPECT (low)
+    assert _FLAG_SCORES["BILL_SPIKE"] > _FLAG_SCORES["OVERPAY_SUSPECT"]
+
+
+# ============================================================
+# finance_analyzer: end-to-end
+# ============================================================
+
+def test_finance_missing_receipt_only_flag():
+    """has_reading=False → должен быть только MISSING_RECEIPT, остальные правила пропускаются."""
+    flags, score = analyze_finance(
+        user_id=1, residents_count=2,
+        current_total_cost=None, current_debt=Decimal("0"),
+        current_overpayment=Decimal("0"),
+        prev_costs=[Decimal("5000"), Decimal("4500")],
+        prev_debts=[Decimal("0"), Decimal("0")],
+        has_reading=False,
+    )
+    # missing_receipt отрабатывает раньше всех остальных правил
+    assert "MISSING_RECEIPT" in flags
+    # ZERO_BILL не выставляется — мы вышли по early-return на missing
+    assert "ZERO_BILL" not in flags
+
+
+def test_finance_normal_no_flags():
+    """Нормальный счёт похожий на средний из истории — никаких флагов."""
+    flags, score = analyze_finance(
+        user_id=1, residents_count=2,
+        current_total_cost=Decimal("5200"),
+        current_debt=Decimal("0"),
+        current_overpayment=Decimal("0"),
+        prev_costs=[Decimal("4900"), Decimal("5000"), Decimal("5100")],
+        prev_debts=[Decimal("0"), Decimal("0"), Decimal("0")],
+        has_reading=True,
+    )
+    assert flags == []
+    assert score == 0
+
+
+def test_finance_bill_spike():
+    """Счёт вырос больше 50% — BILL_SPIKE."""
+    flags, score = analyze_finance(
+        user_id=1, residents_count=2,
+        current_total_cost=Decimal("9000"),  # 80% больше предыдущего
+        current_debt=Decimal("0"),
+        current_overpayment=Decimal("0"),
+        prev_costs=[Decimal("5000")],
+        prev_debts=[Decimal("0")],
+        has_reading=True,
+    )
+    assert "BILL_SPIKE" in flags
+    assert score >= 25
+
+
+def test_finance_zero_bill_with_history():
+    """total=0 при ненулевой истории — ZERO_BILL."""
+    flags, score = analyze_finance(
+        user_id=1, residents_count=2,
+        current_total_cost=Decimal("0"),
+        current_debt=Decimal("0"),
+        current_overpayment=Decimal("0"),
+        prev_costs=[Decimal("4000"), Decimal("4500"), Decimal("5000")],
+        prev_debts=[Decimal("0"), Decimal("0"), Decimal("0")],
+        has_reading=True,
+    )
+    assert "ZERO_BILL" in flags
+
+
+def test_finance_debt_growing_three_periods():
+    """Долг растёт 3 периода подряд — DEBT_GROWING."""
+    flags, score = analyze_finance(
+        user_id=1, residents_count=2,
+        current_total_cost=Decimal("5000"),
+        current_debt=Decimal("3000"),  # текущий
+        current_overpayment=Decimal("0"),
+        prev_costs=[Decimal("5000"), Decimal("5000")],
+        prev_debts=[Decimal("1000"), Decimal("2000")],  # 1k → 2k → 3k
+        has_reading=True,
+    )
+    assert "DEBT_GROWING" in flags
+
+
+def test_finance_wrong_billing_mode_single_by_meter():
+    """Холостяк (single) на by_meter — конфликт."""
+    flags, score = analyze_finance(
+        user_id=1, residents_count=1,
+        current_total_cost=Decimal("3000"),
+        current_debt=Decimal("0"),
+        current_overpayment=Decimal("0"),
+        prev_costs=[Decimal("3000")],
+        prev_debts=[Decimal("0")],
+        has_reading=True,
+        resident_type="single",
+        billing_mode="by_meter",  # должно быть per_capita
+    )
+    assert "WRONG_BILLING_MODE" in flags
+
+
+def test_finance_high_bill_per_person():
+    """Счёт > 8000 ₽ на человека — HIGH_BILL_PER_PERSON."""
+    flags, score = analyze_finance(
+        user_id=1, residents_count=1,
+        current_total_cost=Decimal("9000"),
+        current_debt=Decimal("0"),
+        current_overpayment=Decimal("0"),
+        prev_costs=[Decimal("8500")],
+        prev_debts=[Decimal("0")],
+        has_reading=True,
+    )
+    assert "HIGH_BILL_PER_PERSON" in flags

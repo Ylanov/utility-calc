@@ -31,6 +31,20 @@ FLAG_SEVERITY = {
 }
 
 
+# Точное соответствие «флаг → score». Раньше self-learning отнимал по 15
+# score за каждый dismissed — это неточно, реальные значения от 10 до 40.
+_FLAG_SCORES = {
+    "MISSING_RECEIPT": 40,
+    "ZERO_BILL": 35,
+    "DEBT_GROWING": 30,
+    "BILL_SPIKE": 25,
+    "BILL_DROP": 20,
+    "HIGH_BILL_PER_PERSON": 20,
+    "WRONG_BILLING_MODE": 15,
+    "OVERPAY_SUSPECT": 10,
+}
+
+
 def _D(v) -> Decimal:
     if v is None:
         return Decimal("0")
@@ -97,11 +111,16 @@ def analyze_finance(
 
     # ---------- DEBT_GROWING ----------
     # Долг строго растёт 3+ периода подряд (включая текущий).
+    # Минимальный долг для срабатывания — настраивается админом
+    # (раньше захардкожено 500 ₽). Слишком маленький порог даёт ложные
+    # срабатывания для жильцов с копеечным долгом, слишком большой —
+    # пропускает реальные случаи накопления долга.
     if config.is_rule_enabled("finance.debt_growing"):
+        min_debt = Decimal(str(config.get_int("finance.debt_growing.min_debt_rub", 500)))
         chain = list(prev_debts) + [current_debt]
         if len(chain) >= 3:
             tail = chain[-3:]
-            if tail[0] < tail[1] < tail[2] and tail[2] > Decimal("500"):
+            if tail[0] < tail[1] < tail[2] and tail[2] > min_debt:
                 flags.append("DEBT_GROWING")
                 score += 30
 
@@ -137,21 +156,25 @@ def analyze_finance(
 def _filter_dismissed(
     flags: list[str], score: int, user_id: Optional[int]
 ) -> tuple[list[str], int]:
-    """Снимаем флаги которые админ пометил как «не аномалия для этого жильца»."""
+    """Снимаем флаги которые админ пометил как «не аномалия для этого жильца».
+
+    Точная коррекция score — каждый флаг знает сколько именно он добавил
+    (см. _FLAG_SCORES). Раньше отнималось по 15 score за каждый,
+    независимо от того сколько флаг реально стоит — это давало искажение
+    при dismiss разных по «весу» флагов.
+    """
     if not flags:
         return [], 0
     kept: list[str] = []
-    dropped = 0
+    removed_score = 0
     for f in flags:
         if dismissals.is_dismissed(user_id, f):
-            dropped += 1
+            removed_score += _FLAG_SCORES.get(f, 15)  # 15 — fallback на старое поведение
         else:
             kept.append(f)
     if not kept:
         return [], 0
-    # Грубая корректировка score — точная не нужна, главное чтобы dismissed
-    # понижали уровень риска пропорционально.
-    new_score = max(0, score - dropped * 15)
+    new_score = max(0, score - removed_score)
     return kept, new_score
 
 

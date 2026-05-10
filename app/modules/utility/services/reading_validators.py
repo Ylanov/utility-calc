@@ -33,30 +33,37 @@ from decimal import Decimal
 from typing import Optional
 
 # =====================================================================
-# Пороги. Должны быть синхронизированы с cleanup_anomaly_readings.py.
+# Пороги (DEFAULTS). Реальные значения читаются через analyzer_config —
+# админ может менять без редеплоя. Константы остаются как fallback и для
+# скриптов / тестов где analyzer_settings таблица недоступна.
 # =====================================================================
 
 # Абсолютное накопленное показание счётчика. Реальный жилой счётчик за
-# всю жизнь набирает порядка 1 000-5 000 м³ воды. 10 000 — это «жирный»
-# запас, всё что выше — гарантированно баг.
+# всю жизнь набирает порядка 1 000-5 000 м³ воды. 10 000 — «жирный» запас.
 MAX_WATER_METER_VALUE = Decimal("10000")
-
-# Электросчётчик аналогично — 50 000 кВт·ч жилое потребление за всю
-# жизнь счётчика — это уже очень много.
 MAX_ELECTRICITY_METER_VALUE = Decimal("50000")
 
 # Разумный месячный расход на жилую квартиру.
-# Семья 4 человека потребляет 10-20 м³ воды и 200-400 кВт·ч в месяц.
-# Пороги ставим в 10× от реалистичного — отсекаем явные аномалии,
-# не блокируя переезды/замены счётчика и долгие отъезды.
 MAX_WATER_DELTA_PER_MONTH = Decimal("200")
 MAX_ELECTRICITY_DELTA_PER_MONTH = Decimal("5000")
 
-# Финальная sanity на total_cost. Месячный счёт за квартиру в общежитии
-# при текущих тарифах: 3 000-8 000 ₽ типично, 15 000 ₽ — потолок для
-# больших семей. 100 000 ₽ за месяц — это гарантированно баг.
-# Используется как защита на выходе расчёта (см. calculations.py).
+# Финальная sanity на total_cost.
 MAX_TOTAL_COST_PER_READING = Decimal("100000")
+
+
+def _threshold(key: str, default: Decimal) -> Decimal:
+    """Читает порог из analyzer_config с fallback на default-константу.
+
+    Делает Decimal-safe чтение: даже если в БД сохранена строка вида
+    "10000" — корректно парсится. При недоступности БД (тесты, скрипты)
+    возвращает default.
+    """
+    try:
+        from app.modules.utility.services.analyzer_config import config
+        v = config.get_float(key, default=float(default))
+        return Decimal(str(v))
+    except Exception:
+        return default
 
 
 # =====================================================================
@@ -113,6 +120,12 @@ def validate_meter_reading(
     """
     result = ValidationResult()
 
+    # Динамические пороги из analyzer_config (с fallback на defaults).
+    max_water = _threshold("validator.max_water_meter", MAX_WATER_METER_VALUE)
+    max_elect = _threshold("validator.max_electricity_meter", MAX_ELECTRICITY_METER_VALUE)
+    max_water_delta = _threshold("validator.max_water_delta_per_month", MAX_WATER_DELTA_PER_MONTH)
+    max_elect_delta = _threshold("validator.max_electricity_delta_per_month", MAX_ELECTRICITY_DELTA_PER_MONTH)
+
     # 1. Не-null для воды (gsheets иногда не передаёт electricity — ОК).
     if hot is None:
         result.errors.append("hot_water не задан")
@@ -126,9 +139,9 @@ def validate_meter_reading(
 
     # 3. Абсолютный потолок (защита от пропущенной десятичной точки).
     for name, value, ceiling in [
-        ("hot_water", hot, MAX_WATER_METER_VALUE),
-        ("cold_water", cold, MAX_WATER_METER_VALUE),
-        ("electricity", elect, MAX_ELECTRICITY_METER_VALUE),
+        ("hot_water", hot, max_water),
+        ("cold_water", cold, max_water),
+        ("electricity", elect, max_elect),
     ]:
         if value is not None and value > ceiling:
             result.errors.append(
@@ -159,9 +172,9 @@ def validate_meter_reading(
     # 5. Дельта за месяц. Только если есть prev и не baseline.
     if not is_baseline:
         for name, value, prev, max_delta in [
-            ("hot_water", hot, prev_hot, MAX_WATER_DELTA_PER_MONTH),
-            ("cold_water", cold, prev_cold, MAX_WATER_DELTA_PER_MONTH),
-            ("electricity", elect, prev_elect, MAX_ELECTRICITY_DELTA_PER_MONTH),
+            ("hot_water", hot, prev_hot, max_water_delta),
+            ("cold_water", cold, prev_cold, max_water_delta),
+            ("electricity", elect, prev_elect, max_elect_delta),
         ]:
             if value is None or prev is None:
                 continue
@@ -183,16 +196,25 @@ def validate_total_cost(total: Optional[Decimal]) -> ValidationResult:
     чтобы не сохранять в БД заведомо аномальный результат даже если
     входные значения как-то прошли валидацию.
 
-    100k ₽/месяц для общежития — это гарантированно баг (типичный счёт
-    3-8k ₽). Реальные тарифы × реальные показания этого не дают.
+    Порог редактируется через analyzer_config — admin меняет «нормальный
+    потолок счёта» без редеплоя.
     """
     result = ValidationResult()
     if total is None:
         return result
-    if total > MAX_TOTAL_COST_PER_READING:
+    ceiling = _threshold("validator.max_total_cost_per_reading", MAX_TOTAL_COST_PER_READING)
+    if total > ceiling:
         result.errors.append(
             f"total_cost={total} превышает санитарный потолок "
-            f"{MAX_TOTAL_COST_PER_READING} ₽/период. "
+            f"{ceiling} ₽/период. "
             f"Скорее всего, проблема в показаниях или в тарифе."
         )
     return result
+
+
+def get_max_total_cost_per_reading() -> Decimal:
+    """Public getter для других модулей (calculations.py для sanity_warning).
+    Использует тот же analyzer_config-ключ что и validate_total_cost —
+    единая точка истины (раньше были две константы в разных файлах).
+    """
+    return _threshold("validator.max_total_cost_per_reading", MAX_TOTAL_COST_PER_READING)

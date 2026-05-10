@@ -239,22 +239,25 @@ def calculate_utilities(
     #     долгого отсутствия, накопленный долг);
     #   - блокирующий error на этом уровне уже даёт validate_meter_reading
     #     по входным значениям и validate_total_cost по выходному.
-    # Caller (client_readings и т.д.) читает ключ "sanity_warning" и
-    # передаёт жильцу + админу для человеческой проверки.
+    # Single source of truth — порог берётся из analyzer_config через
+    # тот же getter, что использует validate_total_cost. Раньше тут была
+    # отдельная константа MAX_TOTAL_COST_PER_READING — рассинхрон при
+    # изменении настроек админом.
     from app.modules.utility.services.reading_validators import (
-        MAX_TOTAL_COST_PER_READING,
+        get_max_total_cost_per_reading,
     )
+    ceiling = get_max_total_cost_per_reading()
     sanity_warning = None
-    if total_cost > MAX_TOTAL_COST_PER_READING:
+    if total_cost > ceiling:
         sanity_warning = (
             f"Итоговая сумма {total_cost} ₽ необычно высока для типичного "
-            f"месяца (порог {MAX_TOTAL_COST_PER_READING} ₽). Проверьте "
+            f"месяца (порог {ceiling} ₽). Проверьте "
             f"показания счётчиков и тариф."
         )
         logger.warning(
             "[CALC-SANITY] total_cost=%s > %s for area=%s, volumes "
             "hot=%s cold=%s sewage=%s elect=%s",
-            total_cost, MAX_TOTAL_COST_PER_READING, area,
+            total_cost, ceiling, area,
             v_hot, v_cold, v_sew, v_el,
         )
 
