@@ -108,6 +108,14 @@ celery.conf.beat_schedule = {
         "task": "cleanup_gsheets_old_rows_task",
         "schedule": crontab(minute=0, hour=3),
     },
+    # Ежедневное напоминание жильцам о подаче показаний — push на за 3, 1
+    # и 0 дней до конца окна `submission_end_day`. В прочие дни задача
+    # сама выходит без рассылки. 10:00 МСК = время когда люди уже
+    # просыпаются, но рабочий день ещё не в разгаре — push заметят.
+    "remind-submit-readings-daily": {
+        "task": "remind_submit_readings_task",
+        "schedule": crontab(minute=0, hour=10),
+    },
 }
 
 # ИМПОРТЫ ЗАДАЧ

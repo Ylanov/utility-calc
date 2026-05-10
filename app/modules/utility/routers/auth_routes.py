@@ -33,11 +33,6 @@ LOCK_DURATION_MINUTES = 15
 PRE_AUTH_TOKEN_EXPIRE_MINUTES = 5  # Короткий временный токен для ввода 2FA
 
 
-class PasswordResetRequest(BaseModel):
-    username: str
-    apartment_area: float  # Контрольный вопрос: площадь помещения
-
-
 # ИСПРАВЛЕНИЕ MIXING-БАГА (apr 2026):
 # Раньше login ставил HttpOnly cookie access_token (max_age=120 мин,
 # browser-wide), а oauth2_scheme имел fallback на этот cookie если
@@ -286,83 +281,11 @@ async def logout(response: Response):
     return {"status": "success", "message": "Успешный выход"}
 
 
-# --- 6. СБРОС ПАРОЛЯ — ЗАЯВКА ---
-# RateLimiter: 3 попытки в час с одного IP — защита от перебора
-# "контрольного вопроса" (площадь помещения).
-#
-# SECURITY HARDENING (apr 2026):
-# Раньше этот endpoint:
-#   1. Проверял логин + площадь (контрольный вопрос).
-#   2. Сразу генерировал 6-цифровой пароль и сбрасывал его в БД.
-#   3. Возвращал plaintext temp_password в JSON-ответе → frontend показывал
-#      его пользователю на экране и автозаполнял в форму логина.
-#
-# Уязвимости:
-#   - Площадь помещения часто известна (соседи, квитанции, открытые реестры).
-#   - 6 цифр — слабо: 1M комбинаций, перебираются за минуты.
-#   - Plaintext-пароль в API ответе попадал бы в любую логирующую прокси.
-#   - Самообслуживание без out-of-band канала не даёт админу шанс убедиться,
-#     что сбрасывает именно жилец.
-#
-# Теперь endpoint только РЕГИСТРИРУЕТ заявку (логирует попытку), но НЕ
-# меняет hashed_password и не возвращает никакого пароля. Реальный сброс
-# делает админ через POST /api/admin/users/{id}/reset-password — там пароль
-# показывается ОДНОКРАТНО, и админ передаёт его жильцу out-of-band
-# (по телефону / лично).
-@router.post(
-    "/api/auth/reset-password",
-    dependencies=[Depends(RateLimiter(times=3, seconds=3600))],
-)
-async def reset_password(data: PasswordResetRequest, db: AsyncSession = Depends(get_db)):
-    """Регистрирует заявку на сброс пароля.
-
-    Сам пароль НЕ сбрасывается этим вызовом — это делает админ через
-    /api/admin/users/{user_id}/reset-password. Жилец после успешной
-    проверки контрольных данных получает только подтверждение, что
-    заявка зарегистрирована, и должен дождаться, пока бухгалтерия
-    выдаст ему новый пароль out-of-band.
-
-    Anti-enumeration: любой исход (логин не найден, нет комнаты, не
-    совпала площадь, всё совпало) отдаёт ОДНО И ТО ЖЕ сообщение —
-    атакующий не может через этот endpoint узнать, существует ли
-    учётка или верна ли площадь помещения.
-    """
-    generic_response = {
-        "status": "queued",
-        "message": (
-            "Если данные верны — заявка зарегистрирована. Обратитесь "
-            "в бухгалтерию для получения нового пароля."
-        ),
-    }
-
-    result = await db.execute(
-        select(User).options(selectinload(User.room)).where(
-            func.lower(User.username) == data.username.lower(),
-            User.is_deleted.is_(False)
-        )
-    )
-    user = result.scalars().first()
-
-    # Логируем РЕЗУЛЬТАТ проверки на стороне сервера (info-уровень) —
-    # админ видит в Sentry breadcrumb / app-логе, кто запросил сброс.
-    # Но клиенту разница не отдаётся (anti-enumeration сохраняется).
-    if user and user.room:
-        db_area = round(float(user.room.apartment_area or 0), 1)
-        input_area = round(float(data.apartment_area), 1)
-        if db_area == input_area:
-            logger.info(
-                "[RESET-REQUEST] valid request for username=%s user_id=%s",
-                user.username, user.id,
-            )
-        else:
-            logger.info(
-                "[RESET-REQUEST] area mismatch for username=%s",
-                user.username,
-            )
-    else:
-        logger.info(
-            "[RESET-REQUEST] no user/room for input username=%s",
-            data.username[:32],
-        )
-
-    return generic_response
+# Endpoint /api/auth/reset-password ПОЛНОСТЬЮ УДАЛЁН (may 2026).
+# Раньше принимал username + площадь помещения как «контрольный вопрос»,
+# но площадь — слабый knowledge factor (соседи / бывшие жильцы её знают),
+# а сам endpoint лишь логировал попытку, не сбрасывая пароль. Никакой
+# полезной функции для жильца он не давал. Frontend (login.html) теперь
+# просто показывает текст «обратитесь в бухгалтерию» — без формы и без
+# обращений к серверу. Реальный сброс делает админ через
+# POST /api/admin/users/{user_id}/reset-password.

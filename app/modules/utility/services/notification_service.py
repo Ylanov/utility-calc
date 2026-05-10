@@ -217,3 +217,61 @@ async def send_push_to_all(
     logger.info(
         f"Массовая рассылка завершена: success={total_success}, failed={total_failed}"
     )
+
+
+# ======================================================
+# SYNC HELPER FOR CELERY (used by remind_submit_readings_task etc)
+# ======================================================
+
+def send_push_to_tokens_sync(
+    tokens: List[str],
+    title: str,
+    body: str,
+    data: Optional[dict] = None,
+) -> dict:
+    """Sync-helper для Celery: рассылает push на заданный список FCM-токенов
+    через MulticastMessage батчами по 500.
+
+    Возвращает dict с ключами:
+      success: int — сколько успешно отправлено
+      failed: int  — сколько не доехало
+      invalid_tokens: list[str] — токены, которые FCM пометил как
+        невалидные (UnregisteredError). Их следует удалить из БД на
+        стороне вызывающего кода — здесь мы НЕ делаем DB-write, чтобы
+        helper оставался stateless и переиспользуемым из любого
+        контекста (sync таски, скрипты).
+
+    Не делает асинхронных вызовов — подходит для celery worker'ов с
+    sync_db_session().
+    """
+    if not tokens:
+        return {"success": 0, "failed": 0, "invalid_tokens": []}
+
+    if not firebase_admin._apps:
+        logger.warning("[push_sync] Firebase не инициализирован — пропуск рассылки")
+        return {"success": 0, "failed": 0, "invalid_tokens": []}
+
+    chunk_size = 500
+    success = 0
+    failed = 0
+    invalid: List[str] = []
+
+    for i in range(0, len(tokens), chunk_size):
+        chunk = tokens[i:i + chunk_size]
+        message = messaging.MulticastMessage(
+            notification=messaging.Notification(title=title, body=body),
+            data=data or {},
+            tokens=chunk,
+        )
+        try:
+            response = messaging.send_each_multicast(message)
+            success += response.success_count
+            failed += response.failure_count
+            for idx, resp in enumerate(response.responses):
+                if not resp.success and isinstance(resp.exception, UnregisteredError):
+                    invalid.append(chunk[idx])
+        except Exception as e:
+            logger.error(f"[push_sync] FCM batch error: {e}")
+            failed += len(chunk)
+
+    return {"success": success, "failed": failed, "invalid_tokens": invalid}

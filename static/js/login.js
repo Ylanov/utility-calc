@@ -1,5 +1,4 @@
 // static/js/login.js
-import { api } from './core/api.js';
 import { Auth } from './core/auth.js';
 import { toast, setLoading } from './core/dom.js';
 
@@ -11,14 +10,12 @@ document.addEventListener('DOMContentLoaded', () => {
     const passwordInput = document.getElementById('password');
     const btnLogin = document.getElementById('btnLogin');
 
-    // --- ЭЛЕМЕНТЫ СБРОСА ПАРОЛЯ ---
+    // --- ЭЛЕМЕНТЫ ИНФО-МОДАЛКИ «ЗАБЫЛИ ПАРОЛЬ?» ---
+    // Форма с площадью помещения удалена (may 2026): теперь только
+    // показываем info-сообщение, никаких обращений к серверу.
     const btnForgotPass = document.getElementById('btnForgotPass');
     const resetModal = document.getElementById('resetModal');
-    const resetForm = document.getElementById('resetForm');
-    const resetSuccess = document.getElementById('resetSuccess');
-    const btnCancelReset = document.getElementById('btnCancelReset');
     const btnCloseIconReset = document.getElementById('btnCloseIconReset');
-    const btnSubmitReset = document.getElementById('btnSubmitReset');
     const btnCloseSuccess = document.getElementById('btnCloseSuccess');
 
     // ==========================================
@@ -81,73 +78,20 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // ==========================================
-    // ЛОГИКА СБРОСА ПАРОЛЯ
+    // «ЗАБЫЛИ ПАРОЛЬ?» — ПРОСТО ИНФО-МОДАЛКА
     // ==========================================
+    const closeResetModal = () => resetModal.classList.remove('open');
 
-    const closeResetModal = () => {
-        resetModal.classList.remove('open');
-    };
-
-    // 1. Открыть модалку
     btnForgotPass.addEventListener('click', (e) => {
         e.preventDefault();
-        resetForm.classList.remove('hide');
-        resetSuccess.classList.add('hide');
-        resetForm.reset();
-
-        // Автоматически подставляем логин, если пользователь уже начал его вводить
-        document.getElementById('resetUsername').value = usernameInput.value.trim();
-
         resetModal.classList.add('open');
     });
 
-    // 2. Закрыть модалку (Отмена и Крестик)
-    btnCancelReset.addEventListener('click', closeResetModal);
     btnCloseIconReset.addEventListener('click', closeResetModal);
+    btnCloseSuccess.addEventListener('click', closeResetModal);
 
-    // 3. Отправка запроса на сброс
-    resetForm.addEventListener('submit', async (e) => {
-        e.preventDefault();
-
-        const resetUsername = document.getElementById('resetUsername').value.trim();
-        const resetArea = parseFloat(document.getElementById('resetArea').value.replace(',', '.'));
-
-        setLoading(btnSubmitReset, true, 'Проверка...');
-
-        try {
-            // Заявка на сброс пароля. Сервер больше не возвращает plaintext —
-            // пароль генерирует админ через /api/admin/users/{id}/reset-password
-            // и передаёт жильцу out-of-band. Здесь просто показываем
-            // подтверждение, что заявка зарегистрирована (anti-enumeration —
-            // одно и то же сообщение даже при невалидных данных).
-            await api.post('/auth/reset-password', {
-                username: resetUsername,
-                apartment_area: resetArea
-            });
-
-            resetForm.classList.add('hide');
-            resetSuccess.classList.remove('hide');
-
-        } catch (error) {
-            toast(error.message, 'error');
-        } finally {
-            setLoading(btnSubmitReset, false, 'Сбросить');
-        }
-    });
-
-    // 4. Закрытие модалки после успеха.
-    // Раньше здесь автозаполнялся пароль из tempPasswordDisplay в форму логина —
-    // больше нет, потому что пароль вообще не отдаётся пользователю клиентом.
-    btnCloseSuccess.addEventListener('click', () => {
-        closeResetModal();
-        usernameInput.value = document.getElementById('resetUsername').value.trim();
-        usernameInput.focus();
-    });
-
-    // 5. Закрытие по клику вне модального окна
+    // Закрытие по клику вне модалки
     resetModal.addEventListener('mousedown', (e) => {
-        if (e.target === resetModal && !resetForm.classList.contains('hide')) {
-            closeResetModal();
-        }
+        if (e.target === resetModal) closeResetModal();
     });
 });

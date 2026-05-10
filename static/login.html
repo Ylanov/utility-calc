@@ -53,47 +53,28 @@
         </div>
     </form>
 
-    <!-- МОДАЛЬНОЕ ОКНО СБРОСА ПАРОЛЯ -->
+    <!-- ИНФО-МОДАЛКА «Забыли пароль?»
+         Раньше тут была форма с полем «площадь помещения» как контрольным
+         вопросом. Площадь — слабый knowledge factor (соседи / бывшие жильцы
+         её знают), и сам endpoint только регистрировал заявку, ничего не
+         сбрасывая. Удалено в may 2026: жилец теперь просто видит текст
+         «обратитесь в бухгалтерию», без формы и без обращений к серверу. -->
     <div id="resetModal" class="modal-overlay">
         <div class="modal-window" style="width: 450px;">
             <div class="modal-header">
                 <h3>Восстановление доступа</h3>
                 <button type="button" class="close-icon" id="btnCloseIconReset">&times;</button>
             </div>
-
             <div class="modal-form" style="padding-top: 16px;">
-                <form id="resetForm" class="styled-form">
-                    <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 24px; line-height: 1.5;">
-                        Для подтверждения личности введите ваш Логин и <b>точную площадь</b> помещения (можно посмотреть в квитанции).
+                <div style="background: var(--primary-bg); border-left: 4px solid var(--primary-color); padding: 20px; border-radius: var(--radius-sm); margin-bottom: 24px;">
+                    <p style="margin: 0 0 12px 0; font-size: 14px; font-weight: 600; color: var(--text-main);">Сброс пароля выполняет бухгалтерия</p>
+                    <p style="margin: 0; font-size: 13px; color: var(--text-secondary); line-height: 1.6;">
+                        Для получения нового пароля свяжитесь с бухгалтерией —
+                        сотрудник выдаст временный пароль лично или по телефону.
+                        Самостоятельный сброс через сайт отключён в целях безопасности.
                     </p>
-
-                    <div class="form-group mb-3">
-                        <label for="resetUsername">Логин (Лицевой счет)</label>
-                        <input type="text" id="resetUsername" required>
-                    </div>
-                    <div class="form-group" style="margin-bottom: 24px;">
-                        <label for="resetArea">Площадь (м²)</label>
-                        <input type="number" step="0.1" id="resetArea" required placeholder="Например: 42.5">
-                    </div>
-
-                    <div style="display: flex; gap: 12px;">
-                        <button type="button" id="btnCancelReset" class="action-btn secondary-btn" style="flex: 1;">Отмена</button>
-                        <button type="submit" id="btnSubmitReset" class="action-btn primary-btn" style="flex: 1;">Сбросить</button>
-                    </div>
-                </form>
-
-                <!-- Блок успешного сброса.
-                     Раньше тут показывался plaintext-пароль с сервера —
-                     это убрано: пароль теперь генерирует только админ
-                     через /api/admin/users/{id}/reset-password и передаёт
-                     жильцу out-of-band (по телефону / лично). -->
-                <div id="resetSuccess" class="hide">
-                    <div style="background: var(--success-bg); border: 1px solid #cce8d6; padding: 24px; text-align: center; border-radius: var(--radius-sm); margin-bottom: 24px;">
-                        <p style="margin: 0 0 12px 0; font-size: 14px; color: var(--success-color); font-weight: 600;">Заявка зарегистрирована</p>
-                        <p style="margin: 0; font-size: 13px; color: var(--text-secondary); line-height: 1.5;">Свяжитесь с бухгалтерией для получения нового пароля. Сотрудник передаст его вам лично или по телефону.</p>
-                    </div>
-                    <button type="button" id="btnCloseSuccess" class="action-btn success-btn full-width" style="padding: 12px;">Понятно</button>
                 </div>
+                <button type="button" id="btnCloseSuccess" class="action-btn primary-btn full-width" style="padding: 12px;">Понятно</button>
             </div>
         </div>
     </div>
