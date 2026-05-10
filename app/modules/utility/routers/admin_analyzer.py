@@ -603,3 +603,275 @@ async def get_period_telemetry(
         collect_period_telemetry,
     )
     return await collect_period_telemetry(db=db, period_id=period_id)
+
+
+# =========================================================================
+# TARIFF DRIFT — быстрый screening «что устарело по тарифу»
+# =========================================================================
+@router.get("/tariff-drift")
+async def get_tariff_drift(
+    tariff_id: Optional[int] = Query(None, description="ID тарифа. Не указан — активный."),
+    period_id: Optional[int] = Query(None, description="Ограничить периодом"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Cheap-screening: какие reading'и созданы ДО последнего изменения
+    тарифа и потенциально устарели. Не делает пересчёт — только сравнение
+    дат. Для точной оценки используйте /recalc-drift.
+    """
+    _require_admin(current_user)
+    from app.modules.utility.services.tariff_drift_analyzer import (
+        analyze_tariff_drift,
+    )
+    return await analyze_tariff_drift(db=db, tariff_id=tariff_id, period_id=period_id)
+
+
+# =========================================================================
+# COHORT — peer-сравнение жильцов по группам
+# =========================================================================
+@router.get("/cohorts")
+async def get_cohort_analysis(
+    period_id: int = Query(..., description="ID периода"),
+    metric: str = Query("total_cost", description="total_cost|hot_water|cold_water|electricity"),
+    outlier_factor: float = Query(2.0, ge=1.0, le=10.0, description="Множитель median для outliers"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Сравнение жильцов в когортах: общежитие, размер семьи, площадь.
+    Возвращает median/p95/max + outliers (с показателем > N×median).
+    """
+    _require_admin(current_user)
+    from app.modules.utility.services.cohort_analyzer import analyze_cohorts
+    return await analyze_cohorts(
+        db=db, period_id=period_id, metric=metric, outlier_factor=outlier_factor,
+    )
+
+
+# =========================================================================
+# HEATMAP — флаги × общежития (для UI dashboard)
+# =========================================================================
+@router.get("/flag-heatmap")
+async def get_flag_heatmap(
+    period_id: int = Query(..., description="ID периода"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Тепловая карта: флаг × общежитие. Для каждого флага в каждом
+    общежитии — количество reading'ов с этим флагом в указанном периоде.
+
+    UI использует это для quick-spot «в 4дв.стр.5 много FLAT_COLD».
+    """
+    _require_admin(current_user)
+    # Тянем reading'и периода + комнату для группировки по общежитию
+    rows = (await db.execute(
+        select(MeterReading.anomaly_flags, MeterReading.user_id)
+        .where(
+            MeterReading.period_id == period_id,
+            MeterReading.is_approved.is_(True),
+            MeterReading.anomaly_flags.is_not(None),
+        )
+    )).all()
+
+    if not rows:
+        return {"period_id": period_id, "cells": [], "dormitories": [], "flags": []}
+
+    # Подтягиваем dormitory жильцов одним JOIN-запросом — нужен для
+    # группировки cells по «общежитие × флаг».
+    from app.modules.utility.models import Room as _Room
+    user_ids = list({uid for _, uid in rows if uid})
+    user_dorm: dict[int, str] = {}
+    if user_ids:
+        dorm_q = await db.execute(
+            select(User.id, _Room.dormitory_name)
+            .select_from(User)
+            .join(_Room, User.room_id == _Room.id)
+            .where(User.id.in_(user_ids))
+        )
+        user_dorm = {uid: (dorm or "—") for uid, dorm in dorm_q.all()}
+
+    # Считаем cells: (dormitory, flag) → count
+    from collections import Counter
+    cells: dict[tuple[str, str], int] = Counter()
+    flags_set: set[str] = set()
+    dorms_set: set[str] = set()
+    SOURCE_MARKERS = {
+        "GSHEETS_AUTO", "GSHEETS_AUTO_BASELINE", "GSHEETS_IMPORT",
+        "BASELINE", "AUTO_GENERATED", "DATA_OVERFLOW_RESET",
+        "ONE_TIME_CHARGE", "ONE_TIME_CHARGE_BASELINE",
+    }
+    for raw_flags, uid in rows:
+        if not raw_flags or not uid:
+            continue
+        dorm = user_dorm.get(uid, "—")
+        for token in raw_flags.split(","):
+            t = token.strip()
+            if not t or t in SOURCE_MARKERS:
+                continue
+            cells[(dorm, t)] += 1
+            flags_set.add(t)
+            dorms_set.add(dorm)
+
+    # Convert to dense response
+    response_cells = [
+        {"dormitory": d, "flag": f, "count": c}
+        for (d, f), c in cells.items()
+    ]
+    response_cells.sort(key=lambda x: -x["count"])
+
+    return {
+        "period_id": period_id,
+        "dormitories": sorted(dorms_set),
+        "flags": sorted(flags_set),
+        "cells": response_cells,
+    }
+
+
+# =========================================================================
+# DRILLDOWN — список reading'ов с конкретным флагом
+# =========================================================================
+@router.get("/by-flag")
+async def get_readings_by_flag(
+    flag: str = Query(..., description="Точное имя флага (например, SPIKE_HOT)"),
+    period_id: Optional[int] = Query(None, description="Ограничить периодом"),
+    limit: int = Query(100, ge=1, le=500, description="Сколько вернуть"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Возвращает список approved-reading'ов содержащих указанный флаг.
+    Используется для drilldown из heatmap или topFlags на dashboard.
+    """
+    _require_admin(current_user)
+    # anomaly_flags хранится как CSV. Ищем flag как substring с границами
+    # запятой/начала/конца — строгое совпадение токена.
+    pattern = f"%{flag}%"
+    stmt = (
+        select(MeterReading)
+        .options(selectinload(MeterReading.user).selectinload(User.room),
+                 selectinload(MeterReading.period))
+        .where(
+            MeterReading.is_approved.is_(True),
+            MeterReading.anomaly_flags.like(pattern),
+        )
+        .order_by(MeterReading.anomaly_score.desc().nullslast(), MeterReading.id.desc())
+        .limit(limit)
+    )
+    if period_id is not None:
+        stmt = stmt.where(MeterReading.period_id == period_id)
+
+    raw = (await db.execute(stmt)).scalars().all()
+    # Фильтруем точное соответствие токена (LIKE может ложно совпасть на
+    # подстроке, но FLAT_HOT в LIKE %FLAT_% совпадёт — нам же нужно
+    # ровно «FLAT_HOT»).
+    items = []
+    for r in raw:
+        tokens = [t.strip() for t in (r.anomaly_flags or "").split(",")]
+        if flag not in tokens:
+            continue
+        room = r.user.room if r.user else None
+        items.append({
+            "reading_id": r.id,
+            "user_id": r.user.id if r.user else None,
+            "username": r.user.username if r.user else None,
+            "period_id": r.period_id,
+            "period_name": r.period.name if r.period else None,
+            "dormitory_name": room.dormitory_name if room else None,
+            "room_number": room.room_number if room else None,
+            "anomaly_flags": r.anomaly_flags,
+            "anomaly_score": r.anomaly_score,
+            "total_cost": float(r.total_cost or 0),
+        })
+
+    return {
+        "flag": flag,
+        "period_id": period_id,
+        "count": len(items),
+        "items": items,
+    }
+
+
+# =========================================================================
+# BULK DISMISS — массовое отметить «не аномалия»
+# =========================================================================
+class BulkDismissRequest(BaseModel):
+    flag_code: str
+    user_ids: list[int]  # если пусто — глобальный dismiss (user_id=NULL)
+    reason: Optional[str] = None
+
+
+@router.post("/dismissals/bulk")
+async def bulk_dismiss(
+    data: BulkDismissRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Массовая dismissal: пометить флаг «не аномалия» для нескольких
+    жильцов сразу или глобально (если user_ids пуст).
+    """
+    _require_admin(current_user)
+
+    if not data.flag_code:
+        raise HTTPException(400, "flag_code обязателен")
+
+    created = 0
+    skipped_existing = 0
+
+    if not data.user_ids:
+        # Глобальный dismiss (user_id=NULL)
+        existing = (await db.execute(
+            select(AnomalyDismissal).where(
+                AnomalyDismissal.user_id.is_(None),
+                AnomalyDismissal.flag_code == data.flag_code,
+            )
+        )).scalars().first()
+        if existing:
+            skipped_existing += 1
+        else:
+            db.add(AnomalyDismissal(
+                user_id=None,
+                flag_code=data.flag_code,
+                reason=data.reason or "bulk-dismiss (global)",
+                created_by_id=current_user.id,
+            ))
+            created += 1
+    else:
+        # Per-user. Проверим какие уже существуют чтобы не дублировать.
+        existing_q = await db.execute(
+            select(AnomalyDismissal.user_id).where(
+                AnomalyDismissal.user_id.in_(data.user_ids),
+                AnomalyDismissal.flag_code == data.flag_code,
+            )
+        )
+        existing_user_ids = {row[0] for row in existing_q.all()}
+        for uid in data.user_ids:
+            if uid in existing_user_ids:
+                skipped_existing += 1
+                continue
+            db.add(AnomalyDismissal(
+                user_id=uid,
+                flag_code=data.flag_code,
+                reason=data.reason or "bulk-dismiss",
+                created_by_id=current_user.id,
+            ))
+            created += 1
+
+    await db.commit()
+    # Сбросить кеш dismissals — иначе следующий анализ ещё видит флаги.
+    dismissals.invalidate()
+
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action="bulk_dismiss", entity_type="anomaly_dismissal", entity_id=None,
+        details={
+            "flag_code": data.flag_code,
+            "user_ids_count": len(data.user_ids),
+            "global": not data.user_ids,
+            "created": created, "skipped_existing": skipped_existing,
+        },
+    )
+    await db.commit()
+
+    return {
+        "flag_code": data.flag_code,
+        "created": created,
+        "skipped_existing": skipped_existing,
+    }

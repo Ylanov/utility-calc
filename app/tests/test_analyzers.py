@@ -276,3 +276,85 @@ def test_finance_high_bill_per_person():
         has_reading=True,
     )
     assert "HIGH_BILL_PER_PERSON" in flags
+
+
+# ============================================================
+# cohort_analyzer: pure helpers (без БД)
+# ============================================================
+
+from app.modules.utility.services.cohort_analyzer import (
+    _family_bucket,
+    _area_bucket,
+    _stats,
+    ALLOWED_METRICS,
+)
+
+
+def test_family_bucket_solo():
+    assert _family_bucket(0) == "1 (одиночка)"
+    assert _family_bucket(1) == "1 (одиночка)"
+
+
+def test_family_bucket_pair():
+    assert _family_bucket(2) == "2 (пара)"
+
+
+def test_family_bucket_family():
+    assert _family_bucket(3) == "3-4 (семья)"
+    assert _family_bucket(4) == "3-4 (семья)"
+
+
+def test_family_bucket_large():
+    assert _family_bucket(5) == "5+ (большая семья)"
+    assert _family_bucket(10) == "5+ (большая семья)"
+
+
+def test_area_bucket_no_quartiles():
+    """Если quartiles пустые — fallback на «—»."""
+    assert _area_bucket(30.0, []) == "—"
+
+
+def test_area_bucket_quartiles():
+    quartiles = [20.0, 30.0, 40.0]
+    assert "small" in _area_bucket(15.0, quartiles)
+    assert "medium" in _area_bucket(25.0, quartiles)
+    assert "large" in _area_bucket(35.0, quartiles)
+    assert "xlarge" in _area_bucket(50.0, quartiles)
+
+
+def test_stats_empty():
+    """Пустой список — все None кроме count."""
+    s = _stats([])
+    assert s["count"] == 0
+    assert s["median"] is None
+    assert s["p95"] is None
+
+
+def test_stats_single():
+    """Одно значение — median=p95=max=min."""
+    s = _stats([Decimal("100")])
+    assert s["count"] == 1
+    assert s["median"] == 100.0
+    assert s["max"] == 100.0
+    assert s["min"] == 100.0
+    assert s["p95"] == 100.0
+
+
+def test_stats_typical():
+    """Несколько значений — корректный median/p95."""
+    s = _stats([Decimal(x) for x in (10, 20, 30, 40, 50, 60, 70, 80, 90, 100)])
+    assert s["count"] == 10
+    assert s["min"] == 10.0
+    assert s["max"] == 100.0
+    # median между 50 и 60 = 55
+    assert s["median"] == 55.0
+    # p95 = 95-й процентиль (индекс int(0.95 * 9) = 8 → значение 90)
+    assert s["p95"] == 90.0
+
+
+def test_allowed_metrics_complete():
+    """Все 4 метрики анализатор должен поддерживать."""
+    assert "total_cost" in ALLOWED_METRICS
+    assert "hot_water" in ALLOWED_METRICS
+    assert "cold_water" in ALLOWED_METRICS
+    assert "electricity" in ALLOWED_METRICS
