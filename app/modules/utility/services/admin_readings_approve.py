@@ -201,6 +201,7 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
 
         # Подготавливаем словари для bulk_update.
         # MeterReading PK составной (id + created_at) — оба обязательны.
+        from app.modules.utility.services.calculations import costs_for_model_fields
         update_mappings.append({
             "id": reading.id,
             "created_at": reading.created_at,
@@ -208,7 +209,7 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
             "total_cost": total_209 + total_205,
             "total_209": total_209,
             "total_205": total_205,
-            **costs
+            **costs_for_model_fields(costs),
         })
 
         room_updates.append({
@@ -354,9 +355,9 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
     reading.total_cost = total_209 + total_205
     reading.is_approved = True
 
-    for k, v in costs.items():
-        if hasattr(reading, k):
-            setattr(reading, k, v)
+    from app.modules.utility.services.calculations import costs_for_model_fields
+    for k, v in costs_for_model_fields(costs).items():
+        setattr(reading, k, v)
 
     # BASELINE-маркер — чтобы в реестре и в квитанции админ/жилец видел,
     # что это первая подача и стоимость = 0 намеренно.

@@ -644,7 +644,9 @@ async def replace_meter(room_id: int, data: ReplaceMeterSchema, db: AsyncSession
             debt_205=(prev_reading.debt_205 if prev_reading else ZERO) or ZERO,
             overpayment_205=(prev_reading.overpayment_205 if prev_reading else ZERO) or ZERO,
         )
-        for k, v in costs.items(): setattr(closing_reading, k, v)
+        from app.modules.utility.services.calculations import costs_for_model_fields
+        for k, v in costs_for_model_fields(costs).items():
+            setattr(closing_reading, k, v)
         db.add(closing_reading)
         await db.flush()
 

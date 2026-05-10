@@ -9,6 +9,46 @@ ZERO = Decimal("0.00")
 MONEY_QUANT = Decimal("0.01")
 
 
+# Поля которые есть и в результате calculate_utilities, и в модели
+# MeterReading. Используется в costs_for_model_fields() ниже — фильтрует
+# sanity_warning (не поле БД), total_cost (caller сам решает: чистый
+# total_cost из расчёта или grand_total с долгами и корректировками).
+MODEL_COST_FIELDS = (
+    "cost_hot_water",
+    "cost_cold_water",
+    "cost_sewage",
+    "cost_electricity",
+    "cost_maintenance",
+    "cost_social_rent",
+    "cost_waste",
+    "cost_fixed_part",
+)
+
+
+def costs_for_model_fields(costs: dict) -> dict:
+    """Возвращает подсловарь, безопасный для setattr/**kwargs на MeterReading.
+
+    Раньше код напрямую делал `for k, v in costs.items(): setattr(...)`,
+    и это работало пока все ключи calculate_utilities совпадали с полями
+    модели. После добавления sanity_warning и потенциально других
+    мета-полей — нужен фильтр. Этот helper централизует список.
+    """
+    return {k: costs[k] for k in MODEL_COST_FIELDS if k in costs}
+
+
+class CalculationError(Exception):
+    """Поднимается когда расчёт не может быть честно выполнен.
+
+    Примеры: тариф полностью пустой (все ставки = 0); комната без площади
+    при наличии фиксированных компонент; некорректные входные параметры.
+
+    Раньше calculate_utilities тихо возвращал total_cost=0 в таких случаях —
+    жилец видел «всё хорошо», бухгалтерия удивлялась через месяц. Теперь
+    fail-loud: caller (mobile/admin) увидит 5xx и admin поймёт, что нужно
+    настроить тариф / починить данные комнаты.
+    """
+
+
 def D(value) -> Decimal:
     """Безопасное приведение к Decimal."""
     if value is None:
@@ -62,6 +102,7 @@ def calculate_per_capita(user, tariff, fraction=Decimal("1")) -> dict:
         "cost_waste":       ZERO,
         "cost_fixed_part":  amount,   # вся сумма попадает в «фиксированную часть»
         "total_cost":       amount,
+        "sanity_warning":   None,     # совместимость с calculate_utilities
     }
 
 
@@ -135,6 +176,19 @@ def calculate_utilities(
     t_heat   = D(tariff.heating)          # отопление (на м²)
     t_el_sqm = D(tariff.electricity_per_sqm)  # ОДН электроэнергия (на м²)
 
+    # FAIL-LOUD: если ВСЕ тарифные поля = 0, расчёт лишён смысла. Это
+    # либо отсутствующий тариф, либо некорректно созданный/неактивный.
+    # Раньше функция тихо возвращала total_cost=0 — жилец видел «зеленую
+    # квитанцию» на 0 руб, а бухгалтерия только через месяц обнаруживала
+    # что начислений нет. Теперь явная ошибка на ранней стадии.
+    all_rates = (t_w_sup, t_w_heat, t_sewage, t_el, t_maint, t_rent,
+                 t_waste, t_heat, t_el_sqm)
+    if all(rate == ZERO for rate in all_rates):
+        raise CalculationError(
+            "Тариф полностью пустой (все ставки = 0). Создайте/активируйте "
+            "тариф через админку перед расчётом квитанций."
+        )
+
     # ─────────────────────────────────────────────────
     # РАСЧЁТ ПО СЧЁТЧИКАМ
     # ─────────────────────────────────────────────────
@@ -179,6 +233,31 @@ def calculate_utilities(
         c_hot + c_cold + c_sewage + c_elect + c_maint + c_rent + c_waste + c_fixed
     )
 
+    # SANITY-WARNING (не блокирующее): если итог явно аномален — жилец
+    # увидит «необычно высокий счёт» в UI. Не raise, потому что:
+    #   - редкие легитимные кейсы возможны (большая семья, переезд после
+    #     долгого отсутствия, накопленный долг);
+    #   - блокирующий error на этом уровне уже даёт validate_meter_reading
+    #     по входным значениям и validate_total_cost по выходному.
+    # Caller (client_readings и т.д.) читает ключ "sanity_warning" и
+    # передаёт жильцу + админу для человеческой проверки.
+    from app.modules.utility.services.reading_validators import (
+        MAX_TOTAL_COST_PER_READING,
+    )
+    sanity_warning = None
+    if total_cost > MAX_TOTAL_COST_PER_READING:
+        sanity_warning = (
+            f"Итоговая сумма {total_cost} ₽ необычно высока для типичного "
+            f"месяца (порог {MAX_TOTAL_COST_PER_READING} ₽). Проверьте "
+            f"показания счётчиков и тариф."
+        )
+        logger.warning(
+            "[CALC-SANITY] total_cost=%s > %s for area=%s, volumes "
+            "hot=%s cold=%s sewage=%s elect=%s",
+            total_cost, MAX_TOTAL_COST_PER_READING, area,
+            v_hot, v_cold, v_sew, v_el,
+        )
+
     return {
         "cost_hot_water":   c_hot,
         "cost_cold_water":  c_cold,
@@ -189,4 +268,5 @@ def calculate_utilities(
         "cost_waste":       c_waste,
         "cost_fixed_part":  c_fixed,
         "total_cost":       total_cost,
+        "sanity_warning":   sanity_warning,
     }

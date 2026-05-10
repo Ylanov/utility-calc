@@ -256,6 +256,14 @@ class ReadingStateResponse(BaseModel):
     billing_mode: str = "by_meter"
     per_capita_amount: Optional[Decimal] = None  # фикс. сумма из тарифа жильца
 
+    # Подсказка по формату ввода счётчиков (см. /api/settings/meter-format).
+    # Мобилка/портал показывают example_hint и instructions под полем ввода,
+    # чтобы жилец не вводил «01427957» вместо «01427.957» (см. инцидент
+    # мая 2026 — 1.48 млрд ₽ на дашборде из-за пропущенных точек).
+    meter_format_hint: Optional[str] = None
+    meter_example: Optional[str] = None
+    meter_instructions: Optional[str] = None
+
 
 class ApproveRequest(BaseModel):
     hot_correction: DecimalVolume

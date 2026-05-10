@@ -102,20 +102,21 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
     total_209 = (costs['total_cost'] - costs['cost_social_rent']) + (draft.debt_209 or ZERO if draft else ZERO) - (draft.overpayment_209 or ZERO if draft else ZERO) + adj_map.get('209', ZERO)
     total_205 = costs['cost_social_rent'] + (draft.debt_205 or ZERO if draft else ZERO) - (draft.overpayment_205 or ZERO if draft else ZERO) + adj_map.get('205', ZERO)
 
+    from app.modules.utility.services.calculations import costs_for_model_fields
     if draft:
         draft.hot_water, draft.cold_water, draft.electricity = data.hot_water, data.cold_water, data.electricity
         draft.anomaly_flags, draft.anomaly_score = flags, score
-        for k, v in costs.items():
-            if hasattr(draft, k): setattr(draft, k, v)
+        for k, v in costs_for_model_fields(costs).items():
+            setattr(draft, k, v)
         draft.total_209, draft.total_205, draft.total_cost = total_209, total_205, total_209 + total_205
     else:
-        costs.pop('total_cost', None)
         db.add(MeterReading(
             user_id=user.id, room_id=room.id, period_id=active_period.id,
             hot_water=data.hot_water, cold_water=data.cold_water, electricity=data.electricity,
             debt_209=ZERO, overpayment_209=ZERO, debt_205=ZERO, overpayment_205=ZERO,
             total_209=total_209, total_205=total_205, total_cost=total_209 + total_205,
-            is_approved=False, anomaly_flags=flags, anomaly_score=score, **costs
+            is_approved=False, anomaly_flags=flags, anomaly_score=score,
+            **costs_for_model_fields(costs)
         ))
 
     await db.commit()
@@ -211,16 +212,17 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
     if draft:
         draft.hot_water, draft.cold_water, draft.electricity = data.hot_water, data.cold_water, data.electricity
         draft.anomaly_flags, draft.anomaly_score = charge_flag, 0
-        for k, v in costs.items(): setattr(draft, k, v)
+        for k, v in costs_for_model_fields(costs).items():
+            setattr(draft, k, v)
         draft.total_209, draft.total_205, draft.total_cost, draft.is_approved = total_209, total_205, total_209 + total_205, True
     else:
-        costs.pop('total_cost', None)
         db.add(MeterReading(
             user_id=user.id, room_id=room.id, period_id=active_period.id,
             hot_water=data.hot_water, cold_water=data.cold_water, electricity=data.electricity,
             debt_209=ZERO, overpayment_209=ZERO, debt_205=ZERO, overpayment_205=ZERO,
             total_209=total_209, total_205=total_205, total_cost=total_209 + total_205,
-            is_approved=True, anomaly_flags=charge_flag, anomaly_score=0, **costs
+            is_approved=True, anomaly_flags=charge_flag, anomaly_score=0,
+            **costs_for_model_fields(costs)
         ))
 
     room.last_hot_water, room.last_cold_water, room.last_electricity = data.hot_water, data.cold_water, data.electricity

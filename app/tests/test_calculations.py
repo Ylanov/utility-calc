@@ -1,7 +1,16 @@
 # app/tests/test_calculations.py
 
+import pytest
 from decimal import Decimal
-from app.modules.utility.services.calculations import calculate_utilities, quantize_money, safe_positive, D
+from app.modules.utility.services.calculations import (
+    calculate_utilities,
+    calculate_per_capita,
+    costs_for_model_fields,
+    quantize_money,
+    safe_positive,
+    D,
+    CalculationError,
+)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -337,6 +346,187 @@ def test_helper_functions():
 
 
 # ──────────────────────────────────────────────────────────────
+# ТЕСТ 8: FAIL-LOUD при пустом тарифе
+# ──────────────────────────────────────────────────────────────
+
+def test_calculate_raises_when_all_rates_zero():
+    """Если ВСЕ тарифные поля = 0 — это либо неактивный тариф, либо
+    некорректно созданный. Раньше функция тихо возвращала 0 (жилец
+    видел «зеленую квитанцию», бухгалтерия удивлялась через месяц).
+    Теперь — явная ошибка.
+    """
+    user = FakeUser()
+    room = FakeRoom(area=30.0)
+    tariff = FakeTariff(
+        water_supply="0", water_heating="0", sewage="0",
+        electricity_rate="0", maintenance_repair="0", social_rent="0",
+        waste_disposal="0", heating="0", electricity_per_sqm="0",
+    )
+    with pytest.raises(CalculationError, match="Тариф полностью пустой"):
+        calculate_utilities(
+            user=user, room=room, tariff=tariff,
+            volume_hot=Decimal("3"), volume_cold=Decimal("5"),
+            volume_sewage=Decimal("8"), volume_electricity_share=Decimal("100"),
+        )
+
+
+def test_calculate_passes_when_one_rate_nonzero():
+    """Если хотя бы одно поле ≠ 0 — это валидный (хоть и редкий) тариф,
+    например «только содержание». Не raise.
+    """
+    user = FakeUser()
+    room = FakeRoom(area=30.0)
+    tariff = FakeTariff(
+        water_supply="0", water_heating="0", sewage="0",
+        electricity_rate="0",
+        maintenance_repair="50.00",  # одно ненулевое поле
+        social_rent="0", waste_disposal="0", heating="0", electricity_per_sqm="0",
+    )
+    result = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=Decimal("0"), volume_cold=Decimal("0"),
+        volume_sewage=Decimal("0"), volume_electricity_share=Decimal("0"),
+    )
+    assert result["total_cost"] == Decimal("1500.00")  # 30 * 50
+    assert result["sanity_warning"] is None
+
+
+# ──────────────────────────────────────────────────────────────
+# ТЕСТ 9: sanity_warning при подозрительно большом счёте
+# ──────────────────────────────────────────────────────────────
+
+def test_sanity_warning_for_huge_total():
+    """При итоге > 100k руб должен прийти sanity_warning. НЕ raise —
+    редкие легитимные случаи возможны (большие семьи, накопленный долг).
+    """
+    user = FakeUser()
+    room = FakeRoom(area=100.0)
+    tariff = FakeTariff(
+        water_supply="500.00", water_heating="500.00",  # катастрофичные тарифы
+    )
+    result = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=Decimal("100"), volume_cold=Decimal("100"),
+        volume_sewage=Decimal("200"), volume_electricity_share=Decimal("500"),
+    )
+    assert result["total_cost"] > Decimal("100000")
+    assert result["sanity_warning"] is not None
+    assert "необычно высока" in result["sanity_warning"]
+
+
+def test_no_sanity_warning_for_normal_total():
+    """Типичный месячный счёт 3-15k — никаких warnings."""
+    user = FakeUser()
+    room = FakeRoom(area=45.50)
+    tariff = FakeTariff()
+    result = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=Decimal("3"), volume_cold=Decimal("5"),
+        volume_sewage=Decimal("8"), volume_electricity_share=Decimal("100"),
+    )
+    assert result["total_cost"] < Decimal("10000")
+    assert result["sanity_warning"] is None
+
+
+# ──────────────────────────────────────────────────────────────
+# ТЕСТ 10: per_capita совместим с calculate_utilities (ключи)
+# ──────────────────────────────────────────────────────────────
+
+def test_per_capita_has_same_keys():
+    """Caller (admin/mobile) не должен различать ветку — оба возвращают
+    одинаковый dict с теми же ключами. Иначе сломается общий setattr-loop.
+    """
+    user = FakeUser()
+    user.billing_mode = "per_capita"
+    room = FakeRoom(area=30.0)
+    tariff = FakeTariff()
+    tariff.per_capita_amount = Decimal("3500.00")
+
+    pc_keys = set(calculate_per_capita(user, tariff).keys())
+    util_keys = set(
+        calculate_utilities(
+            user=FakeUser(), room=room, tariff=FakeTariff(),
+            volume_hot=Decimal("1"), volume_cold=Decimal("1"),
+            volume_sewage=Decimal("2"), volume_electricity_share=Decimal("10"),
+        ).keys()
+    )
+    assert pc_keys == util_keys, (
+        f"per_capita keys: {pc_keys}, calculate_utilities keys: {util_keys}"
+    )
+
+
+def test_per_capita_routed_via_billing_mode():
+    """user.billing_mode='per_capita' → calculate_utilities делегирует
+    в calculate_per_capita и возвращает фиксированную сумму."""
+    user = FakeUser()
+    user.billing_mode = "per_capita"
+    room = FakeRoom(area=30.0)
+    tariff = FakeTariff()
+    tariff.per_capita_amount = Decimal("3500.00")
+
+    result = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=Decimal("100"),  # игнорируется для per_capita
+        volume_cold=Decimal("200"),
+        volume_sewage=Decimal("300"),
+        volume_electricity_share=Decimal("400"),
+    )
+    assert result["total_cost"] == Decimal("3500.00")
+    assert result["cost_fixed_part"] == Decimal("3500.00")
+
+
+# ──────────────────────────────────────────────────────────────
+# ТЕСТ 11: costs_for_model_fields фильтрует сервисные ключи
+# ──────────────────────────────────────────────────────────────
+
+def test_costs_for_model_fields_filters_meta():
+    """sanity_warning и total_cost — НЕ поля модели MeterReading,
+    helper их обязан выкидывать. Иначе **costs упадёт с TypeError
+    на лишнем kwargs."""
+    fake_calc_result = {
+        "cost_hot_water": Decimal("100"),
+        "cost_cold_water": Decimal("200"),
+        "cost_sewage": Decimal("50"),
+        "cost_electricity": Decimal("300"),
+        "cost_maintenance": Decimal("400"),
+        "cost_social_rent": Decimal("80"),
+        "cost_waste": Decimal("20"),
+        "cost_fixed_part": Decimal("150"),
+        "total_cost": Decimal("1300"),
+        "sanity_warning": "что-то подозрительное",
+    }
+    safe = costs_for_model_fields(fake_calc_result)
+    assert "total_cost" not in safe
+    assert "sanity_warning" not in safe
+    assert all(k.startswith("cost_") for k in safe.keys())
+    assert len(safe) == 8
+
+
+# ──────────────────────────────────────────────────────────────
+# ТЕСТ 12: типичный счёт жильца — должен попасть в 3-15k диапазон
+# ──────────────────────────────────────────────────────────────
+
+def test_typical_resident_in_normal_range():
+    """Средние тарифы + средний расход → счёт в реальном диапазоне 3-15k.
+    Если этот тест начнёт падать после изменения тарифа/формулы —
+    это сигнал, что что-то пошло не так в калькуляторе."""
+    user = FakeUser(residents=2)
+    room = FakeRoom(area=50.0, total_residents=2)
+    tariff = FakeTariff()  # стандартные тарифы из фикстуры
+    result = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=Decimal("5"),
+        volume_cold=Decimal("8"),
+        volume_sewage=Decimal("13"),
+        volume_electricity_share=Decimal("250"),
+    )
+    assert Decimal("3000") <= result["total_cost"] <= Decimal("15000"), (
+        f"total_cost={result['total_cost']} вне разумного диапазона 3-15k ₽"
+    )
+    assert result["sanity_warning"] is None
+
+
+# ──────────────────────────────────────────────────────────────
 # ЗАПУСК ВСЕХ ТЕСТОВ
 # ──────────────────────────────────────────────────────────────
 
@@ -348,4 +538,12 @@ if __name__ == "__main__":
     test_zero_consumption()
     test_fraction_partial_month()
     test_total_equals_sum_of_components()
+    test_calculate_passes_when_one_rate_nonzero()
+    test_sanity_warning_for_huge_total()
+    test_no_sanity_warning_for_normal_total()
+    test_per_capita_has_same_keys()
+    test_per_capita_routed_via_billing_mode()
+    test_costs_for_model_fields_filters_meta()
+    test_typical_resident_in_normal_range()
+    # test_calculate_raises_when_all_rates_zero — pytest.raises только под pytest
     print("\n🎉 Все тесты пройдены успешно!")

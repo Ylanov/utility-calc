@@ -125,6 +125,23 @@ async def get_reading_state(
         eff_t = tariff_cache.get_effective_tariff(user=user, room=user.room)
         per_capita_amount = eff_t.per_capita_amount if eff_t else None
 
+    # Подсказка по формату ввода (см. /api/settings/meter-format). Берём
+    # одним запросом, не блокируем основной flow если SystemSetting пуст.
+    from app.modules.utility.models import SystemSetting
+    fmt_row = await db.get(SystemSetting, "meter_format_hint")
+    ex_row = await db.get(SystemSetting, "meter_example_hot")
+    instr_row = await db.get(SystemSetting, "meter_instructions")
+    meter_format_value = (fmt_row.value if fmt_row else "5_no_decimal")
+    meter_example_value = (
+        ex_row.value if ex_row else "01433"
+    )
+    meter_instructions_value = (
+        instr_row.value if instr_row else
+        "Запишите только ПЕРВЫЕ 5 цифр счётчика (целая часть). "
+        "Дробные цифры после точки — НЕ нужны. "
+        "Пример: на счётчике «01433.887» вводите 01433 или 1433."
+    )
+
     return {
         "period_name": period.name if period else None,
         "prev_hot": prev_hot,
@@ -149,6 +166,9 @@ async def get_reading_state(
         "cost_fixed_part": current_reading.cost_fixed_part if current_reading else None,
         "billing_mode": bm,
         "per_capita_amount": per_capita_amount,
+        "meter_format_hint": meter_format_value,
+        "meter_example": meter_example_value,
+        "meter_instructions": meter_instructions_value,
     }
 
 
@@ -336,24 +356,20 @@ async def save_reading(
         draft.total_209, draft.total_205, draft.total_cost = total_209, total_205, grand_total
         draft.anomaly_flags, draft.anomaly_score = baseline_flag, 0
 
-        # БАГ-ФИКС: иначе цикл ниже перезаписывал total_cost через
-        # setattr(draft, "total_cost", costs["total_cost"]) — на чистую
-        # сумму начислений БЕЗ долгов и корректировок, тогда как нужен
-        # grand_total = total_209 + total_205 (с учётом долгов/коррект.).
-        # CREATE-ветка ниже уже делала pop("total_cost"), а UPDATE — нет.
-        for key, value in costs.items():
-            if key == "total_cost":
-                continue
-            if hasattr(draft, key):
-                setattr(draft, key, value)
+        # costs_for_model_fields фильтрует sanity_warning и total_cost
+        # — последний устанавливаем выше (grand_total с долгами/коррект.,
+        # а не «чистый» total_cost из calculate_utilities).
+        from app.modules.utility.services.calculations import costs_for_model_fields
+        for key, value in costs_for_model_fields(costs).items():
+            setattr(draft, key, value)
 
         db.add(draft)
         await db.flush()
         reading_id_for_celery = draft.id
 
     else:
-        costs_for_create = costs.copy()
-        costs_for_create.pop('total_cost', None)
+        from app.modules.utility.services.calculations import costs_for_model_fields
+        costs_for_create = costs_for_model_fields(costs)
 
         new_draft = MeterReading(
             user_id=user.id,

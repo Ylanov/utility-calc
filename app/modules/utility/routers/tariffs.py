@@ -428,7 +428,12 @@ async def preview_calculation(
             "volume_cold": float(data.volume_cold),
             "volume_electricity_share": float(elect_share),
         },
-        "breakdown": {k: float(v) for k, v in costs.items()},
+        # Только числовые компоненты — sanity_warning, total_cost фильтруем
+        # (sanity_warning — строка, total_cost вынесен в отдельное поле ниже).
+        "breakdown": {
+            k: float(v) for k, v in costs.items()
+            if k.startswith("cost_") and v is not None
+        },
         "total_209": float(cost_209),
         "total_205": float(cost_205),
         "total_cost": float(costs["total_cost"]),
