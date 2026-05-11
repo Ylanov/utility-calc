@@ -22,48 +22,170 @@
 
     <!-- Подключаем стили -->
     <link rel="stylesheet" href="style.css">
+
+    <!-- Компактный header v2: лого + tabs + аватар-dropdown в одной полосе.
+         Раньше было ТРИ строки (большая шапка, отдельные tabs, и блок Профиль/Выйти).
+         Теперь — sticky-полоска ~52px. Inline CSS чтобы не трогать style.css
+         и не задеть existing-стили (которые продолжают работать на arsenal/portal). -->
+    <style>
+      .app-container > .nav-tabs-container { display: none !important; }
+      .app-header-v2 {
+        position: sticky; top: 0; z-index: 100;
+        display: flex; align-items: center; gap: 16px;
+        padding: 8px 18px;
+        background: var(--bg-card);
+        border-bottom: 1px solid var(--border-color);
+        box-shadow: 0 1px 4px rgba(0,0,0,0.04);
+        margin: 0 0 18px 0;
+      }
+      .brand-mini {
+        display: inline-flex; align-items: center; gap: 10px;
+        font-weight: 600; font-size: 14px;
+        color: var(--text-main); white-space: nowrap;
+        text-decoration: none;
+      }
+      .brand-mini-icon {
+        width: 32px; height: 32px;
+        background: linear-gradient(135deg, #1a73e8 0%, #6366f1 100%);
+        color: #fff;
+        border-radius: 9px;
+        display: inline-flex; align-items: center; justify-content: center;
+        font-size: 15px;
+      }
+      .brand-mini-name-short { color: var(--text-secondary); font-weight: 500; }
+      .header-tabs {
+        display: flex; align-items: center; gap: 2px;
+        flex: 1; overflow-x: auto; scrollbar-width: none;
+        padding: 0 4px;
+      }
+      .header-tabs::-webkit-scrollbar { display: none; }
+      .header-tabs .tab-btn {
+        padding: 7px 13px; font-size: 13px; font-weight: 500;
+        border: none; background: transparent; border-radius: 7px;
+        color: var(--text-secondary); cursor: pointer;
+        display: inline-flex; align-items: center; gap: 6px;
+        transition: background 0.12s, color 0.12s;
+        white-space: nowrap;
+      }
+      .header-tabs .tab-btn:hover { background: rgba(60,64,67,0.06); color: var(--text-main); }
+      .header-tabs .tab-btn.active {
+        background: var(--primary-bg);
+        color: var(--primary-color);
+      }
+      .header-tabs .tab-btn:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+      .avatar-wrap { position: relative; }
+      .avatar-btn {
+        width: 38px; height: 38px;
+        border-radius: 50%; border: 2px solid transparent;
+        background: linear-gradient(135deg, #1a73e8 0%, #6366f1 100%);
+        color: #fff; font-weight: 600; font-size: 14px;
+        cursor: pointer;
+        display: inline-flex; align-items: center; justify-content: center;
+        transition: transform 0.1s, box-shadow 0.15s;
+      }
+      .avatar-btn:hover { transform: scale(1.05); box-shadow: 0 2px 8px rgba(26,115,232,0.3); }
+      .avatar-btn:focus-visible { outline: none; border-color: var(--primary-color); }
+      .avatar-menu {
+        position: absolute; right: 0; top: 48px;
+        min-width: 240px;
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+        padding: 6px;
+        display: flex; flex-direction: column; gap: 1px;
+        z-index: 200;
+        animation: avatarMenuIn 0.12s ease-out;
+      }
+      @keyframes avatarMenuIn {
+        from { opacity: 0; transform: translateY(-4px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      .avatar-menu[hidden] { display: none; }
+      .avatar-menu-header {
+        padding: 10px 12px 10px;
+        border-bottom: 1px solid var(--border-color);
+        margin-bottom: 4px;
+        display: flex; flex-direction: column; gap: 4px;
+      }
+      .avatar-menu-header #adminName {
+        font-weight: 600; color: var(--text-main); font-size: 14px;
+      }
+      .avatar-menu-header .role-badge {
+        font-size: 10px; padding: 2px 8px; border-radius: 4px;
+        background: var(--primary-bg); color: var(--primary-color);
+        width: max-content; font-weight: 500; text-transform: uppercase;
+        letter-spacing: 0.3px;
+      }
+      .avatar-menu-item {
+        background: transparent; border: none;
+        padding: 9px 12px; border-radius: 7px;
+        text-align: left; cursor: pointer;
+        display: flex; align-items: center; gap: 10px;
+        font-size: 13px; color: var(--text-main);
+        font-family: inherit;
+      }
+      .avatar-menu-item:hover { background: var(--bg-page); }
+      .avatar-menu-item i { width: 18px; color: var(--text-secondary); }
+      .avatar-menu-item.danger { color: #dc2626; }
+      .avatar-menu-item.danger i { color: #dc2626; }
+      .avatar-menu-item.danger:hover { background: #fef2f2; }
+    </style>
 </head>
 <body>
 
     <!-- Основной контейнер -->
     <div class="app-container">
 
-        <!-- HEADER -->
-        <header class="app-header">
-            <div class="header-brand">
-                <div class="brand-icon"><i class="fa-solid fa-building-user"></i></div>
-                <div>
-                    <h1>Администрирование ЖКХ</h1>
-                    <span class="header-subtitle">Система управления ресурсами</span>
-                </div>
-            </div>
+        <!-- Компактный HEADER v2 — лого + tabs + аватар. Раньше было три
+             отдельных блока (огромная шапка, nav-tabs-container, профиль/выйти).
+             Теперь одна sticky-полоска ~52px высотой. -->
+        <header class="app-header-v2">
+            <a href="index.html" class="brand-mini" title="К порталу">
+                <span class="brand-mini-icon"><i class="fa-solid fa-building-user"></i></span>
+                <span>ЖКХ</span>
+                <span class="brand-mini-name-short">Лидер</span>
+            </a>
 
-            <div class="header-profile">
-                <div class="admin-info">
-                    <span id="adminName">Загрузка...</span>
-                    <span class="role-badge admin">Администратор</span>
+            <nav class="header-tabs">
+                <!-- Дашборд + сверка показаний объединены: KPI+реестр+журнал
+                     действий в одном экране. -->
+                <button class="tab-btn active" data-tab="dashboard"><i class="fa-solid fa-gauge-high"></i><span>Дашборд</span></button>
+                <button class="tab-btn" data-tab="tools"><i class="fa-solid fa-sliders"></i><span>Операции</span></button>
+                <button class="tab-btn" data-tab="debts"><i class="fa-solid fa-file-invoice-dollar"></i><span>Долги 1С</span></button>
+                <button class="tab-btn" data-tab="housing"><i class="fa-solid fa-city"></i><span>Жилфонд</span></button>
+                <button class="tab-btn" data-tab="users"><i class="fa-solid fa-users"></i><span>Жильцы</span></button>
+                <button class="tab-btn" data-tab="certs"><i class="fa-solid fa-file-lines"></i><span>Справки</span></button>
+            </nav>
+
+            <!-- Аватар + dropdown. ID adminName / btnOpenAdminProfile /
+                 logout-btn — НЕ ТРОГАЕМ: на них уже навешан JS в app.js
+                 (заполнение имени, обработчик logout, открытие модалки профиля). -->
+            <div class="avatar-wrap">
+                <button id="avatarBtn" class="avatar-btn" type="button"
+                        aria-label="Меню профиля" aria-expanded="false"
+                        aria-controls="avatarMenu">
+                    <span id="avatarInitial">A</span>
+                </button>
+                <div id="avatarMenu" class="avatar-menu" hidden>
+                    <div class="avatar-menu-header">
+                        <span id="adminName">Загрузка…</span>
+                        <span class="role-badge admin">Администратор</span>
+                    </div>
+                    <button id="btnOpenAdminProfile" class="avatar-menu-item" type="button">
+                        <i class="fa-solid fa-gear"></i> Профиль
+                    </button>
+                    <button class="avatar-menu-item logout-btn danger" type="button">
+                        <i class="fa-solid fa-arrow-right-from-bracket"></i> Выйти
+                    </button>
                 </div>
-                <button id="btnOpenAdminProfile" class="action-btn secondary-btn">
-                    <i class="fa-solid fa-gear"></i> Профиль
-                </button>
-                <button class="logout-btn">
-                    <i class="fa-solid fa-arrow-right-from-bracket"></i> Выйти
-                </button>
             </div>
         </header>
 
-        <!-- NAV TABS -->
-        <div class="nav-tabs-container">
-            <div class="tabs">
-                <!-- Дашборд совмещён со сверкой показаний: KPI+реестр+журнал действий в одном экране.
-                     Ранее вкладка "Сверка показаний" была отдельной — теперь её UI встроен в tab_dashboard. -->
-                <button class="tab-btn active" data-tab="dashboard"><i class="fa-solid fa-gauge-high"></i> Дашборд</button>
-                <button class="tab-btn" data-tab="tools"><i class="fa-solid fa-sliders"></i> Операции</button>
-                <button class="tab-btn" data-tab="debts"><i class="fa-solid fa-file-invoice-dollar"></i> Долги 1С</button>
-                <button class="tab-btn" data-tab="housing"><i class="fa-solid fa-city"></i> Жилфонд</button>
-                <button class="tab-btn" data-tab="users"><i class="fa-solid fa-users"></i> Жильцы</button>
-                <button class="tab-btn" data-tab="certs"><i class="fa-solid fa-file-lines"></i> Справки</button>
-            </div>
+        <!-- Старый NAV_TABS оставлен для совместимости с скрытыми вкладками
+             и поиска DOM-ссылок; CSS выше его скрывает. Удалим в следующей итерации. -->
+        <div class="nav-tabs-container" aria-hidden="true">
+            <div class="tabs"></div>
         </div>
 
         <!-- CONTENT AREA.
@@ -237,5 +359,60 @@
     <div id="toast-container"></div>
 
     <script type="module" src="js/app.js"></script>
+
+    <!-- Avatar dropdown: toggle на клик + click-outside + Escape.
+         Inline скрипт, потому что чисто DOM-работа без зависимостей —
+         не нужно ради 30 строк создавать отдельный модуль. -->
+    <script>
+      (function () {
+        const btn = document.getElementById('avatarBtn');
+        const menu = document.getElementById('avatarMenu');
+        const initial = document.getElementById('avatarInitial');
+
+        // Инициал из sessionStorage — app.js обновит adminName позже,
+        // но первая буква нужна сразу, без вспышки «A» → «И».
+        try {
+          const u = (sessionStorage.getItem('username') || '').trim();
+          if (u && initial) initial.textContent = u.charAt(0).toUpperCase();
+        } catch (e) { /* sessionStorage недоступен — пропускаем */ }
+
+        // Также — следить за изменением adminName (app.js его заполняет
+        // при загрузке), синхронизировать инициал.
+        const nameEl = document.getElementById('adminName');
+        if (nameEl && initial) {
+          new MutationObserver(() => {
+            const t = (nameEl.textContent || '').trim();
+            if (t && t !== 'Загрузка…' && t !== 'Загрузка...') {
+              initial.textContent = t.charAt(0).toUpperCase();
+            }
+          }).observe(nameEl, { childList: true, characterData: true, subtree: true });
+        }
+
+        if (!btn || !menu) return;
+        function close() {
+          menu.hidden = true;
+          btn.setAttribute('aria-expanded', 'false');
+        }
+        function open() {
+          menu.hidden = false;
+          btn.setAttribute('aria-expanded', 'true');
+        }
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          menu.hidden ? open() : close();
+        });
+        document.addEventListener('click', (e) => {
+          if (!menu.hidden && !menu.contains(e.target) && e.target !== btn) close();
+        });
+        document.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape' && !menu.hidden) { close(); btn.focus(); }
+        });
+        // Закрывать после клика на пункт меню — но НЕ блокировать сам клик
+        // (внутренние обработчики профиля/выхода продолжат работать).
+        menu.querySelectorAll('button').forEach(b => {
+          b.addEventListener('click', () => setTimeout(close, 0));
+        });
+      })();
+    </script>
 </body>
 </html>
