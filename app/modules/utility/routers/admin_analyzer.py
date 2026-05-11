@@ -632,7 +632,11 @@ async def get_tariff_drift(
 @router.get("/cohorts")
 async def get_cohort_analysis(
     period_id: int = Query(..., description="ID периода"),
-    metric: str = Query("total_cost", description="total_cost|hot_water|cold_water|electricity"),
+    metric: str = Query(
+        "total_cost",
+        pattern="^(total_cost|hot_water|cold_water|electricity)$",
+        description="total_cost|hot_water|cold_water|electricity",
+    ),
     outlier_factor: float = Query(2.0, ge=1.0, le=10.0, description="Множитель median для outliers"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -731,7 +735,16 @@ async def get_flag_heatmap(
 # =========================================================================
 @router.get("/by-flag")
 async def get_readings_by_flag(
-    flag: str = Query(..., description="Точное имя флага (например, SPIKE_HOT)"),
+    # Pattern ограничивает flag до канонической формы [A-Z][A-Z0-9_]+ — это
+    # защита от LIKE-injection: без него flag='%' или '_' выдал бы full-scan
+    # readings (потенциальный DoS). Все реальные флаги (SPIKE_HOT, FLAT_COLD,
+    # COPY_NEIGHBOR_PARTIAL) под паттерн подходят.
+    flag: str = Query(
+        ...,
+        pattern="^[A-Z][A-Z0-9_]+$",
+        max_length=64,
+        description="Точное имя флага (например, SPIKE_HOT)",
+    ),
     period_id: Optional[int] = Query(None, description="Ограничить периодом"),
     limit: int = Query(100, ge=1, le=500, description="Сколько вернуть"),
     current_user: User = Depends(get_current_user),
@@ -743,6 +756,7 @@ async def get_readings_by_flag(
     _require_admin(current_user)
     # anomaly_flags хранится как CSV. Ищем flag как substring с границами
     # запятой/начала/конца — строгое совпадение токена.
+    # LIKE wildcard'ы (%/_) в flag блокирует pattern-валидация выше.
     pattern = f"%{flag}%"
     stmt = (
         select(MeterReading)
