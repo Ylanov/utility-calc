@@ -361,58 +361,8 @@
     <script type="module" src="js/app.js"></script>
 
     <!-- Avatar dropdown: toggle на клик + click-outside + Escape.
-         Inline скрипт, потому что чисто DOM-работа без зависимостей —
-         не нужно ради 30 строк создавать отдельный модуль. -->
-    <script>
-      (function () {
-        const btn = document.getElementById('avatarBtn');
-        const menu = document.getElementById('avatarMenu');
-        const initial = document.getElementById('avatarInitial');
-
-        // Инициал из sessionStorage — app.js обновит adminName позже,
-        // но первая буква нужна сразу, без вспышки «A» → «И».
-        try {
-          const u = (sessionStorage.getItem('username') || '').trim();
-          if (u && initial) initial.textContent = u.charAt(0).toUpperCase();
-        } catch (e) { /* sessionStorage недоступен — пропускаем */ }
-
-        // Также — следить за изменением adminName (app.js его заполняет
-        // при загрузке), синхронизировать инициал.
-        const nameEl = document.getElementById('adminName');
-        if (nameEl && initial) {
-          new MutationObserver(() => {
-            const t = (nameEl.textContent || '').trim();
-            if (t && t !== 'Загрузка…' && t !== 'Загрузка...') {
-              initial.textContent = t.charAt(0).toUpperCase();
-            }
-          }).observe(nameEl, { childList: true, characterData: true, subtree: true });
-        }
-
-        if (!btn || !menu) return;
-        function close() {
-          menu.hidden = true;
-          btn.setAttribute('aria-expanded', 'false');
-        }
-        function open() {
-          menu.hidden = false;
-          btn.setAttribute('aria-expanded', 'true');
-        }
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          menu.hidden ? open() : close();
-        });
-        document.addEventListener('click', (e) => {
-          if (!menu.hidden && !menu.contains(e.target) && e.target !== btn) close();
-        });
-        document.addEventListener('keydown', (e) => {
-          if (e.key === 'Escape' && !menu.hidden) { close(); btn.focus(); }
-        });
-        // Закрывать после клика на пункт меню — но НЕ блокировать сам клик
-        // (внутренние обработчики профиля/выхода продолжат работать).
-        menu.querySelectorAll('button').forEach(b => {
-          b.addEventListener('click', () => setTimeout(close, 0));
-        });
-      })();
-    </script>
+         Вынесен в external js/admin-header.js, потому что strict CSP
+         для admin.html не разрешает 'unsafe-inline' в script-src. -->
+    <script src="js/admin-header.js" defer></script>
 </body>
 </html>
