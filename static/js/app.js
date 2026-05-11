@@ -68,9 +68,11 @@ function setupGlobalEvents() {
         });
     });
 
-    // Делегирование событий для переключения табов в шапке
-    const tabsContainer = document.querySelector('.tabs');
-    if (tabsContainer) {
+    // Делегирование событий для переключения табов в шапке.
+    // Поддерживаем оба контейнера: legacy .tabs (старая шапка, скрыт через
+    // CSS, но в DOM) и новый .header-tabs (compact header v2). После
+    // полного удаления legacy-блока selector можно будет упростить.
+    document.querySelectorAll('.tabs, .header-tabs').forEach((tabsContainer) => {
         tabsContainer.addEventListener('click', (e) => {
             const btn = e.target.closest('.tab-btn');
             if (!btn) return;
@@ -81,7 +83,7 @@ function setupGlobalEvents() {
                 window.location.hash = tabId;
             }
         });
-    }
+    });
 
     // --- Глобальные Горячие Клавиши для Админки ---
     document.addEventListener('keydown', (e) => {
