@@ -57,10 +57,6 @@ services:
       # пустую папку из git, и загруженные админом APK пропадают →
       # /api/app/download/... отдаёт 404, клиент качает 110-байтный JSON.
       - apps_data:/app/static/apps
-      # Архив оригинальных xlsx из 1С (DebtImportLog.archive_path). Лежит
-      # вне /static, чтобы nginx НЕ отдавал по прямым URL — скачивание
-      # только через auth-эндпоинт /api/financier/debts/import-history/.../download.
-      - debt_archive_data:/app/data/debt_archives
     depends_on:
       db:
         condition: service_healthy
@@ -141,8 +137,6 @@ services:
     container_name: utility_calc_worker_heavy
     volumes:
       - shared_data:/app/static/generated_files
-      # Тот же том что у web — celery-task пишет/читает архив xlsx из 1С.
-      - debt_archive_data:/app/data/debt_archives
     depends_on:
       db:
         condition: service_healthy
@@ -330,8 +324,7 @@ volumes:
   redis_data:
   shared_data:
   minio_data:
-  apps_data:           # APK мобильного приложения, устойчивы к rebuild образа
-  debt_archive_data:   # Оригиналы ОСВ из 1С (DebtImportLog.archive_path)
+  apps_data:      # APK мобильного приложения, устойчивы к rebuild образа
 
 networks:
   utility_net:

@@ -22,10 +22,18 @@ router = APIRouter(prefix="/api/financier", tags=["Financier"])
 logger = logging.getLogger(__name__)
 
 TEMP_DIR = "/app/static/temp_imports"  # legacy, для совместимости со старым кодом
-# Постоянное хранение оригиналов ОСВ из 1С. Делаем вне /static чтобы:
-#  - не отдавать xlsx с любыми credentials напрямую через nginx;
-#  - админ-only download через /api/financier/debts/import-history/{id}/download.
-DEBT_ARCHIVE_DIR = "/app/data/debt_archives"
+# Постоянное хранение оригиналов ОСВ из 1С.
+# ПУТЬ: используем существующий shared_data volume (/app/static/generated_files/).
+# Раньше пробовали /app/data/debt_archives через отдельный volume,
+# но это требовало `docker compose down && up -d` для создания volume —
+# до рестарта web писал в эфемерный слой, а worker_heavy искал в своём
+# эфемерном слое, выдавая «No such file or directory». shared_data уже
+# смонтирован на web + worker_heavy + nginx, файлы шарятся сразу.
+#
+# Прямой доступ через nginx (/static/generated_files/debt_archives/...)
+# заблокирован в nginx/conf.d/default.conf — скачивание только через
+# /api/financier/debts/import-history/{id}/download с auth.
+DEBT_ARCHIVE_DIR = "/app/static/generated_files/debt_archives"
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
 os.makedirs(TEMP_DIR, exist_ok=True)
 os.makedirs(DEBT_ARCHIVE_DIR, exist_ok=True)
