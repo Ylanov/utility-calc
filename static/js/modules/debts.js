@@ -814,47 +814,95 @@ export const DebtsModule = {
         });
     },
 
+    _nfRenderCandidates(cands, headerLabel) {
+        if (!cands.length) {
+            return `<div style="font-size:13px; color:var(--text-secondary); padding:8px;">
+                Жильцов не нашлось.
+            </div>`;
+        }
+        return `
+            <div style="font-size:11px; color:var(--text-secondary); margin-bottom:8px; text-transform:uppercase;">
+                ${headerLabel} (${cands.length})
+            </div>
+            ${cands.map(c => `
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;
+                            padding:8px 10px; background:#fff; border:1px solid var(--border-color); border-radius:6px; margin-bottom:6px;">
+                    <div style="flex:1; min-width:0;">
+                        <div style="font-weight:600; font-size:13px;">${esc(c.username)}
+                            <span style="font-size:11px; color:var(--text-secondary); margin-left:4px;">${c.score}%</span>
+                        </div>
+                        <div style="font-size:11px; color:var(--text-secondary);">
+                            ${esc(c.room_label)} · ${c.residents_count} чел.
+                        </div>
+                        ${c.reason ? `<div style="font-size:11px; color:#92400e; margin-top:3px;">
+                            <i class="fa-solid fa-circle-info"></i> ${esc(c.reason)}
+                        </div>` : ''}
+                    </div>
+                    <button data-nf-action="pick-candidate" data-user-id="${c.id}" data-username="${esc(c.username)}"
+                            class="action-btn primary-btn" style="padding:4px 10px; font-size:12px; white-space:nowrap;">
+                        <i class="fa-solid fa-check"></i> Это он
+                    </button>
+                </div>
+            `).join('')}`;
+    },
+
     async _nfFindCandidates(row, fio, logId, accountType) {
         const pane = row.querySelector('[data-nf-pane="candidates"]');
         this._nfShowPane(row, 'candidates');
-        pane.innerHTML = '<div style="text-align:center; padding:14px; color:var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Поиск кандидатов…</div>';
+
+        // 1) Сначала рендерим контейнер с поиском и spinner-результатом —
+        // чтобы input поиска появился сразу, не ждал API.
+        pane.innerHTML = `
+            <div style="margin-bottom:10px;">
+                <input type="text" data-nf-search placeholder="🔍 Поиск по фамилии или имени (мин. 2 буквы)"
+                       style="width:100%; padding:7px 10px; font-size:13px; border:1px solid var(--border-color); border-radius:6px;">
+                <div style="font-size:11px; color:var(--text-secondary); margin-top:3px;">
+                    Auto-suggest показывает похожих по импортированному ФИО. Введите запрос — найдёт по подстроке.
+                </div>
+            </div>
+            <div data-nf-results>
+                <div style="text-align:center; padding:14px; color:var(--text-secondary);">
+                    <i class="fa-solid fa-spinner fa-spin"></i> Поиск похожих по «${esc(fio)}»…
+                </div>
+            </div>`;
+
+        const results = pane.querySelector('[data-nf-results]');
+        const input = pane.querySelector('[data-nf-search]');
+
+        // 2) Auto-suggest по fio. Загрузим один раз и оставим как fallback
+        // когда input пустой.
+        let autoSuggestHtml = '';
         try {
-            const data = await api.get(`/financier/debts/find-candidates?fio=${encodeURIComponent(fio)}&limit=5`);
-            const cands = data.candidates || [];
-            if (!cands.length) {
-                pane.innerHTML = `
-                    <div style="font-size:13px; color:var(--text-secondary); padding:8px;">
-                        Похожих жильцов не нашлось. Используйте «Создать жильца» если человек новый.
-                    </div>`;
+            const data = await api.get(`/financier/debts/find-candidates?fio=${encodeURIComponent(fio)}&limit=15`);
+            autoSuggestHtml = this._nfRenderCandidates(data.candidates || [], 'Похожие по импорту');
+            results.innerHTML = autoSuggestHtml;
+        } catch (e) {
+            results.innerHTML = `<div style="color:#b91c1c; padding:8px;">Ошибка: ${esc(e.message)}</div>`;
+        }
+
+        // 3) Debounced ручной поиск
+        let searchTimer = null;
+        input.addEventListener('input', () => {
+            clearTimeout(searchTimer);
+            const q = input.value.trim();
+            if (q.length < 2) {
+                // Возвращаем auto-suggest по fio
+                results.innerHTML = autoSuggestHtml;
                 return;
             }
-            pane.innerHTML = `
-                <div style="font-size:11px; color:var(--text-secondary); margin-bottom:8px; text-transform:uppercase;">
-                    Возможные кандидаты (${cands.length})
-                </div>
-                ${cands.map(c => `
-                    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;
-                                padding:8px 10px; background:#fff; border:1px solid var(--border-color); border-radius:6px; margin-bottom:6px;">
-                        <div style="flex:1; min-width:0;">
-                            <div style="font-weight:600; font-size:13px;">${esc(c.username)}
-                                <span style="font-size:11px; color:var(--text-secondary); margin-left:4px;">${c.score}%</span>
-                            </div>
-                            <div style="font-size:11px; color:var(--text-secondary);">
-                                ${esc(c.room_label)} · ${c.residents_count} чел.
-                            </div>
-                            ${c.reason ? `<div style="font-size:11px; color:#92400e; margin-top:3px;">
-                                <i class="fa-solid fa-circle-info"></i> ${esc(c.reason)}
-                            </div>` : ''}
-                        </div>
-                        <button data-nf-action="pick-candidate" data-user-id="${c.id}" data-username="${esc(c.username)}"
-                                class="action-btn primary-btn" style="padding:4px 10px; font-size:12px; white-space:nowrap;">
-                            <i class="fa-solid fa-check"></i> Это он
-                        </button>
-                    </div>
-                `).join('')}`;
-        } catch (e) {
-            pane.innerHTML = `<div style="color:#b91c1c; padding:8px;">Ошибка: ${esc(e.message)}</div>`;
-        }
+            results.innerHTML = `
+                <div style="text-align:center; padding:14px; color:var(--text-secondary);">
+                    <i class="fa-solid fa-spinner fa-spin"></i> Ищу «${esc(q)}»…
+                </div>`;
+            searchTimer = setTimeout(async () => {
+                try {
+                    const data = await api.get(`/financier/debts/find-candidates?q=${encodeURIComponent(q)}&limit=20`);
+                    results.innerHTML = this._nfRenderCandidates(data.candidates || [], `Найдено по «${esc(q)}»`);
+                } catch (err) {
+                    results.innerHTML = `<div style="color:#b91c1c; padding:8px;">Ошибка: ${esc(err.message)}</div>`;
+                }
+            }, 250);
+        });
     },
 
     async _nfPickCandidate(row, fio, logId, accountType, userId, username) {

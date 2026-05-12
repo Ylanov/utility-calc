@@ -1009,82 +1009,144 @@ async def debts_reassign_not_found(
 # =========================================================================
 # FIND CANDIDATES — поиск похожих жильцов для not-found ФИО
 # =========================================================================
-@router.get("/debts/find-candidates", summary="Похожие жильцы по ФИО (fuzzy)")
+@router.get("/debts/find-candidates", summary="Похожие жильцы по ФИО (fuzzy + фамилия)")
 async def debts_find_candidates(
-    fio: str = Query(..., min_length=3, max_length=200, description="ФИО из Excel"),
-    limit: int = Query(5, ge=1, le=20),
+    fio: Optional[str] = Query(None, max_length=200, description="ФИО из Excel (для auto-suggest)"),
+    q: Optional[str] = Query(None, max_length=100, description="Ручной поиск по любой подстроке"),
+    limit: int = Query(15, ge=1, le=50),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Возвращает топ-N жильцов с похожим ФИО для UI «Не найдены в 1С».
+    """Возвращает кандидатов для модалки «Не найдены в 1С».
 
-    Раньше в not-found модалке админ должен был вводить логин вручную.
-    Теперь система предлагает кандидатов — как в gsheets-импорте. Жилец
-    может найтись по:
-      - fuzzy совпадению имени-фамилии (token_sort_ratio)
-      - общему отчеству (Сергеевич × Сергеевич — возможно брат/сестра)
+    Два режима:
+      1) `q`  — ручной поиск, ILIKE по подстроке (case-insensitive). Когда
+                админ вбивает часть фамилии или имени в input поиска.
+      2) `fio` — auto-suggest для импорта. Объединяет:
+                 - ТОЧНОЕ совпадение фамилии (первого токена) → score=100
+                 - fuzzy token_sort_ratio для остальных (threshold 40%)
+                 Это решает кейс когда в Excel «Ярощук Александр Павлович»,
+                 а в БД «Ярощук А.П.» — fuzzy один даёт score~50%, и жилец
+                 теряется в кандидатах с такими же score; surname-match
+                 поднимает его в топ.
 
-    Используется тот же rapidfuzz что в debt_import.py — порог чуть ниже
-    (50% вместо 88%), чтобы показать СУЩЕСТВУЮЩИХ кандидатов которых
-    отбросил автоматический импорт.
+    Хотя бы один из q/fio должен быть задан.
     """
     _require_finance(current_user)
 
-    from rapidfuzz import process, fuzz
+    if not q and not fio:
+        raise HTTPException(400, "Передайте q (ручной поиск) или fio (по импорту)")
+
     from sqlalchemy.orm import selectinload as _selectinload
 
-    users_raw = (await db.execute(
+    base_query = (
         select(User).options(_selectinload(User.room))
         .where(User.is_deleted.is_(False), User.role == "user")
-    )).scalars().all()
+    )
+
+    # ============= РЕЖИМ 1: ручной поиск по q =============
+    if q:
+        q_norm = q.strip().lower()
+        if len(q_norm) < 2:
+            return {"fio": None, "q": q, "candidates": []}
+        # ILIKE по нормализованному username. Допускаем многословный q
+        # — каждый токен должен встречаться (AND).
+        tokens = [t for t in q_norm.split() if t]
+        filtered = base_query
+        for tok in tokens:
+            filtered = filtered.where(func.lower(User.username).like(f"%{tok}%"))
+        users_raw = (await db.execute(filtered.limit(limit))).scalars().all()
+
+        candidates = []
+        for u in users_raw:
+            room_label = (
+                f"{u.room.dormitory_name} / {u.room.room_number}"
+                if u.room else "без комнаты"
+            )
+            candidates.append({
+                "id": u.id,
+                "username": u.username,
+                "room_label": room_label,
+                "residents_count": int(u.residents_count or 1),
+                "score": 100,  # точное substring-совпадение
+                "reason": None,
+            })
+        # Сортируем по username (стабильный порядок)
+        candidates.sort(key=lambda c: c["username"].lower())
+        return {"fio": None, "q": q, "candidates": candidates}
+
+    # ============= РЕЖИМ 2: auto-suggest по fio =============
+    from rapidfuzz import fuzz
 
     target_norm = " ".join(fio.lower().split())
     if not target_norm:
         return {"fio": fio, "candidates": []}
+    target_tokens = target_norm.split()
+    surname = target_tokens[0] if target_tokens else ""
 
-    # Список (username_normalized, user_obj) для fuzzy-поиска
-    pool = [(" ".join(u.username.lower().split()), u) for u in users_raw if u.username]
+    users_raw = (await db.execute(base_query)).scalars().all()
 
-    # token_sort_ratio из rapidfuzz: «Иванов И.» матчит «Иванов Иван» с
-    # высоким score, потому что сортирует токены.
-    matches = process.extract(
-        target_norm,
-        [name for name, _ in pool],
-        scorer=fuzz.token_sort_ratio,
-        limit=limit * 3,  # берём больше, потом фильтруем по threshold
-    )
+    # Проходим всех жильцов. Для каждого считаем score по двум критериям:
+    #   - точное совпадение фамилии (первый токен username) → 100
+    #   - token_sort_ratio
+    # Из двух берём максимум.
+    matches: list[tuple[User, int, Optional[str]]] = []
+    for u in users_raw:
+        if not u.username:
+            continue
+        name_norm = " ".join(u.username.lower().split())
+        name_tokens = name_norm.split()
 
-    seen_user_ids: set[int] = set()
+        # Точное совпадение фамилии — приоритет
+        surname_exact = (
+            surname and name_tokens and surname == name_tokens[0]
+        )
+        # Или фамилия как substring в username (защита от опечаток типа
+        # «Ярощук-Иванов» когда в БД двойная фамилия)
+        surname_substring = (
+            surname and len(surname) >= 4 and surname in name_norm
+        )
+
+        fuzzy_score = fuzz.token_sort_ratio(target_norm, name_norm)
+
+        if surname_exact:
+            score = max(100, fuzzy_score)
+            reason = "Совпадает фамилия" if fuzzy_score < 80 else None
+        elif surname_substring:
+            score = max(85, fuzzy_score)
+            reason = "Фамилия найдена внутри ФИО"
+        elif fuzzy_score >= 40:
+            score = fuzzy_score
+            # «Общее отчество» — простая эвристика для случая брат/сестра
+            reason = None
+            if (fuzzy_score < 80 and len(target_tokens) >= 3
+                    and len(name_tokens) >= 3
+                    and target_tokens[-1] == name_tokens[-1]
+                    and target_tokens[0] != name_tokens[0]):
+                reason = "Общее отчество (возможно, брат/сестра)"
+        else:
+            continue
+
+        matches.append((u, int(score), reason))
+
+    # Сортируем: сначала score DESC, потом username для стабильности
+    matches.sort(key=lambda m: (-m[1], m[0].username.lower()))
+    matches = matches[:limit]
+
     candidates = []
-    for name, score, idx in matches:
-        if score < 50:
-            continue
-        u = pool[idx][1]
-        if u.id in seen_user_ids:
-            continue
-        seen_user_ids.add(u.id)
+    for u, score, reason in matches:
         room_label = (
             f"{u.room.dormitory_name} / {u.room.room_number}"
             if u.room else "без комнаты"
         )
-        # «Похожее отчество» — простая эвристика для случая брат/сестра.
-        # Берём последний токен у обоих и сравниваем.
-        target_parts = target_norm.split()
-        name_parts = name.split()
-        reason = None
-        if score < 80 and len(target_parts) >= 3 and len(name_parts) >= 3:
-            if target_parts[-1] == name_parts[-1] and target_parts[0] != name_parts[0]:
-                reason = "Общее отчество (возможно, брат/сестра)"
         candidates.append({
             "id": u.id,
             "username": u.username,
             "room_label": room_label,
             "residents_count": int(u.residents_count or 1),
-            "score": int(score),
+            "score": score,
             "reason": reason,
         })
-        if len(candidates) >= limit:
-            break
 
     return {"fio": fio, "candidates": candidates}
 
