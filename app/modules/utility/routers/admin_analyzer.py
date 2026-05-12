@@ -42,6 +42,20 @@ from app.modules.utility.services.analyzer_config import config, dismissals
 router = APIRouter(prefix="/api/admin/analyzer", tags=["Admin Analyzer"])
 
 
+# Маркеры, означающие НЕ аномалию (источник записи), — фильтруем везде где
+# считаем «настоящие аномалии». Используется и в dashboard, и в inbox, и
+# в heatmap. Cleanup_anomaly_readings скрипт ставит anomaly_flags=
+# 'DATA_OVERFLOW_RESET' + score=100 для обнулённых записей, и без этой
+# фильтрации они путали KPI («51 критических аномалий» — это все обнулённые
+# мусорные записи, а не реальные проблемы).
+_SOURCE_MARKERS = {
+    "GSHEETS_AUTO", "GSHEETS_AUTO_BASELINE", "GSHEETS_IMPORT",
+    "BASELINE", "AUTO_GENERATED", "INITIAL_SETUP",
+    "DATA_OVERFLOW_RESET", "ONE_TIME_CHARGE", "ONE_TIME_CHARGE_BASELINE",
+    "PENDING",
+}
+
+
 def _require_admin(user: User) -> None:
     if user.role not in ("admin", "accountant"):
         raise HTTPException(status_code=403, detail="Доступ запрещён")
@@ -69,17 +83,28 @@ async def analyzer_dashboard(
         .where(MeterReading.anomaly_flags != "")
     )).all()
 
+    # Source-маркеры (GSHEETS_AUTO, DATA_OVERFLOW_RESET и т.п.) — это
+    # служебные пометки источника записи, НЕ аномалии. Раньше dashboard
+    # считал их в total_flagged_readings и в score_buckets — KPI показывал
+    # сотни «аномалий», но Inbox (который правильно фильтрует) был пустой.
+    # Используем тот же _SOURCE_MARKERS что и в /inbox для консистентности.
     flag_counts: dict[str, int] = {}
     score_buckets = {"low (1-39)": 0, "medium (40-79)": 0, "critical (80-100)": 0}
     total_flagged = 0
     for flags_str, score in rows:
         if not flags_str or flags_str == "PENDING":
             continue
+        # Оставляем только реальные флаги, без source-маркеров.
+        real_flags = [
+            f.strip()
+            for f in flags_str.split(",")
+            if f.strip() and f.strip() not in _SOURCE_MARKERS
+        ]
+        if not real_flags:
+            continue  # Только маркеры источника — это не аномалия.
         total_flagged += 1
-        for f in flags_str.split(","):
-            f = f.strip()
-            if f:
-                flag_counts[f] = flag_counts.get(f, 0) + 1
+        for f in real_flags:
+            flag_counts[f] = flag_counts.get(f, 0) + 1
         s = int(score or 0)
         if s >= 80:
             score_buckets["critical (80-100)"] += 1
@@ -693,23 +718,20 @@ async def get_flag_heatmap(
         )
         user_dorm = {uid: (dorm or "—") for uid, dorm in dorm_q.all()}
 
-    # Считаем cells: (dormitory, flag) → count
+    # Считаем cells: (dormitory, flag) → count.
+    # _SOURCE_MARKERS — общий список служебных пометок (см. вверху модуля),
+    # их в heatmap не показываем — это не реальные аномалии.
     from collections import Counter
     cells: dict[tuple[str, str], int] = Counter()
     flags_set: set[str] = set()
     dorms_set: set[str] = set()
-    SOURCE_MARKERS = {
-        "GSHEETS_AUTO", "GSHEETS_AUTO_BASELINE", "GSHEETS_IMPORT",
-        "BASELINE", "AUTO_GENERATED", "DATA_OVERFLOW_RESET",
-        "ONE_TIME_CHARGE", "ONE_TIME_CHARGE_BASELINE",
-    }
     for raw_flags, uid in rows:
         if not raw_flags or not uid:
             continue
         dorm = user_dorm.get(uid, "—")
         for token in raw_flags.split(","):
             t = token.strip()
-            if not t or t in SOURCE_MARKERS:
+            if not t or t in _SOURCE_MARKERS:
                 continue
             cells[(dorm, t)] += 1
             flags_set.add(t)
@@ -973,15 +995,6 @@ _FLAG_HUMAN_TITLE = {
     "HIGH_PER_PERSON_COLD": "Много ХВС на 1 человека",
     "HIGH_PER_PERSON_ELECT": "Много электр. на 1 человека",
 }
-
-# Маркеры, означающие НЕ аномалию (источник записи), — фильтруем из inbox.
-_SOURCE_MARKERS = {
-    "GSHEETS_AUTO", "GSHEETS_AUTO_BASELINE", "GSHEETS_IMPORT",
-    "BASELINE", "AUTO_GENERATED", "INITIAL_SETUP",
-    "DATA_OVERFLOW_RESET", "ONE_TIME_CHARGE", "ONE_TIME_CHARGE_BASELINE",
-    "PENDING",
-}
-
 
 def _severity_from_score(score: int) -> str:
     if score >= 80:
