@@ -75,6 +75,24 @@ class BulkApproveRequest(BaseModel):
     row_ids: list[int]
 
 
+class CreateAndMatchRequest(BaseModel):
+    """Создать нового жильца и привязать к нему текущую gsheets-row.
+
+    Используется когда fuzzy-матчер не нашёл подходящего жильца И в БД
+    его реально нет. Раньше админ должен был уйти во вкладку «Жильцы»,
+    вручную создать пользователя, вернуться сюда и переназначить —
+    теперь это один POST.
+    """
+    username: str           # логин для входа в личный кабинет
+    password: str           # начальный пароль (потом жилец сможет сменить)
+    dormitory_name: str     # «4дв.стр.5» — для поиска комнаты в Жилфонде
+    room_number: str        # «104», «101A», и т.п.
+    residents_count: int = 1
+    resident_type: str = "family"  # family | single
+    workplace: Optional[str] = None
+    remember: bool = True   # создать GSheetsAlias на это ФИО
+
+
 class RowResponse(BaseModel):
     id: int
     sheet_timestamp: Optional[datetime]
@@ -804,6 +822,168 @@ async def reassign_row(
     await db.commit()
     return {
         "status": "ok",
+        "alias_created": alias_created,
+        "siblings_updated": siblings_updated,
+    }
+
+
+# =========================================================================
+# CREATE-AND-MATCH — создать нового жильца прямо из gsheets-модалки
+# =========================================================================
+@router.post("/rows/{row_id}/create-and-match")
+async def create_user_and_match(
+    row_id: int,
+    data: CreateAndMatchRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Создать нового User + привязать к комнате + привязать gsheets-row.
+
+    Сценарий: gsheets-импорт принёс ФИО которого реально нет в системе.
+    Fuzzy-кандидаты дают совпадения 50-60% («Общее отчество»), но это
+    другие люди. Reassign не подходит — нужен НОВЫЙ жилец.
+
+    Делаем атомарно:
+      1) уникальность username (логина для входа)
+      2) ищем комнату по (dormitory_name, room_number) в Жилфонде
+      3) создаём User, селим в комнату через move_user_to_room
+         (он же открывает RoomAssignment для истории заселений)
+      4) привязываем gsheets row + все сестринские unmatched/conflict
+         того же ФИО (та же логика что в reassign)
+      5) создаём GSheetsAlias если remember=True
+    """
+    require_admin(current_user)
+
+    row = await db.get(GSheetsImportRow, row_id)
+    if not row:
+        raise HTTPException(404, "GSheets-row не найдена")
+    if row.matched_user_id is not None:
+        raise HTTPException(
+            400,
+            "Подача уже привязана к жильцу — для смены используйте reassign",
+        )
+
+    # Username уникален? Сравнение case-insensitive чтобы не было «Ivanov» и «ivanov».
+    existing_user = (await db.execute(
+        select(User).where(func.lower(User.username) == data.username.strip().lower())
+    )).scalars().first()
+    if existing_user:
+        raise HTTPException(
+            400,
+            f"Жилец с логином {data.username.strip()!r} уже есть. "
+            "Используйте кнопку «Это он» в модалке или поиск.",
+        )
+
+    # Комната должна существовать в Жилфонде — мы не создаём её здесь
+    # автоматически, чтобы не плодить дубли (admin может неправильно
+    # написать название общежития).
+    room = (await db.execute(
+        select(Room).where(
+            Room.dormitory_name == data.dormitory_name.strip(),
+            Room.room_number == data.room_number.strip(),
+        ).limit(1)
+    )).scalars().first()
+    if not room:
+        raise HTTPException(
+            400,
+            f"Комната «{data.room_number}» в общежитии «{data.dormitory_name}» "
+            "не найдена в Жилфонде. Создайте её сначала во вкладке «Жилфонд», "
+            "затем повторите.",
+        )
+
+    # Валидация resident_type — иначе через query попадёт мусор в БД.
+    rt = data.resident_type if data.resident_type in ("family", "single") else "family"
+    bm = "per_capita" if rt == "single" else "by_meter"
+
+    # Создаём User
+    from app.core.auth import get_password_hash
+    db_user = User(
+        username=data.username.strip(),
+        hashed_password=get_password_hash(data.password),
+        role="user",
+        workplace=(data.workplace or "").strip() or None,
+        residents_count=max(1, int(data.residents_count)),
+        room_id=None,  # выставится move_user_to_room
+        resident_type=rt,
+        billing_mode=bm,
+        is_deleted=False,
+        is_initial_setup_done=False,
+    )
+    db.add(db_user)
+    await db.flush()  # нужен db_user.id для room_assignments
+
+    # Селим в комнату (создаст RoomAssignment запись)
+    from app.modules.utility.services.room_assignment import move_user_to_room
+    await move_user_to_room(
+        db, user=db_user, new_room_id=room.id,
+        note=f"created via gsheets row #{row_id}",
+    )
+
+    # Привязка текущей строки
+    row.matched_user_id = db_user.id
+    row.matched_room_id = room.id
+    row.match_score = 100
+    row.status = "pending"
+    row.conflict_reason = None
+
+    # Alias чтобы будущие импорты с этим ФИО матчили автоматически
+    alias_created = False
+    if data.remember:
+        alias_created = await _ensure_alias(
+            db,
+            alias_fio=row.raw_fio,
+            user_id=db_user.id,
+            kind="manual",
+            note="created-and-match",
+            created_by_id=current_user.id,
+        )
+
+    # Сестринские подачи того же ФИО — та же логика что в reassign,
+    # чтобы один create-and-match закрыл всю цепочку.
+    normalized_fio = _normalize_fio(row.raw_fio)
+    canonical_fio = canonical_initials(row.raw_fio)
+    siblings_updated = 0
+    if normalized_fio or canonical_fio:
+        sibling_rows = (await db.execute(
+            select(GSheetsImportRow).where(
+                GSheetsImportRow.id != row_id,
+                GSheetsImportRow.status.in_(("unmatched", "conflict", "pending")),
+            )
+        )).scalars().all()
+        for sr in sibling_rows:
+            sr_norm = _normalize_fio(sr.raw_fio)
+            sr_canon = canonical_initials(sr.raw_fio)
+            if (sr_norm and sr_norm == normalized_fio) or (sr_canon and sr_canon == canonical_fio):
+                sr.matched_user_id = db_user.id
+                sr.matched_room_id = room.id
+                sr.match_score = 100
+                sr.status = "pending"
+                sr.conflict_reason = None
+                siblings_updated += 1
+
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action="gsheets_create_and_match", entity_type="user", entity_id=db_user.id,
+        details={
+            "new_username": data.username.strip(),
+            "room_id": room.id,
+            "dormitory_name": data.dormitory_name,
+            "room_number": data.room_number,
+            "gsheets_row_id": row_id,
+            "fio": row.raw_fio,
+            "alias_created": alias_created,
+            "siblings_updated": siblings_updated,
+        },
+    )
+    await db.commit()
+
+    return {
+        "status": "ok",
+        "user_id": db_user.id,
+        "username": data.username.strip(),
+        "room_id": room.id,
+        "dormitory_name": room.dormitory_name,
+        "room_number": room.room_number,
         "alias_created": alias_created,
         "siblings_updated": siblings_updated,
     }

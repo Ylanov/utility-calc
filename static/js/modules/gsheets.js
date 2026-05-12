@@ -1088,10 +1088,33 @@ export const GSheetsModule = {
             rowId,
             rawFio: row?.raw_fio || '',
             rawRoom: row?.raw_room_number || '',
+            rawDormitory: row?.raw_dormitory || '',
             initialQuery,
             candidatesPromise,
         });
         if (!result) return;
+
+        // Режим create — отдельный endpoint /create-and-match (создаёт жильца)
+        if (result.mode === 'create') {
+            try {
+                const resp = await api.post(
+                    `/admin/gsheets/rows/${rowId}/create-and-match`,
+                    result.payload,
+                );
+                const siblings = resp?.siblings_updated || 0;
+                const siblingsPart = siblings > 0
+                    ? ` + привязано ещё ${siblings} ${siblings === 1 ? 'подача' : (siblings < 5 ? 'подачи' : 'подач')}`
+                    : '';
+                toast(
+                    `Создан жилец «${resp.username}» в комнате ${resp.room_number} (${resp.dormitory_name})${siblingsPart}`,
+                    'success',
+                );
+                this.refresh();
+            } catch (e) {
+                toast('Ошибка создания: ' + e.message, 'error');
+            }
+            return;
+        }
 
         try {
             const endpoint = result.asRelative
@@ -1126,7 +1149,7 @@ export const GSheetsModule = {
      * родственники». Возвращает {userId, username, asRelative, remember, note}
      * или null если пользователь закрыл окно.
      */
-    _showReassignModal({ rowId, rawFio, rawRoom, initialQuery, candidatesPromise }) {
+    _showReassignModal({ rowId, rawFio, rawRoom, rawDormitory, initialQuery, candidatesPromise }) {
         return new Promise((resolve) => {
             // Удаляем старую модалку если осталась.
             document.getElementById('gsheetsReassignModal')?.remove();
@@ -1165,15 +1188,160 @@ export const GSheetsModule = {
                         </div>
                     </div>
 
+                    <!-- CREATE-MODE pane. Скрыт по умолчанию, показывается при клике
+                         «➕ Создать нового жильца». Заменяет search/results. -->
+                    <div id="reassignCreatePane" style="display:none; padding:14px 22px; overflow:auto; flex:1;">
+                        <div style="font-size:13px; color:var(--text-secondary); margin-bottom:12px;">
+                            <i class="fa-solid fa-circle-info" style="color:#3b82f6;"></i>
+                            Создание нового жильца с привязкой подачи «${escapeHtml(rawFio)}».
+                            Комната должна уже существовать в «Жилфонд».
+                        </div>
+                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                            <div>
+                                <label style="font-size:11px; color:var(--text-secondary); display:block; margin-bottom:4px;">Логин (для входа)</label>
+                                <input type="text" id="newUserLogin" value="${escapeHtml(rawFio)}"
+                                       style="width:100%; padding:8px 10px; font-size:13px; border:1px solid var(--border-color); border-radius:6px;">
+                            </div>
+                            <div>
+                                <label style="font-size:11px; color:var(--text-secondary); display:block; margin-bottom:4px;">
+                                    Начальный пароль
+                                    <button type="button" id="newUserPasswordRegen" class="icon-btn" title="Сгенерировать новый"
+                                            style="font-size:10px; padding:0 6px; vertical-align:middle;">
+                                        <i class="fa-solid fa-rotate"></i>
+                                    </button>
+                                </label>
+                                <input type="text" id="newUserPassword"
+                                       style="width:100%; padding:8px 10px; font-size:13px; font-family:monospace; border:1px solid var(--border-color); border-radius:6px;">
+                            </div>
+                            <div>
+                                <label style="font-size:11px; color:var(--text-secondary); display:block; margin-bottom:4px;">Общежитие</label>
+                                <input type="text" id="newUserDormitory" value="${escapeHtml(rawDormitory || '')}"
+                                       style="width:100%; padding:8px 10px; font-size:13px; border:1px solid var(--border-color); border-radius:6px;">
+                            </div>
+                            <div>
+                                <label style="font-size:11px; color:var(--text-secondary); display:block; margin-bottom:4px;">Номер комнаты</label>
+                                <input type="text" id="newUserRoom" value="${escapeHtml(rawRoom || '')}"
+                                       style="width:100%; padding:8px 10px; font-size:13px; border:1px solid var(--border-color); border-radius:6px;">
+                            </div>
+                            <div>
+                                <label style="font-size:11px; color:var(--text-secondary); display:block; margin-bottom:4px;">Жильцов в семье</label>
+                                <input type="number" id="newUserResidents" value="1" min="1" max="20"
+                                       style="width:100%; padding:8px 10px; font-size:13px; border:1px solid var(--border-color); border-radius:6px;">
+                            </div>
+                            <div>
+                                <label style="font-size:11px; color:var(--text-secondary); display:block; margin-bottom:4px;">Тип жильца</label>
+                                <select id="newUserType" style="width:100%; padding:8px 10px; font-size:13px; border:1px solid var(--border-color); border-radius:6px;">
+                                    <option value="family">Семья (по счётчику)</option>
+                                    <option value="single">Одиночка (per capita)</option>
+                                </select>
+                            </div>
+                            <div style="grid-column:1/-1;">
+                                <label style="font-size:11px; color:var(--text-secondary); display:block; margin-bottom:4px;">Место работы (опционально)</label>
+                                <input type="text" id="newUserWorkplace"
+                                       style="width:100%; padding:8px 10px; font-size:13px; border:1px solid var(--border-color); border-radius:6px;">
+                            </div>
+                        </div>
+                    </div>
+
                     <div style="padding:12px 22px; border-top:1px solid var(--border-color); display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
-                        <label style="display:inline-flex; align-items:center; gap:8px; font-size:12px; color:var(--text-secondary); cursor:pointer; user-select:none;">
+                        <label id="reassignRememberLabel" style="display:inline-flex; align-items:center; gap:8px; font-size:12px; color:var(--text-secondary); cursor:pointer; user-select:none;">
                             <input type="checkbox" id="reassignRemember" checked>
                             Запомнить «${escapeHtml(rawFio)}» за этим жильцом (auto-match впредь)
                         </label>
-                        <button class="action-btn secondary-btn" data-close="1" style="padding:8px 16px;">Отмена</button>
+                        <div style="display:flex; gap:8px;">
+                            <button id="btnSwitchCreate" class="action-btn success-btn" style="padding:8px 14px;" title="Если жильца нет в системе">
+                                <i class="fa-solid fa-user-plus"></i> Создать нового жильца
+                            </button>
+                            <button id="btnSwitchBack" class="action-btn secondary-btn" style="display:none; padding:8px 14px;">
+                                <i class="fa-solid fa-arrow-left"></i> Назад к поиску
+                            </button>
+                            <button id="btnSubmitCreate" class="action-btn primary-btn" style="display:none; padding:8px 14px;">
+                                <i class="fa-solid fa-check"></i> Создать и привязать
+                            </button>
+                            <button class="action-btn secondary-btn" data-close="1" style="padding:8px 16px;">Отмена</button>
+                        </div>
                     </div>
                 </div>`;
             document.body.appendChild(modal);
+
+            // ===== CREATE-MODE: переключение и submit =====
+            // Не разносим в отдельные методы, чтобы не разрывать closure
+            // с rawFio / rowId — модалка одноразовая.
+            const inputSection = modal.querySelector('#reassignSearch')?.parentElement;
+            const createPane = modal.querySelector('#reassignCreatePane');
+            const rememberLabel = modal.querySelector('#reassignRememberLabel');
+            const btnSwitchCreate = modal.querySelector('#btnSwitchCreate');
+            const btnSwitchBack = modal.querySelector('#btnSwitchBack');
+            const btnSubmitCreate = modal.querySelector('#btnSubmitCreate');
+            const passwordInput = modal.querySelector('#newUserPassword');
+            const passwordRegen = modal.querySelector('#newUserPasswordRegen');
+
+            // 12-знаковый читаемый пароль (без 0/O, 1/l/I — путаются).
+            const genPassword = () => {
+                const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+                let s = '';
+                const arr = new Uint8Array(12);
+                (window.crypto || window.msCrypto).getRandomValues(arr);
+                for (let i = 0; i < 12; i++) s += chars[arr[i] % chars.length];
+                return s;
+            };
+            if (passwordInput) passwordInput.value = genPassword();
+            passwordRegen?.addEventListener('click', () => {
+                if (passwordInput) passwordInput.value = genPassword();
+            });
+
+            const setMode = (mode) => {
+                const isCreate = mode === 'create';
+                if (modal.querySelector('#reassignSuggestions'))
+                    modal.querySelector('#reassignSuggestions').style.display = isCreate ? 'none' : '';
+                if (modal.querySelector('#reassignResults'))
+                    modal.querySelector('#reassignResults').style.display = isCreate ? 'none' : '';
+                if (inputSection) inputSection.style.display = isCreate ? 'none' : '';
+                if (createPane) createPane.style.display = isCreate ? '' : 'none';
+                btnSwitchCreate.style.display = isCreate ? 'none' : '';
+                btnSwitchBack.style.display = isCreate ? '' : 'none';
+                btnSubmitCreate.style.display = isCreate ? '' : 'none';
+                rememberLabel.style.display = isCreate ? 'none' : '';
+            };
+            btnSwitchCreate?.addEventListener('click', () => setMode('create'));
+            btnSwitchBack?.addEventListener('click', () => setMode('search'));
+
+            btnSubmitCreate?.addEventListener('click', () => {
+                const login = modal.querySelector('#newUserLogin').value.trim();
+                const password = modal.querySelector('#newUserPassword').value.trim();
+                const dormitory = modal.querySelector('#newUserDormitory').value.trim();
+                const roomNumber = modal.querySelector('#newUserRoom').value.trim();
+                const residents = Number(modal.querySelector('#newUserResidents').value) || 1;
+                const type = modal.querySelector('#newUserType').value;
+                const workplace = modal.querySelector('#newUserWorkplace').value.trim();
+
+                if (!login || login.length < 3) {
+                    toast('Логин минимум 3 символа', 'warning');
+                    return;
+                }
+                if (!password || password.length < 6) {
+                    toast('Пароль минимум 6 символов', 'warning');
+                    return;
+                }
+                if (!dormitory || !roomNumber) {
+                    toast('Укажите общежитие и номер комнаты', 'warning');
+                    return;
+                }
+
+                close({
+                    mode: 'create',
+                    payload: {
+                        username: login,
+                        password,
+                        dormitory_name: dormitory,
+                        room_number: roomNumber,
+                        residents_count: residents,
+                        resident_type: type,
+                        workplace: workplace || null,
+                        remember: true,
+                    },
+                });
+            });
 
             const close = (value) => {
                 modal.remove();
