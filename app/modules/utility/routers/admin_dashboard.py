@@ -7,7 +7,7 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func, desc, case
+from sqlalchemy import func, desc, case, or_
 
 from app.core.database import get_db
 from app.core.request_context import current_request_id
@@ -129,10 +129,17 @@ async def get_dashboard_kpi(
     comparison = None
 
     if active_period:
-        # Комнаты с показаниями
+        # Комнаты с показаниями. Debt-only черновики от импорта 1С
+        # (только debt_*, без показаний) — НЕ засчитываются: они не
+        # являются «подачей жильца», это финансовое сальдо.
         submitted = (await db.execute(
             select(func.count(func.distinct(MeterReading.room_id))).where(
-                MeterReading.period_id == active_period.id
+                MeterReading.period_id == active_period.id,
+                or_(
+                    MeterReading.hot_water.is_not(None),
+                    MeterReading.cold_water.is_not(None),
+                    MeterReading.electricity.is_not(None),
+                ),
             )
         )).scalar_one()
 

@@ -8,7 +8,7 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import desc, func
+from sqlalchemy import desc, func, or_
 from fastapi_cache.decorator import cache
 from fastapi_cache import FastAPICache
 from fastapi_limiter.depends import RateLimiter
@@ -77,8 +77,16 @@ async def close_period_preview(
             )
         ),
         db.execute(
+            # «Комнаты с показаниями» — только те, где есть РЕАЛЬНЫЕ
+            # показания. Debt-only черновики от импорта 1С (показания NULL)
+            # сюда НЕ считаются — это финансовое сальдо, не подача.
             select(func.count(func.distinct(MeterReading.room_id))).where(
-                MeterReading.period_id == pid
+                MeterReading.period_id == pid,
+                or_(
+                    MeterReading.hot_water.is_not(None),
+                    MeterReading.cold_water.is_not(None),
+                    MeterReading.electricity.is_not(None),
+                ),
             )
         ),
         db.execute(
@@ -127,9 +135,17 @@ async def close_period_preview(
             .group_by(Room.dormitory_name).order_by(Room.dormitory_name)
         ),
         db.execute(
+            # «Сдали по общежитиям» — то же правило: debt-only не считается.
             select(Room.dormitory_name, func.count(func.distinct(MeterReading.room_id)).label("submitted"))
             .join(MeterReading, MeterReading.room_id == Room.id)
-            .where(MeterReading.period_id == pid)
+            .where(
+                MeterReading.period_id == pid,
+                or_(
+                    MeterReading.hot_water.is_not(None),
+                    MeterReading.cold_water.is_not(None),
+                    MeterReading.electricity.is_not(None),
+                ),
+            )
             .group_by(Room.dormitory_name)
         ),
     )
