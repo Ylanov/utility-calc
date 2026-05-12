@@ -107,6 +107,12 @@ services:
   worker_default:
     <<: *app-base
     container_name: utility_calc_worker_default
+    volumes:
+      # Тот же том что у web и worker_heavy — import_debts_task идёт
+      # на default queue и читает архив xlsx из 1С. Без shared_data
+      # worker писал в свой эфемерный слой, и при чтении в другой инстанс
+      # того же worker_default файл «исчезал».
+      - shared_data:/app/static/generated_files
     depends_on:
       db:
         condition: service_healthy
