@@ -724,10 +724,18 @@ export const DebtsModule = {
             this.dom.notFoundList.innerHTML = `
                 <p class="hint-text" style="font-size:12px; margin-bottom:12px;">
                     ФИО из Excel, которых fuzzy-матчер не смог привязать к жильцу.
-                    Сначала впишите сумму долга/переплаты, потом «Найти похожих»
-                    (если жилец есть в системе) или «Создать жильца» (если нового нет).
+                    <b>Суммы долга/переплаты подгружены автоматически</b> — нажмите
+                    «Найти похожих» (если жилец есть в системе) или «Создать жильца»
+                    (если нового нет).
                 </p>
-                ${list.map(fio => this.renderNotFoundRow(fio, logId, data.account_type)).join('')}
+                ${list.map(item => {
+                    // Backend нормализует к dict {fio, debt, overpayment}.
+                    // Старые импорты (до фикса) — debt/overpayment = "0".
+                    const fio = (typeof item === 'object') ? item.fio : item;
+                    const debt = (typeof item === 'object') ? Number(item.debt) || 0 : 0;
+                    const overpay = (typeof item === 'object') ? Number(item.overpayment) || 0 : 0;
+                    return this.renderNotFoundRow(fio, logId, data.account_type, debt, overpay);
+                }).join('')}
             `;
             // Контекст для click-handler. Меняется при каждом openNotFoundModal,
             // handler читает из state — нет накопления listeners.
@@ -764,24 +772,33 @@ export const DebtsModule = {
         }
     },
 
-    renderNotFoundRow(fio, logId, accountType) {
+    renderNotFoundRow(fio, logId, accountType, debt = 0, overpay = 0) {
         // Каждая строка содержит:
-        //  - ФИО + поля для суммы (общие для любого выбора кандидата)
+        //  - ФИО + поля для суммы (префилл из импорта, можно править)
         //  - Кнопка «Найти похожих» — раскрывает inline-блок с кандидатами
         //  - Кнопка «Создать жильца» — раскрывает форму создания
         //  - (старое) Inline-форма с логином — fallback если знаешь точный логин
         const safeId = btoa(unescape(encodeURIComponent(fio))).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
+        const sumHint = (debt > 0 || overpay > 0)
+            ? `<span style="font-size:11px; color:#92400e; margin-left:6px;">
+                 ${debt > 0 ? `долг ${debt.toLocaleString('ru-RU')} ₽` : ''}
+                 ${overpay > 0 ? `${debt > 0 ? ' · ' : ''}переплата ${overpay.toLocaleString('ru-RU')} ₽` : ''}
+                 (из файла)
+               </span>`
+            : '';
         return `
             <div class="nf-row" data-fio="${esc(fio)}" data-row-id="${safeId}"
                  style="border:1px solid var(--border-color); border-radius:8px; margin-bottom:10px; padding:10px;">
                 <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px; margin-bottom:8px;">
                     <div style="flex:1; min-width:0;">
-                        <div style="font-weight:600; font-size:13px; color:#1f2937; overflow-wrap:anywhere;">${esc(fio)}</div>
+                        <div style="font-weight:600; font-size:13px; color:#1f2937; overflow-wrap:anywhere;">
+                            ${esc(fio)}${sumHint}
+                        </div>
                         <div style="font-size:11px; color:var(--text-secondary);">счёт ${esc(accountType)}</div>
                     </div>
                     <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                        <input type="number" data-nf-debt step="0.01" placeholder="Долг ₽" style="width:90px; font-size:12px;">
-                        <input type="number" data-nf-overpay step="0.01" placeholder="Перепл. ₽" style="width:90px; font-size:12px;">
+                        <input type="number" data-nf-debt step="0.01" placeholder="Долг ₽" value="${debt || ''}" style="width:100px; font-size:12px;">
+                        <input type="number" data-nf-overpay step="0.01" placeholder="Перепл. ₽" value="${overpay || ''}" style="width:100px; font-size:12px;">
                     </div>
                 </div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap;">

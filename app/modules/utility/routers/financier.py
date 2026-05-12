@@ -847,15 +847,39 @@ async def debts_not_found(
     db: AsyncSession = Depends(get_db),
 ):
     """Список ФИО из конкретного импорта, которые fuzzy не привязал.
-    Админ может вручную сопоставить через reassign-endpoint."""
+    Админ может вручную сопоставить через reassign-endpoint.
+
+    Формат not_found_users поменялся в импорте мая 2026:
+      - старые импорты: list[str] — только ФИО, без сумм
+      - новые: list[dict] {fio, debt, overpayment} — фронт префиллит инпуты
+    Возвращаем УНИФИЦИРОВАННЫЙ формат list[dict] чтобы UI был один.
+    """
     _require_finance(current_user)
     log = await db.get(DebtImportLog, log_id)
     if not log:
         raise HTTPException(404, "Лог импорта не найден")
+
+    raw_list = log.not_found_users or []
+    normalized = []
+    for item in raw_list:
+        if isinstance(item, dict):
+            normalized.append({
+                "fio": item.get("fio", ""),
+                "debt": item.get("debt", "0"),
+                "overpayment": item.get("overpayment", "0"),
+            })
+        else:
+            # Legacy: только ФИО, без сумм. Админу придётся вводить руками.
+            normalized.append({
+                "fio": str(item),
+                "debt": "0",
+                "overpayment": "0",
+            })
+
     return {
         "log_id": log.id,
         "account_type": log.account_type,
-        "not_found_users": log.not_found_users or [],
+        "not_found_users": normalized,
     }
 
 

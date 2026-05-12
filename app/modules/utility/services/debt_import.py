@@ -395,10 +395,24 @@ def sync_import_debts_process(
             fio_raw = str(name_cell).strip()
             stats["processed"] += 1
 
+            # Сальдо на конец (актуальный долг/переплата на дату отчёта).
+            # Читаем ДО проверки user_data — нужно для not_found_users тоже,
+            # чтобы фронт смог автоматически перенести сумму при reassign.
+            debt_val = pick_saldo_value(row, debt_col_last, debt_col_first)
+            over_val = pick_saldo_value(row, overpay_col_last, overpay_col_first)
+
             user_data = get_user_data_optimized(fio_raw)
 
             if not user_data or not user_data["room_id"]:
-                stats["not_found_users"].append(fio_raw)
+                # Сохраняем dict вместо плоской строки — суммы нужны фронту
+                # чтобы при reassign автоматически перенести долг к жильцу.
+                # Раньше: stats["not_found_users"].append(fio_raw) → суммы
+                # терялись, админ должен был вводить руками (часто 0).
+                stats["not_found_users"].append({
+                    "fio": fio_raw,
+                    "debt": str(debt_val),
+                    "overpayment": str(over_val),
+                })
                 # Сбрасываем контекст — следующая строка «Договор» не
                 # должна привязаться к ранее сматченному жильцу.
                 last_matched_user_id = None
@@ -407,13 +421,6 @@ def sync_import_debts_process(
             user_id = user_data["id"]
             room_id = user_data["room_id"]
             last_matched_user_id = user_id  # для парсера договоров ниже
-
-            # Берём актуальный долг/переплату из «Сальдо на конец» (если
-            # ячейка не пустая) или fallback на «Сальдо на начало».
-            # Раньше использовалось «Сальдо на начало» — это устаревшие
-            # данные на дату ПРЕДЫДУЩЕГО периода, не текущие.
-            debt_val = pick_saldo_value(row, debt_col_last, debt_col_first)
-            over_val = pick_saldo_value(row, overpay_col_last, overpay_col_first)
 
             # 4. Если для этой комнаты уже есть черновик в БД
             if room_id in readings_map:
@@ -504,8 +511,16 @@ def sync_import_debts_process(
                 })
             db.bulk_update_mappings(MeterReading, updates_list)
 
-        # 8. Финализируем DebtImportLog в той же транзакции
-        stats["not_found_users"] = list(set(stats["not_found_users"]))
+        # 8. Финализируем DebtImportLog в той же транзакции.
+        # Dedup по ФИО — set() на dict не работает, поэтому через {fio: dict}.
+        # Сохраняем ПОСЛЕДНЕЕ вхождение каждого ФИО (если в xlsx несколько
+        # строк с одним ФИО — обычно для семьи в одной комнате — берём
+        # последнее, так делает и основной цикл).
+        seen: dict[str, dict] = {}
+        for item in stats["not_found_users"]:
+            key = item["fio"].strip().lower()
+            seen[key] = item
+        stats["not_found_users"] = list(seen.values())
         import_log.status = "completed"
         import_log.processed = stats["processed"]
         import_log.updated = stats["updated"]
