@@ -244,7 +244,8 @@ async def main() -> int:
         print("=" * 78)
 
         for r, b, _ in ok:
-            r.total_cost = b["total_cost"]
+            # total_cost вычисляется триггером trg_readings_sync_total_cost
+            # из total_209 + total_205 — присваивать его руками не нужно.
             r.total_209 = b["total_209"]
             r.total_205 = b["total_205"]
             r.cost_hot_water = b["cost_hot_water"]

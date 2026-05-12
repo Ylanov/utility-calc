@@ -96,9 +96,9 @@ async def set_initial_readings(
             is_approved=True,  # Сразу утверждено — это baseline
             anomaly_flags="INITIAL_SETUP",
             anomaly_score=0,
-            total_cost=ZERO,
             total_209=ZERO,
             total_205=ZERO,
+            # total_cost вычисляется триггером trg_readings_sync_total_cost.
         )
         db.add(reading)
 
@@ -288,7 +288,8 @@ async def import_initial_readings(
                     period_id=None,
                     hot_water=hot, cold_water=cold, electricity=elect,
                     is_approved=True, anomaly_flags="INITIAL_SETUP", anomaly_score=0,
-                    total_cost=ZERO, total_209=ZERO, total_205=ZERO,
+                    total_209=ZERO, total_205=ZERO,
+                    # total_cost вычисляется триггером trg_readings_sync_total_cost.
                 ))
 
             # Обновляем кэш комнаты

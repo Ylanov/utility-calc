@@ -82,7 +82,7 @@ async def create_adjustment(
                 draft.total_209 = (draft.total_209 or Decimal("0.00")) + amount
             elif data.account_type == "205":
                 draft.total_205 = (draft.total_205 or Decimal("0.00")) + amount
-            draft.total_cost = (draft.total_209 or Decimal("0.00")) + (draft.total_205 or Decimal("0.00"))
+            # total_cost синхронизируется триггером trg_readings_sync_total_cost.
             db.add(draft)
 
         # ЗАПИСЬ В ЖУРНАЛ: Создание финансовой корректировки
@@ -176,7 +176,7 @@ async def delete_adjustment(
                     draft.total_209 = (draft.total_209 or Decimal("0.00")) - amount
                 elif adj.account_type == "205":
                     draft.total_205 = (draft.total_205 or Decimal("0.00")) - amount
-                draft.total_cost = (draft.total_209 or Decimal("0.00")) + (draft.total_205 or Decimal("0.00"))
+                # total_cost синхронизируется триггером trg_readings_sync_total_cost.
                 db.add(draft)
 
         # ЗАПИСЬ В ЖУРНАЛ: Удаление корректировки (отмена)
