@@ -38,22 +38,9 @@ from app.modules.utility.models import (
 )
 from app.modules.utility.routers.admin_dashboard import write_audit_log
 from app.modules.utility.services.analyzer_config import config, dismissals
+from app.modules.utility.services.anomaly_flags import SOURCE_MARKERS as _SOURCE_MARKERS
 
 router = APIRouter(prefix="/api/admin/analyzer", tags=["Admin Analyzer"])
-
-
-# Маркеры, означающие НЕ аномалию (источник записи), — фильтруем везде где
-# считаем «настоящие аномалии». Используется и в dashboard, и в inbox, и
-# в heatmap. Cleanup_anomaly_readings скрипт ставит anomaly_flags=
-# 'DATA_OVERFLOW_RESET' + score=100 для обнулённых записей, и без этой
-# фильтрации они путали KPI («51 критических аномалий» — это все обнулённые
-# мусорные записи, а не реальные проблемы).
-_SOURCE_MARKERS = {
-    "GSHEETS_AUTO", "GSHEETS_AUTO_BASELINE", "GSHEETS_IMPORT",
-    "BASELINE", "AUTO_GENERATED", "INITIAL_SETUP",
-    "DATA_OVERFLOW_RESET", "ONE_TIME_CHARGE", "ONE_TIME_CHARGE_BASELINE",
-    "PENDING",
-}
 
 
 def _require_admin(user: User) -> None:

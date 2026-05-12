@@ -557,7 +557,15 @@ async def get_accountant_summary_v2(
             billing_mode=getattr(user, "billing_mode", "by_meter"),
         )
 
-        if only_anomaly and not flags and not (reading.anomaly_flags or "").strip():
+        # Только настоящие аномалии — без source-маркеров (GSHEETS_AUTO,
+        # AUTO_GENERATED, DATA_OVERFLOW_RESET и т.п.). Раньше KPI «Аномалий»
+        # включал все записи с anomaly_flags!=NULL — даже служебные, и
+        # показывал сотни проблем при том что filter «Аномалии» находил
+        # единицы. См. services/anomaly_flags.py:SOURCE_MARKERS.
+        from app.modules.utility.services.anomaly_flags import real_flags
+        meter_flags = real_flags(reading.anomaly_flags)
+
+        if only_anomaly and not flags and not meter_flags:
             continue
 
         # Δ vs прошлый
@@ -571,12 +579,6 @@ async def get_accountant_summary_v2(
 
         # Sparkline: 6 точек (включая текущий — последняя)
         sparkline = [float(c) for c in prev_costs] + [float(cur_cost)]
-
-        # Аномалии показаний (из anomaly_detector)
-        meter_flags = [
-            f.strip() for f in (reading.anomaly_flags or "").split(",")
-            if f.strip() and f.strip() != "PENDING"
-        ]
 
         d = _ensure_dorm(room.dormitory_name or "Без общежития")
         d["residents"].append({
@@ -637,8 +639,10 @@ async def get_accountant_summary_v2(
                 "anomaly_score": 0,
                 "created_at": None,
             })
-            d["flagged_count"] += 1
-            flagged_count += 1
+            # flagged_count для missing-receipt НЕ инкрементим — у них есть
+            # своя отдельная KPI «Без квитанции» (missing_count). Иначе KPI
+            # «Аномалий» = реальные + missing, и расходится с фильтром
+            # «Аномалии», который missing игнорирует.
 
     if only_missing:
         # отфильтровываем всё кроме MISSING_RECEIPT

@@ -91,28 +91,19 @@ async def collect_period_telemetry(db, period_id: int) -> dict:
     for r in readings:
         by_source[_classify_source(r.anomaly_flags)] += 1
 
-    # 4. Anomaly stats — кто-сколько-каких флагов
+    # 4. Anomaly stats — кто-сколько-каких флагов.
+    # real_flags() единое место правды по списку source-маркеров
+    # (см. services/anomaly_flags.py:SOURCE_MARKERS).
+    from app.modules.utility.services.anomaly_flags import real_flags
     flagged = 0
     flag_counter: Counter = Counter()
     scores: list[int] = []
     for r in readings:
-        if r.anomaly_flags:
-            # Не считаем чисто «source-маркеры» как аномалии — они
-            # технические (GSHEETS_AUTO, BASELINE и т.п.). Аномалии
-            # = SPIKE_*, FLAT_*, ZERO_*, COPY_NEIGHBOR и т.д.
-            tokens = [t.strip() for t in r.anomaly_flags.split(",") if t.strip()]
-            real = [
-                t for t in tokens
-                if not (
-                    t.startswith("GSHEETS_") or t == "BASELINE"
-                    or t.startswith("ONE_TIME") or t == "AUTO_GENERATED"
-                    or t == "DATA_OVERFLOW_RESET"
-                )
-            ]
-            if real:
-                flagged += 1
-                for t in real:
-                    flag_counter[t] += 1
+        real = real_flags(r.anomaly_flags)
+        if real:
+            flagged += 1
+            for t in real:
+                flag_counter[t] += 1
         if r.anomaly_score is not None:
             scores.append(int(r.anomaly_score))
 
