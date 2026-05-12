@@ -889,3 +889,396 @@ async def bulk_dismiss(
         "created": created,
         "skipped_existing": skipped_existing,
     }
+
+
+# =========================================================================
+# INBOX — единый список «всего что требует внимания админа» с подсказкой
+# что делать и кнопками одного действия.
+#
+# Идея: вместо разрозненных списков (аномалии в одном таб-е, gsheets-
+# конфликты в другом, ручные пересчёты в третьем) — одна таблица,
+# отсортированная по severity. На каждой строке система предлагает
+# «рекомендуемое действие» — админ нажимает кнопку и проблема закрыта.
+# Если рекомендация не подходит — есть выбор альтернативных actions.
+# =========================================================================
+
+# Подсказки «что делать» по флагу аномалии. Маппится из реальных кейсов:
+#   - dismiss   — отметить как не-аномалия (создаст AnomalyDismissal,
+#                 self-learning перестанет триггериться у этого жильца).
+#   - verify    — открыть запись в реестре, чтобы посмотреть глазами.
+#   - reset     — обнулить расчёт (для DATA_OVERFLOW-подобных случаев).
+#   - ignore    — пропустить (обычно для нейтральных трендов).
+# Если флаг не в словаре — default 'verify'.
+_FLAG_SUGGESTED_ACTION = {
+    # Откат счётчика — почти всегда требует ручной проверки физически.
+    "NEGATIVE_HOT": "verify", "NEGATIVE_COLD": "verify", "NEGATIVE_ELECT": "verify",
+    # Скачки — часто крупная семья / гости / стирка → dismiss.
+    "SPIKE_HOT": "dismiss", "SPIKE_COLD": "dismiss", "SPIKE_ELECT": "dismiss",
+    "HIGH_HOT": "dismiss", "HIGH_COLD": "dismiss", "HIGH_ELECT": "dismiss",
+    "HIGH_VS_PEERS_HOT": "dismiss", "HIGH_VS_PEERS_COLD": "dismiss",
+    "HIGH_VS_PEERS_ELECT": "dismiss",
+    "HIGH_PER_PERSON_COLD": "dismiss", "HIGH_PER_PERSON_ELECT": "dismiss",
+    # «Замёрз» / «плоский» / «спад после скачка» — проверять физически.
+    "FLAT_HOT": "verify", "FLAT_COLD": "verify", "FLAT_ELECT": "verify",
+    "FROZEN_HOT": "verify", "FROZEN_COLD": "verify", "FROZEN_ELECT": "verify",
+    "DROP_AFTER_SPIKE_HOT": "verify", "DROP_AFTER_SPIKE_COLD": "verify",
+    "DROP_AFTER_SPIKE_ELECT": "verify",
+    "HOT_GT_COLD": "verify",
+    # Округление — часто привычка жильца, dismiss + (опционально) уведомить.
+    "ROUND_NUMBER_HOT": "dismiss", "ROUND_NUMBER_COLD": "dismiss",
+    "ROUND_NUMBER_ELECT": "dismiss",
+    # Списано у соседа — связаться вручную.
+    "COPY_NEIGHBOR": "verify", "COPY_NEIGHBOR_PARTIAL": "verify",
+    # Тренды и нули — нет немедленного действия, просто следить.
+    "TREND_UP_HOT": "ignore", "TREND_UP_COLD": "ignore", "TREND_UP_ELECT": "ignore",
+    "ZERO_HOT": "ignore", "ZERO_COLD": "ignore", "ZERO_ELECT": "ignore",
+    "GAP_RECOVERY": "ignore",
+}
+
+_FLAG_HUMAN_TITLE = {
+    "NEGATIVE_HOT": "Откат счётчика ГВС",
+    "NEGATIVE_COLD": "Откат счётчика ХВС",
+    "NEGATIVE_ELECT": "Откат счётчика электр.",
+    "SPIKE_HOT": "Резкий скачок ГВС",
+    "SPIKE_COLD": "Резкий скачок ХВС",
+    "SPIKE_ELECT": "Резкий скачок электр.",
+    "HIGH_HOT": "Высокий расход ГВС",
+    "HIGH_COLD": "Высокий расход ХВС",
+    "HIGH_ELECT": "Высокий расход электр.",
+    "FLAT_HOT": "Одинаковая подача ГВС",
+    "FLAT_COLD": "Одинаковая подача ХВС",
+    "FLAT_ELECT": "Одинаковая подача электр.",
+    "FROZEN_HOT": "Замёрзший счётчик ГВС",
+    "FROZEN_COLD": "Замёрзший счётчик ХВС",
+    "FROZEN_ELECT": "Замёрзший счётчик электр.",
+    "ZERO_HOT": "Перестал расходовать ГВС",
+    "ZERO_COLD": "Перестал расходовать ХВС",
+    "ZERO_ELECT": "Перестал расходовать электр.",
+    "ROUND_NUMBER_HOT": "Подозрение на округление (ГВС)",
+    "ROUND_NUMBER_COLD": "Подозрение на округление (ХВС)",
+    "ROUND_NUMBER_ELECT": "Подозрение на округление (электр.)",
+    "HOT_GT_COLD": "ГВС > ХВС (нефизично)",
+    "COPY_NEIGHBOR": "Списано у соседа",
+    "COPY_NEIGHBOR_PARTIAL": "Частичное совпадение с соседом",
+    "GAP_RECOVERY": "Большая подача после паузы",
+    "TREND_UP_HOT": "Постоянный рост ГВС",
+    "TREND_UP_COLD": "Постоянный рост ХВС",
+    "TREND_UP_ELECT": "Постоянный рост электр.",
+    "DROP_AFTER_SPIKE_HOT": "Резкий спад после скачка ГВС",
+    "DROP_AFTER_SPIKE_COLD": "Резкий спад после скачка ХВС",
+    "DROP_AFTER_SPIKE_ELECT": "Резкий спад после скачка электр.",
+    "HIGH_VS_PEERS_HOT": "Выше соседей по ГВС",
+    "HIGH_VS_PEERS_COLD": "Выше соседей по ХВС",
+    "HIGH_VS_PEERS_ELECT": "Выше соседей по электр.",
+    "HIGH_PER_PERSON_COLD": "Много ХВС на 1 человека",
+    "HIGH_PER_PERSON_ELECT": "Много электр. на 1 человека",
+}
+
+# Маркеры, означающие НЕ аномалию (источник записи), — фильтруем из inbox.
+_SOURCE_MARKERS = {
+    "GSHEETS_AUTO", "GSHEETS_AUTO_BASELINE", "GSHEETS_IMPORT",
+    "BASELINE", "AUTO_GENERATED", "INITIAL_SETUP",
+    "DATA_OVERFLOW_RESET", "ONE_TIME_CHARGE", "ONE_TIME_CHARGE_BASELINE",
+    "PENDING",
+}
+
+
+def _severity_from_score(score: int) -> str:
+    if score >= 80:
+        return "critical"
+    if score >= 40:
+        return "high"
+    if score > 0:
+        return "medium"
+    return "low"
+
+
+def _pick_primary_flag(flags_csv: str | None) -> str | None:
+    """Из строки 'FLAG1,FLAG2,SOURCE_MARKER' выбираем первый реальный флаг
+    (не source-marker)."""
+    if not flags_csv:
+        return None
+    for token in flags_csv.split(","):
+        t = token.strip()
+        if t and t not in _SOURCE_MARKERS:
+            return t
+    return None
+
+
+@router.get("/inbox")
+async def get_inbox(
+    period_days: int = Query(30, ge=1, le=365),
+    kind: str = Query(
+        "all",
+        pattern="^(all|anomalies|gsheets)$",
+        description="Фильтр по типу проблемы",
+    ),
+    severity: Optional[str] = Query(
+        None,
+        pattern="^(critical|high|medium)$",
+        description="Минимальная серьёзность (только для anomalies)",
+    ),
+    limit: int = Query(100, ge=1, le=300),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Единый список проблем требующих внимания админа.
+
+    Объединяет в одном ответе:
+      - anomalies: MeterReading с anomaly_score > 0 за период
+      - gsheets:   GSheetsImportRow со status conflict/unmatched
+
+    Для каждой проблемы возвращает suggested_action — что админ может
+    сделать одной кнопкой (см. _FLAG_SUGGESTED_ACTION). Если рекомендация
+    не подходит — список available_actions с альтернативами.
+    """
+    _require_admin(current_user)
+    cutoff = utcnow() - timedelta(days=period_days)
+
+    issues: list[dict] = []
+
+    # 1) Anomalies
+    if kind in ("all", "anomalies"):
+        score_threshold = {"critical": 80, "high": 40, "medium": 1}.get(
+            severity or "medium", 1
+        )
+        anom_q = (
+            select(MeterReading)
+            .options(
+                selectinload(MeterReading.user).selectinload(User.room),
+                selectinload(MeterReading.period),
+            )
+            .where(
+                MeterReading.created_at >= cutoff,
+                MeterReading.anomaly_score >= score_threshold,
+                MeterReading.anomaly_flags.is_not(None),
+                MeterReading.anomaly_flags != "",
+            )
+            .order_by(
+                MeterReading.anomaly_score.desc().nullslast(),
+                MeterReading.id.desc(),
+            )
+            .limit(limit)
+        )
+        for r in (await db.execute(anom_q)).scalars().all():
+            primary_flag = _pick_primary_flag(r.anomaly_flags)
+            if not primary_flag:
+                continue  # Только source-markers — это не аномалия.
+            room = r.user.room if r.user else None
+            suggested = _FLAG_SUGGESTED_ACTION.get(primary_flag, "verify")
+            title = _FLAG_HUMAN_TITLE.get(primary_flag, primary_flag)
+            issues.append({
+                "issue_id": f"anomaly:{r.id}",
+                "kind": "anomaly",
+                "severity": _severity_from_score(int(r.anomaly_score or 0)),
+                "title": title,
+                "flag": primary_flag,
+                "all_flags": r.anomaly_flags,
+                "score": int(r.anomaly_score or 0),
+                "context": {
+                    "reading_id": r.id,
+                    "user_id": r.user.id if r.user else None,
+                    "username": r.user.username if r.user else None,
+                    "period_id": r.period_id,
+                    "period_name": r.period.name if r.period else None,
+                    "dormitory": room.dormitory_name if room else None,
+                    "room_number": room.room_number if room else None,
+                    "total_cost": float(r.total_cost or 0),
+                    "hot_water": float(r.hot_water) if r.hot_water is not None else None,
+                    "cold_water": float(r.cold_water) if r.cold_water is not None else None,
+                    "electricity": float(r.electricity) if r.electricity is not None else None,
+                },
+                "suggested_action": suggested,
+                "available_actions": ["dismiss", "verify", "ignore"],
+            })
+
+    # 2) GSheets конфликты + unmatched
+    if kind in ("all", "gsheets"):
+        gs_q = (
+            select(GSheetsImportRow)
+            .where(
+                GSheetsImportRow.created_at >= cutoff,
+                GSheetsImportRow.status.in_(["conflict", "unmatched"]),
+            )
+            .order_by(GSheetsImportRow.created_at.desc())
+            .limit(limit)
+        )
+        for g in (await db.execute(gs_q)).scalars().all():
+            is_unmatched = g.status == "unmatched"
+            issues.append({
+                "issue_id": f"gsheets:{g.id}",
+                "kind": "gsheets",
+                "severity": "high" if is_unmatched else "medium",
+                "title": (
+                    "GSheets: ФИО не найдено в базе"
+                    if is_unmatched
+                    else "GSheets: конфликт сопоставления"
+                ),
+                "flag": g.status,
+                "score": 100 - int(g.match_score or 0),
+                "context": {
+                    "row_id": g.id,
+                    "fio_raw": g.raw_fio,
+                    "dormitory_raw": g.raw_dormitory,
+                    "room_raw": g.raw_room_number,
+                    "hot_water_raw": g.raw_hot_water,
+                    "cold_water_raw": g.raw_cold_water,
+                    "match_score": int(g.match_score or 0),
+                    "conflict_reason": g.conflict_reason,
+                    "sheet_timestamp": (
+                        g.sheet_timestamp.isoformat() if g.sheet_timestamp else None
+                    ),
+                },
+                "suggested_action": "open",
+                "available_actions": ["open", "reject"],
+            })
+
+    # Сортируем итоговый список: critical → high → medium → low,
+    # внутри по score убыванию.
+    sev_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+    issues.sort(key=lambda i: (sev_order.get(i["severity"], 9), -i.get("score", 0)))
+
+    return {
+        "period_days": period_days,
+        "kind": kind,
+        "total": len(issues),
+        "issues": issues[:limit],
+        "summary": {
+            "anomalies": sum(1 for i in issues if i["kind"] == "anomaly"),
+            "gsheets":   sum(1 for i in issues if i["kind"] == "gsheets"),
+            "critical":  sum(1 for i in issues if i["severity"] == "critical"),
+            "high":      sum(1 for i in issues if i["severity"] == "high"),
+        },
+    }
+
+
+class InboxResolveRequest(BaseModel):
+    issue_id: str  # "anomaly:578" | "gsheets:42"
+    action: str    # "dismiss" | "verify" | "ignore" | "reject" | "open"
+    note: Optional[str] = None
+
+
+@router.post("/inbox/resolve")
+async def resolve_inbox_issue(
+    data: InboxResolveRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Применить действие к проблеме из inbox.
+
+    Поддерживаемые actions:
+      - anomaly + dismiss → создать AnomalyDismissal (user_id, flag_code).
+                           Self-learning перестанет триггериться.
+      - anomaly + ignore  → no-op (просто отметить «видел, всё ок»).
+      - anomaly + verify  → no-op на бэке (фронт откроет reading в реестре).
+      - gsheets + reject  → пометить gsheets_row status='rejected'.
+      - gsheets + open    → no-op (фронт откроет gsheets-modal).
+
+    Действия approve gsheets row / reset reading — пока не реализованы,
+    их делают через специализированные эндпоинты с дополнительной логикой
+    (создание MeterReading, обнуление компонент).
+    """
+    _require_admin(current_user)
+
+    # Разбираем issue_id
+    parts = data.issue_id.split(":", 1)
+    if len(parts) != 2:
+        raise HTTPException(400, "issue_id должен быть в формате '<kind>:<id>'")
+    kind, raw_id = parts
+    try:
+        entity_id = int(raw_id)
+    except ValueError:
+        raise HTTPException(400, "id должен быть числом")
+
+    if data.action not in ("dismiss", "verify", "ignore", "reject", "open"):
+        raise HTTPException(400, f"Неизвестное действие: {data.action!r}")
+
+    # === ANOMALY ===
+    if kind == "anomaly":
+        reading = await db.get(MeterReading, entity_id)
+        if not reading:
+            raise HTTPException(404, f"Reading {entity_id} не найден")
+
+        if data.action == "dismiss":
+            primary_flag = _pick_primary_flag(reading.anomaly_flags)
+            if not primary_flag:
+                raise HTTPException(400, "У reading нет аномального флага")
+            if not reading.user_id:
+                raise HTTPException(400, "У reading нет привязки к жильцу")
+
+            # Проверим дубликат
+            existing = (await db.execute(
+                select(AnomalyDismissal).where(
+                    AnomalyDismissal.user_id == reading.user_id,
+                    AnomalyDismissal.flag_code == primary_flag,
+                )
+            )).scalars().first()
+            if existing:
+                if data.note:
+                    existing.reason = data.note
+                    await db.commit()
+                    dismissals.invalidate()
+                return {"status": "exists", "dismissal_id": existing.id}
+
+            dism = AnomalyDismissal(
+                user_id=reading.user_id,
+                flag_code=primary_flag,
+                reason=data.note or "inbox-resolve",
+                created_by_id=current_user.id,
+            )
+            db.add(dism)
+            await write_audit_log(
+                db, current_user.id, current_user.username,
+                action="inbox_resolve_dismiss", entity_type="meter_reading",
+                entity_id=entity_id,
+                details={"flag": primary_flag, "user_id": reading.user_id},
+            )
+            await db.commit()
+            dismissals.invalidate()
+            return {"status": "ok", "action": "dismiss", "dismissal_id": dism.id}
+
+        if data.action in ("verify", "open", "ignore"):
+            # Бэкенду делать нечего — фронт сам откроет reading в реестре.
+            # Для ignore просто audit-логируем, чтобы было видно что админ
+            # принял решение (даже если оно — «оставить как есть»).
+            if data.action == "ignore":
+                await write_audit_log(
+                    db, current_user.id, current_user.username,
+                    action="inbox_resolve_ignore", entity_type="meter_reading",
+                    entity_id=entity_id,
+                    details={"note": data.note},
+                )
+                await db.commit()
+            return {"status": "ok", "action": data.action}
+
+        raise HTTPException(400, f"Действие {data.action!r} не применимо к anomaly")
+
+    # === GSHEETS ===
+    if kind == "gsheets":
+        gs_row = await db.get(GSheetsImportRow, entity_id)
+        if not gs_row:
+            raise HTTPException(404, f"GSheets-row {entity_id} не найдена")
+
+        if data.action == "reject":
+            if gs_row.status not in ("conflict", "unmatched", "pending"):
+                raise HTTPException(
+                    400,
+                    f"Нельзя отклонить строку со статусом {gs_row.status!r}",
+                )
+            gs_row.status = "rejected"
+            await write_audit_log(
+                db, current_user.id, current_user.username,
+                action="inbox_resolve_reject_gsheets", entity_type="gsheets_import_row",
+                entity_id=entity_id,
+                details={"old_status": gs_row.status, "note": data.note},
+            )
+            await db.commit()
+            return {"status": "ok", "action": "reject", "row_id": entity_id}
+
+        if data.action == "open":
+            # Фронт сам откроет нужную модалку gsheets-матчинга.
+            return {"status": "ok", "action": "open", "row_id": entity_id}
+
+        raise HTTPException(400, f"Действие {data.action!r} не применимо к gsheets")
+
+    raise HTTPException(400, f"Неизвестный kind: {kind!r}")

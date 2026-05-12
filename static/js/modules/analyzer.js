@@ -123,6 +123,14 @@ export const AnalyzerModule = {
             if (btn) this.deleteDismissal(Number(btn.dataset.deleteDismissal));
         });
 
+        // Клик по KPI-карточке с data-inbox-filter — открывает Inbox с
+        // соответствующим фильтром. Карточки без атрибута (Алиасы /
+        // Self-learning) — не реагируют.
+        this.dom.kpis?.addEventListener('click', (e) => {
+            const card = e.target.closest('[data-inbox-filter]');
+            if (card) this.openInbox(card.dataset.inboxFilter);
+        });
+
         // Верхнеуровневые табы
         this.dom.tabs?.forEach(btn => {
             btn.addEventListener('click', () => this._setTab(btn.dataset.analyzerTab));
@@ -199,22 +207,34 @@ export const AnalyzerModule = {
         const gs = d.gsheets || {};
         const sl = d.self_learning || {};
 
-        const kpi = (label, value, color, hint) => `
-            <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; padding:14px;">
-                <div style="font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.5px;">${escapeHtml(label)}</div>
-                <div style="font-size:26px; font-weight:700; color:${color}; margin:4px 0 2px;">${value}</div>
-                ${hint ? `<div style="font-size:11px; color:var(--text-tertiary);">${escapeHtml(hint)}</div>` : ''}
-            </div>`;
+        // 5-й параметр inboxFilter — если задан, карточка кликабельная и
+        // открывает Inbox с этим фильтром. Иначе обычная статичная
+        // карточка (например, «Алиасов всего» — кликать некуда).
+        const kpi = (label, value, color, hint, inboxFilter) => {
+            const clickable = inboxFilter
+                ? `data-inbox-filter="${escapeHtml(inboxFilter)}" style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; padding:14px; cursor:pointer; transition:transform 0.1s, box-shadow 0.15s; position:relative;" title="Открыть список и решить"`
+                : `style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; padding:14px;"`;
+            const arrow = inboxFilter
+                ? `<i class="fa-solid fa-arrow-right" style="position:absolute; top:14px; right:14px; color:var(--text-tertiary); font-size:11px;"></i>`
+                : '';
+            return `
+                <div ${clickable}>
+                    ${arrow}
+                    <div style="font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.5px;">${escapeHtml(label)}</div>
+                    <div style="font-size:26px; font-weight:700; color:${color}; margin:4px 0 2px;">${value}</div>
+                    ${hint ? `<div style="font-size:11px; color:var(--text-tertiary);">${escapeHtml(hint)}</div>` : ''}
+                </div>`;
+        };
 
         this.dom.kpis.innerHTML = [
             kpi('Аномалий найдено', a.total_flagged_readings || 0, '#dc2626',
-                `за последние ${d.period_days} дн.`),
+                `за последние ${d.period_days} дн.`, 'anomalies'),
             kpi('Критических', sev['critical (80-100)'] || 0, '#ef4444',
-                'score ≥ 80 — требуют внимания'),
+                'score ≥ 80 — требуют внимания', 'critical'),
             kpi('GSheets auto-approved', gs.by_status?.auto_approved || 0, '#10b981',
                 'автоматически утверждено'),
             kpi('GSheets конфликтов', (gs.by_status?.conflict || 0) + (gs.by_status?.unmatched || 0), '#f59e0b',
-                'требуют ручного решения'),
+                'требуют ручного решения', 'gsheets'),
             kpi('Алиасов всего', gs.aliases_total || 0, '#3b82f6',
                 `+${gs.aliases_new_in_period || 0} за период`),
             kpi('Self-learning', sl.total_dismissals || 0, '#7c3aed',
@@ -858,6 +878,266 @@ export const AnalyzerModule = {
                 `<div style="padding:12px 16px; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; color:#991b1b;">Ошибка: ${escapeHtml(e.message)}</div>`;
         } finally {
             if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-trash"></i> Очистить сейчас'; }
+        }
+    },
+
+    // ====================================================================
+    // INBOX — модальный экран «список всех проблем требующих внимания»
+    //
+    // Открывается кликом по KPI-карточке с data-inbox-filter. Показывает
+    // таблицу из /api/admin/analyzer/inbox: на каждой строке кнопка
+    // «Решить» делает рекомендованное действие, плюс альтернативы.
+    // ====================================================================
+
+    async openInbox(filter) {
+        // Маппинг с UI-фильтра карточки на параметры /inbox API.
+        // 'anomalies' / 'gsheets' идут как kind, 'critical' — как severity.
+        const params = new URLSearchParams({
+            period_days: String(this.state.period || 30),
+            limit: '200',
+        });
+        if (filter === 'gsheets') {
+            params.set('kind', 'gsheets');
+        } else if (filter === 'critical') {
+            params.set('kind', 'anomalies');
+            params.set('severity', 'critical');
+        } else if (filter === 'anomalies') {
+            params.set('kind', 'anomalies');
+        }
+        // Сначала открываем модалку с loading-state, чтобы было видно
+        // что клик сработал — потом подменяем содержимое на данные.
+        this._renderInboxLoading(filter);
+        try {
+            const data = await api.get(`/admin/analyzer/inbox?${params.toString()}`);
+            this._renderInboxModal(data, filter);
+        } catch (e) {
+            this._renderInboxError(e.message);
+        }
+    },
+
+    _inboxOverlayId: 'analyzerInboxOverlay',
+
+    _renderInboxLoading(filter) {
+        this._ensureInboxOverlay();
+        const body = document.getElementById('analyzerInboxBody');
+        if (body) body.innerHTML = `
+            <div style="text-align:center; padding:60px; color:var(--text-secondary);">
+                <i class="fa-solid fa-spinner fa-spin" style="font-size:24px;"></i>
+                <div style="margin-top:12px;">Загрузка списка проблем…</div>
+            </div>`;
+    },
+
+    _renderInboxError(msg) {
+        const body = document.getElementById('analyzerInboxBody');
+        if (body) body.innerHTML = `
+            <div style="padding:16px; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; color:#991b1b;">
+                Ошибка загрузки: ${escapeHtml(msg)}
+            </div>`;
+    },
+
+    _ensureInboxOverlay() {
+        if (document.getElementById(this._inboxOverlayId)) return;
+        const overlay = document.createElement('div');
+        overlay.id = this._inboxOverlayId;
+        overlay.style.cssText = `
+            position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:1000;
+            display:flex; align-items:center; justify-content:center; padding:20px;
+        `;
+        overlay.innerHTML = `
+            <div style="background:var(--bg-card); border-radius:12px; max-width:1200px; width:100%;
+                        max-height:90vh; display:flex; flex-direction:column; box-shadow:0 12px 40px rgba(0,0,0,0.3);">
+                <div style="padding:14px 20px; border-bottom:1px solid var(--border-color);
+                            display:flex; align-items:center; justify-content:space-between; gap:12px;">
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <i class="fa-solid fa-inbox" style="color:#dc2626;"></i>
+                        <h3 id="analyzerInboxTitle" style="margin:0; font-size:16px;">Список проблем</h3>
+                        <span id="analyzerInboxSummary" style="font-size:12px; color:var(--text-secondary);"></span>
+                    </div>
+                    <button id="analyzerInboxClose" class="secondary-btn" style="padding:6px 12px;">
+                        <i class="fa-solid fa-xmark"></i> Закрыть
+                    </button>
+                </div>
+                <div id="analyzerInboxBody" style="padding:14px 20px; overflow:auto; flex:1;"></div>
+            </div>`;
+        document.body.appendChild(overlay);
+        // Закрытие по клику на overlay (но не на содержимое) + кнопке + Escape.
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) this._closeInboxModal();
+        });
+        document.getElementById('analyzerInboxClose').addEventListener('click', () => this._closeInboxModal());
+        this._inboxEscHandler = (e) => {
+            if (e.key === 'Escape' && document.getElementById(this._inboxOverlayId)) {
+                this._closeInboxModal();
+            }
+        };
+        document.addEventListener('keydown', this._inboxEscHandler);
+
+        // Делегация click для resolve-кнопок внутри tablицы.
+        document.getElementById('analyzerInboxBody').addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-resolve-action]');
+            if (!btn) return;
+            const issueId = btn.dataset.issueId;
+            const action = btn.dataset.resolveAction;
+            this._resolveIssue(issueId, action, btn);
+        });
+    },
+
+    _closeInboxModal() {
+        const el = document.getElementById(this._inboxOverlayId);
+        if (el) el.remove();
+        if (this._inboxEscHandler) {
+            document.removeEventListener('keydown', this._inboxEscHandler);
+            this._inboxEscHandler = null;
+        }
+        // После закрытия — рефрешим KPI: счётчики могли поменяться.
+        this.loadDashboard();
+    },
+
+    _renderInboxModal(data, filter) {
+        const titleMap = {
+            anomalies: 'Аномалии — список проблем',
+            critical:  'Критические аномалии (score ≥ 80)',
+            gsheets:   'GSheets — конфликты сопоставления',
+        };
+        const title = titleMap[filter] || 'Список проблем';
+        document.getElementById('analyzerInboxTitle').textContent = title;
+        const sum = data.summary || {};
+        document.getElementById('analyzerInboxSummary').textContent =
+            `Всего: ${data.total} · anomalies: ${sum.anomalies || 0} · gsheets: ${sum.gsheets || 0} · critical: ${sum.critical || 0}`;
+
+        const body = document.getElementById('analyzerInboxBody');
+        if (!data.issues || !data.issues.length) {
+            body.innerHTML = `
+                <div style="text-align:center; padding:60px; color:var(--text-secondary);">
+                    <i class="fa-solid fa-check-circle" style="font-size:32px; color:#10b981;"></i>
+                    <div style="margin-top:12px; font-size:14px;">За период проблем не найдено — всё чисто.</div>
+                </div>`;
+            return;
+        }
+        body.innerHTML = `
+            <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                <thead style="position:sticky; top:0; background:var(--bg-page); z-index:1;">
+                    <tr style="font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.3px;">
+                        <th style="text-align:left; padding:8px 10px; width:90px;">Severity</th>
+                        <th style="text-align:left; padding:8px 10px;">Проблема</th>
+                        <th style="text-align:left; padding:8px 10px;">Контекст</th>
+                        <th style="text-align:right; padding:8px 10px; width:300px;">Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${data.issues.map(i => this._inboxRowHtml(i)).join('')}
+                </tbody>
+            </table>`;
+    },
+
+    _inboxRowHtml(issue) {
+        const sev = issue.severity || 'medium';
+        const sevColors = {
+            critical: { bg: '#fef2f2', fg: '#991b1b', border: '#fecaca' },
+            high:     { bg: '#fff7ed', fg: '#9a3412', border: '#fed7aa' },
+            medium:   { bg: '#fefce8', fg: '#854d0e', border: '#fde68a' },
+            low:      { bg: '#f9fafb', fg: '#6b7280', border: '#e5e7eb' },
+        };
+        const c = sevColors[sev] || sevColors.medium;
+        const sevBadge = `<span style="display:inline-block; padding:3px 8px; border-radius:4px; background:${c.bg}; color:${c.fg}; border:1px solid ${c.border}; font-size:10px; font-weight:600; text-transform:uppercase;">${escapeHtml(sev)}</span>`;
+
+        const ctx = issue.context || {};
+        let contextHtml = '';
+        if (issue.kind === 'anomaly') {
+            const flag = `<span style="font-family:monospace; font-size:11px; background:#f3f4f6; padding:1px 5px; border-radius:3px;">${escapeHtml(issue.flag || '')}</span>`;
+            const cost = ctx.total_cost != null
+                ? `<span style="color:var(--text-secondary);"> · ${(ctx.total_cost).toLocaleString('ru-RU', {minimumFractionDigits:2, maximumFractionDigits:2})} ₽</span>`
+                : '';
+            contextHtml = `
+                <div><b>${escapeHtml(ctx.username || '—')}</b>${cost}</div>
+                <div style="color:var(--text-secondary); font-size:11px;">
+                    ${escapeHtml(ctx.dormitory || '—')} · комн. ${escapeHtml(ctx.room_number || '—')} · ${escapeHtml(ctx.period_name || '—')}
+                </div>
+                <div style="margin-top:3px;">${flag} <span style="color:var(--text-tertiary); font-size:11px;">score=${issue.score}</span></div>`;
+        } else if (issue.kind === 'gsheets') {
+            contextHtml = `
+                <div><b>${escapeHtml(ctx.fio_raw || '—')}</b></div>
+                <div style="color:var(--text-secondary); font-size:11px;">
+                    ${escapeHtml(ctx.dormitory_raw || '—')} · комн. ${escapeHtml(ctx.room_raw || '—')}
+                </div>
+                ${ctx.conflict_reason ? `<div style="color:#9a3412; font-size:11px; margin-top:3px;"><i class="fa-solid fa-triangle-exclamation"></i> ${escapeHtml(ctx.conflict_reason)}</div>` : ''}`;
+        }
+
+        // Кнопка suggested action — primary, остальные available — secondary.
+        const actionLabels = {
+            dismiss: { ru: 'Не аномалия', icon: 'check', desc: 'Жилец живёт нормально, флаг ложный — больше не показывать' },
+            verify:  { ru: 'Открыть запись', icon: 'eye',  desc: 'Открыть reading в реестре для ручной проверки' },
+            ignore:  { ru: 'Пропустить',    icon: 'forward', desc: 'Видел, оставляю как есть' },
+            reject:  { ru: 'Отклонить',     icon: 'ban',  desc: 'Отбросить строку из импорта' },
+            open:    { ru: 'Открыть',       icon: 'arrow-up-right-from-square', desc: 'Открыть форму сопоставления' },
+        };
+        const suggested = issue.suggested_action;
+        const available = issue.available_actions || [];
+
+        const renderBtn = (act, primary) => {
+            const meta = actionLabels[act] || { ru: act, icon: 'play', desc: '' };
+            const cls = primary ? 'primary-btn' : 'secondary-btn';
+            return `
+                <button class="${cls}" data-resolve-action="${escapeHtml(act)}" data-issue-id="${escapeHtml(issue.issue_id)}"
+                        title="${escapeHtml(meta.desc)}" style="padding:5px 10px; font-size:12px; margin-left:4px;">
+                    <i class="fa-solid fa-${meta.icon}"></i> ${escapeHtml(meta.ru)}
+                </button>`;
+        };
+        const buttons = [
+            renderBtn(suggested, true),
+            ...available.filter(a => a !== suggested).map(a => renderBtn(a, false)),
+        ].join('');
+
+        return `
+            <tr style="border-bottom:1px solid var(--border-color);">
+                <td style="padding:10px;">${sevBadge}</td>
+                <td style="padding:10px;">${escapeHtml(issue.title || '')}</td>
+                <td style="padding:10px;">${contextHtml}</td>
+                <td style="padding:10px; text-align:right; white-space:nowrap;">${buttons}</td>
+            </tr>`;
+    },
+
+    async _resolveIssue(issueId, action, btn) {
+        // Действия 'open' / 'verify' — пока показываем подсказку с ID
+        // записи, чтобы админ нашёл её в реестре «Сверка показаний» или
+        // в форме GSheets-матчинга. Deep-link на конкретный reading
+        // потребует поддержку в router'е app.js — сделаем отдельным шагом.
+        if (action === 'verify' || action === 'open') {
+            const [kind, rawId] = issueId.split(':');
+            if (kind === 'anomaly') {
+                toast(`Откройте «Сверка показаний» и найдите reading #${rawId}`, 'info');
+                return;
+            }
+            if (kind === 'gsheets') {
+                toast(`Откройте GSheets-импорт и найдите строку #${rawId}`, 'info');
+                return;
+            }
+        }
+
+        const origHtml = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+        try {
+            const res = await api.post('/admin/analyzer/inbox/resolve', {
+                issue_id: issueId,
+                action: action,
+            });
+            toast(`✓ ${action}: применено`, 'success');
+            // Перерисуем модалку чтобы убрать обработанную строку.
+            // Простой путь: убрать строку из DOM локально.
+            const row = btn.closest('tr');
+            if (row) {
+                row.style.transition = 'opacity 0.25s, background 0.25s';
+                row.style.background = '#d1fae5';
+                setTimeout(() => {
+                    row.style.opacity = '0';
+                    setTimeout(() => row.remove(), 250);
+                }, 200);
+            }
+        } catch (e) {
+            toast(`Ошибка: ${e.message}`, 'error');
+            btn.disabled = false;
+            btn.innerHTML = origHtml;
         }
     },
 };
