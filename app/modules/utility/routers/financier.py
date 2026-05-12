@@ -1006,6 +1006,230 @@ async def debts_reassign_not_found(
 
 
 # =========================================================================
+# FIND CANDIDATES — поиск похожих жильцов для not-found ФИО
+# =========================================================================
+@router.get("/debts/find-candidates", summary="Похожие жильцы по ФИО (fuzzy)")
+async def debts_find_candidates(
+    fio: str = Query(..., min_length=3, max_length=200, description="ФИО из Excel"),
+    limit: int = Query(5, ge=1, le=20),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Возвращает топ-N жильцов с похожим ФИО для UI «Не найдены в 1С».
+
+    Раньше в not-found модалке админ должен был вводить логин вручную.
+    Теперь система предлагает кандидатов — как в gsheets-импорте. Жилец
+    может найтись по:
+      - fuzzy совпадению имени-фамилии (token_sort_ratio)
+      - общему отчеству (Сергеевич × Сергеевич — возможно брат/сестра)
+
+    Используется тот же rapidfuzz что в debt_import.py — порог чуть ниже
+    (50% вместо 88%), чтобы показать СУЩЕСТВУЮЩИХ кандидатов которых
+    отбросил автоматический импорт.
+    """
+    _require_finance(current_user)
+
+    from rapidfuzz import process, fuzz
+    from sqlalchemy.orm import selectinload as _selectinload
+
+    users_raw = (await db.execute(
+        select(User).options(_selectinload(User.room))
+        .where(User.is_deleted.is_(False), User.role == "user")
+    )).scalars().all()
+
+    target_norm = " ".join(fio.lower().split())
+    if not target_norm:
+        return {"fio": fio, "candidates": []}
+
+    # Список (username_normalized, user_obj) для fuzzy-поиска
+    pool = [(" ".join(u.username.lower().split()), u) for u in users_raw if u.username]
+
+    # token_sort_ratio из rapidfuzz: «Иванов И.» матчит «Иванов Иван» с
+    # высоким score, потому что сортирует токены.
+    matches = process.extract(
+        target_norm,
+        [name for name, _ in pool],
+        scorer=fuzz.token_sort_ratio,
+        limit=limit * 3,  # берём больше, потом фильтруем по threshold
+    )
+
+    seen_user_ids: set[int] = set()
+    candidates = []
+    for name, score, idx in matches:
+        if score < 50:
+            continue
+        u = pool[idx][1]
+        if u.id in seen_user_ids:
+            continue
+        seen_user_ids.add(u.id)
+        room_label = (
+            f"{u.room.dormitory_name} / {u.room.room_number}"
+            if u.room else "без комнаты"
+        )
+        # «Похожее отчество» — простая эвристика для случая брат/сестра.
+        # Берём последний токен у обоих и сравниваем.
+        target_parts = target_norm.split()
+        name_parts = name.split()
+        reason = None
+        if score < 80 and len(target_parts) >= 3 and len(name_parts) >= 3:
+            if target_parts[-1] == name_parts[-1] and target_parts[0] != name_parts[0]:
+                reason = "Общее отчество (возможно, брат/сестра)"
+        candidates.append({
+            "id": u.id,
+            "username": u.username,
+            "room_label": room_label,
+            "residents_count": int(u.residents_count or 1),
+            "score": int(score),
+            "reason": reason,
+        })
+        if len(candidates) >= limit:
+            break
+
+    return {"fio": fio, "candidates": candidates}
+
+
+# =========================================================================
+# CREATE-AND-MATCH — создать нового жильца + привязать долг
+# =========================================================================
+class DebtCreateAndMatchRequest(BaseModel):
+    """Создание нового жильца с одновременной привязкой долга/переплаты.
+
+    Аналогично gsheets create-and-match (admin_gsheets.py), но здесь сразу
+    добавляем сумму к debt_*/overpayment_* в MeterReading периода импорта.
+    """
+    fio: str           # ФИО из Excel — для удаления из not_found_users
+    username: str      # логин для входа
+    password: str
+    dormitory_name: str
+    room_number: str
+    debt: float = 0.0
+    overpayment: float = 0.0
+    residents_count: int = 1
+    resident_type: str = "family"
+    workplace: Optional[str] = None
+
+
+@router.post("/debts/import-history/{log_id}/create-and-match", summary="Создать жильца + привязать долг")
+async def debts_create_and_match(
+    log_id: int,
+    data: DebtCreateAndMatchRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Создаёт нового User + комнатную привязку + добавляет долг к
+    черновику reading периода импорта. Удаляет ФИО из not_found_users.
+
+    Используется когда жильца РЕАЛЬНО нет в системе (новый человек,
+    которого ещё не завели в «Жильцы»). До этого фикса админ должен был:
+      1) зайти в «Жильцы»
+      2) создать пользователя
+      3) вернуться в долги и сделать reassign
+    Сейчас всё одной операцией.
+    """
+    _require_finance(current_user)
+
+    log = await db.get(DebtImportLog, log_id)
+    if not log:
+        raise HTTPException(404, "Лог не найден")
+    if log.status != "completed":
+        raise HTTPException(400, f"Статус лога «{log.status}» — операция только для completed")
+
+    # 1. Уникальность логина (case-insensitive)
+    existing_user = (await db.execute(
+        select(User).where(func.lower(User.username) == data.username.strip().lower())
+    )).scalars().first()
+    if existing_user:
+        raise HTTPException(400, f"Логин «{data.username.strip()}» уже занят")
+
+    # 2. Комната должна существовать в Жилфонде
+    room = (await db.execute(
+        select(Room).where(
+            Room.dormitory_name == data.dormitory_name.strip(),
+            Room.room_number == data.room_number.strip(),
+        ).limit(1)
+    )).scalars().first()
+    if not room:
+        raise HTTPException(
+            400,
+            f"Комната «{data.room_number}» в общежитии «{data.dormitory_name}» "
+            "не найдена в Жилфонде. Создайте её сначала.",
+        )
+
+    # 3. Создание User
+    rt = data.resident_type if data.resident_type in ("family", "single") else "family"
+    bm = "per_capita" if rt == "single" else "by_meter"
+
+    from app.core.auth import get_password_hash
+    db_user = User(
+        username=data.username.strip(),
+        hashed_password=get_password_hash(data.password),
+        role="user",
+        workplace=(data.workplace or "").strip() or None,
+        residents_count=max(1, int(data.residents_count)),
+        room_id=None,  # выставит move_user_to_room
+        resident_type=rt,
+        billing_mode=bm,
+        is_deleted=False,
+        is_initial_setup_done=False,
+    )
+    db.add(db_user)
+    await db.flush()
+
+    from app.modules.utility.services.room_assignment import move_user_to_room
+    await move_user_to_room(
+        db, user=db_user, new_room_id=room.id,
+        note=f"created via debts not-found import #{log_id}",
+    )
+
+    # 4. Добавляем долг к черновику reading периода импорта
+    debt_dec = Decimal(str(data.debt or 0))
+    over_dec = Decimal(str(data.overpayment or 0))
+
+    if log.period_id:
+        reading = (await db.execute(
+            select(MeterReading).where(
+                MeterReading.period_id == log.period_id,
+                MeterReading.room_id == room.id,
+            ).limit(1)
+        )).scalars().first()
+
+        if reading:
+            if log.account_type == "209":
+                reading.debt_209 = (reading.debt_209 or Decimal("0")) + debt_dec
+                reading.overpayment_209 = (reading.overpayment_209 or Decimal("0")) + over_dec
+            else:
+                reading.debt_205 = (reading.debt_205 or Decimal("0")) + debt_dec
+                reading.overpayment_205 = (reading.overpayment_205 or Decimal("0")) + over_dec
+        else:
+            reading = MeterReading(
+                user_id=db_user.id,
+                room_id=room.id,
+                period_id=log.period_id,
+                is_approved=False,
+                debt_209=debt_dec if log.account_type == "209" else Decimal("0"),
+                overpayment_209=over_dec if log.account_type == "209" else Decimal("0"),
+                debt_205=debt_dec if log.account_type == "205" else Decimal("0"),
+                overpayment_205=over_dec if log.account_type == "205" else Decimal("0"),
+            )
+            db.add(reading)
+
+    # 5. Удаляем FIO из not_found_users
+    nfu = list(log.not_found_users or [])
+    nfu_new = [x for x in nfu if x.strip().lower() != data.fio.strip().lower()]
+    if len(nfu_new) != len(nfu):
+        log.not_found_users = nfu_new
+        log.not_found_count = len(nfu_new)
+
+    await db.commit()
+    return {
+        "status": "ok",
+        "user_id": db_user.id,
+        "username": data.username.strip(),
+        "room_id": room.id,
+    }
+
+
+# =========================================================================
 # RECONCILIATION — сверка показаний с долгами (для Центра анализа)
 # =========================================================================
 

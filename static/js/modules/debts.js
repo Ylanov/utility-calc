@@ -723,70 +723,262 @@ export const DebtsModule = {
             }
             this.dom.notFoundList.innerHTML = `
                 <p class="hint-text" style="font-size:12px; margin-bottom:12px;">
-                    ФИО из Excel, которые fuzzy-матчер не смог привязать к жильцу. Для каждого — введите логин жильца и сумму.
+                    ФИО из Excel, которых fuzzy-матчер не смог привязать к жильцу.
+                    Сначала впишите сумму долга/переплаты, потом «Найти похожих»
+                    (если жилец есть в системе) или «Создать жильца» (если нового нет).
                 </p>
                 ${list.map(fio => this.renderNotFoundRow(fio, logId, data.account_type)).join('')}
             `;
-            this.dom.notFoundList.querySelectorAll('form[data-nf-form]').forEach(f => {
-                f.addEventListener('submit', (e) => this.submitReassign(e, logId, data.account_type));
-            });
+            // Контекст для click-handler. Меняется при каждом openNotFoundModal,
+            // handler читает из state — нет накопления listeners.
+            this._nfCtx = { logId, accountType: data.account_type };
+            if (!this._nfClickHandlerAttached) {
+                this.dom.notFoundList.addEventListener('click', (e) => {
+                    const btn = e.target.closest('button[data-nf-action]');
+                    if (!btn || !this._nfCtx) return;
+                    const { logId, accountType } = this._nfCtx;
+                    const action = btn.dataset.nfAction;
+                    const row = btn.closest('.nf-row');
+                    if (!row) return;
+                    const fio = row.dataset.fio;
+                    if (action === 'find') {
+                        this._nfFindCandidates(row, fio, logId, accountType);
+                    } else if (action === 'create') {
+                        this._nfShowCreateForm(row, fio, logId, accountType);
+                    } else if (action === 'legacy') {
+                        this._nfShowLegacyForm(row, fio, logId, accountType);
+                    } else if (action === 'pick-candidate') {
+                        this._nfPickCandidate(row, fio, logId, accountType, Number(btn.dataset.userId), btn.dataset.username);
+                    } else if (action === 'submit-create') {
+                        this._nfSubmitCreate(row, fio, logId, accountType);
+                    } else if (action === 'submit-legacy') {
+                        this._nfSubmitLegacy(row, fio, logId, accountType);
+                    }
+                });
+                this._nfClickHandlerAttached = true;
+            }
         } catch (e) {
             this.dom.notFoundList.innerHTML = `<div style="padding:16px; color:var(--danger-color);">Ошибка: ${esc(e.message)}</div>`;
         }
     },
 
     renderNotFoundRow(fio, logId, accountType) {
+        // Каждая строка содержит:
+        //  - ФИО + поля для суммы (общие для любого выбора кандидата)
+        //  - Кнопка «Найти похожих» — раскрывает inline-блок с кандидатами
+        //  - Кнопка «Создать жильца» — раскрывает форму создания
+        //  - (старое) Inline-форма с логином — fallback если знаешь точный логин
+        const safeId = btoa(unescape(encodeURIComponent(fio))).replace(/[^a-zA-Z0-9]/g, '').slice(0, 16);
         return `
-            <form data-nf-form data-fio="${esc(fio)}" style="display:flex; gap:8px; align-items:center; padding:10px; border:1px solid var(--border-color); border-radius:8px; margin-bottom:8px; flex-wrap:wrap;">
-                <div style="flex:1 1 240px; min-width:0;">
-                    <div style="font-weight:600; font-size:13px; color:#1f2937; overflow-wrap:anywhere;">${esc(fio)}</div>
-                    <div style="font-size:11px; color:var(--text-secondary);">счёт ${esc(accountType)}</div>
+            <div class="nf-row" data-fio="${esc(fio)}" data-row-id="${safeId}"
+                 style="border:1px solid var(--border-color); border-radius:8px; margin-bottom:10px; padding:10px;">
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px; margin-bottom:8px;">
+                    <div style="flex:1; min-width:0;">
+                        <div style="font-weight:600; font-size:13px; color:#1f2937; overflow-wrap:anywhere;">${esc(fio)}</div>
+                        <div style="font-size:11px; color:var(--text-secondary);">счёт ${esc(accountType)}</div>
+                    </div>
+                    <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                        <input type="number" data-nf-debt step="0.01" placeholder="Долг ₽" style="width:90px; font-size:12px;">
+                        <input type="number" data-nf-overpay step="0.01" placeholder="Перепл. ₽" style="width:90px; font-size:12px;">
+                    </div>
                 </div>
-                <input type="text" name="user_login" placeholder="Логин жильца" required style="width:160px;" autocomplete="off">
-                <input type="number" name="debt" step="0.01" placeholder="Долг ₽" style="width:100px;">
-                <input type="number" name="overpayment" step="0.01" placeholder="Перепл. ₽" style="width:100px;">
-                <button type="submit" class="action-btn primary-btn" style="padding:5px 12px; font-size:12px;">
-                    <i class="fa-solid fa-link"></i> Привязать
-                </button>
-            </form>
+                <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                    <button data-nf-action="find" class="action-btn primary-btn" style="padding:5px 10px; font-size:12px;">
+                        <i class="fa-solid fa-magnifying-glass"></i> Найти похожих
+                    </button>
+                    <button data-nf-action="create" class="action-btn success-btn" style="padding:5px 10px; font-size:12px;">
+                        <i class="fa-solid fa-user-plus"></i> Создать жильца
+                    </button>
+                    <button data-nf-action="legacy" class="action-btn secondary-btn" style="padding:5px 10px; font-size:12px;">
+                        <i class="fa-solid fa-keyboard"></i> Логин вручную
+                    </button>
+                </div>
+                <div data-nf-pane="candidates" style="display:none; margin-top:10px; padding:10px; background:#f9fafb; border-radius:6px;"></div>
+                <div data-nf-pane="create" style="display:none; margin-top:10px; padding:10px; background:#f0fdf4; border-radius:6px; border:1px solid #bbf7d0;"></div>
+                <div data-nf-pane="legacy" style="display:none; margin-top:10px;"></div>
+            </div>
         `;
     },
 
-    async submitReassign(e, logId, accountType) {
-        e.preventDefault();
-        const form = e.currentTarget;
-        const fio = form.dataset.fio;
-        const login = form.user_login.value.trim();
-        const debt = parseFloat(form.debt.value) || 0;
-        const overpayment = parseFloat(form.overpayment.value) || 0;
+    _nfGetSums(row) {
+        // Возвращает {debt, overpayment} из input полей в шапке строки.
+        const debt = parseFloat(row.querySelector('[data-nf-debt]')?.value) || 0;
+        const overpayment = parseFloat(row.querySelector('[data-nf-overpay]')?.value) || 0;
+        return { debt, overpayment };
+    },
 
-        if (!login) return toast('Укажите логин жильца', 'error');
+    _nfShowPane(row, paneName) {
+        // Прячет все панели в строке, потом показывает нужную.
+        row.querySelectorAll('[data-nf-pane]').forEach(p => {
+            p.style.display = p.dataset.nfPane === paneName ? '' : 'none';
+        });
+    },
 
-        const btn = form.querySelector('button[type="submit"]');
-        setLoading(btn, true, '...');
+    async _nfFindCandidates(row, fio, logId, accountType) {
+        const pane = row.querySelector('[data-nf-pane="candidates"]');
+        this._nfShowPane(row, 'candidates');
+        pane.innerHTML = '<div style="text-align:center; padding:14px; color:var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Поиск кандидатов…</div>';
         try {
-            // Резолвим логин → user_id (минимальный API — подсветка жильца через /users?search)
-            const userSearch = await api.get(`/users?page=1&limit=5&search=${encodeURIComponent(login)}`);
-            const exact = (userSearch.items || []).find(u => u.username.toLowerCase() === login.toLowerCase());
-            if (!exact) {
-                toast(`Жилец «${login}» не найден`, 'error');
+            const data = await api.get(`/financier/debts/find-candidates?fio=${encodeURIComponent(fio)}&limit=5`);
+            const cands = data.candidates || [];
+            if (!cands.length) {
+                pane.innerHTML = `
+                    <div style="font-size:13px; color:var(--text-secondary); padding:8px;">
+                        Похожих жильцов не нашлось. Используйте «Создать жильца» если человек новый.
+                    </div>`;
                 return;
             }
+            pane.innerHTML = `
+                <div style="font-size:11px; color:var(--text-secondary); margin-bottom:8px; text-transform:uppercase;">
+                    Возможные кандидаты (${cands.length})
+                </div>
+                ${cands.map(c => `
+                    <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;
+                                padding:8px 10px; background:#fff; border:1px solid var(--border-color); border-radius:6px; margin-bottom:6px;">
+                        <div style="flex:1; min-width:0;">
+                            <div style="font-weight:600; font-size:13px;">${esc(c.username)}
+                                <span style="font-size:11px; color:var(--text-secondary); margin-left:4px;">${c.score}%</span>
+                            </div>
+                            <div style="font-size:11px; color:var(--text-secondary);">
+                                ${esc(c.room_label)} · ${c.residents_count} чел.
+                            </div>
+                            ${c.reason ? `<div style="font-size:11px; color:#92400e; margin-top:3px;">
+                                <i class="fa-solid fa-circle-info"></i> ${esc(c.reason)}
+                            </div>` : ''}
+                        </div>
+                        <button data-nf-action="pick-candidate" data-user-id="${c.id}" data-username="${esc(c.username)}"
+                                class="action-btn primary-btn" style="padding:4px 10px; font-size:12px; white-space:nowrap;">
+                            <i class="fa-solid fa-check"></i> Это он
+                        </button>
+                    </div>
+                `).join('')}`;
+        } catch (e) {
+            pane.innerHTML = `<div style="color:#b91c1c; padding:8px;">Ошибка: ${esc(e.message)}</div>`;
+        }
+    },
+
+    async _nfPickCandidate(row, fio, logId, accountType, userId, username) {
+        const { debt, overpayment } = this._nfGetSums(row);
+        const fd = new FormData();
+        fd.append('fio', fio);
+        fd.append('user_id', String(userId));
+        fd.append('debt', String(debt));
+        fd.append('overpayment', String(overpayment));
+        try {
+            await api.post(`/financier/debts/import-history/${logId}/reassign`, fd);
+            toast(`Привязано: ${fio} → ${username}`, 'success');
+            row.remove();
+            this.reload();
+            this.loadImportHistory();
+        } catch (e) {
+            toast('Ошибка: ' + e.message, 'error');
+        }
+    },
+
+    _nfShowCreateForm(row, fio, logId, accountType) {
+        const pane = row.querySelector('[data-nf-pane="create"]');
+        this._nfShowPane(row, 'create');
+        // Генерим читаемый пароль (без 0/O, 1/l/I).
+        const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789';
+        const arr = new Uint8Array(12);
+        (window.crypto || window.msCrypto).getRandomValues(arr);
+        let pwd = ''; for (let i = 0; i < 12; i++) pwd += chars[arr[i] % chars.length];
+        pane.innerHTML = `
+            <div style="font-size:11px; color:#166534; margin-bottom:8px; text-transform:uppercase;">
+                Создать нового жильца + сразу записать долг
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+                <input type="text" data-nf-login placeholder="Логин (для входа)" value="${esc(fio)}" style="font-size:13px;">
+                <input type="text" data-nf-pwd placeholder="Пароль" value="${pwd}" style="font-size:13px; font-family:monospace;">
+                <input type="text" data-nf-dorm placeholder="Общежитие" style="font-size:13px;">
+                <input type="text" data-nf-room placeholder="Номер комнаты" style="font-size:13px;">
+                <input type="number" data-nf-residents value="1" min="1" max="20" placeholder="Жильцов в семье" style="font-size:13px;">
+                <select data-nf-type style="font-size:13px;">
+                    <option value="family">Семья (по счётчику)</option>
+                    <option value="single">Одиночка (per capita)</option>
+                </select>
+            </div>
+            <div style="margin-top:8px;">
+                <button data-nf-action="submit-create" class="action-btn success-btn" style="padding:6px 12px; font-size:12px;">
+                    <i class="fa-solid fa-check"></i> Создать и привязать
+                </button>
+            </div>
+        `;
+    },
+
+    async _nfSubmitCreate(row, fio, logId, accountType) {
+        const { debt, overpayment } = this._nfGetSums(row);
+        const pane = row.querySelector('[data-nf-pane="create"]');
+        const login = pane.querySelector('[data-nf-login]').value.trim();
+        const password = pane.querySelector('[data-nf-pwd]').value.trim();
+        const dorm = pane.querySelector('[data-nf-dorm]').value.trim();
+        const roomNo = pane.querySelector('[data-nf-room]').value.trim();
+        const residents = Number(pane.querySelector('[data-nf-residents]').value) || 1;
+        const type = pane.querySelector('[data-nf-type]').value;
+
+        if (!login || login.length < 3) return toast('Логин минимум 3 символа', 'warning');
+        if (!password || password.length < 6) return toast('Пароль минимум 6 символов', 'warning');
+        if (!dorm || !roomNo) return toast('Укажите общежитие и номер комнаты', 'warning');
+
+        try {
+            await api.post(`/financier/debts/import-history/${logId}/create-and-match`, {
+                fio,
+                username: login,
+                password,
+                dormitory_name: dorm,
+                room_number: roomNo,
+                debt,
+                overpayment,
+                residents_count: residents,
+                resident_type: type,
+            });
+            toast(`Создан жилец «${login}», долг ${debt} ₽ записан`, 'success');
+            row.remove();
+            this.reload();
+            this.loadImportHistory();
+        } catch (e) {
+            toast('Ошибка: ' + e.message, 'error');
+        }
+    },
+
+    _nfShowLegacyForm(row, fio, logId, accountType) {
+        const pane = row.querySelector('[data-nf-pane="legacy"]');
+        this._nfShowPane(row, 'legacy');
+        pane.innerHTML = `
+            <div style="display:flex; gap:6px; align-items:center;">
+                <input type="text" data-nf-legacy-login placeholder="Логин жильца" style="flex:1; font-size:13px;" autocomplete="off">
+                <button data-nf-action="submit-legacy" class="action-btn primary-btn" style="padding:5px 10px; font-size:12px;">
+                    <i class="fa-solid fa-link"></i> Привязать
+                </button>
+            </div>
+            <div style="font-size:11px; color:var(--text-secondary); margin-top:4px;">
+                Подходит когда знаешь точный логин жильца — поиск по точному совпадению.
+            </div>
+        `;
+    },
+
+    async _nfSubmitLegacy(row, fio, logId, accountType) {
+        const { debt, overpayment } = this._nfGetSums(row);
+        const pane = row.querySelector('[data-nf-pane="legacy"]');
+        const login = pane.querySelector('[data-nf-legacy-login]').value.trim();
+        if (!login) return toast('Укажите логин', 'warning');
+        try {
+            const userSearch = await api.get(`/users?page=1&limit=5&search=${encodeURIComponent(login)}`);
+            const exact = (userSearch.items || []).find(u => u.username.toLowerCase() === login.toLowerCase());
+            if (!exact) return toast(`Жилец «${login}» не найден`, 'error');
 
             const fd = new FormData();
             fd.append('fio', fio);
             fd.append('user_id', String(exact.id));
             fd.append('debt', String(debt));
             fd.append('overpayment', String(overpayment));
-
             await api.post(`/financier/debts/import-history/${logId}/reassign`, fd);
             toast(`Привязано: ${fio} → ${login}`, 'success');
-            form.remove();
+            row.remove();
             this.reload();
-        } catch (e2) {
-            toast('Ошибка: ' + e2.message, 'error');
-        } finally {
-            setLoading(btn, false, '<i class="fa-solid fa-link"></i> Привязать');
+            this.loadImportHistory();
+        } catch (e) {
+            toast('Ошибка: ' + e.message, 'error');
         }
     },
 
