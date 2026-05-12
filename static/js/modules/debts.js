@@ -75,6 +75,12 @@ export const DebtsModule = {
             minDebt: document.getElementById('debtsMinDebt'),
             // Импорт
             btnUpload: document.getElementById('btnUploadDebts'),
+            // Парный импорт v2 — два отдельных file-input. Старый
+            // #debtFile1C оставлен fallback'ом если HTML где-то ещё
+            // содержит legacy-шаблон, но в актуальном tab_debts.html
+            // его нет.
+            inputUpload209: document.getElementById('debtFile209'),
+            inputUpload205: document.getElementById('debtFile205'),
             inputUpload: document.getElementById('debtFile1C'),
             uploadResult: document.getElementById('uploadResult'),
             // KPI
@@ -262,10 +268,67 @@ export const DebtsModule = {
     // ==========================================================================
     async handleUpload() {
         if (this.state.isUploading) return toast('Импорт уже выполняется', 'info');
-        const file = this.dom.inputUpload.files[0];
-        if (!file) return toast('Выберите файл .xlsx', 'error');
 
-        const accountType = document.querySelector('input[name="accountType"]:checked').value;
+        const file209 = this.dom.inputUpload209?.files[0] || null;
+        const file205 = this.dom.inputUpload205?.files[0] || null;
+        // Legacy: если только старая разметка (#debtFile1C + radio) — старая логика.
+        if (!file209 && !file205) {
+            const legacyFile = this.dom.inputUpload?.files[0];
+            if (legacyFile) {
+                return this._handleLegacyUpload(legacyFile);
+            }
+            return toast('Выберите хотя бы один файл .xlsx', 'error');
+        }
+
+        const summary = [
+            file209 ? `209: ${file209.name}` : null,
+            file205 ? `205: ${file205.name}` : null,
+        ].filter(Boolean).join('\n');
+        if (!confirm(`Загрузить файлы?\n${summary}`)) return;
+
+        this.state.isUploading = true;
+        if (this.dom.uploadResult) {
+            this.dom.uploadResult.style.display = 'none';
+            this.dom.uploadResult.innerHTML = '';
+        }
+        setLoading(this.dom.btnUpload, true, 'Загрузка...');
+
+        const formData = new FormData();
+        if (file209) formData.append('file_209', file209);
+        if (file205) formData.append('file_205', file205);
+
+        try {
+            const res = await api.post('/financier/import-debts-pair', formData);
+            // Очищаем inputs чтобы случайно не нажать «загрузить» ещё раз.
+            if (this.dom.inputUpload209) this.dom.inputUpload209.value = '';
+            if (this.dom.inputUpload205) this.dom.inputUpload205.value = '';
+
+            toast(`Файлы приняты (${res.tasks?.length || 0}). Обработка…`, 'info');
+            // Polling по последнему таску — обычно у нас 1-2 и они идут
+            // параллельно, общая длительность определяется самым медленным.
+            // Для простоты UI ждём один из тасков; loadImportHistory всё равно
+            // покажет обе записи в любом случае.
+            const lastTask = res.tasks?.[res.tasks.length - 1];
+            if (lastTask?.task_id) {
+                this.pollTask(lastTask.task_id);
+            } else {
+                this.state.isUploading = false;
+                setLoading(this.dom.btnUpload, false, '⬆ Загрузить выбранные');
+                this.loadImportHistory();
+            }
+        } catch (e) {
+            toast(`Ошибка: ${e.message}`, 'error');
+            this.state.isUploading = false;
+            setLoading(this.dom.btnUpload, false, '⬆ Загрузить выбранные');
+        }
+    },
+
+    async _handleLegacyUpload(file) {
+        // Старая разметка (только #debtFile1C + radio) — отдельный код-пас
+        // для обратной совместимости. После полного удаления tab_debts.html
+        // v1 этот метод можно убрать.
+        const radio = document.querySelector('input[name="accountType"]:checked');
+        const accountType = radio?.value || '209';
         if (!confirm(`Загрузить долги для счёта ${accountType}?`)) return;
 
         this.state.isUploading = true;
@@ -592,6 +655,13 @@ export const DebtsModule = {
                             style="padding:3px 8px; font-size:11px; background:#fef3c7; color:#92400e; border-color:#fde68a; white-space:nowrap;">
                         ⚠ ${log.not_found_count}
                     </button>` : ''}
+                ${log.has_archive ? `
+                    <a href="/api/financier/debts/import-history/${log.id}/download"
+                       class="action-btn secondary-btn" download
+                       title="Скачать оригинальный xlsx из 1С"
+                       style="padding:3px 8px; font-size:11px; white-space:nowrap; text-decoration:none;">
+                        <i class="fa-solid fa-download"></i>
+                    </a>` : ''}
                 ${canUndo ? `
                     <button class="action-btn danger-btn" data-history-action="undo" data-log-id="${log.id}"
                             style="padding:3px 8px; font-size:11px; white-space:nowrap;">

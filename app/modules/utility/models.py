@@ -768,9 +768,21 @@ class DebtImportLog(Base):
     completed_at = Column(DateTime, nullable=True)
     reverted_at = Column(DateTime, nullable=True)
 
+    # Постоянный архив оригинального xlsx — /app/data/debt_archives/{log_id}.xlsx.
+    # До миграции debts_002 файл лежал в /static/temp_imports/{uuid}.xlsx и
+    # мог теряться. Колонка nullable — у старых логов значения нет.
+    archive_path = Column(String(512), nullable=True)
+    # Индивидуальный retention в днях. None → берётся из analyzer_settings
+    # (debt.archive_retention_days, default 730).
+    retention_days = Column(Integer, nullable=True)
+    # Группировка парных импортов: тот же UUID в обоих логах (205 + 209)
+    # когда админ загрузил два файла одной операцией.
+    batch_id = Column(String(36), nullable=True, index=True)
+
     __table_args__ = (
         Index("idx_debt_import_logs_started_at", "started_at"),
         Index("idx_debt_import_logs_status", "status"),
+        Index("idx_debt_import_logs_batch_id", "batch_id"),
     )
 
 

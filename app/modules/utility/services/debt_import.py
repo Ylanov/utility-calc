@@ -89,6 +89,8 @@ def sync_import_debts_process(
     account_type: str,
     started_by_id: int | None = None,
     started_by_username: str | None = None,
+    batch_id: str | None = None,
+    original_file_name: str | None = None,
 ) -> dict:
     """
     Функция массового импорта долгов.
@@ -114,9 +116,16 @@ def sync_import_debts_process(
         raise RuntimeError(f"Ошибка чтения файла: {error}") from error
 
     # Создаём запись в логе ПЕРЕД импортом — чтобы при падении остался след.
+    # archive_path / batch_id заполняем сразу — если упадёт на парсинге,
+    # админ всё равно сможет скачать оригинальный файл через
+    # /debts/import-history/{id}/download.
     import_log = DebtImportLog(
         account_type=account_type,
-        file_name=os.path.basename(file_path) if file_path else None,
+        # file_name теперь хранит ОРИГИНАЛЬНОЕ имя из upload (если есть),
+        # а не uuid с диска — для удобной навигации в истории.
+        file_name=(original_file_name or os.path.basename(file_path)) if file_path else None,
+        archive_path=file_path if "/debt_archives/" in (file_path or "") else None,
+        batch_id=batch_id,
         status="pending",
         started_by_id=started_by_id,
         started_by_username=started_by_username,
@@ -329,7 +338,9 @@ def sync_import_debts_process(
         try:
             failed_log = DebtImportLog(
                 account_type=account_type,
-                file_name=os.path.basename(file_path) if file_path else None,
+                file_name=(original_file_name or os.path.basename(file_path)) if file_path else None,
+                archive_path=file_path if "/debt_archives/" in (file_path or "") else None,
+                batch_id=batch_id,
                 status="failed",
                 started_by_id=started_by_id,
                 started_by_username=started_by_username,

@@ -443,39 +443,45 @@ def import_debts_task(
     account_type: str,
     started_by_id: int | None = None,
     started_by_username: str | None = None,
+    batch_id: str | None = None,
+    original_file_name: str | None = None,
 ) -> dict:
     """Фоновая задача импорта долгов.
 
-    Транзакционность: sync_import_debts_process делает ОДИН commit в конце
-    и полный rollback при любом исключении. Тасак ретраится до 2 раз
-    (см. retry_kwargs) — временные сбои БД/Redis не приведут к частичному
-    импорту.
+    batch_id — общий UUID для парной загрузки 205+209. Оба DebtImportLog
+    получают один batch_id, UI группирует их как одну операцию.
+    original_file_name — оригинальное имя файла из upload (без UUID),
+    чтобы в истории показывать «209-апрель-2026.xlsx», а не uuid'ы.
 
-    Файл удаляется ТОЛЬКО при успешном завершении. Если задача падает и
-    будет ретрайнутся — файл остаётся на диске, чтобы ретрай мог его снова
-    прочитать. Если все ретраи исчерпаны — файл остаётся (админ увидит
-    ошибку и загрузит заново).
+    Файл с ARCHIVE_PATH БОЛЬШЕ НЕ УДАЛЯЕТСЯ — он архивируется и
+    привязывается к DebtImportLog.archive_path. Очистка делает retention-
+    task раз в неделю (см. analyzer_settings debt.archive_retention_days).
 
-    started_by_* — атрибуция импорта в DebtImportLog: админ видит «кто
-    когда запустил» в истории импортов.
+    Файл из legacy TEMP_DIR (если кто-то ещё его использует) удаляется
+    как раньше — у него нет архивного смысла.
     """
     logger.info(
         f"[IMPORT] Start {file_path} for Account {account_type} "
-        f"by user_id={started_by_id} ({started_by_username})"
+        f"by user_id={started_by_id} ({started_by_username}) batch={batch_id}"
     )
     with sync_db_session() as db:
         result = sync_import_debts_process(
             file_path, db, account_type,
             started_by_id=started_by_id,
             started_by_username=started_by_username,
+            batch_id=batch_id,
+            original_file_name=original_file_name,
         )
 
-    # Сюда доходим только при успехе (ошибка пробрасывается из with).
-    try:
-        if os.path.exists(file_path):
-            os.remove(file_path)
-    except Exception as error:
-        logger.warning(f"[IMPORT] File cleanup failed: {error}")
+    # Архивные файлы НЕ удаляем — они привязаны к DebtImportLog.archive_path
+    # и используются для скачивания / диагностики. Удалит retention-task.
+    # Файлы из legacy temp_imports — удаляем как раньше.
+    if "/temp_imports/" in file_path:
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except Exception as error:
+            logger.warning(f"[IMPORT] Legacy file cleanup failed: {error}")
     return result
 
 

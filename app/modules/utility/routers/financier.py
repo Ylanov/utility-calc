@@ -21,20 +21,26 @@ from app.modules.utility.tasks import import_debts_task
 router = APIRouter(prefix="/api/financier", tags=["Financier"])
 logger = logging.getLogger(__name__)
 
-TEMP_DIR = "/app/static/temp_imports"
+TEMP_DIR = "/app/static/temp_imports"  # legacy, для совместимости со старым кодом
+# Постоянное хранение оригиналов ОСВ из 1С. Делаем вне /static чтобы:
+#  - не отдавать xlsx с любыми credentials напрямую через nginx;
+#  - админ-only download через /api/financier/debts/import-history/{id}/download.
+DEBT_ARCHIVE_DIR = "/app/data/debt_archives"
 MAX_FILE_SIZE = 5 * 1024 * 1024  # 5 MB
 os.makedirs(TEMP_DIR, exist_ok=True)
+os.makedirs(DEBT_ARCHIVE_DIR, exist_ok=True)
 
 
-@router.post("/import-debts", summary="Фоновый импорт долгов из 1С")
-async def upload_debts_1c(
-        account_type: str = Form(..., pattern="^(209|205)$", description="Тип счета: 209 или 205"),
-        file: UploadFile = File(...),
-        current_user: User = Depends(get_current_user)
-):
-    if current_user.role not in ("financier", "accountant", "admin"):
-        raise HTTPException(status_code=403, detail="Доступ запрещен")
+async def _save_uploaded_debt_file(
+    file: UploadFile, account_type: str, batch_id: str
+) -> tuple[str, str]:
+    """Валидирует, проверяет размер/magic-bytes и сохраняет xlsx в archive.
 
+    Возвращает (file_path, original_name). Кидает HTTPException при ошибке.
+    Файлы парного импорта получают batch_id в имени для группировки на
+    диске — после успешного импорта debt_import.py зальёт archive_path
+    в DebtImportLog.
+    """
     if not file.filename.lower().endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Поддерживаются только Excel-файлы")
 
@@ -46,16 +52,15 @@ async def upload_debts_1c(
     file.file.seek(0, 2)
     file_size = file.file.tell()
     await file.seek(0)
-
     if file_size > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=400,
-            detail=f"Файл слишком большой. Максимум {MAX_FILE_SIZE / 1024 / 1024} MB"
+            detail=f"Файл слишком большой. Максимум {MAX_FILE_SIZE / 1024 / 1024} MB",
         )
 
-    ext = file.filename.split(".")[-1]
-    unique_name = f"{uuid.uuid4()}.{ext}"
-    file_path = os.path.join(TEMP_DIR, unique_name)
+    ext = file.filename.rsplit(".", 1)[-1].lower()
+    unique_name = f"{batch_id}_{account_type}.{ext}"
+    file_path = os.path.join(DEBT_ARCHIVE_DIR, unique_name)
 
     try:
         content = await file.read()
@@ -65,22 +70,89 @@ async def upload_debts_1c(
                 buffer.write(content)
 
         await asyncio.to_thread(save_file)
-
     except Exception:
         logger.exception("Failed to save uploaded file")
         raise HTTPException(status_code=500, detail="Ошибка сохранения файла")
+
+    return file_path, file.filename
+
+
+@router.post("/import-debts", summary="Фоновый импорт долгов из 1С")
+async def upload_debts_1c(
+        account_type: str = Form(..., pattern="^(209|205)$", description="Тип счета: 209 или 205"),
+        file: UploadFile = File(...),
+        current_user: User = Depends(get_current_user)
+):
+    """Загрузка ОДНОГО файла. Для парной загрузки 205+209 используйте
+    /import-debts-pair — он создаёт один batch_id для обоих импортов
+    и UI показывает их как единую операцию."""
+    if current_user.role not in ("financier", "accountant", "admin"):
+        raise HTTPException(status_code=403, detail="Доступ запрещен")
+
+    batch_id = str(uuid.uuid4())
+    file_path, original_name = await _save_uploaded_debt_file(file, account_type, batch_id)
 
     task = import_debts_task.delay(
         file_path, account_type,
         started_by_id=current_user.id,
         started_by_username=current_user.username,
+        batch_id=batch_id,
+        original_file_name=original_name,
     )
-    logger.info(f"[IMPORT] Started task={task.id} for account={account_type}")
+    logger.info(f"[IMPORT] Started task={task.id} for account={account_type} batch={batch_id}")
 
     return {
         "task_id": task.id,
         "status": "processing",
-        "account_type": account_type
+        "account_type": account_type,
+        "batch_id": batch_id,
+    }
+
+
+@router.post("/import-debts-pair", summary="Парная загрузка 205 + 209 одной операцией")
+async def upload_debts_pair_1c(
+        file_209: UploadFile = File(None, description="Файл ОСВ по счёту 209"),
+        file_205: UploadFile = File(None, description="Файл ОСВ по счёту 205"),
+        current_user: User = Depends(get_current_user),
+):
+    """Загружает ОБА файла одной операцией. Оба DebtImportLog получают
+    один batch_id — в истории импортов показываются как одна группа.
+
+    Минимум один файл должен быть передан. Если только один — работает
+    как обычный /import-debts (но всё равно создаёт batch_id для
+    унификации UI).
+    """
+    if current_user.role not in ("financier", "accountant", "admin"):
+        raise HTTPException(status_code=403, detail="Доступ запрещен")
+
+    if not file_209 and not file_205:
+        raise HTTPException(status_code=400, detail="Передайте хотя бы один файл (209 и/или 205)")
+
+    batch_id = str(uuid.uuid4())
+    tasks_out = []
+
+    for f, account in [(file_209, "209"), (file_205, "205")]:
+        if f is None:
+            continue
+        file_path, original_name = await _save_uploaded_debt_file(f, account, batch_id)
+        task = import_debts_task.delay(
+            file_path, account,
+            started_by_id=current_user.id,
+            started_by_username=current_user.username,
+            batch_id=batch_id,
+            original_file_name=original_name,
+        )
+        tasks_out.append({
+            "account_type": account,
+            "task_id": task.id,
+            "file_name": original_name,
+        })
+        logger.info(f"[IMPORT-PAIR] Started task={task.id} for account={account} batch={batch_id}")
+
+    return {
+        "status": "processing",
+        "batch_id": batch_id,
+        "tasks": tasks_out,
     }
 
 
@@ -463,9 +535,53 @@ async def debts_import_history(
             "started_at": log.started_at.isoformat() if log.started_at else None,
             "completed_at": log.completed_at.isoformat() if log.completed_at else None,
             "reverted_at": log.reverted_at.isoformat() if log.reverted_at else None,
+            # Новые поля: парный batch + наличие оригинала для скачивания
+            "batch_id": log.batch_id,
+            "has_archive": bool(log.archive_path),
         }
         for log in logs
     ]
+
+
+@router.get("/debts/import-history/{log_id}/download", summary="Скачать оригинальный xlsx")
+async def debts_import_download(
+    log_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Отдаёт оригинальный файл ОСВ из 1С, привязанный к этому импорту.
+
+    archive_path хранится на диске вне /static (защита от прямого
+    скачивания через nginx без auth). FileResponse кидает 404 если файл
+    физически удалён (например, после retention-чистки).
+    """
+    _require_finance(current_user)
+    log = await db.get(DebtImportLog, log_id)
+    if not log:
+        raise HTTPException(404, "Лог импорта не найден")
+    if not log.archive_path:
+        raise HTTPException(
+            404,
+            "Архив этого импорта не сохранён (старый импорт до миграции debts_002)",
+        )
+    if not os.path.exists(log.archive_path):
+        raise HTTPException(
+            404,
+            "Файл физически удалён (retention-policy / ручная очистка).",
+        )
+
+    # Имя для пользователя: оригинальное file_name если есть, иначе генерим
+    # понятное «debts_209_2026-05-12.xlsx».
+    download_name = log.file_name or (
+        f"debts_{log.account_type}_{log.started_at.strftime('%Y-%m-%d') if log.started_at else 'unknown'}.xlsx"
+    )
+
+    from fastapi.responses import FileResponse
+    return FileResponse(
+        path=log.archive_path,
+        filename=download_name,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
 
 
 @router.get("/debts/import-history/{log_id}/not-found", summary="Не найденные ФИО в импорте")
