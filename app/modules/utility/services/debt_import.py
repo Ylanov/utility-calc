@@ -115,6 +115,52 @@ def sync_import_debts_process(
         # Бросаем — Celery должен увидеть падение и ретраить.
         raise RuntimeError(f"Ошибка чтения файла: {error}") from error
 
+    # Парсим заголовок чтобы динамически найти колонки «Дебет» и «Кредит».
+    # Раньше колонки были захардкожены как row[5]/row[6] — это сработало на
+    # старых выгрузках, но в текущих файлах ОСВ из 1С данные в col 4 и col 7
+    # (между ними merged-ячейки, и row[5]/row[6] всегда пустые → debt и
+    # overpayment всё время = 0). Парсер заголовка переживёт изменение
+    # шаблона выгрузки 1С (количество merged-cells).
+    #
+    # Структура header в стандартной ОСВ 1С:
+    #   row 8: ['ДАТА', '', '', '', 'Сальдо на начало периода', ...,
+    #           'Обороты за период', ..., 'Сальдо на конец периода']
+    #   row 9: ['Контрагент', '', '', '', 'Дебет', '', '', 'Кредит', ...]
+    # Берём ПЕРВЫЕ «Дебет» и «Кредит» — это «Сальдо на начало», то что
+    # формально и есть текущий долг/переплата на дату формирования отчёта.
+    debt_col_idx: Optional[int] = None
+    overpay_col_idx: Optional[int] = None
+    try:
+        header_workbook = openpyxl.load_workbook(filename=file_path, read_only=True, data_only=True)
+        header_ws = header_workbook.active
+        for i, header_row in enumerate(header_ws.iter_rows(min_row=1, max_row=12, values_only=True)):
+            if not header_row:
+                continue
+            for col_idx, cell_val in enumerate(header_row):
+                if cell_val is None:
+                    continue
+                token = str(cell_val).strip().lower()
+                if token == "дебет" and debt_col_idx is None:
+                    debt_col_idx = col_idx
+                elif token == "кредит" and overpay_col_idx is None:
+                    overpay_col_idx = col_idx
+            if debt_col_idx is not None and overpay_col_idx is not None:
+                break
+        header_workbook.close()
+    except Exception as e:
+        logger.warning(f"Header parse failed, fallback to legacy indices: {e}")
+
+    # Fallback на legacy-индексы если парсер не нашёл — пусть лучше частично
+    # сработает чем упадёт. Для текущего шаблона 1С парсер найдёт col 4 и 7.
+    if debt_col_idx is None:
+        debt_col_idx = 5
+    if overpay_col_idx is None:
+        overpay_col_idx = 6
+    logger.info(
+        f"Debt import column mapping: debt=col{debt_col_idx}, "
+        f"overpayment=col{overpay_col_idx} (account={account_type})"
+    )
+
     # Создаём запись в логе ПЕРЕД импортом — чтобы при падении остался след.
     # archive_path / batch_id заполняем сразу — если упадёт на парсинге,
     # админ всё равно сможет скачать оригинальный файл через
@@ -193,9 +239,13 @@ def sync_import_debts_process(
             fuzzy_cache[norm] = None
             return None
 
-        # 3. Чтение строк Excel
+        # 3. Чтение строк Excel.
+        # Минимальная длина row = max(debt_col_idx, overpay_col_idx) + 1 чтобы
+        # индексация не вышла за границу. Старое 7 — было хардкодом под legacy
+        # row[6], сейчас может быть и 8 (если overpayment в col 7).
+        min_row_len = max(debt_col_idx, overpay_col_idx) + 1
         for row in worksheet.iter_rows(min_row=8, values_only=True):
-            if not row or len(row) < 7:
+            if not row or len(row) < min_row_len:
                 continue
 
             name_cell = row[0]
@@ -214,8 +264,8 @@ def sync_import_debts_process(
             user_id = user_data["id"]
             room_id = user_data["room_id"]
 
-            debt_val = clean_decimal(row[5])
-            over_val = clean_decimal(row[6])
+            debt_val = clean_decimal(row[debt_col_idx])
+            over_val = clean_decimal(row[overpay_col_idx])
 
             # 4. Если для этой комнаты уже есть черновик в БД
             if room_id in readings_map:
