@@ -543,6 +543,254 @@ async def debts_import_history(
     ]
 
 
+@router.get("/debts/import-history/{log_id}/diff", summary="Diff с предыдущим импортом того же счёта")
+async def debts_import_diff(
+    log_id: int,
+    against_id: Optional[int] = Query(None, description="ID импорта для сравнения. None — предыдущий того же типа."),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Сравнивает applied_state двух импортов одного account_type.
+
+    Категории жильцов:
+      - new_debtors:  не было в прошлом импорте, появился долг > 0
+      - debt_grew:    был и есть, debt вырос
+      - debt_dropped: был и есть, debt упал (но > 0)
+      - debt_closed:  был долг > 0, стал 0 (или жилец исчез из файла)
+      - new_overpay:  появилась переплата которой не было
+
+    На жильцов с одинаковой суммой не возвращаем — это шум, отрисуется
+    только то что изменилось.
+    """
+    _require_finance(current_user)
+
+    current = await db.get(DebtImportLog, log_id)
+    if not current:
+        raise HTTPException(404, "Лог не найден")
+    if not current.applied_state:
+        raise HTTPException(
+            400,
+            "У этого импорта нет applied_state (импорт до миграции debts_003). "
+            "Перезагрузите файлы — diff заработает.",
+        )
+
+    # Находим предыдущий импорт того же account_type, либо берём указанный.
+    if against_id is not None:
+        previous = await db.get(DebtImportLog, against_id)
+        if not previous:
+            raise HTTPException(404, "Лог для сравнения не найден")
+        if previous.account_type != current.account_type:
+            raise HTTPException(
+                400,
+                f"Нельзя сравнивать {previous.account_type!r} с {current.account_type!r}",
+            )
+    else:
+        previous = (await db.execute(
+            select(DebtImportLog)
+            .where(
+                DebtImportLog.account_type == current.account_type,
+                DebtImportLog.id < current.id,
+                DebtImportLog.status == "completed",
+                DebtImportLog.applied_state.is_not(None),
+            )
+            .order_by(desc(DebtImportLog.id))
+            .limit(1)
+        )).scalars().first()
+
+    if not previous:
+        return {
+            "current_id": log_id,
+            "previous_id": None,
+            "account_type": current.account_type,
+            "fatal": "Это первый импорт этого счёта — сравнивать не с чем.",
+        }
+
+    cur_state = current.applied_state or {}
+    prev_state = previous.applied_state or {}
+    account = current.account_type
+    debt_key = f"debt_{account}"
+    over_key = f"overpayment_{account}"
+
+    def _dec(d, key):
+        try:
+            return Decimal(str(d.get(key, "0") or "0"))
+        except Exception:
+            return Decimal("0")
+
+    new_debtors = []
+    debt_grew = []
+    debt_dropped = []
+    debt_closed = []
+    new_overpay = []
+
+    all_room_ids = set(cur_state.keys()) | set(prev_state.keys())
+    for room_id in all_room_ids:
+        cur = cur_state.get(room_id, {})
+        prev = prev_state.get(room_id, {})
+        cur_debt = _dec(cur, debt_key)
+        prev_debt = _dec(prev, debt_key)
+        cur_over = _dec(cur, over_key)
+        prev_over = _dec(prev, over_key)
+
+        # Метаданные берём из cur если есть, иначе из prev (если жилец исчез)
+        meta_username = cur.get("username") or prev.get("username") or "—"
+        meta_room = cur.get("room_label") or prev.get("room_label") or "—"
+
+        if cur_debt > prev_debt:
+            entry = {
+                "room_id": int(room_id),
+                "username": meta_username,
+                "room_label": meta_room,
+                "prev_debt": float(prev_debt),
+                "current_debt": float(cur_debt),
+                "delta": float(cur_debt - prev_debt),
+            }
+            if prev_debt == 0 and cur_debt > 0:
+                new_debtors.append(entry)
+            else:
+                debt_grew.append(entry)
+        elif cur_debt < prev_debt:
+            entry = {
+                "room_id": int(room_id),
+                "username": meta_username,
+                "room_label": meta_room,
+                "prev_debt": float(prev_debt),
+                "current_debt": float(cur_debt),
+                "delta": float(cur_debt - prev_debt),  # отрицательная
+            }
+            if cur_debt == 0 and prev_debt > 0:
+                debt_closed.append(entry)
+            else:
+                debt_dropped.append(entry)
+
+        # Появилась переплата которой не было — сигнал что админ должен возвратить
+        if cur_over > 0 and prev_over == 0:
+            new_overpay.append({
+                "room_id": int(room_id),
+                "username": meta_username,
+                "room_label": meta_room,
+                "overpayment": float(cur_over),
+            })
+
+    # Сортируем: новые должники и рост — по сумме убыванию
+    new_debtors.sort(key=lambda x: -x["current_debt"])
+    debt_grew.sort(key=lambda x: -x["delta"])
+    debt_dropped.sort(key=lambda x: x["delta"])  # самый большой спад первым
+    debt_closed.sort(key=lambda x: -x["prev_debt"])
+    new_overpay.sort(key=lambda x: -x["overpayment"])
+
+    # Топ-снимок сумм для KPI
+    sum_grew = sum(e["delta"] for e in debt_grew + new_debtors)
+    sum_closed = sum(e["prev_debt"] for e in debt_closed)
+    sum_dropped = sum(-e["delta"] for e in debt_dropped)
+
+    return {
+        "current_id": log_id,
+        "previous_id": previous.id,
+        "account_type": account,
+        "current_started_at": current.started_at.isoformat() if current.started_at else None,
+        "previous_started_at": previous.started_at.isoformat() if previous.started_at else None,
+        "summary": {
+            "new_debtors_count": len(new_debtors),
+            "debt_grew_count": len(debt_grew),
+            "debt_dropped_count": len(debt_dropped),
+            "debt_closed_count": len(debt_closed),
+            "new_overpay_count": len(new_overpay),
+            "sum_new_and_grew": float(sum_grew),
+            "sum_closed": float(sum_closed),
+            "sum_dropped": float(sum_dropped),
+        },
+        # Лимиты на размер response — UI всё равно покажет первые 100
+        "new_debtors": new_debtors[:100],
+        "debt_grew": debt_grew[:100],
+        "debt_dropped": debt_dropped[:100],
+        "debt_closed": debt_closed[:100],
+        "new_overpay": new_overpay[:50],
+    }
+
+
+@router.get("/debts/user-debt-history/{user_id}", summary="История долгов жильца через все импорты")
+async def debts_user_history(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Возвращает точки графика для одного жильца: на каждый
+    completed-импорт — debt+overpayment по этому юзеру (по его room_id).
+
+    Сортировка по started_at. Если у жильца менялась комната — она
+    учитывается: ищем applied_state по room_id, который был у жильца
+    на момент импорта. Для простоты MVP берём текущий room_id юзера —
+    это покрывает 99% случаев (миграции редки).
+
+    UI рисует две линии: 209 (коммунальный) и 205 (найм), плюс tabular
+    разрез по каждому импорту.
+    """
+    _require_finance(current_user)
+
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(404, "Жилец не найден")
+    if not user.room_id:
+        return {
+            "user_id": user_id,
+            "username": user.username,
+            "room_id": None,
+            "points": [],
+            "fatal": "У жильца нет комнаты — долги привязываются к комнате, не к юзеру.",
+        }
+
+    room_id_key = str(user.room_id)
+
+    # Все completed-импорты с applied_state — отсортированы по дате
+    logs = (await db.execute(
+        select(DebtImportLog)
+        .where(
+            DebtImportLog.status == "completed",
+            DebtImportLog.applied_state.is_not(None),
+        )
+        .order_by(DebtImportLog.started_at.asc(), DebtImportLog.id.asc())
+    )).scalars().all()
+
+    points = []
+    last_room_label = None
+    for log in logs:
+        st = log.applied_state or {}
+        entry = st.get(room_id_key)
+        if not entry:
+            # В этот импорт этой комнаты не было — пропускаем точку, чтобы
+            # не подмешивать «0», которое на самом деле «нет данных».
+            continue
+        debt_key = f"debt_{log.account_type}"
+        over_key = f"overpayment_{log.account_type}"
+        try:
+            debt = float(Decimal(str(entry.get(debt_key, "0") or "0")))
+            over = float(Decimal(str(entry.get(over_key, "0") or "0")))
+        except Exception:
+            debt = 0.0
+            over = 0.0
+        # room_label берём из applied_state (denormalized), чтобы не делать
+        # отдельный JOIN. Последнее значение — самое свежее.
+        if entry.get("room_label"):
+            last_room_label = entry["room_label"]
+        points.append({
+            "log_id": log.id,
+            "started_at": log.started_at.isoformat() if log.started_at else None,
+            "account_type": log.account_type,
+            "debt": debt,
+            "overpayment": over,
+            "file_name": log.file_name,
+        })
+
+    return {
+        "user_id": user_id,
+        "username": user.username,
+        "room_id": user.room_id,
+        "room_label": last_room_label,
+        "points": points,
+    }
+
+
 @router.get("/debts/import-history/{log_id}/download", summary="Скачать оригинальный xlsx")
 async def debts_import_download(
     log_id: int,

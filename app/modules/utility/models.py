@@ -778,6 +778,17 @@ class DebtImportLog(Base):
     # Группировка парных импортов: тот же UUID в обоих логах (205 + 209)
     # когда админ загрузил два файла одной операцией.
     batch_id = Column(String(36), nullable=True, index=True)
+    # State ПОСЛЕ применения импорта — для быстрого diff между двумя
+    # импортами того же account_type. Структура:
+    #   {<room_id>: {
+    #     "debt_209": "...", "overpayment_209": "...",
+    #     "debt_205": "...", "overpayment_205": "...",
+    #     "username": "...", "room_label": "общ./комн."
+    #   }}
+    # Хранится denormalized чтобы diff не делал JOIN на user/room.
+    # snapshot_data — для undo (state ДО), applied_state — для analytics
+    # (state ПОСЛЕ).
+    applied_state = Column(JSONB, nullable=True)
 
     __table_args__ = (
         Index("idx_debt_import_logs_started_at", "started_at"),

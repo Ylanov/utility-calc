@@ -318,6 +318,50 @@ def sync_import_debts_process(
             "before": snapshot_before,
             "inserted_reading_ids": inserts_reading_ids,
         }
+
+        # applied_state — state ПОСЛЕ применения импорта, для последующего
+        # diff. Собираем denormalized {room_id: {долги, username, room_label}}
+        # по всем затронутым reading'ам (updates + inserts).
+        # username/room_label берём чтобы UI diff не делал JOIN на каждую
+        # строку — память дешевле кликов.
+        applied_state: dict[str, dict] = {}
+        all_touched_readings = list(updates_dict.values()) + list(inserts_dict.values())
+        if all_touched_readings:
+            # Подтягиваем User+Room одним запросом — для denormalized snapshot.
+            room_ids = list({r.room_id for r in all_touched_readings if r.room_id})
+            user_ids = list({r.user_id for r in all_touched_readings if r.user_id})
+            rooms_map = {}
+            users_map_id = {}
+            if room_ids:
+                from app.modules.utility.models import Room as _Room
+                rooms_rows = db.execute(
+                    select(_Room).where(_Room.id.in_(room_ids))
+                ).scalars().all()
+                rooms_map = {r.id: r for r in rooms_rows}
+            if user_ids:
+                users_rows = db.execute(
+                    select(User).where(User.id.in_(user_ids))
+                ).scalars().all()
+                users_map_id = {u.id: u for u in users_rows}
+
+            for r in all_touched_readings:
+                if not r.room_id:
+                    continue
+                room = rooms_map.get(r.room_id)
+                user = users_map_id.get(r.user_id) if r.user_id else None
+                applied_state[str(r.room_id)] = {
+                    "debt_209": str(r.debt_209 or 0),
+                    "overpayment_209": str(r.overpayment_209 or 0),
+                    "debt_205": str(r.debt_205 or 0),
+                    "overpayment_205": str(r.overpayment_205 or 0),
+                    "username": user.username if user else None,
+                    "room_label": (
+                        f"{room.dormitory_name} / {room.room_number}"
+                        if room else None
+                    ),
+                }
+        import_log.applied_state = applied_state
+
         import_log.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
         import_log.id  # нужен id для stats
 

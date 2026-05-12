@@ -179,6 +179,7 @@ export const DebtsModule = {
             const logId = Number(btn.dataset.logId);
             if (action === 'view-not-found') this.openNotFoundModal(logId);
             else if (action === 'undo') this.undoImport(logId);
+            else if (action === 'diff') this.openDiffModal(logId);
         });
     },
 
@@ -662,6 +663,12 @@ export const DebtsModule = {
                        style="padding:3px 8px; font-size:11px; white-space:nowrap; text-decoration:none;">
                         <i class="fa-solid fa-download"></i>
                     </a>` : ''}
+                ${log.status === 'completed' ? `
+                    <button class="action-btn secondary-btn" data-history-action="diff" data-log-id="${log.id}"
+                            title="Сравнить с предыдущим импортом того же счёта"
+                            style="padding:3px 8px; font-size:11px; white-space:nowrap; background:#eef2ff; color:#4338ca; border-color:#c7d2fe;">
+                        <i class="fa-solid fa-code-compare"></i> Diff
+                    </button>` : ''}
                 ${canUndo ? `
                     <button class="action-btn danger-btn" data-history-action="undo" data-log-id="${log.id}"
                             style="padding:3px 8px; font-size:11px; white-space:nowrap;">
@@ -770,5 +777,174 @@ export const DebtsModule = {
 
     closeNotFoundModal() {
         this.dom.notFoundModal?.classList.remove('open');
+    },
+
+    // ==========================================================================
+    // DIFF МОДАЛКА — сравнение импорта с предыдущим того же счёта
+    //
+    // Открывается из кнопки «Diff» в строке истории импортов. Backend
+    // /diff отдаёт 5 категорий жильцов; рисуем 5 collapsible-секций.
+    // ==========================================================================
+    async openDiffModal(logId) {
+        // Overlay + skeleton сразу — чтобы юзер видел что клик сработал.
+        const old = document.getElementById('debtDiffModal');
+        if (old) old.remove();
+        const modal = document.createElement('div');
+        modal.id = 'debtDiffModal';
+        modal.style.cssText = `
+            position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:1000;
+            display:flex; align-items:center; justify-content:center; padding:20px;`;
+        modal.innerHTML = `
+            <div style="background:var(--bg-card); border-radius:12px; max-width:1100px; width:100%;
+                        max-height:90vh; display:flex; flex-direction:column; box-shadow:0 12px 40px rgba(0,0,0,0.3);">
+                <div style="padding:14px 20px; border-bottom:1px solid var(--border-color);
+                            display:flex; align-items:center; justify-content:space-between;">
+                    <h3 style="margin:0; font-size:15px;">
+                        <i class="fa-solid fa-code-compare" style="color:#4338ca;"></i>
+                        Сравнение импорта №${logId}
+                    </h3>
+                    <button class="secondary-btn" data-close-diff style="padding:6px 12px;">
+                        <i class="fa-solid fa-xmark"></i> Закрыть
+                    </button>
+                </div>
+                <div id="debtDiffBody" style="padding:14px 20px; overflow:auto; flex:1;">
+                    <div style="text-align:center; padding:40px; color:var(--text-secondary);">
+                        <i class="fa-solid fa-spinner fa-spin"></i> Загрузка diff…
+                    </div>
+                </div>
+            </div>`;
+        document.body.appendChild(modal);
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal || e.target.closest('[data-close-diff]')) modal.remove();
+        });
+        const escHandler = (e) => { if (e.key === 'Escape') { modal.remove(); document.removeEventListener('keydown', escHandler); } };
+        document.addEventListener('keydown', escHandler);
+
+        try {
+            const data = await api.get(`/financier/debts/import-history/${logId}/diff`);
+            this._renderDiff(data);
+        } catch (e) {
+            const body = document.getElementById('debtDiffBody');
+            if (body) body.innerHTML = `
+                <div style="padding:16px; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; color:#991b1b;">
+                    Ошибка загрузки: ${esc(e.message)}
+                </div>`;
+        }
+    },
+
+    _renderDiff(data) {
+        const body = document.getElementById('debtDiffBody');
+        if (!body) return;
+
+        if (data.fatal) {
+            body.innerHTML = `
+                <div style="padding:30px; text-align:center; color:var(--text-secondary);">
+                    <i class="fa-solid fa-circle-info" style="font-size:24px; color:#3b82f6;"></i>
+                    <div style="margin-top:10px;">${esc(data.fatal)}</div>
+                </div>`;
+            return;
+        }
+
+        const s = data.summary || {};
+        const acc = data.account_type;
+        const prevDate = data.previous_started_at
+            ? new Date(data.previous_started_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
+            : '—';
+        const curDate = data.current_started_at
+            ? new Date(data.current_started_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
+            : '—';
+
+        const header = `
+            <div style="margin-bottom:18px; padding:12px 14px; background:#f9fafb; border:1px solid var(--border-color); border-radius:8px; font-size:13px;">
+                <div style="margin-bottom:6px;">
+                    <b>Счёт ${esc(acc)}:</b> сравнение
+                    <span style="color:var(--text-secondary);">№${data.previous_id} (${esc(prevDate)})</span>
+                    <i class="fa-solid fa-arrow-right" style="margin:0 6px;"></i>
+                    <b>№${data.current_id} (${esc(curDate)})</b>
+                </div>
+                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:8px; margin-top:8px;">
+                    <div style="padding:8px 10px; background:#fef2f2; border-radius:6px; border:1px solid #fecaca;">
+                        <div style="font-size:11px; color:#991b1b; text-transform:uppercase;">Новые должники</div>
+                        <div style="font-size:18px; font-weight:700; color:#dc2626;">${s.new_debtors_count || 0}</div>
+                    </div>
+                    <div style="padding:8px 10px; background:#fff7ed; border-radius:6px; border:1px solid #fed7aa;">
+                        <div style="font-size:11px; color:#9a3412; text-transform:uppercase;">Долг вырос</div>
+                        <div style="font-size:18px; font-weight:700; color:#ea580c;">${s.debt_grew_count || 0}</div>
+                        <div style="font-size:11px; color:var(--text-secondary);">+${fmtMoney(s.sum_new_and_grew || 0)}</div>
+                    </div>
+                    <div style="padding:8px 10px; background:#f0fdf4; border-radius:6px; border:1px solid #bbf7d0;">
+                        <div style="font-size:11px; color:#166534; text-transform:uppercase;">Долг упал</div>
+                        <div style="font-size:18px; font-weight:700; color:#16a34a;">${s.debt_dropped_count || 0}</div>
+                        <div style="font-size:11px; color:var(--text-secondary);">−${fmtMoney(s.sum_dropped || 0)}</div>
+                    </div>
+                    <div style="padding:8px 10px; background:#ecfdf5; border-radius:6px; border:1px solid #a7f3d0;">
+                        <div style="font-size:11px; color:#065f46; text-transform:uppercase;">Долг закрыт</div>
+                        <div style="font-size:18px; font-weight:700; color:#10b981;">${s.debt_closed_count || 0}</div>
+                        <div style="font-size:11px; color:var(--text-secondary);">−${fmtMoney(s.sum_closed || 0)}</div>
+                    </div>
+                    <div style="padding:8px 10px; background:#ede9fe; border-radius:6px; border:1px solid #ddd6fe;">
+                        <div style="font-size:11px; color:#5b21b6; text-transform:uppercase;">Новые переплаты</div>
+                        <div style="font-size:18px; font-weight:700; color:#7c3aed;">${s.new_overpay_count || 0}</div>
+                    </div>
+                </div>
+            </div>`;
+
+        const sec = (title, items, kind) => {
+            if (!items || !items.length) return '';
+            const colorMap = {
+                new_debtors: '#dc2626',
+                debt_grew:   '#ea580c',
+                debt_dropped:'#16a34a',
+                debt_closed: '#10b981',
+                new_overpay: '#7c3aed',
+            };
+            const c = colorMap[kind] || '#6b7280';
+            const rows = items.map(it => {
+                const valueCell = kind === 'new_overpay'
+                    ? `<td style="text-align:right; font-weight:600; color:${c};">${fmtMoney(it.overpayment)}</td>`
+                    : `<td style="text-align:right; color:var(--text-secondary);">${fmtMoney(it.prev_debt)}</td>
+                       <td style="text-align:right; font-weight:600;">${fmtMoney(it.current_debt)}</td>
+                       <td style="text-align:right; font-weight:600; color:${c};">${it.delta >= 0 ? '+' : ''}${fmtMoney(it.delta)}</td>`;
+                return `
+                    <tr style="border-bottom:1px solid var(--border-color);">
+                        <td style="padding:6px 10px;">${esc(it.username)}</td>
+                        <td style="padding:6px 10px; color:var(--text-secondary); font-size:11px;">${esc(it.room_label)}</td>
+                        ${valueCell}
+                    </tr>`;
+            }).join('');
+            const headers = kind === 'new_overpay'
+                ? '<th style="text-align:left; padding:6px 10px;">Жилец</th><th style="text-align:left; padding:6px 10px;">Комната</th><th style="text-align:right; padding:6px 10px;">Переплата</th>'
+                : '<th style="text-align:left; padding:6px 10px;">Жилец</th><th style="text-align:left; padding:6px 10px;">Комната</th><th style="text-align:right; padding:6px 10px;">Было</th><th style="text-align:right; padding:6px 10px;">Стало</th><th style="text-align:right; padding:6px 10px;">Δ</th>';
+            return `
+                <details style="margin-bottom:14px; border:1px solid var(--border-color); border-radius:8px; overflow:hidden;" open>
+                    <summary style="padding:10px 14px; cursor:pointer; background:${c}11; color:${c}; font-weight:600; font-size:13px;">
+                        ${esc(title)} (${items.length})
+                    </summary>
+                    <table style="width:100%; border-collapse:collapse; font-size:12px;">
+                        <thead style="background:var(--bg-page); font-size:11px; color:var(--text-secondary); text-transform:uppercase;">
+                            <tr>${headers}</tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </details>`;
+        };
+
+        body.innerHTML = header
+            + sec('Новые должники', data.new_debtors, 'new_debtors')
+            + sec('Долг вырос', data.debt_grew, 'debt_grew')
+            + sec('Долг упал', data.debt_dropped, 'debt_dropped')
+            + sec('Долг закрыт', data.debt_closed, 'debt_closed')
+            + sec('Появились переплаты', data.new_overpay, 'new_overpay');
+
+        // Если все секции пусты — показать «всё то же самое»
+        if (!data.new_debtors?.length && !data.debt_grew?.length
+            && !data.debt_dropped?.length && !data.debt_closed?.length
+            && !data.new_overpay?.length) {
+            body.innerHTML = header + `
+                <div style="text-align:center; padding:40px; color:var(--text-secondary);">
+                    <i class="fa-solid fa-equals" style="font-size:24px; color:#10b981;"></i>
+                    <div style="margin-top:10px;">Изменений нет — суммы совпадают с прошлым импортом.</div>
+                </div>`;
+        }
     },
 };
