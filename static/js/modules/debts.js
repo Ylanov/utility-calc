@@ -351,7 +351,7 @@ export const DebtsModule = {
         } catch (e) {
             toast(`Ошибка: ${e.message}`, 'error');
             this.state.isUploading = false;
-            setLoading(this.dom.btnUpload, false, '⬆ Загрузить');
+            setLoading(this.dom.btnUpload, false, '⬆ Загрузить выбранные');
         }
     },
 
@@ -367,14 +367,20 @@ export const DebtsModule = {
             if (attempts > maxAttempts) {
                 toast('Превышено время ожидания сервера.', 'warning');
                 this.state.isUploading = false;
-                setLoading(this.dom.btnUpload, false, '⬆ Загрузить');
+                setLoading(this.dom.btnUpload, false, '⬆ Загрузить выбранные');
                 return;
             }
             try {
                 const res = await api.get(`/admin/tasks/${taskId}`);
                 if (this.state.currentPollId !== taskId) return;
 
-                if (res.state === 'PENDING' || res.status === 'processing') {
+                // Celery task проходит состояния:
+                //   PENDING (в очереди) → STARTED (worker взял) → RETRY (autoretry)
+                //   → SUCCESS | FAILURE
+                // Раньше STARTED/RETRY валились в «Неизвестный статус» —
+                // считаем их как «продолжаем polling».
+                const inProgress = ['PENDING', 'STARTED', 'RETRY', 'RECEIVED'];
+                if (inProgress.includes(res.state) || res.status === 'processing') {
                     this.state.pollTimer = setTimeout(check, 2000);
                     return;
                 }
@@ -384,11 +390,15 @@ export const DebtsModule = {
                     this.reload();
                     this.loadImportHistory();
                     this.state.isUploading = false;
-                    setLoading(this.dom.btnUpload, false, '⬆ Загрузить');
+                    setLoading(this.dom.btnUpload, false, '⬆ Загрузить выбранные');
                     return;
                 }
-                if (res.state === 'FAILURE') throw new Error(res.error || 'Ошибка воркера');
-                throw new Error('Неизвестный статус задачи');
+                if (res.state === 'FAILURE' || res.state === 'REVOKED') {
+                    throw new Error(res.error || 'Ошибка воркера');
+                }
+                // На всякий случай: неизвестное состояние — повторяем polling,
+                // а не сразу падаем с ошибкой. maxAttempts ограничит сверху.
+                this.state.pollTimer = setTimeout(check, 3000);
             } catch (e) {
                 if (this.state.currentPollId !== taskId) return;
                 toast('Ошибка задачи: ' + e.message, 'error');
@@ -400,7 +410,7 @@ export const DebtsModule = {
                     );
                 }
                 this.state.isUploading = false;
-                setLoading(this.dom.btnUpload, false, '⬆ Загрузить');
+                setLoading(this.dom.btnUpload, false, '⬆ Загрузить выбранные');
             }
         };
         check();
