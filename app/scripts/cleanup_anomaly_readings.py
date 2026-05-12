@@ -43,7 +43,6 @@
 from __future__ import annotations
 
 import asyncio
-import sys
 from argparse import ArgumentParser
 from decimal import Decimal
 

@@ -15,7 +15,6 @@ QR со ссылкой на скачивание APK. Раньше QR подгр
 from __future__ import annotations
 
 import io
-import re
 
 import qrcode
 from fastapi import APIRouter, HTTPException, Query, Response

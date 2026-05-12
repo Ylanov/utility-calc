@@ -11,13 +11,13 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from datetime import datetime, timedelta
+from datetime import timedelta
 from app.core.time_utils import utcnow
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import and_, or_, select, func
+from sqlalchemy import and_, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -29,8 +29,6 @@ from app.modules.arsenal.models import (
     ArsenalPasswordResetToken,
     ArsenalUser,
     DisposalReason,
-    Document,
-    DocumentItem,
     Inventory,
     InventoryItem,
     Nomenclature,

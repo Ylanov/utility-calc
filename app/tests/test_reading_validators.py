@@ -4,10 +4,8 @@
 from decimal import Decimal
 
 from app.modules.utility.services.reading_validators import (
-    MAX_ELECTRICITY_DELTA_PER_MONTH,
     MAX_ELECTRICITY_METER_VALUE,
     MAX_TOTAL_COST_PER_READING,
-    MAX_WATER_DELTA_PER_MONTH,
     MAX_WATER_METER_VALUE,
     validate_meter_reading,
     validate_total_cost,

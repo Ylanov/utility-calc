@@ -3,15 +3,12 @@ import io
 import logging
 import pyotp
 import qrcode
-from datetime import datetime, timedelta
+from datetime import timedelta
 from app.core.time_utils import utcnow
-from pydantic import BaseModel
 from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func
-from sqlalchemy.orm import selectinload
 from jose import jwt, JWTError
 
 from fastapi_limiter.depends import RateLimiter

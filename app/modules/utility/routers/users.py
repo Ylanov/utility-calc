@@ -17,7 +17,7 @@ from fastapi_limiter.depends import RateLimiter
 
 from app.core.database import get_db
 from app.core.time_utils import utcnow
-from app.modules.utility.models import User, Room, BillingPeriod, MeterReading, Adjustment, Tariff, DeviceToken
+from app.modules.utility.models import User, Room, BillingPeriod, MeterReading, Tariff, DeviceToken
 from app.modules.utility.schemas import (
     UserCreate, UserResponse, UserUpdate, PaginatedResponse,
     DeviceTokenCreate, RelocateUserSchema
@@ -26,7 +26,6 @@ from app.core.dependencies import get_current_user, RoleChecker
 from app.core.auth import get_password_hash, verify_password
 from app.modules.utility.services.excel_service import import_users_from_excel
 from app.modules.utility.services.user_service import delete_user_service
-from app.modules.utility.services.calculations import calculate_utilities
 
 # ИМПОРТ ДЛЯ ЖУРНАЛА ДЕЙСТВИЙ
 from app.modules.utility.routers.admin_dashboard import write_audit_log

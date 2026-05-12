@@ -44,9 +44,7 @@ from sqlalchemy.orm import selectinload
 
 from app.core.database import AsyncSessionLocal
 from app.modules.utility.models import (
-    BillingPeriod,
     MeterReading,
-    Room,
     Tariff,
     User,
 )

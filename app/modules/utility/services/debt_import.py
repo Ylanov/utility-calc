@@ -2,13 +2,69 @@
 import openpyxl
 import logging
 import os
-from datetime import datetime, timezone
+import re
+from datetime import datetime, timezone, date
 from decimal import Decimal
 from typing import Dict, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import select
 from rapidfuzz import process, fuzz
-from app.modules.utility.models import User, MeterReading, BillingPeriod, DebtImportLog
+from app.modules.utility.models import (
+    User, MeterReading, BillingPeriod, DebtImportLog, RentalContract,
+)
+
+
+# Регексы для парсинга строки договора из ОСВ 1С. В файле под каждым ФИО
+# идут строки типа:
+#   «Договор от 14.02.2017 № 1013»     (date первая)
+#   «Договор № 923 от 28.12.2015»      (number первый)
+#   «Договор 923 от 28.12.2015»        (без «№»)
+#   «Договор от 07.02.2013 № 417-К»    (буква в номере)
+_CONTRACT_DATE_RE = re.compile(r"(\d{1,2})\.(\d{1,2})\.(\d{2,4})")
+_CONTRACT_NUM_AFTER_HASH_RE = re.compile(r"№\s*([^\s,;]+)", re.IGNORECASE)
+_CONTRACT_NUM_BARE_RE = re.compile(r"^договор\s+(\d[^\s]*)\s+от", re.IGNORECASE)
+
+
+def parse_contract_line(text: Optional[str]) -> Optional[dict]:
+    """Парсит строку из колонки A ОСВ 1С если это договор.
+
+    Возвращает {"number", "signed_date"} или None если строка не договор
+    либо нет даты/номера.
+
+    Поддерживаемые форматы:
+      «Договор от 14.02.2017 № 1013»  → {number: "1013", date: 2017-02-14}
+      «Договор № 923 от 28.12.2015»   → {number: "923", date: 2015-12-28}
+      «Договор 923 от 28.12.2015»     → {number: "923", date: 2015-12-28}
+      «Договор от 07.02.2013 № 417-К» → {number: "417-К", date: 2013-02-07}
+    """
+    if not text:
+        return None
+    s = str(text).strip()
+    if not s or not s.lower().startswith("договор"):
+        return None
+
+    date_match = _CONTRACT_DATE_RE.search(s)
+    if not date_match:
+        return None
+    day, month, year = date_match.groups()
+    # Двузначный год — считаем что 20XX (1С обычно пишет 4 цифры, но защита)
+    year_int = int("20" + year) if len(year) == 2 else int(year)
+    try:
+        signed_date = date(year_int, int(month), int(day))
+    except ValueError:
+        return None
+
+    # Номер: «№ XXX» имеет приоритет, иначе формат «Договор NUM от ...»
+    num_match = _CONTRACT_NUM_AFTER_HASH_RE.search(s)
+    if num_match:
+        number = num_match.group(1)
+    else:
+        num_bare = _CONTRACT_NUM_BARE_RE.search(s)
+        number = num_bare.group(1) if num_bare else None
+
+    if not number:
+        return None
+    return {"number": number.strip(), "signed_date": signed_date}
 
 logger = logging.getLogger(__name__)
 
@@ -207,8 +263,17 @@ def sync_import_debts_process(
 
         stats = {
             "processed": 0, "updated": 0, "created": 0,
+            "contracts_created": 0,  # новые RentalContract из строк «Договор от ...»
             "not_found_users": [], "errors": [], "account": account_type
         }
+
+        # Для парсера договоров: запоминаем последнего сматченного жильца.
+        # В ОСВ под каждым ФИО идут строки «Договор от ДД.ММ.ГГГГ № N» —
+        # все они принадлежат предыдущему ФИО.
+        last_matched_user_id: Optional[int] = None
+        # Кеш уже существующих договоров: {user_id: set(number)} — чтобы
+        # не делать SELECT для каждой строки.
+        existing_contracts_cache: Dict[int, set] = {}
 
         updates_dict = {}  # reading_id -> reading object (для обновления)
         inserts_dict = {}  # room_id -> reading object (для вставки)
@@ -249,6 +314,36 @@ def sync_import_debts_process(
                 continue
 
             name_cell = row[0]
+
+            # Проверяем «Договор от ... № ...» — это под-строка для
+            # ПОСЛЕДНЕГО сматченного жильца. Парсим и создаём
+            # RentalContract если ещё нет.
+            contract_data = parse_contract_line(name_cell)
+            if contract_data and last_matched_user_id:
+                # Lazy-load existing для этого юзера
+                if last_matched_user_id not in existing_contracts_cache:
+                    rows_db = db.execute(
+                        select(RentalContract.number).where(
+                            RentalContract.user_id == last_matched_user_id
+                        )
+                    ).all()
+                    existing_contracts_cache[last_matched_user_id] = {
+                        r[0] for r in rows_db if r[0]
+                    }
+                if contract_data["number"] not in existing_contracts_cache[last_matched_user_id]:
+                    db.add(RentalContract(
+                        user_id=last_matched_user_id,
+                        number=contract_data["number"],
+                        signed_date=contract_data["signed_date"],
+                        is_active=True,
+                        note=f"импортировано из 1С ОСВ (счёт {account_type})",
+                    ))
+                    existing_contracts_cache[last_matched_user_id].add(
+                        contract_data["number"]
+                    )
+                    stats["contracts_created"] += 1
+                continue
+
             if not is_valid_name_row(name_cell):
                 continue
 
@@ -259,10 +354,14 @@ def sync_import_debts_process(
 
             if not user_data or not user_data["room_id"]:
                 stats["not_found_users"].append(fio_raw)
+                # Сбрасываем контекст — следующая строка «Договор» не
+                # должна привязаться к ранее сматченному жильцу.
+                last_matched_user_id = None
                 continue
 
             user_id = user_data["id"]
             room_id = user_data["room_id"]
+            last_matched_user_id = user_id  # для парсера договоров ниже
 
             debt_val = clean_decimal(row[debt_col_idx])
             over_val = clean_decimal(row[overpay_col_idx])

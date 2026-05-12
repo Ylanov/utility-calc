@@ -30,7 +30,6 @@ from sqlalchemy.orm import selectinload
 from app.modules.utility.models import (
     BillingPeriod,
     MeterReading,
-    Room,
     Tariff,
     User,
 )

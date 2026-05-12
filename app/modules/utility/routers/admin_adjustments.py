@@ -4,7 +4,6 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import update
 from decimal import Decimal
 
 from app.core.database import get_db

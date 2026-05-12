@@ -21,7 +21,6 @@ import logging
 from collections import defaultdict
 from decimal import Decimal
 from statistics import median
-from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -29,7 +28,6 @@ from sqlalchemy.orm import selectinload
 from app.modules.utility.models import (
     BillingPeriod,
     MeterReading,
-    Room,
     User,
 )
 

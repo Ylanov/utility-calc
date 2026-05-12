@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
-from datetime import datetime
 from decimal import Decimal
 from statistics import median
 from typing import Optional
@@ -28,7 +27,6 @@ from sqlalchemy import func, select
 from app.modules.utility.models import (
     BillingPeriod,
     MeterReading,
-    Room,
     User,
 )
 

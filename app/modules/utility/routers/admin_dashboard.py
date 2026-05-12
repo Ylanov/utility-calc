@@ -12,9 +12,9 @@ from sqlalchemy import func, desc, case
 from app.core.database import get_db
 from app.core.request_context import current_request_id
 from app.modules.utility.models import (
-    User, Room, MeterReading, BillingPeriod, Adjustment, AuditLog
+    User, Room, MeterReading, BillingPeriod, AuditLog
 )
-from app.core.dependencies import get_current_user, RoleChecker
+from app.core.dependencies import RoleChecker
 
 router = APIRouter(tags=["Admin Dashboard"])
 logger = logging.getLogger(__name__)

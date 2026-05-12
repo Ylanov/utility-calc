@@ -945,8 +945,8 @@ def _recalc_run(job_id: int, apply: bool):
       * при apply=True — обновляем записи чанком через bulk_update_mappings.
     """
     from decimal import Decimal
-    from sqlalchemy.orm import selectinload, load_only
-    from app.modules.utility.models import RecalcJob, MeterReading, BillingPeriod, Tariff, Room, User
+    from sqlalchemy.orm import selectinload
+    from app.modules.utility.models import RecalcJob, MeterReading, BillingPeriod, Tariff, User
 
     CHUNK = 500
 

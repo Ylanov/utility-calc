@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import or_, func, distinct
+from sqlalchemy import or_, func
 
 from app.core.database import get_arsenal_db
 from app.modules.arsenal.models import Nomenclature, ArsenalUser, WeaponRegistry, DocumentItem

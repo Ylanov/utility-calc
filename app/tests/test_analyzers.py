@@ -9,7 +9,6 @@ Recalc-drift и telemetry тестируются интеграционно че
 performance-tests.
 """
 from decimal import Decimal
-from unittest.mock import patch
 
 from app.modules.utility.services.anomaly_detector import (
     _flag_score,

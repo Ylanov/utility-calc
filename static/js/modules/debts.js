@@ -749,6 +749,8 @@ export const DebtsModule = {
                         this._nfShowLegacyForm(row, fio, logId, accountType);
                     } else if (action === 'pick-candidate') {
                         this._nfPickCandidate(row, fio, logId, accountType, Number(btn.dataset.userId), btn.dataset.username);
+                    } else if (action === 'edit-fio') {
+                        this._nfEditFio(btn, Number(btn.dataset.userId), btn.dataset.username);
                     } else if (action === 'submit-create') {
                         this._nfSubmitCreate(row, fio, logId, accountType);
                     } else if (action === 'submit-legacy') {
@@ -825,11 +827,18 @@ export const DebtsModule = {
                 ${headerLabel} (${cands.length})
             </div>
             ${cands.map(c => `
-                <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;
+                <div class="nf-candidate" data-user-id="${c.id}" data-username="${esc(c.username)}"
+                     style="display:flex; justify-content:space-between; align-items:center; gap:10px;
                             padding:8px 10px; background:#fff; border:1px solid var(--border-color); border-radius:6px; margin-bottom:6px;">
                     <div style="flex:1; min-width:0;">
-                        <div style="font-weight:600; font-size:13px;">${esc(c.username)}
+                        <div class="nf-candidate-name-row" style="font-weight:600; font-size:13px;">
+                            <span class="nf-candidate-username">${esc(c.username)}</span>
                             <span style="font-size:11px; color:var(--text-secondary); margin-left:4px;">${c.score}%</span>
+                            <button data-nf-action="edit-fio" data-user-id="${c.id}" data-username="${esc(c.username)}"
+                                    class="icon-btn" style="padding:1px 5px; margin-left:4px; font-size:11px; color:var(--text-secondary);"
+                                    title="Исправить ФИО в базе (если в системе написано с ошибкой)">
+                                <i class="fa-solid fa-pen"></i>
+                            </button>
                         </div>
                         <div style="font-size:11px; color:var(--text-secondary);">
                             ${esc(c.room_label)} · ${c.residents_count} чел.
@@ -844,6 +853,69 @@ export const DebtsModule = {
                     </button>
                 </div>
             `).join('')}`;
+    },
+
+    _nfEditFio(btn, userId, currentUsername) {
+        // Превращаем span с username в input + кнопки Save/Cancel inline.
+        const cand = btn.closest('.nf-candidate');
+        if (!cand) return;
+        const nameRow = cand.querySelector('.nf-candidate-name-row');
+        if (!nameRow || nameRow.dataset.editing === '1') return;
+        nameRow.dataset.editing = '1';
+        const originalHtml = nameRow.innerHTML;
+        nameRow.innerHTML = `
+            <input type="text" data-nf-fio-input value="${esc(currentUsername)}"
+                   style="width:65%; padding:3px 6px; font-size:13px; border:1px solid var(--border-color); border-radius:4px;">
+            <button data-nf-fio-save class="action-btn success-btn" style="padding:3px 8px; font-size:11px; margin-left:4px;">
+                <i class="fa-solid fa-check"></i>
+            </button>
+            <button data-nf-fio-cancel class="action-btn secondary-btn" style="padding:3px 8px; font-size:11px; margin-left:2px;">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+        `;
+        const input = nameRow.querySelector('[data-nf-fio-input]');
+        input.focus();
+        input.select();
+
+        nameRow.querySelector('[data-nf-fio-cancel]').addEventListener('click', () => {
+            nameRow.innerHTML = originalHtml;
+            nameRow.dataset.editing = '';
+        });
+        const doSave = async () => {
+            const newName = input.value.trim();
+            if (!newName || newName.length < 3) {
+                toast('Имя минимум 3 символа', 'warning');
+                return;
+            }
+            if (newName === currentUsername) {
+                nameRow.innerHTML = originalHtml;
+                nameRow.dataset.editing = '';
+                return;
+            }
+            try {
+                await api.put(`/users/${userId}`, { username: newName });
+                toast(`Имя жильца обновлено: ${newName}`, 'success');
+                // Обновляем DOM на месте — не пересоздаём всю модалку.
+                cand.dataset.username = newName;
+                cand.querySelectorAll('button[data-username]').forEach(b => {
+                    b.dataset.username = newName;
+                });
+                nameRow.innerHTML = originalHtml;
+                nameRow.querySelector('.nf-candidate-username').textContent = newName;
+                nameRow.querySelector('button[data-nf-action="edit-fio"]').dataset.username = newName;
+                nameRow.dataset.editing = '';
+            } catch (e) {
+                toast('Ошибка обновления: ' + e.message, 'error');
+            }
+        };
+        nameRow.querySelector('[data-nf-fio-save]').addEventListener('click', doSave);
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); doSave(); }
+            if (e.key === 'Escape') {
+                nameRow.innerHTML = originalHtml;
+                nameRow.dataset.editing = '';
+            }
+        });
     },
 
     async _nfFindCandidates(row, fio, logId, accountType) {

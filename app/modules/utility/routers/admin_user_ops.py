@@ -10,7 +10,7 @@ from sqlalchemy import delete
 from app.core.auth import get_password_hash
 from app.core.database import get_db
 from app.modules.utility.models import User, MeterReading, Adjustment
-from app.core.dependencies import get_current_user, RoleChecker
+from app.core.dependencies import RoleChecker
 
 logger = logging.getLogger(__name__)
 

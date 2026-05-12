@@ -1,12 +1,11 @@
 # app/modules/utility/routers/tariffs.py
 
 import logging
-from datetime import datetime
 from app.core.time_utils import utcnow
 from decimal import Decimal
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select

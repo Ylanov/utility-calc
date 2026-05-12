@@ -10,7 +10,6 @@ POST  /api/admin/gsheets/rows/{id}/reject     — отклонить строк�
 POST  /api/admin/gsheets/rows/{id}/reassign   — переназначить жильца (fuzzy не угадал)
 POST  /api/admin/gsheets/rows/bulk-approve    — массовое утверждение
 """
-import re
 from datetime import datetime
 from app.core.time_utils import utcnow
 from decimal import Decimal

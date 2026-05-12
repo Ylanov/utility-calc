@@ -20,7 +20,6 @@ Anomaly Detector v3 — теперь с конфигом и self-learning.
 """
 from __future__ import annotations
 
-from datetime import timedelta
 from decimal import Decimal
 from statistics import median
 from typing import Dict, List, Optional, Tuple

@@ -1,13 +1,13 @@
 # app/modules/utility/routers/admin_readings.py
 
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.modules.utility.models import User
 from app.modules.utility.schemas import ApproveRequest, AdminManualReadingSchema, OneTimeChargeSchema
-from app.core.dependencies import get_current_user, RoleChecker
+from app.core.dependencies import RoleChecker
 
 from app.modules.utility.services import admin_readings_list
 from app.modules.utility.services import admin_readings_approve

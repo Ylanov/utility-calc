@@ -8,7 +8,7 @@ from typing import List
 import redis.asyncio as redis
 
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import JSONResponse, FileResponse, ORJSONResponse
+from fastapi.responses import FileResponse, ORJSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -17,7 +17,6 @@ from fastapi_limiter import FastAPILimiter
 from fastapi_cache import FastAPICache
 from fastapi_cache.backends.redis import RedisBackend
 
-from sqlalchemy.future import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from passlib.context import CryptContext
 
@@ -54,13 +53,6 @@ from app.modules.utility.routers import (
 )
 
 # === АРСЕНАЛ ===
-from app.modules.arsenal.routers import (
-    system as arsenal_system,
-    objects as arsenal_objects,
-    nomenclature as arsenal_nomenclature,
-    documents as arsenal_documents,
-    users as arsenal_users_router,
-)
 
 from app.modules.arsenal import (
     reports as arsenal_reports,

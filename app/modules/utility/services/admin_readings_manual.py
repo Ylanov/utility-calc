@@ -3,10 +3,10 @@ from decimal import Decimal
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func, desc
+from sqlalchemy import func
 from sqlalchemy.orm import selectinload
 
-from app.modules.utility.models import User, MeterReading, Room, Tariff, BillingPeriod, Adjustment
+from app.modules.utility.models import User, MeterReading, Tariff, BillingPeriod, Adjustment
 from app.modules.utility.schemas import AdminManualReadingSchema, OneTimeChargeSchema
 from app.modules.utility.services.calculations import (
     calculate_utilities,

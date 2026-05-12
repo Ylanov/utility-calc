@@ -20,7 +20,7 @@
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import timedelta
 from app.core.time_utils import utcnow
 from typing import Optional
 
@@ -521,7 +521,7 @@ async def cleanup_gsheets_now(
         )
 
     # Выполняем ту же логику, что и Celery-задача, но в рамках async-сессии.
-    from datetime import datetime, timedelta
+    from datetime import timedelta
     cutoff = utcnow() - timedelta(days=days)
     terminal = ("approved", "auto_approved", "rejected")
 

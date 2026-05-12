@@ -16,18 +16,16 @@ import io
 import asyncio
 import logging
 from decimal import Decimal
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 
 from app.core.database import get_db
-from app.modules.utility.models import User, Room, MeterReading, BillingPeriod
+from app.modules.utility.models import User, Room, MeterReading
 from app.core.dependencies import RoleChecker
 
 router = APIRouter(prefix="/api/rooms", tags=["Initial Readings"])
