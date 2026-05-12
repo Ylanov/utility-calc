@@ -108,6 +108,15 @@ celery.conf.beat_schedule = {
         "task": "cleanup_gsheets_old_rows_task",
         "schedule": crontab(minute=0, hour=3),
     },
+    # Очистка архива оригинальных xlsx из 1С (DebtImportLog.archive_path).
+    # Запускается раз в неделю в воскресенье 03:15. Удаляет файлы старше
+    # debt.archive_retention_days (default 730 дней) или log.retention_days
+    # (per-log override). Сами DebtImportLog НЕ удаляются — только файл,
+    # archive_path обнуляется чтобы UI «Скачать» давал 404 а не битый путь.
+    "cleanup-debt-archives-weekly": {
+        "task": "cleanup_debt_archives_task",
+        "schedule": crontab(minute=15, hour=3, day_of_week=0),
+    },
     # Ежедневное напоминание жильцам о подаче показаний — push на за 3, 1
     # и 0 дней до конца окна `submission_end_day`. В прочие дни задача
     # сама выходит без рассылки. 10:00 МСК = время когда люди уже

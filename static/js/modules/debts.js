@@ -538,14 +538,19 @@ export const DebtsModule = {
             tr.appendChild(sumCell);
 
             tr.appendChild(el('td', { style: { fontWeight: 'bold' } }, total !== 0 ? fmtMoney(total) : '—'));
-            tr.appendChild(
-                el('td', { style: { textAlign: 'right' } },
-                    el('button', {
-                        class: 'action-btn', style: { padding: '4px 10px', fontSize: '12px', background: '#6366f1', color: '#fff' },
-                        onclick: () => this.openAdjustModal(u.id, u.username)
-                    }, 'Корр.')
-                )
-            );
+            // Группа кнопок: «История» — модалка sparkline через все импорты;
+            // «Корр.» — ручная корректировка сальдо. Раньше была только Корр.
+            const actionsCell = el('td', { style: { textAlign: 'right', whiteSpace: 'nowrap' } });
+            actionsCell.appendChild(el('button', {
+                class: 'action-btn', style: { padding: '4px 8px', fontSize: '12px', background: '#fff', color: '#4338ca', border: '1px solid #c7d2fe', marginRight: '4px' },
+                title: 'История долгов через все импорты 1С',
+                onclick: () => this.openUserDebtHistory(u.id, u.username),
+            }, '📊'));
+            actionsCell.appendChild(el('button', {
+                class: 'action-btn', style: { padding: '4px 10px', fontSize: '12px', background: '#6366f1', color: '#fff' },
+                onclick: () => this.openAdjustModal(u.id, u.username),
+            }, 'Корр.'));
+            tr.appendChild(actionsCell);
             fragment.appendChild(tr);
         });
         this.dom.tableBody.appendChild(fragment);
@@ -946,5 +951,143 @@ export const DebtsModule = {
                     <div style="margin-top:10px;">Изменений нет — суммы совпадают с прошлым импортом.</div>
                 </div>`;
         }
+    },
+
+    // ==========================================================================
+    // ИСТОРИЯ ДОЛГОВ ЖИЛЬЦА — sparkline 209 + 205 через все импорты
+    // ==========================================================================
+    async openUserDebtHistory(userId, username) {
+        document.getElementById('debtUserHistoryModal')?.remove();
+        const modal = document.createElement('div');
+        modal.id = 'debtUserHistoryModal';
+        modal.style.cssText = `
+            position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:1000;
+            display:flex; align-items:center; justify-content:center; padding:20px;`;
+        modal.innerHTML = `
+            <div style="background:var(--bg-card); border-radius:12px; max-width:820px; width:100%;
+                        max-height:85vh; display:flex; flex-direction:column; box-shadow:0 12px 40px rgba(0,0,0,0.3);">
+                <div style="padding:14px 20px; border-bottom:1px solid var(--border-color);
+                            display:flex; align-items:center; justify-content:space-between;">
+                    <h3 style="margin:0; font-size:15px;">
+                        <i class="fa-solid fa-chart-line" style="color:#4338ca;"></i>
+                        История долгов: ${esc(username)}
+                    </h3>
+                    <button class="secondary-btn" data-close-uh style="padding:6px 12px;">
+                        <i class="fa-solid fa-xmark"></i> Закрыть
+                    </button>
+                </div>
+                <div id="debtUserHistoryBody" style="padding:14px 20px; overflow:auto; flex:1;">
+                    <div style="text-align:center; padding:40px; color:var(--text-secondary);">
+                        <i class="fa-solid fa-spinner fa-spin"></i> Загрузка…
+                    </div>
+                </div>
+            </div>`;
+        document.body.appendChild(modal);
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal || e.target.closest('[data-close-uh]')) modal.remove();
+        });
+        const escHandler = (e) => { if (e.key === 'Escape') { modal.remove(); document.removeEventListener('keydown', escHandler); } };
+        document.addEventListener('keydown', escHandler);
+
+        try {
+            const data = await api.get(`/financier/debts/user-debt-history/${userId}`);
+            this._renderUserDebtHistory(data);
+        } catch (e) {
+            const body = document.getElementById('debtUserHistoryBody');
+            if (body) body.innerHTML = `
+                <div style="padding:16px; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; color:#991b1b;">
+                    Ошибка: ${esc(e.message)}
+                </div>`;
+        }
+    },
+
+    _renderUserDebtHistory(data) {
+        const body = document.getElementById('debtUserHistoryBody');
+        if (!body) return;
+
+        if (data.fatal) {
+            body.innerHTML = `
+                <div style="padding:30px; text-align:center; color:var(--text-secondary);">
+                    <i class="fa-solid fa-circle-info" style="font-size:24px; color:#f59e0b;"></i>
+                    <div style="margin-top:10px;">${esc(data.fatal)}</div>
+                </div>`;
+            return;
+        }
+        if (!data.points || !data.points.length) {
+            body.innerHTML = `
+                <div style="padding:30px; text-align:center; color:var(--text-secondary);">
+                    Жилец не встречался ни в одном импорте — долгов нет.
+                </div>`;
+            return;
+        }
+
+        // Разделяем точки на 209 / 205, рисуем 2 sparkline + table
+        const points209 = data.points.filter(p => p.account_type === '209');
+        const points205 = data.points.filter(p => p.account_type === '205');
+
+        // SVG sparkline — высота 60, ширина ~600
+        const renderSpark = (pts, color, account) => {
+            if (!pts.length) {
+                return `<div style="color:var(--text-secondary); font-size:12px; padding:14px;">${account}: данных нет</div>`;
+            }
+            const W = 580, H = 60, P = 20;
+            const debts = pts.map(p => p.debt);
+            const maxD = Math.max(...debts, 1);
+            const step = pts.length > 1 ? (W - 2 * P) / (pts.length - 1) : 0;
+            const polyline = pts.map((p, i) => {
+                const x = P + i * step;
+                const y = H - P - (p.debt / maxD) * (H - 2 * P);
+                return `${x.toFixed(1)},${y.toFixed(1)}`;
+            }).join(' ');
+            const last = pts[pts.length - 1];
+            return `
+                <div style="margin-bottom:12px;">
+                    <div style="font-size:12px; color:var(--text-secondary); margin-bottom:4px;">
+                        Счёт <b>${account}</b>: ${pts.length} точек, max ${fmtMoney(maxD)}, последний долг <b style="color:${color};">${fmtMoney(last.debt)}</b>
+                    </div>
+                    <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="border:1px solid var(--border-color); border-radius:6px; background:#fafafa; display:block;">
+                        <polyline fill="none" stroke="${color}" stroke-width="2" points="${polyline}"/>
+                        ${pts.map((p, i) => {
+                            const x = P + i * step;
+                            const y = H - P - (p.debt / maxD) * (H - 2 * P);
+                            return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" fill="${color}">
+                                      <title>${new Date(p.started_at).toLocaleDateString('ru-RU')}: ${fmtMoney(p.debt)}</title>
+                                    </circle>`;
+                        }).join('')}
+                    </svg>
+                </div>`;
+        };
+
+        const tableRows = data.points
+            .slice()
+            .reverse()  // самый свежий импорт сверху
+            .map(p => `
+                <tr style="border-bottom:1px solid var(--border-color);">
+                    <td style="padding:6px 10px; font-size:12px;">${new Date(p.started_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })}</td>
+                    <td style="padding:6px 10px;"><span style="background:${p.account_type === '209' ? '#dbeafe' : '#fef3c7'}; color:${p.account_type === '209' ? '#1e40af' : '#92400e'}; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:600;">${p.account_type}</span></td>
+                    <td style="padding:6px 10px; text-align:right; font-weight:600; color:${p.debt > 0 ? '#dc2626' : 'var(--text-secondary)'};">${p.debt > 0 ? fmtMoney(p.debt) : '—'}</td>
+                    <td style="padding:6px 10px; text-align:right; color:${p.overpayment > 0 ? '#7c3aed' : 'var(--text-secondary)'};">${p.overpayment > 0 ? fmtMoney(p.overpayment) : '—'}</td>
+                    <td style="padding:6px 10px; color:var(--text-secondary); font-size:11px;">${esc(p.file_name || '—')}</td>
+                </tr>`).join('');
+
+        body.innerHTML = `
+            <div style="margin-bottom:10px; color:var(--text-secondary); font-size:12px;">
+                Комната: <b>${esc(data.room_label || '—')}</b> ·
+                ${data.points.length} ${data.points.length === 1 ? 'импорт' : (data.points.length < 5 ? 'импорта' : 'импортов')}
+            </div>
+            ${renderSpark(points209, '#dc2626', '209 (Коммуналка)')}
+            ${renderSpark(points205, '#ea580c', '205 (Найм)')}
+            <table style="width:100%; margin-top:14px; border-collapse:collapse; font-size:13px;">
+                <thead style="background:var(--bg-page); font-size:11px; color:var(--text-secondary); text-transform:uppercase;">
+                    <tr>
+                        <th style="text-align:left; padding:6px 10px;">Дата</th>
+                        <th style="text-align:left; padding:6px 10px;">Счёт</th>
+                        <th style="text-align:right; padding:6px 10px;">Долг</th>
+                        <th style="text-align:right; padding:6px 10px;">Переплата</th>
+                        <th style="text-align:left; padding:6px 10px;">Файл</th>
+                    </tr>
+                </thead>
+                <tbody>${tableRows}</tbody>
+            </table>`;
     },
 };
