@@ -1,12 +1,16 @@
 """Unit-тесты для парсеров debt_import.py — без БД, чисто текстовые.
 
-Сейчас покрываем:
-  - parse_contract_line: разбор строки «Договор от ... № ...» из ОСВ 1С
-    (4 поддерживаемых формата + негативные кейсы)
+Покрываем:
+  - parse_contract_line:  разбор строки «Договор от ... № ...» из ОСВ 1С
+  - pick_saldo_value:     выбор актуального сальдо (конец vs начало)
 """
 from datetime import date
+from decimal import Decimal
 
-from app.modules.utility.services.debt_import import parse_contract_line
+from app.modules.utility.services.debt_import import (
+    parse_contract_line,
+    pick_saldo_value,
+)
 
 
 class TestParseContractLine:
@@ -70,3 +74,49 @@ class TestParseContractLine:
     def test_no_number_only_date(self):
         """«Договор от 14.02.2017» без номера — None."""
         assert parse_contract_line("Договор от 14.02.2017") is None
+
+
+class TestPickSaldoValue:
+    """Логика выбора актуального сальдо из строки ОСВ 1С.
+
+    В ОСВ есть 3 секции: Сальдо начало | Обороты | Сальдо конец.
+    Нужно брать Сальдо на КОНЕЦ периода — это текущее состояние долга.
+    Если ячейка пустая (None) — fallback на Сальдо на начало (1С не
+    повторяет неизменное значение).
+    Если ячейка содержит явный 0 — берём 0 (долг закрыт).
+    """
+
+    def test_takes_end_when_present(self):
+        """End-колонка имеет значение → берём её."""
+        # row[4]=начало, row[7]=конец (стандарт ОСВ)
+        row = ("ФИО", None, None, None, "100.00", None, None, "50.00")
+        assert pick_saldo_value(row, end_col=7, start_col=4) == Decimal("50.00")
+
+    def test_fallback_to_start_when_end_is_none(self):
+        """End пустая → берём начало (жилец без оборотов в периоде)."""
+        row = ("ФИО", None, None, None, "936.87", None, None, None)
+        assert pick_saldo_value(row, end_col=7, start_col=4) == Decimal("936.87")
+
+    def test_explicit_zero_at_end_means_closed(self):
+        """End=0 (а не None) — долг закрыт. НЕ fallback на старое начало."""
+        row = ("ФИО", None, None, None, "1000.00", None, None, 0)
+        assert pick_saldo_value(row, end_col=7, start_col=4) == Decimal("0")
+
+    def test_both_empty_returns_zero(self):
+        row = ("ФИО", None, None, None, None, None, None, None)
+        assert pick_saldo_value(row, end_col=7, start_col=4) == Decimal("0")
+
+    def test_single_section_when_end_equals_start(self):
+        """Упрощённый отчёт с одной парой Дебет/Кредит — end_col == start_col."""
+        row = ("ФИО", None, None, None, "500.00")
+        assert pick_saldo_value(row, end_col=4, start_col=4) == Decimal("500.00")
+
+    def test_out_of_bounds_indices(self):
+        """Индексы за границей row → 0 (защита от коротких строк)."""
+        row = ("ФИО",)
+        assert pick_saldo_value(row, end_col=7, start_col=4) == Decimal("0")
+
+    def test_numeric_value_not_string(self):
+        """В реальных Excel значения часто float/int, не string."""
+        row = ("ФИО", None, None, None, 100.5, None, None, 75)
+        assert pick_saldo_value(row, end_col=7, start_col=4) == Decimal("75")

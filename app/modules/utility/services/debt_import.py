@@ -25,6 +25,29 @@ _CONTRACT_NUM_AFTER_HASH_RE = re.compile(r"№\s*([^\s,;]+)", re.IGNORECASE)
 _CONTRACT_NUM_BARE_RE = re.compile(r"^договор\s+(\d[^\s]*)\s+от", re.IGNORECASE)
 
 
+def pick_saldo_value(row, end_col: int, start_col: int) -> Decimal:
+    """Выбирает актуальное сальдо из строки ОСВ 1С.
+
+    Логика:
+      - Если ячейка «Сальдо на конец» (end_col) НЕ пустая (None) — берём её.
+        Это работает и для 0: явный 0 в end означает «долг закрыт», и
+        мы импортируем 0 (не fallback на старое «Сальдо на начало»).
+      - Если end ячейка None — fallback на «Сальдо на начало» (start_col).
+        1С не повторяет неизменное значение в столбце «конец», поэтому
+        пустая ячейка = у жильца не было оборотов, состояние не менялось.
+      - Если обе None или индексы вне границ строки — возвращаем 0.
+
+    Вынесено модуль-уровень для покрытия unit-тестами без БД.
+    """
+    end_raw = row[end_col] if 0 <= end_col < len(row) else None
+    if end_raw is not None:
+        return clean_decimal(end_raw)
+    if end_col == start_col:
+        return Decimal("0")
+    start_raw = row[start_col] if 0 <= start_col < len(row) else None
+    return clean_decimal(start_raw) if start_raw is not None else Decimal("0")
+
+
 def parse_contract_line(text: Optional[str]) -> Optional[dict]:
     """Парсит строку из колонки A ОСВ 1С если это договор.
 
@@ -171,50 +194,70 @@ def sync_import_debts_process(
         # Бросаем — Celery должен увидеть падение и ретраить.
         raise RuntimeError(f"Ошибка чтения файла: {error}") from error
 
-    # Парсим заголовок чтобы динамически найти колонки «Дебет» и «Кредит».
-    # Раньше колонки были захардкожены как row[5]/row[6] — это сработало на
-    # старых выгрузках, но в текущих файлах ОСВ из 1С данные в col 4 и col 7
-    # (между ними merged-ячейки, и row[5]/row[6] всегда пустые → debt и
-    # overpayment всё время = 0). Парсер заголовка переживёт изменение
-    # шаблона выгрузки 1С (количество merged-cells).
+    # Парсим заголовок чтобы найти колонки «Дебет» и «Кредит».
     #
-    # Структура header в стандартной ОСВ 1С:
-    #   row 8: ['ДАТА', '', '', '', 'Сальдо на начало периода', ...,
-    #           'Обороты за период', ..., 'Сальдо на конец периода']
-    #   row 9: ['Контрагент', '', '', '', 'Дебет', '', '', 'Кредит', ...]
-    # Берём ПЕРВЫЕ «Дебет» и «Кредит» — это «Сальдо на начало», то что
-    # формально и есть текущий долг/переплата на дату формирования отчёта.
-    debt_col_idx: Optional[int] = None
-    overpay_col_idx: Optional[int] = None
+    # Структура header в стандартной ОСВ 1С имеет ТРИ секции:
+    #   row 8: 'Сальдо на начало периода' (E-G) | 'Обороты за период' (K-O)
+    #          | 'Сальдо на конец периода' (P-R)
+    #   row 9: ...'Дебет','','','Кредит',...,'Дебет','','','Кредит',...,'Дебет','','','Кредит'...
+    #
+    # Что нам реально нужно — «Сальдо на КОНЕЦ периода». Это актуальный
+    # долг/переплата на дату формирования отчёта. Если у жильца не было
+    # оборотов — конечная ячейка может быть пустой (1С не повторяет
+    # неизменное значение); тогда fallback на «Сальдо на начало».
+    #
+    # debt_col_first/last — позиции 1-й и 3-й колонки «Дебет» в row 9
+    # (Сальдо начало и Сальдо конец). Same для «Кредит».
+    debt_col_first: Optional[int] = None
+    debt_col_last: Optional[int] = None
+    overpay_col_first: Optional[int] = None
+    overpay_col_last: Optional[int] = None
     try:
         header_workbook = openpyxl.load_workbook(filename=file_path, read_only=True, data_only=True)
         header_ws = header_workbook.active
-        for i, header_row in enumerate(header_ws.iter_rows(min_row=1, max_row=12, values_only=True)):
+        for header_row in header_ws.iter_rows(min_row=1, max_row=12, values_only=True):
             if not header_row:
                 continue
             for col_idx, cell_val in enumerate(header_row):
                 if cell_val is None:
                     continue
                 token = str(cell_val).strip().lower()
-                if token == "дебет" and debt_col_idx is None:
-                    debt_col_idx = col_idx
-                elif token == "кредит" and overpay_col_idx is None:
-                    overpay_col_idx = col_idx
-            if debt_col_idx is not None and overpay_col_idx is not None:
+                if token == "дебет":
+                    if debt_col_first is None:
+                        debt_col_first = col_idx
+                    debt_col_last = col_idx
+                elif token == "кредит":
+                    if overpay_col_first is None:
+                        overpay_col_first = col_idx
+                    overpay_col_last = col_idx
+            # Прерываем когда нашли ВСЕ четыре индекса (три «Дебет» и три
+            # «Кредит» лежат в одной строке row 9 — обычно одной итерации
+            # хватает; этот break — защита от иногда merged-headers).
+            if (debt_col_first is not None and debt_col_last is not None
+                    and overpay_col_first is not None and overpay_col_last is not None
+                    and debt_col_first != debt_col_last
+                    and overpay_col_first != overpay_col_last):
                 break
         header_workbook.close()
     except Exception as e:
         logger.warning(f"Header parse failed, fallback to legacy indices: {e}")
 
-    # Fallback на legacy-индексы если парсер не нашёл — пусть лучше частично
-    # сработает чем упадёт. Для текущего шаблона 1С парсер найдёт col 4 и 7.
-    if debt_col_idx is None:
-        debt_col_idx = 5
-    if overpay_col_idx is None:
-        overpay_col_idx = 6
+    # Fallback на legacy-индексы если парсер не нашёл колонок.
+    if debt_col_first is None:
+        debt_col_first = 5
+    if overpay_col_first is None:
+        overpay_col_first = 6
+    # Если в файле всего ОДНА секция «Дебет/Кредит» (упрощённый отчёт) —
+    # last совпадает с first, fallback логика тоже сработает корректно.
+    if debt_col_last is None:
+        debt_col_last = debt_col_first
+    if overpay_col_last is None:
+        overpay_col_last = overpay_col_first
+
     logger.info(
-        f"Debt import column mapping: debt=col{debt_col_idx}, "
-        f"overpayment=col{overpay_col_idx} (account={account_type})"
+        f"Debt import columns: debt_start=col{debt_col_first}/end=col{debt_col_last}, "
+        f"overpay_start=col{overpay_col_first}/end=col{overpay_col_last} "
+        f"(account={account_type})"
     )
 
     # Создаём запись в логе ПЕРЕД импортом — чтобы при падении остался след.
@@ -305,10 +348,12 @@ def sync_import_debts_process(
             return None
 
         # 3. Чтение строк Excel.
-        # Минимальная длина row = max(debt_col_idx, overpay_col_idx) + 1 чтобы
-        # индексация не вышла за границу. Старое 7 — было хардкодом под legacy
-        # row[6], сейчас может быть и 8 (если overpayment в col 7).
-        min_row_len = max(debt_col_idx, overpay_col_idx) + 1
+        # Минимальная длина row = max(всех колонок) + 1 чтобы индексация
+        # не вышла за границу. pick_saldo_value определена на module-level
+        # для покрытия unit-тестами.
+        min_row_len = max(
+            debt_col_first, debt_col_last, overpay_col_first, overpay_col_last
+        ) + 1
         for row in worksheet.iter_rows(min_row=8, values_only=True):
             if not row or len(row) < min_row_len:
                 continue
@@ -363,8 +408,12 @@ def sync_import_debts_process(
             room_id = user_data["room_id"]
             last_matched_user_id = user_id  # для парсера договоров ниже
 
-            debt_val = clean_decimal(row[debt_col_idx])
-            over_val = clean_decimal(row[overpay_col_idx])
+            # Берём актуальный долг/переплату из «Сальдо на конец» (если
+            # ячейка не пустая) или fallback на «Сальдо на начало».
+            # Раньше использовалось «Сальдо на начало» — это устаревшие
+            # данные на дату ПРЕДЫДУЩЕГО периода, не текущие.
+            debt_val = pick_saldo_value(row, debt_col_last, debt_col_first)
+            over_val = pick_saldo_value(row, overpay_col_last, overpay_col_first)
 
             # 4. Если для этой комнаты уже есть черновик в БД
             if room_id in readings_map:
