@@ -5,7 +5,7 @@ from decimal import Decimal
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func, update, desc
+from sqlalchemy import func, update, desc, or_
 from sqlalchemy.orm import selectinload
 
 from app.modules.utility.models import User, MeterReading, Tariff, BillingPeriod, Adjustment, Room
@@ -65,7 +65,17 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
         .where(
             MeterReading.is_approved.is_(False),
             MeterReading.period_id == active_period.id,
-            MeterReading.anomaly_score < score_gate
+            MeterReading.anomaly_score < score_gate,
+            # Debt-only черновики от импорта 1С (все показания NULL) —
+            # утверждать нечего. Они подхватятся когда жилец подаст
+            # реальные показания через мобильное / gsheets. Без этого
+            # фильтра calculate_utilities падал на нулевых объёмах
+            # и весь bulk_approve валился с 500.
+            or_(
+                MeterReading.hot_water.is_not(None),
+                MeterReading.cold_water.is_not(None),
+                MeterReading.electricity.is_not(None),
+            ),
         )
     )).all()
 

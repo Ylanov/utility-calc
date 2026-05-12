@@ -88,7 +88,16 @@ async def get_paginated_readings(
     # =====================================================
     base_filter = [
         MeterReading.is_approved.is_(False),
-        MeterReading.period_id == selected_period.id
+        MeterReading.period_id == selected_period.id,
+        # Скрываем debt-only черновики от импорта 1С (показания NULL).
+        # Это технические записи для хранения долга — жилец их
+        # «подхватит» когда подаст реальные показания, в реестре
+        # для админа они просто шум («Норма / 0.000 / 0.000 / 0.000»).
+        or_(
+            MeterReading.hot_water.is_not(None),
+            MeterReading.cold_water.is_not(None),
+            MeterReading.electricity.is_not(None),
+        ),
     ]
 
     if anomalies_only:
@@ -328,6 +337,12 @@ async def get_readings_stats(db: AsyncSession, period_id: Optional[int] = None):
     base = [
         MeterReading.is_approved.is_(False),
         MeterReading.period_id == selected_period.id,
+        # См. base_filter выше — KPI реестра тоже не включает debt-only.
+        or_(
+            MeterReading.hot_water.is_not(None),
+            MeterReading.cold_water.is_not(None),
+            MeterReading.electricity.is_not(None),
+        ),
     ]
 
     # Основной агрегат — один запрос
