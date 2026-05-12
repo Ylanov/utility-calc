@@ -181,6 +181,13 @@ services:
       nofile:
         soft: 65535
         hard: 65535
+    volumes:
+      # Общий том для сгенерированных файлов: ZIP-архивы квитанций,
+      # APK мобильного приложения и архив оригинальных xlsx из 1С
+      # (DebtImportLog.archive_path). Раньше каждый контейнер имел свой
+      # эфемерный /app/static/generated_files — web писал, worker не
+      # находил. Теперь через named volume оба видят одни файлы.
+      - shared_data:/app/static/generated_files
     depends_on:
       migration_job:
         condition: service_completed_successfully
@@ -257,6 +264,11 @@ services:
       --queues=default
       --concurrency=8
       --max-tasks-per-child=500
+    volumes:
+      # Тот же том что у web_jkh — import_debts_task читает архив xlsx,
+      # сгенерированные ZIP отдаются юзеру через web → файлы должны
+      # быть в shared filesystem.
+      - shared_data:/app/static/generated_files
     depends_on:
       redis:
         condition: service_healthy
@@ -283,6 +295,8 @@ services:
       --queues=heavy
       --concurrency=4
       --max-tasks-per-child=500
+    volumes:
+      - shared_data:/app/static/generated_files
     depends_on:
       redis:
         condition: service_healthy
@@ -400,6 +414,10 @@ volumes:
   redis_data:
   minio_data:
   nginx_cache:
+  # Общая filesystem между web_jkh + worker_jkh_default + worker_jkh_heavy.
+  # Хранит ZIP-квитанции, APK мобильного приложения и архив оригинальных
+  # xlsx из 1С (DebtImportLog.archive_path).
+  shared_data:
 
 networks:
   utility_net:
