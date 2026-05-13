@@ -196,11 +196,40 @@ export const ClientReadings = {
         if (this.dom.prev.cold) this.dom.prev.cold.textContent = Number(data.prev_cold).toFixed(3);
         if (this.dom.prev.elect) this.dom.prev.elect.textContent = Number(data.prev_elect).toFixed(3);
 
+        // Прячем карточки счётчиков, которых у жильца нет (meters_001_per_user_config).
+        // Поля становятся не-required, чтобы валидация формы не блокировала submit.
+        // По умолчанию (старые серверы / отсутствие поля) показываем всё.
+        this._applyMeterVisibility('hot', data.has_hw_meter !== false);
+        this._applyMeterVisibility('cold', data.has_cw_meter !== false);
+        this._applyMeterVisibility('elect', data.has_el_meter !== false);
+
         if (data.is_draft || data.is_already_approved) {
             if (this.dom.inputs.hot) this.dom.inputs.hot.value = data.current_hot;
             if (this.dom.inputs.cold) this.dom.inputs.cold.value = data.current_cold;
             if (this.dom.inputs.elect) this.dom.inputs.elect.value = data.current_elect;
             this.validate();
+        }
+    },
+
+    /**
+     * Скрыть / показать карточку счётчика. При скрытии поле снимаем с required
+     * и зануляем, чтобы submit не падал на пустом required input. Если у жильца
+     * нет счётчика — потребление считается по нормативу из тарифа на сервере.
+     */
+    _applyMeterVisibility(key, isPresent) {
+        const card = this.dom.cards[key];
+        const input = this.dom.inputs[key];
+        if (!card || !input) return;
+        if (isPresent) {
+            card.style.display = '';
+            input.required = true;
+            input.disabled = false;
+        } else {
+            card.style.display = 'none';
+            input.required = false;
+            input.disabled = true;
+            // Шлём 0 — сервер всё равно перезатрёт расход на норматив × residents.
+            input.value = 0;
         }
     },
 
@@ -235,6 +264,14 @@ export const ClientReadings = {
             const error = this.dom.errors[key];
             const card = this.dom.cards[key];
             if (!input) return true;
+
+            // Если счётчика у жильца нет (карточка скрыта / поле disabled),
+            // не валидируем — расход возьмётся из норматива на сервере.
+            if (input.disabled) {
+                if (error) error.textContent = '';
+                if (card) card.classList.remove('error');
+                return true;
+            }
 
             const val = parseFloat(input.value);
 

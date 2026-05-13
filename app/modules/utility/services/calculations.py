@@ -149,11 +149,35 @@ def calculate_utilities(
     # Объёмы: приводим к Decimal, защищаем от отрицательных значений.
     # Отрицательный объём физически невозможен и должен давать 0, а не
     # отрицательную сумму в квитанции.
+    #
+    # NB: если у жильца НЕТ счётчика конкретного ресурса (has_X_meter=False),
+    # передан volume=0. В этом случае используем НОРМАТИВ из тарифа
+    # (X_norm_per_capita × residents_count). Это правильное поведение
+    # для жильцов без счётчика — иначе им бы ничего не начислялось за
+    # ресурсы которые они потребляют.
     # ─────────────────────────────────────────────────
     v_hot  = safe_positive(D(volume_hot))
     v_cold = safe_positive(D(volume_cold))
     v_sew  = safe_positive(D(volume_sewage))
     v_el   = safe_positive(D(volume_electricity_share))
+
+    residents = D(user.residents_count if user.residents_count else 1)
+    has_hw = getattr(user, "has_hw_meter", True)
+    has_cw = getattr(user, "has_cw_meter", True)
+    has_el = getattr(user, "has_el_meter", True)
+
+    if not has_hw:
+        # Счётчика ГВС нет — норматив × жильцов. Если norm=0 → 0.
+        v_hot = safe_positive(D(getattr(tariff, "hw_norm_per_capita", 0)) * residents)
+    if not has_cw:
+        v_cold = safe_positive(D(getattr(tariff, "cw_norm_per_capita", 0)) * residents)
+    if not has_el:
+        v_el = safe_positive(D(getattr(tariff, "el_norm_per_capita", 0)) * residents)
+
+    # Водоотведение тоже пересчитываем если хотя бы один из водных
+    # счётчиков отсутствует — оно идёт от суммы (ГВС + ХВС).
+    if (not has_hw) or (not has_cw):
+        v_sew = v_hot + v_cold
 
     # Площадь комнаты
     area = D(room.apartment_area or 0)

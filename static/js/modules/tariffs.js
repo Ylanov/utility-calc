@@ -20,6 +20,12 @@ export const TariffsModule = {
         // Сумма за «койко-место» (для холостяков, billing_mode='per_capita').
         // 0 = тариф для одиночек не применяется.
         per_capita_amount: 't_per_capita',
+        // Нормативы потребления для жильцов без счётчика (User.has_X_meter=False).
+        // Расход тогда = norm_per_capita × residents_count.
+        // См. миграцию meters_001_per_user_config.
+        hw_norm_per_capita: 't_hw_norm',
+        cw_norm_per_capita: 't_cw_norm',
+        el_norm_per_capita: 't_el_norm',
     },
 
     // Утилита: форматировать дату для отображения
@@ -256,11 +262,14 @@ export const TariffsModule = {
         }
         this._updateScheduledAlert();
 
-        // Проходим по нашей карте и заполняем инпуты с ценами
+        // Проходим по нашей карте и заполняем инпуты с ценами.
+        // Нормативы (Numeric(10,3)) — 3 знака; цены/ставки — 2 знака.
+        const NORM_KEYS = new Set(['hw_norm_per_capita', 'cw_norm_per_capita', 'el_norm_per_capita']);
         for (const [dbKey, htmlId] of Object.entries(this.MAPPING)) {
             const input = document.getElementById(htmlId);
             if (input && tariff[dbKey] !== undefined) {
-                input.value = Number(tariff[dbKey]).toFixed(2);
+                const decimals = NORM_KEYS.has(dbKey) ? 3 : 2;
+                input.value = Number(tariff[dbKey]).toFixed(decimals);
             }
         }
 

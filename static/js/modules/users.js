@@ -476,6 +476,13 @@ export const UsersModule = {
             // но мы всё равно шлём оба явно — чтобы не было сюрпризов если валидатор не сработает.
             resident_type: this.dom.newResidentType?.value || 'family',
             billing_mode: this.dom.newBillingMode?.value || 'by_meter',
+            // Конфигурация счётчиков жильца (meters_001_per_user_config).
+            // По умолчанию все три True (старая логика). Если снять галочку —
+            // на мобиле поле скрывается, анализатор не флагит «не подал X»,
+            // в calculate_utilities берётся tariff.X_norm_per_capita × residents.
+            has_hw_meter: document.getElementById('newHasHwMeter')?.checked ?? true,
+            has_cw_meter: document.getElementById('newHasCwMeter')?.checked ?? true,
+            has_el_meter: document.getElementById('newHasElMeter')?.checked ?? true,
         };
 
         setLoading(button, true, 'Создание...');
@@ -902,6 +909,15 @@ export const UsersModule = {
             if (inputs.residentType) inputs.residentType.value = user.resident_type || 'family';
             if (inputs.billingMode) inputs.billingMode.value = user.billing_mode || 'by_meter';
 
+            // Конфигурация счётчиков жильца (meters_001_per_user_config).
+            // Если поле отсутствует в ответе (старые сервера) — по умолчанию true.
+            const hwBox = document.getElementById('editHasHwMeter');
+            const cwBox = document.getElementById('editHasCwMeter');
+            const elBox = document.getElementById('editHasElMeter');
+            if (hwBox) hwBox.checked = user.has_hw_meter !== false;
+            if (cwBox) cwBox.checked = user.has_cw_meter !== false;
+            if (elBox) elBox.checked = user.has_el_meter !== false;
+
             // Авто-подбор billing_mode при смене типа: single → per_capita.
             // Админ может оставить выбор вручную (но прозрачно, не молча).
             if (inputs.residentType && inputs.billingMode) {
@@ -994,6 +1010,12 @@ export const UsersModule = {
             workplace: this.modal.inputs.work.value.trim(),
             resident_type: this.modal.inputs.residentType?.value || 'family',
             billing_mode: this.modal.inputs.billingMode?.value || 'by_meter',
+            // Конфигурация счётчиков жильца (meters_001_per_user_config).
+            // Шлём всегда (UserUpdate.has_X_meter = Optional[bool], None=не менять;
+            // мы посылаем явное значение из чекбокса).
+            has_hw_meter: document.getElementById('editHasHwMeter')?.checked ?? true,
+            has_cw_meter: document.getElementById('editHasCwMeter')?.checked ?? true,
+            has_el_meter: document.getElementById('editHasElMeter')?.checked ?? true,
         };
 
         if (this.modal.inputs.password.value) {

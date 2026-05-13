@@ -97,6 +97,12 @@ class UserCreate(BaseModel):
     hw_meter_serial: Optional[str] = None
     cw_meter_serial: Optional[str] = None
     el_meter_serial: Optional[str] = None
+    # Флаги наличия счётчиков. По умолчанию все True (как было).
+    # Если False — анализатор не флагит «не подал X», в calculate_utilities
+    # используется tariff.X_norm_per_capita × residents_count.
+    has_hw_meter: bool = True
+    has_cw_meter: bool = True
+    has_el_meter: bool = True
 
 
 class UserResponse(BaseModel):
@@ -113,6 +119,10 @@ class UserResponse(BaseModel):
 
     is_2fa_enabled: bool = False
     is_initial_setup_done: bool = False
+
+    has_hw_meter: bool = True
+    has_cw_meter: bool = True
+    has_el_meter: bool = True
 
     room: Optional[RoomResponse] = None
 
@@ -132,6 +142,9 @@ class UserUpdate(BaseModel):
     hw_meter_serial: Optional[str] = None
     cw_meter_serial: Optional[str] = None
     el_meter_serial: Optional[str] = None
+    has_hw_meter: Optional[bool] = None
+    has_cw_meter: Optional[bool] = None
+    has_el_meter: Optional[bool] = None
 
 
 # ======================================================
@@ -168,6 +181,13 @@ class TariffSchema(BaseModel):
     # Фиксированная сумма за койко-место (для холостяков, billing_mode=per_capita).
     # 0 = тариф не предполагает одиночек.
     per_capita_amount: DecimalTariff = Decimal("0.00")
+    # Нормативы потребления на 1 человека в месяц для случая когда
+    # у жильца НЕТ счётчика (User.has_X_meter=False). Расход тогда:
+    # v_X = norm_per_capita × residents_count. 0 = нет норматива → 0 потребление.
+    # См. миграцию meters_001_per_user_config.
+    hw_norm_per_capita: DecimalVolume = Decimal("0.000")
+    cw_norm_per_capita: DecimalVolume = Decimal("0.000")
+    el_norm_per_capita: DecimalVolume = Decimal("0.000")
     # Дата вступления в силу (необязательная)
     effective_from: Optional[datetime] = None
 
@@ -255,6 +275,14 @@ class ReadingStateResponse(BaseModel):
     # и показывает «к оплате X ₽ (койко-место по тарифу)».
     billing_mode: str = "by_meter"
     per_capita_amount: Optional[Decimal] = None  # фикс. сумма из тарифа жильца
+
+    # Конфигурация счётчиков жильца (см. миграцию meters_001_per_user_config).
+    # Если has_X_meter=False — мобилка/портал ПРЯЧЕТ соответствующее поле ввода,
+    # сервер при расчёте берёт tariff.X_norm_per_capita × residents_count.
+    # По умолчанию True (старое поведение — есть все три счётчика).
+    has_hw_meter: bool = True
+    has_cw_meter: bool = True
+    has_el_meter: bool = True
 
     # Подсказка по формату ввода счётчиков (см. /api/settings/meter-format).
     # Мобилка/портал показывают example_hint и instructions под полем ввода,

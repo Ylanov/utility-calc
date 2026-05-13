@@ -192,6 +192,12 @@ async def create_user(
         room_id=None,
         resident_type=rt,
         billing_mode=bm,
+        # Конфигурация счётчиков (см. meters_001_per_user_config). По умолчанию
+        # True (старая логика — все счётчики есть). Снимать галочку — для
+        # жильцов которые принципиально не подают какой-то ресурс.
+        has_hw_meter=getattr(new_user, "has_hw_meter", True),
+        has_cw_meter=getattr(new_user, "has_cw_meter", True),
+        has_el_meter=getattr(new_user, "has_el_meter", True),
         is_deleted=False,
         is_initial_setup_done=False
     )

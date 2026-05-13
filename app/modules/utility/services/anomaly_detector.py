@@ -87,9 +87,17 @@ def analyze_resource(
     hist_deltas: List[Decimal],
     name: str,
     avg_peer: Optional[Decimal] = None,
+    meter_present: bool = True,
 ) -> Tuple[List[str], int]:
     flags: list[str] = []
     score = 0
+
+    # Если у жильца нет соответствующего счётчика (has_X_meter=False) —
+    # никаких аномалий по этому ресурсу не считаем. Подача 0 = ожидаемое
+    # поведение, исторические дельты могут быть произвольными (если счётчик
+    # был, потом снят). См. миграцию meters_001_per_user_config.
+    if not meter_present:
+        return flags, score
 
     if not hist_deltas:
         return flags, score
@@ -287,8 +295,18 @@ def check_reading_for_anomalies_v2(
         "ELECT": D(current_reading.electricity) - D(last.electricity),
     }
 
+    # Маппинг ресурс → has_X_meter. Если у жильца нет счётчика — не флагим
+    # ничего по этому ресурсу (см. меняла meters_001_per_user_config).
+    meter_present_map = {
+        "HOT": bool(getattr(user, "has_hw_meter", True)) if user else True,
+        "COLD": bool(getattr(user, "has_cw_meter", True)) if user else True,
+        "ELECT": bool(getattr(user, "has_el_meter", True)) if user else True,
+    }
+
     # --- 1. КРИТИЧЕСКИЕ ПРОВЕРКИ ---
     for k, v in current_deltas.items():
+        if not meter_present_map[k]:
+            continue
         if v < 0:
             flags.append(f"NEGATIVE_{k}")
             total_score += 100
@@ -308,31 +326,40 @@ def check_reading_for_anomalies_v2(
             avg_peer_consumption.get(f"avg_{key.lower()}")
             if avg_peer_consumption else None
         )
-        f, s = analyze_resource(current_deltas[key], hist_deltas[key], key, peer_avg)
+        f, s = analyze_resource(
+            current_deltas[key],
+            hist_deltas[key],
+            key,
+            peer_avg,
+            meter_present=meter_present_map[key],
+        )
         flags.extend(f)
         total_score += s
 
     # --- 3. КОНТЕКСТНЫЙ АНАЛИЗ ---
     if user and getattr(user, "residents_count", 1) > 0:
         rc = Decimal(str(user.residents_count))
-        # COLD per person (исторически было только это)
-        per_person_cold_limit = Decimal(str(
-            config.get_float("anomaly.high_per_person_cold", 12.0)
-        ))
-        per_person_cold = current_deltas["COLD"] / rc
-        if per_person_cold > per_person_cold_limit:
-            flags.append("HIGH_PER_PERSON_COLD")
-            total_score += 25
+        # COLD per person (исторически было только это) —
+        # пропускаем для жильцов без счётчика ХВС.
+        if meter_present_map["COLD"]:
+            per_person_cold_limit = Decimal(str(
+                config.get_float("anomaly.high_per_person_cold", 12.0)
+            ))
+            per_person_cold = current_deltas["COLD"] / rc
+            if per_person_cold > per_person_cold_limit:
+                flags.append("HIGH_PER_PERSON_COLD")
+                total_score += 25
         # ELECT per person — симметрия (раньше была только для воды).
         # 200 кВт·ч/чел/мес — реалистичный потолок жилого потребления;
         # выше — серверная ферма, грязный счётчик или ошибка ввода.
-        per_person_elect_limit = Decimal(str(
-            config.get_float("anomaly.high_per_person_elect", 200.0)
-        ))
-        per_person_elect = current_deltas["ELECT"] / rc
-        if per_person_elect > per_person_elect_limit:
-            flags.append("HIGH_PER_PERSON_ELECT")
-            total_score += 25
+        if meter_present_map["ELECT"]:
+            per_person_elect_limit = Decimal(str(
+                config.get_float("anomaly.high_per_person_elect", 200.0)
+            ))
+            per_person_elect = current_deltas["ELECT"] / rc
+            if per_person_elect > per_person_elect_limit:
+                flags.append("HIGH_PER_PERSON_ELECT")
+                total_score += 25
 
     # --- 4. НОВЫЕ ПРАВИЛА v3 ---
     for rule_fn, args in (

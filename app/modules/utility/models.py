@@ -101,6 +101,16 @@ class User(Base):
     # Допустимые значения: 'by_meter' | 'per_capita'.
     billing_mode = Column(String(16), default="by_meter", nullable=False, index=True)
 
+    # Флаги наличия счётчиков. Если у жильца НЕТ какого-то счётчика
+    # (например, нет электросчётчика в общежитии-блоке), то:
+    #  - анализатор не флагит «не подал X»
+    #  - в calculate_utilities потребление считается как
+    #    norm_per_capita × residents_count из тарифа (если norm > 0)
+    # По умолчанию все True — старое поведение (счётчики у всех).
+    has_hw_meter = Column(Boolean, default=True, nullable=False)
+    has_cw_meter = Column(Boolean, default=True, nullable=False)
+    has_el_meter = Column(Boolean, default=True, nullable=False)
+
     room_id = Column(Integer, ForeignKey("rooms.id"), nullable=True)
     room = relationship("Room", backref="users")
 
@@ -217,6 +227,15 @@ class Tariff(Base):
     # (счётчики ХВС/ГВС/Электр в этом случае НЕ учитываются индивидуально).
     # Если 0 — холостяки в этом тарифе не используются.
     per_capita_amount = Column(Numeric(10, 2), default=0.00, nullable=False)
+
+    # Нормативы потребления на 1 человека в месяц для случаев когда у
+    # жильца НЕТ счётчика (User.has_X_meter=False). Когда счётчик есть —
+    # используются показания, эти поля игнорируются. Если норматив = 0,
+    # потребление считается 0 (т.е. жильцу без счётчика ничего не
+    # начисляется за этот ресурс).
+    hw_norm_per_capita = Column(Numeric(10, 3), default=0.0, nullable=False)  # м³ ГВС/чел/мес
+    cw_norm_per_capita = Column(Numeric(10, 3), default=0.0, nullable=False)  # м³ ХВС/чел/мес
+    el_norm_per_capita = Column(Numeric(10, 3), default=0.0, nullable=False)  # кВт·ч/чел/мес
 
     # Дата вступления в силу. Если задана в будущем — тариф "запланирован" (is_active=False)
     # и автоматически активируется Celery-задачей в эту дату.

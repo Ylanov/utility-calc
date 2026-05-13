@@ -165,6 +165,11 @@ async def get_reading_state(
         "cost_fixed_part": current_reading.cost_fixed_part if current_reading else None,
         "billing_mode": bm,
         "per_capita_amount": per_capita_amount,
+        # Конфигурация счётчиков (см. meters_001_per_user_config). Клиент
+        # использует эти флаги чтобы спрятать поля ввода у отсутствующих счётчиков.
+        "has_hw_meter": bool(getattr(user, "has_hw_meter", True)),
+        "has_cw_meter": bool(getattr(user, "has_cw_meter", True)),
+        "has_el_meter": bool(getattr(user, "has_el_meter", True)),
         "meter_format_hint": meter_format_value,
         "meter_example": meter_example_value,
         "meter_instructions": meter_instructions_value,
