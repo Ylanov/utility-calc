@@ -107,40 +107,82 @@ td { text-align: right; }
 </table>
 
 <table class="summary">
+    {% if total_debt and total_debt > 0 %}
     <tr>
-        <th scope="row" class="label">Начальный долг:</th><td class="value">{{ total_debt|round(2) }} руб.</td>
+        <th scope="row" class="label">Долг за прошлые периоды:</th>
+        <td class="value" style="color:#b91c1c;">{{ total_debt|round(2) }} руб.</td>
     </tr>
+    {% endif %}
+    {% if total_overpayment and total_overpayment > 0 %}
     <tr>
-        <th scope="row" class="label">Начальная переплата:</th><td class="value">{{ total_overpayment|round(2) }} руб.</td>
+        <th scope="row" class="label">Переплата с прошлых периодов:</th>
+        <td class="value" style="color:#15803d;">−{{ total_overpayment|round(2) }} руб.</td>
     </tr>
+    {% endif %}
+    {% if recalc and recalc != 0 %}
     <tr>
-        <th scope="row" class="label">Перерасчет (в т.ч. в этом месяце):</th><td class="value">{{ recalc|round(2) }} руб.</td>
+        <th scope="row" class="label">Перерасчёт (в т.ч. в этом месяце):</th>
+        <td class="value">{{ recalc|round(2) }} руб.</td>
     </tr>
+    {% endif %}
     <tr><td colspan="2" style="padding: 2px;"></td></tr>
     <tr>
-        <th scope="row" class="label" style="border-top: 1px solid #ccc; padding-top: 5px;">К оплате по счету 205 (Найм):</th>
-        <td class="value" style="border-top: 1px solid #ccc; padding-top: 5px;">{{ total_205_due|round(2) }} руб.</td>
+        <th scope="row" class="label" style="border-top: 1px solid #ccc; padding-top: 5px;">
+            {% if total_205_due < 0 %}Остаток на счёте 205 (Найм):{% else %}К оплате по счёту 205 (Найм):{% endif %}
+        </th>
+        <td class="value" style="border-top: 1px solid #ccc; padding-top: 5px; {% if total_205_due < 0 %}color:#15803d;{% endif %}">
+            {% if total_205_due < 0 %}−{{ ((-total_205_due)|float)|round(2) }}{% else %}{{ total_205_due|round(2) }}{% endif %} руб.
+        </td>
     </tr>
     <tr>
-        <th scope="row" class="label">К оплате по счету 209 (Коммуналка):</th>
-        <td class="value">{{ total_209_due|round(2) }} руб.</td>
+        <th scope="row" class="label">
+            {% if total_209_due < 0 %}Остаток на счёте 209 (Коммуналка):{% else %}К оплате по счёту 209 (Коммуналка):{% endif %}
+        </th>
+        <td class="value" style="{% if total_209_due < 0 %}color:#15803d;{% endif %}">
+            {% if total_209_due < 0 %}−{{ ((-total_209_due)|float)|round(2) }}{% else %}{{ total_209_due|round(2) }}{% endif %} руб.
+        </td>
     </tr>
 </table>
 
+{# Итоговый блок: положительный → «К оплате», отрицательный → «Остаток
+   средств» (переплата покрыла начисления, платить в этом месяце не
+   нужно), нулевой → «Платить не нужно». #}
+{% if grand_total < 0 %}
+<div class="total-final" style="color:#15803d; background:#f0fdf4; padding:10px 14px; border:2px solid #86efac; border-radius:6px;">
+    ОСТАТОК НА СЧЁТЕ: {{ ((-grand_total)|float)|round(2) }} руб.
+    <div style="font-size:11pt; font-weight:normal; margin-top:4px;">
+        Платить в этом месяце не нужно — переплата покрыла начисления.
+    </div>
+</div>
+{% elif grand_total == 0 %}
+<div class="total-final" style="color:#6b7280;">
+    Платить в этом месяце не нужно — сальдо нулевое.
+</div>
+{% else %}
 <div class="total-final">
     ИТОГО К ОПЛАТЕ: {{ grand_total|round(2) }} руб.
 </div>
+{% endif %}
 
+{# QR-коды показываем только для счетов где РЕАЛЬНО есть что платить.
+   Для отрицательных сумм QR с суммой −X невалидный и сбивает банковский
+   терминал. Если оба счёта в нуле/минусе — блок полностью скрываем. #}
+{% if total_205_due > 0 or total_209_due > 0 %}
 <div class="qr-section">
+    {% if total_205_due > 0 %}
     <div class="qr-box">
         <img src="data:image/png;base64,{{ qr_rent }}" alt="QR Rent">
         <div class="qr-desc">Оплата за наем<br>КБК {{ kbk_rent }}<br>Сумма: {{ total_205_due|round(2) }} руб.</div>
     </div>
+    {% endif %}
+    {% if total_209_due > 0 %}
     <div class="qr-box">
         <img src="data:image/png;base64,{{ qr_utils }}" alt="QR Utils">
         <div class="qr-desc">Коммунальные услуги<br>КБК {{ kbk_utils }}<br>Сумма: {{ total_209_due|round(2) }} руб.</div>
     </div>
+    {% endif %}
 </div>
+{% endif %}
 
 <div class="footer">
     Документ сформирован автоматически информационной системой. Подпись не требуется.
