@@ -11,6 +11,7 @@ from sqlalchemy import select
 from rapidfuzz import process, fuzz
 from app.modules.utility.models import (
     User, MeterReading, BillingPeriod, DebtImportLog, RentalContract,
+    GSheetsAlias,
 )
 
 
@@ -295,7 +296,21 @@ def sync_import_debts_process(
         # 1. Предзагрузка пользователей (сохраняем id и room_id)
         users_raw = db.execute(select(User).where(User.is_deleted.is_(False))).scalars().all()
         users_map = {normalize_name(u.username): {"id": u.id, "room_id": u.room_id} for u in users_raw}
+        users_by_id = {u.id: {"id": u.id, "room_id": u.room_id} for u in users_raw}
         users_keys = list(users_map.keys())
+
+        # 1.1. Предзагрузка алиасов ФИО — общая таблица GSheetsAlias.
+        # Если админ ранее привязал «Кондрашов ГА» → user_id=5 (через
+        # reassign в долгах ИЛИ в gsheets-импорте) — в этом импорте «Кондрашов ГА»
+        # сразу попадёт к user_id=5 без fuzzy. Один alias работает на оба
+        # счёта (205 и 209) и на gsheets — потому что таблица универсальная.
+        alias_rows = db.execute(
+            select(GSheetsAlias.alias_fio_normalized, GSheetsAlias.user_id)
+        ).all()
+        aliases_map: Dict[str, int] = {}
+        for norm, uid in alias_rows:
+            if norm and uid in users_by_id:
+                aliases_map[norm] = uid
 
         # 2. Предзагрузка показаний (черновиков) по КОМНАТАМ
         readings_raw = db.execute(
@@ -331,8 +346,17 @@ def sync_import_debts_process(
 
         def get_user_data_optimized(fio: str):
             norm = normalize_name(fio)
+            # 1. Точное совпадение username — самое надёжное
             if norm in users_map:
                 return users_map[norm]
+            # 2. Алиас (запомненная админом привязка из прошлых reassign).
+            # Работает для всех типов импорта (205, 209, gsheets) через
+            # общую таблицу GSheetsAlias.
+            if norm in aliases_map:
+                uid = aliases_map[norm]
+                cached = users_by_id.get(uid)
+                if cached:
+                    return cached
             if norm in fuzzy_cache:
                 return fuzzy_cache[norm]
 

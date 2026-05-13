@@ -33,6 +33,46 @@ def _nfu_fio(item) -> str:
     return str(item).strip()
 
 
+async def _ensure_debt_alias(
+    db: AsyncSession,
+    *,
+    alias_fio: str,
+    user_id: int,
+    created_by_id: int,
+    note: Optional[str] = None,
+) -> bool:
+    """Создаёт GSheetsAlias для запоминания привязки ФИО → user.
+
+    Общая таблица для всех типов импорта (gsheets, debt 205, debt 209) —
+    привязка сделана один раз, работает везде. Если alias по этому
+    normalized ФИО уже есть (даже на другого юзера) — НЕ перезаписываем,
+    оставляем старый (защита от случайной перебивки чужой привязки).
+
+    Возвращает True если действительно создал новую запись.
+    """
+    from app.modules.utility.models import GSheetsAlias
+    from app.modules.utility.services.gsheets_sync import normalize_fio
+
+    normalized = normalize_fio(alias_fio)
+    if not normalized:
+        return False
+    existing = (await db.execute(
+        select(GSheetsAlias).where(GSheetsAlias.alias_fio_normalized == normalized)
+    )).scalars().first()
+    if existing:
+        return False
+
+    db.add(GSheetsAlias(
+        alias_fio=alias_fio.strip(),
+        alias_fio_normalized=normalized,
+        user_id=user_id,
+        kind="debt_manual",
+        note=note,
+        created_by_id=created_by_id,
+    ))
+    return True
+
+
 TEMP_DIR = "/app/static/temp_imports"  # legacy, для совместимости со старым кодом
 # Постоянное хранение оригиналов ОСВ из 1С.
 # ПУТЬ: используем существующий shared_data volume (/app/static/generated_files/).
@@ -1039,8 +1079,20 @@ async def debts_reassign_not_found(
         log.not_found_users = nfu_new
         log.not_found_count = len(nfu_new)
 
+    # Сохраняем alias чтобы при СЛЕДУЮЩЕМ импорте (205 или 209 или gsheets)
+    # эта же ФИО автоматически матчилась на user — без повторного reassign.
+    alias_created = await _ensure_debt_alias(
+        db, alias_fio=fio, user_id=user_id,
+        created_by_id=current_user.id,
+        note=f"debt reassign log#{log_id}",
+    )
+
     await db.commit()
-    return {"status": "ok", "reading_id": reading.id if reading else None}
+    return {
+        "status": "ok",
+        "reading_id": reading.id if reading else None,
+        "alias_created": alias_created,
+    }
 
 
 # =========================================================================
@@ -1320,6 +1372,13 @@ async def debts_create_and_match(
     if len(nfu_new) != len(nfu):
         log.not_found_users = nfu_new
         log.not_found_count = len(nfu_new)
+
+    # 6. Alias — то же что в reassign: запомнить эту привязку для будущего.
+    await _ensure_debt_alias(
+        db, alias_fio=data.fio, user_id=db_user.id,
+        created_by_id=current_user.id,
+        note=f"debt create-and-match log#{log_id}",
+    )
 
     await db.commit()
     return {

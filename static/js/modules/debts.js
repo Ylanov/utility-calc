@@ -767,6 +767,32 @@ export const DebtsModule = {
                 });
                 this._nfClickHandlerAttached = true;
             }
+            // Инжектим CSS для иконки-карандаша «Исправить ФИО» один раз —
+            // нужен hover-стейт и opacity, которые inline в HTML не работают.
+            if (!document.getElementById('nf-fio-edit-styles')) {
+                const styleEl = document.createElement('style');
+                styleEl.id = 'nf-fio-edit-styles';
+                styleEl.textContent = `
+                    .nf-edit-fio-btn {
+                        background: transparent;
+                        border: none;
+                        padding: 2px 5px;
+                        border-radius: 4px;
+                        color: var(--text-tertiary);
+                        opacity: 0.35;
+                        cursor: pointer;
+                        font-size: 11px;
+                        transition: opacity 0.15s, background 0.15s, color 0.15s;
+                    }
+                    .nf-candidate:hover .nf-edit-fio-btn { opacity: 0.7; }
+                    .nf-edit-fio-btn:hover {
+                        opacity: 1 !important;
+                        background: #eef2ff;
+                        color: #4338ca;
+                    }
+                `;
+                document.head.appendChild(styleEl);
+            }
         } catch (e) {
             this.dom.notFoundList.innerHTML = `<div style="padding:16px; color:var(--danger-color);">Ошибка: ${esc(e.message)}</div>`;
         }
@@ -848,11 +874,11 @@ export const DebtsModule = {
                      style="display:flex; justify-content:space-between; align-items:center; gap:10px;
                             padding:8px 10px; background:#fff; border:1px solid var(--border-color); border-radius:6px; margin-bottom:6px;">
                     <div style="flex:1; min-width:0;">
-                        <div class="nf-candidate-name-row" style="font-weight:600; font-size:13px;">
+                        <div class="nf-candidate-name-row" style="font-weight:600; font-size:13px; display:inline-flex; align-items:center; gap:6px;">
                             <span class="nf-candidate-username">${esc(c.username)}</span>
-                            <span style="font-size:11px; color:var(--text-secondary); margin-left:4px;">${c.score}%</span>
+                            <span style="font-size:11px; color:var(--text-secondary);">${c.score}%</span>
                             <button data-nf-action="edit-fio" data-user-id="${c.id}" data-username="${esc(c.username)}"
-                                    class="icon-btn" style="padding:1px 5px; margin-left:4px; font-size:11px; color:var(--text-secondary);"
+                                    class="nf-edit-fio-btn"
                                     title="Исправить ФИО в базе (если в системе написано с ошибкой)">
                                 <i class="fa-solid fa-pen"></i>
                             </button>
