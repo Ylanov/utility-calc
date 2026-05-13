@@ -9,6 +9,7 @@ from decimal import Decimal
 
 from app.modules.utility.services.debt_import import (
     parse_contract_line,
+    pick_saldo_pair,
     pick_saldo_value,
 )
 
@@ -120,3 +121,143 @@ class TestPickSaldoValue:
         """В реальных Excel значения часто float/int, не string."""
         row = ("ФИО", None, None, None, 100.5, None, None, 75)
         assert pick_saldo_value(row, end_col=7, start_col=4) == Decimal("75")
+
+
+class TestPickSaldoPair:
+    """Парная логика выбора сальдо — корректно работает когда жилец
+    переплатил или у него «переехал» долг в переплату.
+
+    Колонки в стандартной ОСВ:
+      4 = Сальдо начало - Дебет
+      7 = Сальдо начало - Кредит
+      10 = Обороты - Дебет
+      13 = Обороты - Кредит
+      16 = Сальдо конец - Дебет
+      19 = Сальдо конец - Кредит
+    """
+
+    def test_glob_case_overpay_no_debt(self):
+        """REGRESSION: Глоба заплатил больше долга → переплата.
+
+        Сальдо начало Дебет = 10908.10
+        Обороты Кредит      = 18000     (заплатил)
+        Сальдо конец Дебет  = пусто     (долга нет)
+        Сальдо конец Кредит = 7091.90   (переплата)
+
+        Раньше pick_saldo_value(end=16, start=4) брал fallback → 10908.10
+        как «долг». Неверно: у Глобы НЕТ долга, есть переплата.
+        """
+        row = (
+            "Глоба", None, None, None,
+            10908.10,  # 4: Сальдо начало Дебет
+            None, None,
+            None,  # 7: Сальдо начало Кредит (пусто)
+            None, None,
+            None,  # 10: Обороты Дебет (пусто)
+            None, None,
+            18000,  # 13: Обороты Кредит = заплатил
+            None, None,
+            None,  # 16: Сальдо конец Дебет (пусто — долга нет)
+            None, None,
+            7091.90,  # 19: Сальдо конец Кредит = переплата
+        )
+        debt, over = pick_saldo_pair(
+            row,
+            end_debit_col=16, end_credit_col=19,
+            start_debit_col=4, start_credit_col=7,
+        )
+        assert debt == Decimal("0"), f"У Глобы НЕ должно быть долга, получено {debt}"
+        assert over == Decimal("7091.90")
+
+    def test_malyshkin_case_both_debt_and_overpay(self):
+        """Малышкин: на конец одновременно долг и переплата (разные субсчета)."""
+        row = (
+            "Малышкин", None, None, None,
+            4627.08,  # 4
+            None, None,
+            None,  # 7
+            None, None,
+            None,  # 10
+            None, None,
+            None,  # 13
+            None, None,
+            4631.33,  # 16: Сальдо конец Дебет
+            None, None,
+            4.25,  # 19: Сальдо конец Кредит
+        )
+        debt, over = pick_saldo_pair(
+            row,
+            end_debit_col=16, end_credit_col=19,
+            start_debit_col=4, start_credit_col=7,
+        )
+        assert debt == Decimal("4631.33")
+        assert over == Decimal("4.25")
+
+    def test_no_turnover_fallback_to_start(self):
+        """Жилец без оборотов: обе ячейки конца пустые → берём начало."""
+        row = (
+            "Иванов", None, None, None,
+            500,  # 4: Сальдо начало Дебет
+            None, None,
+            None,  # 7
+            None, None,
+            None,  # 10
+            None, None,
+            None,  # 13
+            None, None,
+            None,  # 16: end Дебет пуст
+            None, None,
+            None,  # 19: end Кредит пуст
+        )
+        debt, over = pick_saldo_pair(
+            row,
+            end_debit_col=16, end_credit_col=19,
+            start_debit_col=4, start_credit_col=7,
+        )
+        assert debt == Decimal("500")
+        assert over == Decimal("0")
+
+    def test_debt_closed_explicit_zero(self):
+        """Долг закрыт: в конец Дебет явный 0 (а не None), оба = 0."""
+        row = (
+            "Петров", None, None, None,
+            1000,  # начало Дебет
+            None, None,
+            None,
+            None, None,
+            None, None, None,
+            None, None, None,
+            0,  # 16: конец Дебет = 0 явный (долг закрыт)
+            None, None,
+            None,  # 19: конец Кредит
+        )
+        debt, over = pick_saldo_pair(
+            row,
+            end_debit_col=16, end_credit_col=19,
+            start_debit_col=4, start_credit_col=7,
+        )
+        # has_end_data=True (потому что end_d=0 НЕ None)
+        # debt = 0 (явно закрыт), over = 0 (None)
+        assert debt == Decimal("0")
+        assert over == Decimal("0")
+
+    def test_both_empty_returns_zero_pair(self):
+        row = ("ФИО",)
+        debt, over = pick_saldo_pair(
+            row,
+            end_debit_col=16, end_credit_col=19,
+            start_debit_col=4, start_credit_col=7,
+        )
+        assert debt == Decimal("0")
+        assert over == Decimal("0")
+
+    def test_simple_two_column_layout(self):
+        """Упрощённый отчёт с одной парой Дебет/Кредит — start_col == end_col."""
+        row = ("ФИО", None, None, None, 800, None, None, 50)
+        debt, over = pick_saldo_pair(
+            row,
+            end_debit_col=4, end_credit_col=7,
+            start_debit_col=4, start_credit_col=7,
+        )
+        assert debt == Decimal("800")
+        assert over == Decimal("50")

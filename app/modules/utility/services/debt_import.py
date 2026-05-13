@@ -26,19 +26,61 @@ _CONTRACT_NUM_AFTER_HASH_RE = re.compile(r"№\s*([^\s,;]+)", re.IGNORECASE)
 _CONTRACT_NUM_BARE_RE = re.compile(r"^договор\s+(\d[^\s]*)\s+от", re.IGNORECASE)
 
 
+def pick_saldo_pair(
+    row,
+    end_debit_col: int,
+    end_credit_col: int,
+    start_debit_col: int,
+    start_credit_col: int,
+) -> tuple[Decimal, Decimal]:
+    """Возвращает (debt, overpayment) — актуальные сальдо из строки ОСВ.
+
+    Корректная семантика 1С (раньше parser работал поколоночно — debt и
+    overpay независимо — и ломался на жильцах с оборотами):
+
+    1) Если в строке указано «Сальдо на КОНЕЦ периода» (Дебет ИЛИ Кредит,
+       хотя бы один из них не None) — значит у жильца БЫЛИ обороты.
+       Берём end-значения как пару: пустая ячейка = 0 для этой стороны.
+
+       Пример: Глоба — Сальдо начало Дебет=10908, оборот Кредит=18000
+       (заплатил), Сальдо конец Дебет=пусто, Сальдо конец Кредит=7091.
+       Раньше брали debt = fallback на 10908 ❌. Теперь:
+       has_end_data=True → debt=0 (end_d None), over=7091 ✓.
+
+    2) Если ОБА «Сальдо конец» пустые — у жильца не было оборотов,
+       состояние = «Сальдо начало». Берём start как пару.
+
+    3) Если обе пары пустые — возвращаем (0, 0).
+    """
+    def _read(col: int):
+        if 0 <= col < len(row):
+            return row[col]
+        return None
+
+    end_d = _read(end_debit_col)
+    end_c = _read(end_credit_col)
+    has_end_data = (end_d is not None) or (end_c is not None)
+
+    if has_end_data:
+        debt = clean_decimal(end_d) if end_d is not None else Decimal("0")
+        over = clean_decimal(end_c) if end_c is not None else Decimal("0")
+        return debt, over
+
+    # Fallback: end не показан → состояние = начало (без оборотов)
+    start_d = _read(start_debit_col)
+    start_c = _read(start_credit_col)
+    debt = clean_decimal(start_d) if start_d is not None else Decimal("0")
+    over = clean_decimal(start_c) if start_c is not None else Decimal("0")
+    return debt, over
+
+
+# DEPRECATED: оставлен для обратной совместимости со старыми unit-тестами
+# и внешними скриптами; в продакшен-цикле используется pick_saldo_pair.
 def pick_saldo_value(row, end_col: int, start_col: int) -> Decimal:
-    """Выбирает актуальное сальдо из строки ОСВ 1С.
+    """Старая поколоночная логика (бралa либо debt либо overpay независимо).
 
-    Логика:
-      - Если ячейка «Сальдо на конец» (end_col) НЕ пустая (None) — берём её.
-        Это работает и для 0: явный 0 в end означает «долг закрыт», и
-        мы импортируем 0 (не fallback на старое «Сальдо на начало»).
-      - Если end ячейка None — fallback на «Сальдо на начало» (start_col).
-        1С не повторяет неизменное значение в столбце «конец», поэтому
-        пустая ячейка = у жильца не было оборотов, состояние не менялось.
-      - Если обе None или индексы вне границ строки — возвращаем 0.
-
-    Вынесено модуль-уровень для покрытия unit-тестами без БД.
+    Не использовать в новом коде — она ломается на парах когда у жильца
+    одновременно есть оборот по противоположной стороне. См. pick_saldo_pair.
     """
     end_raw = row[end_col] if 0 <= end_col < len(row) else None
     if end_raw is not None:
@@ -420,10 +462,17 @@ def sync_import_debts_process(
             stats["processed"] += 1
 
             # Сальдо на конец (актуальный долг/переплата на дату отчёта).
-            # Читаем ДО проверки user_data — нужно для not_found_users тоже,
-            # чтобы фронт смог автоматически перенести сумму при reassign.
-            debt_val = pick_saldo_value(row, debt_col_last, debt_col_first)
-            over_val = pick_saldo_value(row, overpay_col_last, overpay_col_first)
+            # pick_saldo_pair — единая функция для пары (debt, overpay):
+            # она корректно обрабатывает кейс «жилец заплатил больше, конец
+            # Дебет пустой, конец Кредит = переплата» (Глоба) — раньше старая
+            # pick_saldo_value падала в fallback на «Сальдо начало Дебет».
+            debt_val, over_val = pick_saldo_pair(
+                row,
+                end_debit_col=debt_col_last,
+                end_credit_col=overpay_col_last,
+                start_debit_col=debt_col_first,
+                start_credit_col=overpay_col_first,
+            )
 
             user_data = get_user_data_optimized(fio_raw)
 
