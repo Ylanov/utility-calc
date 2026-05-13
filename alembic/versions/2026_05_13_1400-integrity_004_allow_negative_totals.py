@@ -22,7 +22,10 @@ from alembic import op
 
 
 revision = 'integrity_004_allow_negative_totals'
-down_revision = 'integrity_003_reading_bounds'
+# Линейная цепочка: integrity_003 → debts_002 → debts_003 → integrity_004.
+# Раньше down_revision указывал на integrity_003, но debts_002/003 уже
+# применены поверх integrity_003 → alembic выдавал «Multiple head revisions».
+down_revision = 'debts_003_applied_state'
 branch_labels = None
 depends_on = None
 
