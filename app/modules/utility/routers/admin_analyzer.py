@@ -34,7 +34,7 @@ from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.modules.utility.models import (
     AnalyzerSetting, AnomalyDismissal, MeterReading, User,
-    GSheetsImportRow, GSheetsAlias,
+    GSheetsImportRow, GSheetsAlias, BillingPeriod,
 )
 from app.modules.utility.routers.admin_dashboard import write_audit_log
 from app.modules.utility.services.analyzer_config import config, dismissals
@@ -897,6 +897,112 @@ async def bulk_dismiss(
         "flag_code": data.flag_code,
         "created": created,
         "skipped_existing": skipped_existing,
+    }
+
+
+# =========================================================================
+# ДВОЙНИКИ — жильцы с >1 approved MeterReading в одном периоде
+# =========================================================================
+@router.get("/duplicate-readings")
+async def get_duplicate_readings(
+    period_id: Optional[int] = Query(None, description="ID периода; None = активный"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Возвращает группы дубликатов: жильцы у которых в одном периоде
+    более одного approved MeterReading.
+
+    Возникает например когда manual_receipt создал новую квитанцию НЕ
+    обнаружив уже существующую (баг до 0c17797), или после ручных
+    манипуляций в БД. Админу нужна возможность найти эти дубли и
+    удалить лишние через UI.
+    """
+    _require_admin(current_user)
+
+    if period_id is None:
+        active = (await db.execute(
+            select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
+        )).scalars().first()
+        if not active:
+            return {"period_id": None, "duplicates": [], "total_dup_groups": 0}
+        period_id = active.id
+
+    # Группы (user_id, room_id) с >1 approved reading в этом периоде
+    dup_query = (
+        select(
+            MeterReading.user_id,
+            func.count(MeterReading.id).label("cnt"),
+        )
+        .where(
+            MeterReading.period_id == period_id,
+            MeterReading.is_approved.is_(True),
+            MeterReading.user_id.is_not(None),
+        )
+        .group_by(MeterReading.user_id)
+        .having(func.count(MeterReading.id) > 1)
+    )
+    dup_rows = (await db.execute(dup_query)).all()
+
+    if not dup_rows:
+        return {
+            "period_id": period_id,
+            "duplicates": [],
+            "total_dup_groups": 0,
+        }
+
+    dup_user_ids = [r[0] for r in dup_rows]
+
+    # Достаём все reading-и этих жильцов в этом периоде + user/room для UI
+    detail_query = (
+        select(MeterReading, User)
+        .join(User, MeterReading.user_id == User.id)
+        .options(selectinload(User.room))
+        .where(
+            MeterReading.period_id == period_id,
+            MeterReading.is_approved.is_(True),
+            MeterReading.user_id.in_(dup_user_ids),
+        )
+        .order_by(MeterReading.user_id, MeterReading.created_at.desc())
+    )
+    rows = (await db.execute(detail_query)).all()
+
+    # Группируем по user_id
+    grouped: dict[int, dict] = {}
+    for reading, user in rows:
+        if user.id not in grouped:
+            room = user.room
+            grouped[user.id] = {
+                "user_id": user.id,
+                "username": user.username,
+                "room_label": (
+                    f"{room.dormitory_name} / {room.room_number}"
+                    if room else "без комнаты"
+                ),
+                "readings": [],
+            }
+        grouped[user.id]["readings"].append({
+            "id": reading.id,
+            "created_at": reading.created_at.isoformat() if reading.created_at else None,
+            "total_cost": float(reading.total_cost or 0),
+            "total_209": float(reading.total_209 or 0),
+            "total_205": float(reading.total_205 or 0),
+            "anomaly_flags": reading.anomaly_flags,
+            "anomaly_score": int(reading.anomaly_score or 0),
+            "hot_water": float(reading.hot_water) if reading.hot_water is not None else None,
+            "cold_water": float(reading.cold_water) if reading.cold_water is not None else None,
+            "electricity": float(reading.electricity) if reading.electricity is not None else None,
+        })
+
+    duplicates = list(grouped.values())
+    duplicates.sort(key=lambda g: g["username"].lower())
+
+    return {
+        "period_id": period_id,
+        "duplicates": duplicates,
+        "total_dup_groups": len(duplicates),
+        "total_extra_readings": sum(
+            len(g["readings"]) - 1 for g in duplicates
+        ),  # сколько reading-ов «лишние»
     }
 
 

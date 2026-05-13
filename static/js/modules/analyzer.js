@@ -94,6 +94,8 @@ export const AnalyzerModule = {
             cleanupDays:    document.getElementById('analyzerCleanupDays'),
             btnCleanupNow:  document.getElementById('btnAnalyzerCleanupNow'),
             cleanupResult:  document.getElementById('analyzerCleanupResult'),
+            btnFindDuplicates: document.getElementById('btnFindDuplicates'),
+            duplicatesResult:  document.getElementById('duplicatesResult'),
 
             // Таб «Сверка 1С»
             btnReconcileRun: document.getElementById('btnReconcileRun'),
@@ -147,6 +149,15 @@ export const AnalyzerModule = {
 
         // Таб «Обслуживание»
         this.dom.btnCleanupNow?.addEventListener('click', () => this.runGsheetsCleanup());
+        this.dom.btnFindDuplicates?.addEventListener('click', () => this.findDuplicates());
+        // Делегирование клика «Удалить дубликат» внутри результата
+        this.dom.duplicatesResult?.addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-delete-dup-id]');
+            if (btn) {
+                e.preventDefault();
+                this.deleteDuplicateReading(Number(btn.dataset.deleteDupId));
+            }
+        });
 
         // Таб «Сверка 1С»
         this.dom.btnReconcileRun?.addEventListener('click', () => this.runReconcile());
@@ -878,6 +889,110 @@ export const AnalyzerModule = {
                 `<div style="padding:12px 16px; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; color:#991b1b;">Ошибка: ${escapeHtml(e.message)}</div>`;
         } finally {
             if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-trash"></i> Очистить сейчас'; }
+        }
+    },
+
+    // ====================================================================
+    // ДВОЙНИКИ — поиск и удаление дубликатов approved-квитанций в периоде
+    // ====================================================================
+    async findDuplicates() {
+        const btn = this.dom.btnFindDuplicates;
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Поиск…'; }
+        this.dom.duplicatesResult.innerHTML = '';
+        try {
+            const res = await api.get('/admin/analyzer/duplicate-readings');
+            this._renderDuplicates(res);
+        } catch (e) {
+            this.dom.duplicatesResult.innerHTML =
+                `<div style="padding:12px 16px; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; color:#991b1b;">Ошибка: ${escapeHtml(e.message)}</div>`;
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-magnifying-glass"></i> Найти двойников (активный период)'; }
+        }
+    },
+
+    _renderDuplicates(data) {
+        const groups = data.duplicates || [];
+        if (!groups.length) {
+            this.dom.duplicatesResult.innerHTML = `
+                <div style="padding:12px 16px; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; color:#065f46;">
+                    <i class="fa-solid fa-check-circle"></i> Дубликатов не найдено — у каждого жильца в этом периоде ровно одна утверждённая квитанция.
+                </div>`;
+            return;
+        }
+        const header = `
+            <div style="padding:10px 14px; background:#fef3c7; border:1px solid #fde68a; border-radius:8px; color:#92400e; margin-bottom:12px;">
+                <b><i class="fa-solid fa-triangle-exclamation"></i> Найдено ${groups.length} ${groups.length === 1 ? 'жилец' : 'жильцов'}</b>
+                с дубликатами квитанций. Всего лишних reading-ов: ${data.total_extra_readings}.
+                Просмотрите и удалите ненужные через кнопку «Удалить» (нельзя отменить).
+            </div>`;
+        const groupsHtml = groups.map(g => `
+            <details style="margin-bottom:10px; border:1px solid var(--border-color); border-radius:8px; background:#fff;">
+                <summary style="padding:10px 14px; cursor:pointer; background:#f9fafb; font-weight:600;">
+                    ${escapeHtml(g.username)}
+                    <span style="font-size:12px; color:var(--text-secondary); font-weight:normal; margin-left:6px;">
+                        · ${escapeHtml(g.room_label)} · ${g.readings.length} квитанций
+                    </span>
+                </summary>
+                <div style="padding:10px 14px;">
+                    <table style="width:100%; border-collapse:collapse; font-size:12px;">
+                        <thead style="background:var(--bg-page); font-size:11px; color:var(--text-secondary); text-transform:uppercase;">
+                            <tr>
+                                <th style="text-align:left; padding:6px 8px;">ID</th>
+                                <th style="text-align:left; padding:6px 8px;">Создан</th>
+                                <th style="text-align:left; padding:6px 8px;">Флаги</th>
+                                <th style="text-align:right; padding:6px 8px;">ГВС</th>
+                                <th style="text-align:right; padding:6px 8px;">ХВС</th>
+                                <th style="text-align:right; padding:6px 8px;">Свет</th>
+                                <th style="text-align:right; padding:6px 8px;">209</th>
+                                <th style="text-align:right; padding:6px 8px;">205</th>
+                                <th style="text-align:right; padding:6px 8px;">Итого</th>
+                                <th style="padding:6px 8px;"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${g.readings.map(r => `
+                                <tr style="border-bottom:1px solid var(--border-color);">
+                                    <td style="padding:6px 8px; font-family:monospace;">#${r.id}</td>
+                                    <td style="padding:6px 8px; font-size:11px;">${escapeHtml(fmtDateTime(r.created_at))}</td>
+                                    <td style="padding:6px 8px;">
+                                        <span style="font-family:monospace; font-size:11px; background:#f3f4f6; padding:1px 5px; border-radius:3px;">${escapeHtml(r.anomaly_flags || '—')}</span>
+                                    </td>
+                                    <td style="padding:6px 8px; text-align:right; font-family:monospace;">${r.hot_water != null ? r.hot_water.toFixed(3) : '—'}</td>
+                                    <td style="padding:6px 8px; text-align:right; font-family:monospace;">${r.cold_water != null ? r.cold_water.toFixed(3) : '—'}</td>
+                                    <td style="padding:6px 8px; text-align:right; font-family:monospace;">${r.electricity != null ? r.electricity.toFixed(3) : '—'}</td>
+                                    <td style="padding:6px 8px; text-align:right; font-family:monospace;">${r.total_209.toFixed(2)}</td>
+                                    <td style="padding:6px 8px; text-align:right; font-family:monospace;">${r.total_205.toFixed(2)}</td>
+                                    <td style="padding:6px 8px; text-align:right; font-family:monospace; font-weight:600;">${r.total_cost.toFixed(2)}</td>
+                                    <td style="padding:6px 8px; text-align:right;">
+                                        <button data-delete-dup-id="${r.id}" class="action-btn danger-btn" style="padding:3px 8px; font-size:11px;" title="Удалить эту квитанцию">
+                                            <i class="fa-solid fa-trash"></i>
+                                        </button>
+                                    </td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            </details>
+        `).join('');
+        this.dom.duplicatesResult.innerHTML = header + groupsHtml;
+    },
+
+    async deleteDuplicateReading(readingId) {
+        if (!readingId) return;
+        if (!confirm(
+            `Удалить квитанцию #${readingId}?\n\n` +
+            'Reading и связанные данные будут удалены безвозвратно. ' +
+            'Используйте только если знаете что это дубликат — оригинал останется.'
+        )) return;
+        try {
+            await api.delete(`/admin/readings/${readingId}`);
+            toast(`Квитанция #${readingId} удалена`, 'success');
+            // Перезагружаем список — удалённый ряд уйдёт, оставшиеся группы
+            // могут перестать быть «дубликатами» если в группе осталась 1.
+            this.findDuplicates();
+        } catch (e) {
+            toast('Ошибка: ' + e.message, 'error');
         }
     },
 
