@@ -24,8 +24,13 @@ class FakeRoom:
 
 
 class FakeUser:
-    def __init__(self, residents=2):
+    def __init__(self, residents=2, has_hw_meter=True, has_cw_meter=True, has_el_meter=True):
         self.residents_count = residents
+        # Конфигурация счётчиков (см. meters_001_per_user_config). По умолчанию
+        # все три True — старое поведение (есть все счётчики).
+        self.has_hw_meter = has_hw_meter
+        self.has_cw_meter = has_cw_meter
+        self.has_el_meter = has_el_meter
 
 
 class FakeTariff:
@@ -40,6 +45,9 @@ class FakeTariff:
         waste_disposal="6.50",
         heating="25.00",
         electricity_per_sqm="1.20",
+        hw_norm_per_capita="0.000",
+        cw_norm_per_capita="0.000",
+        el_norm_per_capita="0.000",
     ):
         self.water_supply      = Decimal(water_supply)
         self.water_heating     = Decimal(water_heating)
@@ -50,6 +58,10 @@ class FakeTariff:
         self.waste_disposal    = Decimal(waste_disposal)
         self.heating           = Decimal(heating)
         self.electricity_per_sqm = Decimal(electricity_per_sqm)
+        # Нормативы для жильцов без счётчика (meters_001_per_user_config)
+        self.hw_norm_per_capita = Decimal(hw_norm_per_capita)
+        self.cw_norm_per_capita = Decimal(cw_norm_per_capita)
+        self.el_norm_per_capita = Decimal(el_norm_per_capita)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -527,6 +539,105 @@ def test_typical_resident_in_normal_range():
 
 
 # ──────────────────────────────────────────────────────────────
+# ТЕСТЫ: meters_001_per_user_config — нормативы для жильцов без счётчиков
+# ──────────────────────────────────────────────────────────────
+
+def test_missing_hot_meter_uses_norm():
+    """Жилец без ГВС-счётчика (has_hw_meter=False) — расход = норматив × жильцов.
+    Передаём volume_hot=0, но в результате должен быть посчитан расход по нормативу.
+    """
+    user = FakeUser(residents=3, has_hw_meter=False)  # 3 жильца, нет ГВС
+    room = FakeRoom(area=30.0)
+    tariff = FakeTariff(hw_norm_per_capita="2.500")  # 2.5 м³/чел/мес
+
+    result = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=Decimal("0"),     # клиент не подал — счётчика нет
+        volume_cold=Decimal("4.0"),
+        volume_sewage=Decimal("4.0"),
+        volume_electricity_share=Decimal("50.0"),
+    )
+
+    # Норматив ГВС: 2.5 × 3 = 7.5 м³; ГВС стоит water_supply+water_heating=190 ₽
+    # 7.5 × 190 = 1425.00 ₽
+    assert result["cost_hot_water"] == Decimal("1425.00"), (
+        f"ГВС по нормативу: ожидается 1425.00, получено {result['cost_hot_water']}"
+    )
+    # Канализация = (v_hot + v_cold) × sewage = (7.5 + 4) × 35 = 402.50 ₽
+    assert result["cost_sewage"] == Decimal("402.50"), (
+        f"Канализация после норматива: ожидается 402.50, получено {result['cost_sewage']}"
+    )
+
+
+def test_missing_meter_with_zero_norm_gives_zero_cost():
+    """Если у жильца нет счётчика И норматив=0 — стоимость 0 (а не норматив × N)."""
+    user = FakeUser(residents=2, has_el_meter=False)
+    room = FakeRoom(area=20.0)
+    # el_norm_per_capita по умолчанию 0
+    tariff = FakeTariff()
+
+    result = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=Decimal("3.0"),
+        volume_cold=Decimal("4.0"),
+        volume_sewage=Decimal("7.0"),
+        volume_electricity_share=Decimal("100.0"),  # передан, но игнорируется
+    )
+
+    assert result["cost_electricity"] == Decimal("0.00"), (
+        f"Свет без счётчика + норматив=0: ожидается 0, получено {result['cost_electricity']}"
+    )
+
+
+def test_no_meters_at_all_only_fixed_part_charged():
+    """Жилец вообще без счётчиков и без нормативов — только фикс. часть."""
+    user = FakeUser(
+        residents=1, has_hw_meter=False, has_cw_meter=False, has_el_meter=False
+    )
+    room = FakeRoom(area=18.0)
+    tariff = FakeTariff()  # нормативы по умолчанию 0
+
+    result = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=Decimal("0"),
+        volume_cold=Decimal("0"),
+        volume_sewage=Decimal("0"),
+        volume_electricity_share=Decimal("0"),
+    )
+
+    assert result["cost_hot_water"]   == Decimal("0.00")
+    assert result["cost_cold_water"]  == Decimal("0.00")
+    assert result["cost_sewage"]      == Decimal("0.00")
+    assert result["cost_electricity"] == Decimal("0.00")
+    # Фиксированные части (от площади) должны быть посчитаны
+    assert result["cost_maintenance"] > Decimal("0.00")
+    assert result["cost_social_rent"] > Decimal("0.00")
+
+
+def test_present_meter_ignores_norm():
+    """Если has_X_meter=True — норматив НЕ применяется, считается дельта счётчика.
+    Это гарантия что новое поведение не ломает старое (по умолчанию все meters=True).
+    """
+    user = FakeUser(residents=2, has_hw_meter=True)  # счётчик есть
+    room = FakeRoom(area=30.0)
+    # norm=999 — большое число, чтобы убедиться что оно НЕ используется
+    tariff = FakeTariff(hw_norm_per_capita="999.000")
+
+    result = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=Decimal("3.0"),  # реальная подача
+        volume_cold=Decimal("4.0"),
+        volume_sewage=Decimal("7.0"),
+        volume_electricity_share=Decimal("50.0"),
+    )
+
+    # ГВС от ФАКТА (3.0), а не норматива: 3.0 × 190 = 570.00 ₽
+    assert result["cost_hot_water"] == Decimal("570.00"), (
+        f"При наличии счётчика норматив не применяется: получено {result['cost_hot_water']}"
+    )
+
+
+# ──────────────────────────────────────────────────────────────
 # ЗАПУСК ВСЕХ ТЕСТОВ
 # ──────────────────────────────────────────────────────────────
 
@@ -545,5 +656,9 @@ if __name__ == "__main__":
     test_per_capita_routed_via_billing_mode()
     test_costs_for_model_fields_filters_meta()
     test_typical_resident_in_normal_range()
+    test_missing_hot_meter_uses_norm()
+    test_missing_meter_with_zero_norm_gives_zero_cost()
+    test_no_meters_at_all_only_fixed_part_charged()
+    test_present_meter_ignores_norm()
     # test_calculate_raises_when_all_rates_zero — pytest.raises только под pytest
     print("\n🎉 Все тесты пройдены успешно!")

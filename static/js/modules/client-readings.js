@@ -199,14 +199,22 @@ export const ClientReadings = {
         // Прячем карточки счётчиков, которых у жильца нет (meters_001_per_user_config).
         // Поля становятся не-required, чтобы валидация формы не блокировала submit.
         // По умолчанию (старые серверы / отсутствие поля) показываем всё.
-        this._applyMeterVisibility('hot', data.has_hw_meter !== false);
-        this._applyMeterVisibility('cold', data.has_cw_meter !== false);
-        this._applyMeterVisibility('elect', data.has_el_meter !== false);
+        const hasHw = data.has_hw_meter !== false;
+        const hasCw = data.has_cw_meter !== false;
+        const hasEl = data.has_el_meter !== false;
+        this._applyMeterVisibility('hot', hasHw);
+        this._applyMeterVisibility('cold', hasCw);
+        this._applyMeterVisibility('elect', hasEl);
+        // Запоминаем для confirm-сообщения / submit (см. handleSubmit).
+        this.state.hasMeters = { hot: hasHw, cold: hasCw, elect: hasEl };
 
         if (data.is_draft || data.is_already_approved) {
-            if (this.dom.inputs.hot) this.dom.inputs.hot.value = data.current_hot;
-            if (this.dom.inputs.cold) this.dom.inputs.cold.value = data.current_cold;
-            if (this.dom.inputs.elect) this.dom.inputs.elect.value = data.current_elect;
+            // Скрытые поля (нет счётчика) НЕ перезаписываем current_X — у них
+            // уже стоит 0 от _applyMeterVisibility. Перезатирать саппортит
+            // прошлые значения, что вводит в заблуждение.
+            if (hasHw && this.dom.inputs.hot) this.dom.inputs.hot.value = data.current_hot;
+            if (hasCw && this.dom.inputs.cold) this.dom.inputs.cold.value = data.current_cold;
+            if (hasEl && this.dom.inputs.elect) this.dom.inputs.elect.value = data.current_elect;
             this.validate();
         }
     },
@@ -317,7 +325,14 @@ export const ClientReadings = {
         };
 
         if (this.state.isDraft) {
-            const msg = `Вы уверены, что хотите перезаписать показания?\n\nНовые данные:\n🔥 ГВС: ${data.hot_water}\n❄️ ХВС: ${data.cold_water}\n⚡ Свет: ${data.electricity}\n\nСтарые данные будут заменены.`;
+            // В confirm-сообщении показываем только реальные счётчики жильца —
+            // если у него нет ГВС, не пишем «ГВС: 0», это сбивает.
+            const hm = this.state.hasMeters || { hot: true, cold: true, elect: true };
+            const lines = ['Новые данные:'];
+            if (hm.hot)   lines.push(`🔥 ГВС: ${data.hot_water}`);
+            if (hm.cold)  lines.push(`❄️ ХВС: ${data.cold_water}`);
+            if (hm.elect) lines.push(`⚡ Свет: ${data.electricity}`);
+            const msg = `Вы уверены, что хотите перезаписать показания?\n\n${lines.join('\n')}\n\nСтарые данные будут заменены.`;
             if (!confirm(msg)) return;
         }
 

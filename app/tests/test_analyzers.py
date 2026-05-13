@@ -127,9 +127,15 @@ class _FakeReading:
 
 
 class _FakeUser:
-    def __init__(self, residents=2, uid=1):
+    def __init__(self, residents=2, uid=1,
+                 has_hw_meter=True, has_cw_meter=True, has_el_meter=True):
         self.id = uid
         self.residents_count = residents
+        # Конфигурация счётчиков (meters_001_per_user_config). По умолчанию
+        # True — анализатор флагит всё как раньше; False — пропускает ресурс.
+        self.has_hw_meter = has_hw_meter
+        self.has_cw_meter = has_cw_meter
+        self.has_el_meter = has_el_meter
 
 
 def test_check_reading_no_history_returns_none():
@@ -152,6 +158,56 @@ def test_check_reading_negative_delta_critical():
     assert "NEGATIVE_HOT" in flags
     # score достигает 100 (cap)
     assert score == 100
+
+
+# ============================================================
+# anomaly_detector: meters_001_per_user_config — отсутствующие счётчики
+# ============================================================
+
+def test_analyze_resource_skips_when_meter_absent():
+    """analyze_resource(meter_present=False) — никаких флагов, даже при ZERO/FROZEN."""
+    flags, score = analyze_resource(
+        current_delta=Decimal("0"),
+        hist_deltas=[Decimal("3"), Decimal("4"), Decimal("3.5")],
+        name="HOT",
+        meter_present=False,
+    )
+    assert flags == []
+    assert score == 0
+
+
+def test_check_reading_skips_negative_for_absent_meter():
+    """Если has_el_meter=False — NEGATIVE_ELECT не выставляется даже при отрицательной дельте.
+    Раньше анализатор флагил «дельта = 0 - 500 = -500», теперь — игнорирует ресурс целиком.
+    """
+    history = [
+        _FakeReading(hot=100, cold=200, elect=500),
+        _FakeReading(hot=95, cold=190, elect=480),
+    ]
+    # Жилец сдал hot/cold нормально, по элекстричеству счётчика нет → подаёт 0
+    cur = _FakeReading(hot=105, cold=205, elect=0)
+    user = _FakeUser(has_el_meter=False)
+    flags, score = check_reading_for_anomalies_v2(cur, history=history, user=user)
+    # NEGATIVE_ELECT не должен быть в флагах — анализатор пропустил ресурс
+    assert flags is None or "NEGATIVE_ELECT" not in (flags or "")
+    # NEGATIVE_HOT/COLD тоже не должно быть — там дельта положительная
+    assert flags is None or "NEGATIVE_HOT" not in (flags or "")
+    assert flags is None or "NEGATIVE_COLD" not in (flags or "")
+
+
+def test_check_reading_meter_present_default_for_none_user():
+    """Если user=None — все счётчики считаются присутствующими (старое поведение).
+    Это гарантия что вызовы без user не падают и работают как до меньшетвения.
+    """
+    history = [
+        _FakeReading(hot=100, cold=200, elect=500),
+        _FakeReading(hot=95, cold=190, elect=480),
+    ]
+    cur = _FakeReading(hot=90, cold=205, elect=510)  # hot -- отрицательная
+    flags, score = check_reading_for_anomalies_v2(cur, history=history, user=None)
+    # Без user — анализатор работает как раньше, NEGATIVE_HOT должен выйти
+    assert flags is not None
+    assert "NEGATIVE_HOT" in flags
 
 
 # ============================================================
