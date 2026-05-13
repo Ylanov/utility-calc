@@ -284,9 +284,9 @@ async def create_manual_receipt(
     t = tariff_cache.get_effective_tariff(user=user, room=room) or \
         (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().first()
 
-    # Последний approved reading жильца в этой комнате — для показаний и
-    # для актуального сальдо. История по ПАРЕ (user_id, room_id), чтобы
-    # при переезде старая комната не «утянула» данные нового жильца.
+    # Последний approved reading жильца в этой комнате — для показаний.
+    # История по ПАРЕ (user_id, room_id), чтобы при переезде старая комната
+    # не «утянула» данные нового жильца.
     prev = (await db.execute(
         select(MeterReading).where(
             MeterReading.user_id == user.id,
@@ -295,17 +295,56 @@ async def create_manual_receipt(
         ).order_by(MeterReading.created_at.desc()).limit(1)
     )).scalars().first()
 
-    # Draft того же периода (включая debt-only от импорта 1С).
-    draft = (await db.execute(
+    # Защита от дублирования: ищем ЛЮБОЙ reading этого жильца в этом
+    # периоде (approved или draft). Раньше искали только drafts → если
+    # уже был approved, создавался второй approved — в финансовой
+    # отчётности появлялась пара одинаковых жильцов.
+    existing = (await db.execute(
         select(MeterReading).where(
+            MeterReading.user_id == user.id,
             MeterReading.room_id == room.id,
             MeterReading.period_id == target_period.id,
-            MeterReading.is_approved.is_(False),
+        ).order_by(MeterReading.created_at.desc())
+    )).scalars().all()
+
+    approved_existing = next((r for r in existing if r.is_approved), None)
+    if approved_existing:
+        raise HTTPException(
+            400,
+            f"Квитанция за этот период уже есть (reading id={approved_existing.id}). "
+            "Чтобы создать новую — удалите старую через реестр показаний."
         )
+
+    # Берём draft (если есть) — будем апдейтить его до approved
+    draft = next((r for r in existing if not r.is_approved), None)
+
+    # Долги/переплаты живут не «в активном периоде», а на reading-ах. Импорт
+    # 1С перезаписывает их в АКТИВНОМ периоде, но если выбранный сейчас
+    # период НЕ совпадает с тем где был импорт — debt/overpay могут лежать
+    # на другом reading. Решение: берём САМЫЙ СВЕЖИЙ reading жильца где
+    # хотя бы один из debt_*/overpayment_* > 0 — это и есть актуальное
+    # сальдо. (Раньше брали draft || prev → теряли переплаты из других
+    # периодов: Глоба, переплата 7091.90 в Мае, manual_receipt в Феврале
+    # → системы их не видела → к оплате 707.70 вместо «остаток 6384»).
+    latest_with_balance = (await db.execute(
+        select(MeterReading).where(
+            MeterReading.room_id == room.id,
+            (MeterReading.debt_209 > 0)
+            | (MeterReading.debt_205 > 0)
+            | (MeterReading.overpayment_209 > 0)
+            | (MeterReading.overpayment_205 > 0),
+        ).order_by(MeterReading.created_at.desc()).limit(1)
     )).scalars().first()
 
-    # Берём долги/переплаты по приоритету draft → prev → 0
-    src = draft or prev
+    # Приоритет: draft текущего периода (свежий импорт) → latest с балансом
+    # из любого периода → 0/0.
+    if draft and (
+        (draft.debt_209 or 0) > 0 or (draft.debt_205 or 0) > 0
+        or (draft.overpayment_209 or 0) > 0 or (draft.overpayment_205 or 0) > 0
+    ):
+        src = draft
+    else:
+        src = latest_with_balance
     debt_209 = (src.debt_209 if src else ZERO) or ZERO
     overpay_209 = (src.overpayment_209 if src else ZERO) or ZERO
     debt_205 = (src.debt_205 if src else ZERO) or ZERO
