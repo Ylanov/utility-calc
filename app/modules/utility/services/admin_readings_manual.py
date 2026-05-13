@@ -280,9 +280,8 @@ async def create_manual_receipt(
     if not room:
         raise HTTPException(400, "Жилец не привязан к помещению")
 
-    from app.modules.utility.services.tariff_cache import tariff_cache
-    t = tariff_cache.get_effective_tariff(user=user, room=room) or \
-        (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().first()
+    # NB: тариф больше не нужен — costs всегда нулевые, фикс-часть не
+    # начисляется без подачи показаний. Раньше передавали в calculate_utilities.
 
     # Последний approved reading жильца в этой комнате — для показаний.
     # История по ПАРЕ (user_id, room_id), чтобы при переезде старая комната
