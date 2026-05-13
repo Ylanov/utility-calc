@@ -361,30 +361,26 @@ async def create_manual_receipt(
         .group_by(Adjustment.account_type)
     )).all()}
 
-    # Расчёт фикс-составляющих: volume=0, тариф даст maintenance/social_rent
-    # /fixed_part если они есть. Если это первый период жильца (prev=None) —
-    # делаем zero-costs (baseline-логика).
-    if prev is None:
-        costs = {
-            "cost_hot_water": ZERO, "cost_cold_water": ZERO, "cost_sewage": ZERO,
-            "cost_electricity": ZERO, "cost_maintenance": ZERO, "cost_social_rent": ZERO,
-            "cost_waste": ZERO, "cost_fixed_part": ZERO, "total_cost": ZERO,
-        }
-    else:
-        costs = calculate_utilities(
-            user=user, room=room, tariff=t,
-            volume_hot=ZERO, volume_cold=ZERO,
-            volume_sewage=ZERO, volume_electricity_share=ZERO,
-        )
+    # manual_receipt — БЕЗ начислений. Жилец не подал показания за этот
+    # период, поэтому фикс-часть тарифа (cost_maintenance, cost_social_rent,
+    # cost_fixed_part) НЕ начисляется. Только перенос сальдо.
+    #
+    # Раньше при manual_receipt начислялись фикс-составляющие (~700 ₽/мес
+    # за площадь 33м²: наём + содержание + отопление + ТКО). Эти суммы
+    # автоматически списывались с переплаты жильца → жилец «терял» деньги
+    # за период когда даже не подавал показания. Семантически неверно:
+    # фактическая оплата фикс-части должна начисляться когда жилец
+    # подтверждает наличие активного потребления (т.е. подаёт показания).
+    costs = {
+        "cost_hot_water": ZERO, "cost_cold_water": ZERO, "cost_sewage": ZERO,
+        "cost_electricity": ZERO, "cost_maintenance": ZERO, "cost_social_rent": ZERO,
+        "cost_waste": ZERO, "cost_fixed_part": ZERO, "total_cost": ZERO,
+    }
 
-    total_209 = (
-        (costs["total_cost"] - costs["cost_social_rent"])
-        + debt_209 - overpay_209 + adj_map.get("209", ZERO)
-    )
-    total_205 = (
-        costs["cost_social_rent"]
-        + debt_205 - overpay_205 + adj_map.get("205", ZERO)
-    )
+    # Total = только сальдо (долг минус переплата) + ручные корректировки.
+    # Если переплата больше долга — total отрицательный (остаток на счёте).
+    total_209 = debt_209 - overpay_209 + adj_map.get("209", ZERO)
+    total_205 = debt_205 - overpay_205 + adj_map.get("205", ZERO)
 
     # Показания счётчиков = prev (нулевое потребление в текущем периоде)
     hot = prev.hot_water if prev else None
