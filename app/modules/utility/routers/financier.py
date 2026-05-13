@@ -21,6 +21,18 @@ from app.modules.utility.tasks import import_debts_task
 router = APIRouter(prefix="/api/financier", tags=["Financier"])
 logger = logging.getLogger(__name__)
 
+def _nfu_fio(item) -> str:
+    """Извлекает ФИО из элемента not_found_users.
+
+    not_found_users поменял формат: legacy = list[str], новый = list[dict].
+    Помогает не падать с AttributeError при работе со старыми импортами
+    и при удалении/сравнении элементов.
+    """
+    if isinstance(item, dict):
+        return str(item.get("fio", "")).strip()
+    return str(item).strip()
+
+
 TEMP_DIR = "/app/static/temp_imports"  # legacy, для совместимости со старым кодом
 # Постоянное хранение оригиналов ОСВ из 1С.
 # ПУТЬ: используем существующий shared_data volume (/app/static/generated_files/).
@@ -1018,9 +1030,11 @@ async def debts_reassign_not_found(
         )
         db.add(reading)
 
-    # Удаляем FIO из not_found_users
+    # Удаляем FIO из not_found_users. После фикса формата (list[dict])
+    # сравниваем через helper _nfu_fio чтобы не упасть на .strip() от dict.
     nfu = list(log.not_found_users or [])
-    nfu_new = [x for x in nfu if x.strip().lower() != fio.strip().lower()]
+    fio_norm = fio.strip().lower()
+    nfu_new = [x for x in nfu if _nfu_fio(x).lower() != fio_norm]
     if len(nfu_new) != len(nfu):
         log.not_found_users = nfu_new
         log.not_found_count = len(nfu_new)
@@ -1299,9 +1313,10 @@ async def debts_create_and_match(
             )
             db.add(reading)
 
-    # 5. Удаляем FIO из not_found_users
+    # 5. Удаляем FIO из not_found_users (см. _nfu_fio про list[dict] vs str)
     nfu = list(log.not_found_users or [])
-    nfu_new = [x for x in nfu if x.strip().lower() != data.fio.strip().lower()]
+    fio_norm = data.fio.strip().lower()
+    nfu_new = [x for x in nfu if _nfu_fio(x).lower() != fio_norm]
     if len(nfu_new) != len(nfu):
         log.not_found_users = nfu_new
         log.not_found_count = len(nfu_new)
@@ -1398,12 +1413,16 @@ async def debts_reconcile(
         .where(DebtImportLog.status == "completed")
         .order_by(desc(DebtImportLog.started_at)).limit(1)
     )).scalars().first()
-    nf = (last_log.not_found_users or []) if last_log else []
+    # not_found_users может быть list[str] (legacy) или list[dict] (new).
+    # Для reconcile-UI возвращаем плоский list[str] — там сейчас не нужны
+    # суммы (только список ФИО).
+    nf_raw = (last_log.not_found_users or []) if last_log else []
+    nf = [_nfu_fio(x) for x in nf_raw][:200]
 
     return {
         "period": {"id": active_period.id, "name": active_period.name},
         "readings_without_debts": r_no_debts,
         "debts_without_readings": d_no_readings,
-        "last_import_not_found": nf[:200],
+        "last_import_not_found": nf,
         "last_import_id": last_log.id if last_log else None,
     }
