@@ -434,6 +434,86 @@ async def create_manual_receipt(
     }
 
 
+async def bulk_create_manual_receipts(
+    db: AsyncSession, period_id: int | None = None,
+) -> dict:
+    """Массовое создание квитанций для жильцов которые НЕ подали показания.
+
+    Use case: в конце периода многие жильцы не подают показания. Админ
+    хочет за всех создать квитанции одной кнопкой — только сальдо, без
+    начислений (см. create_manual_receipt).
+
+    Алгоритм:
+      1. Найти всех User с room (не deleted, role=user) активного жилфонда
+      2. Отфильтровать тех у кого УЖЕ есть approved MeterReading в
+         целевом периоде — для них пропуск (квитанция уже есть)
+      3. Для остальных вызвать create_manual_receipt поштучно — там
+         корректно собрано debt/overpay из любых периодов
+      4. Не падать на ошибке отдельного жильца — логировать и продолжать
+
+    Returns:
+      {processed, created, skipped_existing, errors}
+    """
+    target_period = None
+    if period_id is not None:
+        target_period = await db.get(BillingPeriod, period_id)
+    if target_period is None:
+        target_period = (await db.execute(
+            select(BillingPeriod).where(BillingPeriod.is_active)
+        )).scalars().first()
+    if not target_period:
+        raise HTTPException(400, "Нет активного периода")
+
+    # 1. Все активные жильцы с комнатой
+    all_users = (await db.execute(
+        select(User).options(selectinload(User.room)).where(
+            User.is_deleted.is_(False),
+            User.role == "user",
+            User.room_id.is_not(None),
+        )
+    )).scalars().all()
+
+    # 2. У кого уже есть approved reading в целевом периоде — пропустить
+    existing_approved_user_ids = set((await db.execute(
+        select(MeterReading.user_id).where(
+            MeterReading.period_id == target_period.id,
+            MeterReading.is_approved.is_(True),
+            MeterReading.user_id.is_not(None),
+        )
+    )).scalars().all())
+
+    created = 0
+    skipped_existing = 0
+    errors: list[dict] = []
+
+    for user in all_users:
+        if user.id in existing_approved_user_ids:
+            skipped_existing += 1
+            continue
+        try:
+            await create_manual_receipt(db, user.id, target_period.id)
+            created += 1
+        except HTTPException as e:
+            # 400 «уже есть» / «нет комнаты» — пропускаем, не критично
+            if e.status_code == 400:
+                skipped_existing += 1
+            else:
+                errors.append({"user_id": user.id, "username": user.username, "error": e.detail})
+        except Exception as e:
+            errors.append({"user_id": user.id, "username": user.username, "error": str(e)[:200]})
+
+    return {
+        "status": "ok",
+        "period_id": target_period.id,
+        "period_name": target_period.name,
+        "total_users": len(all_users),
+        "created": created,
+        "skipped_existing": skipped_existing,
+        "errors": errors[:50],  # ограничиваем длину response
+        "errors_total": len(errors),
+    }
+
+
 async def delete_reading(db: AsyncSession, reading_id: int):
     """Удаление утверждённого/чернового MeterReading.
 

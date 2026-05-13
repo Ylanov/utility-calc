@@ -100,6 +100,7 @@ export const SummaryModule = {
             btnRefresh:     document.getElementById('btnRefreshSummary'),
             btnExcel:       document.getElementById('btnDownloadExcel'),
             btnZip:         document.getElementById('btnDownloadZip'),
+            btnBulkManualReceipt: document.getElementById('btnBulkManualReceipt'),
             explainModal:   document.getElementById('explainModal'),
             explainBody:    document.getElementById('explainModalBody'),
             btnExplainClose: document.getElementById('btnExplainClose'),
@@ -110,6 +111,7 @@ export const SummaryModule = {
         this.dom.btnRefresh?.addEventListener('click', () => this.loadData());
         this.dom.btnExcel?.addEventListener('click', () => this.downloadExcel());
         this.dom.btnZip?.addEventListener('click', () => this.downloadZip());
+        this.dom.btnBulkManualReceipt?.addEventListener('click', () => this.bulkCreateManualReceipts());
 
         // Фильтры финансовой отчётности
         document.querySelectorAll('[data-summary-filter]').forEach(btn => {
@@ -800,6 +802,40 @@ export const SummaryModule = {
             await api.download(`/admin/receipts/${id}/download`, `Kvitanciya_${id}.pdf`);
         } catch (e) {
             toast('Ошибка скачивания: ' + e.message, 'error');
+        }
+    },
+
+    async bulkCreateManualReceipts() {
+        if (!this.state.selectedPeriodId) {
+            return toast('Сначала выберите период', 'warning');
+        }
+        if (!confirm(
+            'Создать квитанции для ВСЕХ жильцов которые не подали показания в этом периоде?\n\n' +
+            'Для каждого будет создана квитанция:\n' +
+            '  • с нулевым потреблением (показания не подавались)\n' +
+            '  • БЕЗ начислений фикс-части тарифа\n' +
+            '  • с переносом текущего сальдо (долг/переплата) из импорта 1С\n\n' +
+            'Жильцы у которых квитанция уже есть — будут пропущены.'
+        )) return;
+
+        setLoading(this.dom.btnBulkManualReceipt, true, 'Создание…');
+        try {
+            const res = await api.post(
+                `/admin/readings/manual-receipt-bulk?period_id=${this.state.selectedPeriodId}`,
+            );
+            const errMsg = res.errors_total > 0
+                ? ` (ошибок: ${res.errors_total} — см. логи)` : '';
+            toast(
+                `Создано квитанций: ${res.created}. ` +
+                `Пропущено (уже есть): ${res.skipped_existing}${errMsg}`,
+                res.created > 0 ? 'success' : 'info',
+            );
+            this.loadData();
+        } catch (e) {
+            toast('Ошибка: ' + e.message, 'error');
+        } finally {
+            setLoading(this.dom.btnBulkManualReceipt, false,
+                '<i class="fa-solid fa-file-circle-plus"></i> Квитанции без подачи');
         }
     },
 

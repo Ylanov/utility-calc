@@ -108,6 +108,23 @@ async def create_manual_receipt_endpoint(
     return await admin_readings_manual.create_manual_receipt(db, user_id, period_id)
 
 
+@router.post("/api/admin/readings/manual-receipt-bulk")
+async def bulk_create_manual_receipts_endpoint(
+        period_id: int | None = None,
+        current_user: User = Depends(allow_readings_manage),
+        db: AsyncSession = Depends(get_db),
+):
+    """Массово создать квитанции для всех жильцов которые НЕ подали
+    показания в целевом периоде. Использует ту же логику что
+    /manual-receipt/{user_id} — только сальдо, без начислений.
+
+    Use case: в конце периода многие жильцы не подают показания. Админ
+    одной кнопкой формирует им квитанции с актуальным сальдо (долги/
+    переплаты из импорта 1С), не трогая тех у кого квитанция уже есть.
+    """
+    return await admin_readings_manual.bulk_create_manual_receipts(db, period_id)
+
+
 @router.get("/api/admin/readings/manual-state/{user_id}")
 async def get_manual_reading_state(
         user_id: int,
