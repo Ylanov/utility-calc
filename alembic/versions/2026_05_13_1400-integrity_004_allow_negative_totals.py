@@ -21,10 +21,14 @@ hot_water/cold_water/electricity тоже >= 0 (физически отрица�
 from alembic import op
 
 
-revision = 'integrity_004_allow_negative_totals'
+revision = 'integrity_004_neg_totals'
 # Линейная цепочка: integrity_003 → debts_002 → debts_003 → integrity_004.
 # Раньше down_revision указывал на integrity_003, но debts_002/003 уже
 # применены поверх integrity_003 → alembic выдавал «Multiple head revisions».
+#
+# ID сокращён до 24 символов: alembic_version.version_num — VARCHAR(32),
+# полное имя 'integrity_004_allow_negative_totals' (36 символов) не
+# помещалось — UPDATE падал StringDataRightTruncationError.
 down_revision = 'debts_003_applied_state'
 branch_labels = None
 depends_on = None
