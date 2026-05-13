@@ -318,37 +318,41 @@ async def create_manual_receipt(
     # Берём draft (если есть) — будем апдейтить его до approved
     draft = next((r for r in existing if not r.is_approved), None)
 
-    # Долги/переплаты живут не «в активном периоде», а на reading-ах. Импорт
-    # 1С перезаписывает их в АКТИВНОМ периоде, но если выбранный сейчас
-    # период НЕ совпадает с тем где был импорт — debt/overpay могут лежать
-    # на другом reading. Решение: берём САМЫЙ СВЕЖИЙ reading жильца где
-    # хотя бы один из debt_*/overpayment_* > 0 — это и есть актуальное
-    # сальдо. (Раньше брали draft || prev → теряли переплаты из других
-    # периодов: Глоба, переплата 7091.90 в Мае, manual_receipt в Феврале
-    # → системы их не видела → к оплате 707.70 вместо «остаток 6384»).
-    latest_with_balance = (await db.execute(
+    # Долги/переплаты по 209 и 205 счетам берём НЕЗАВИСИМО из самых
+    # свежих reading-ов где есть ненулевое сальдо. Раньше брали один
+    # reading на все 4 поля → если 209-импорт в Мае, а 205-импорт в
+    # Январе → 205-сальдо терялось (брался свежий 209-reading где 205=0).
+
+    # Свежий reading с 209-балансом
+    latest_209 = (await db.execute(
         select(MeterReading).where(
             MeterReading.room_id == room.id,
-            (MeterReading.debt_209 > 0)
-            | (MeterReading.debt_205 > 0)
-            | (MeterReading.overpayment_209 > 0)
-            | (MeterReading.overpayment_205 > 0),
+            (MeterReading.debt_209 > 0) | (MeterReading.overpayment_209 > 0),
         ).order_by(MeterReading.created_at.desc()).limit(1)
     )).scalars().first()
 
-    # Приоритет: draft текущего периода (свежий импорт) → latest с балансом
-    # из любого периода → 0/0.
-    if draft and (
-        (draft.debt_209 or 0) > 0 or (draft.debt_205 or 0) > 0
-        or (draft.overpayment_209 or 0) > 0 or (draft.overpayment_205 or 0) > 0
-    ):
-        src = draft
+    # Свежий reading с 205-балансом
+    latest_205 = (await db.execute(
+        select(MeterReading).where(
+            MeterReading.room_id == room.id,
+            (MeterReading.debt_205 > 0) | (MeterReading.overpayment_205 > 0),
+        ).order_by(MeterReading.created_at.desc()).limit(1)
+    )).scalars().first()
+
+    # Priority: draft текущего периода (свежий импорт) → независимо 209/205.
+    if draft and ((draft.debt_209 or 0) > 0 or (draft.overpayment_209 or 0) > 0):
+        debt_209 = draft.debt_209 or ZERO
+        overpay_209 = draft.overpayment_209 or ZERO
     else:
-        src = latest_with_balance
-    debt_209 = (src.debt_209 if src else ZERO) or ZERO
-    overpay_209 = (src.overpayment_209 if src else ZERO) or ZERO
-    debt_205 = (src.debt_205 if src else ZERO) or ZERO
-    overpay_205 = (src.overpayment_205 if src else ZERO) or ZERO
+        debt_209 = (latest_209.debt_209 if latest_209 else ZERO) or ZERO
+        overpay_209 = (latest_209.overpayment_209 if latest_209 else ZERO) or ZERO
+
+    if draft and ((draft.debt_205 or 0) > 0 or (draft.overpayment_205 or 0) > 0):
+        debt_205 = draft.debt_205 or ZERO
+        overpay_205 = draft.overpayment_205 or ZERO
+    else:
+        debt_205 = (latest_205.debt_205 if latest_205 else ZERO) or ZERO
+        overpay_205 = (latest_205.overpayment_205 if latest_205 else ZERO) or ZERO
 
     # Adjustments периода
     adj_map = {row[0]: (row[1] or ZERO) for row in (await db.execute(

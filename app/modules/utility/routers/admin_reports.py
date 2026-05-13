@@ -973,56 +973,68 @@ async def get_resident_finance_detail(
 
 
 async def _compute_user_balance(db: AsyncSession, user_id: int, room_id: Optional[int]) -> dict:
-    """Текущий баланс жильца — единое число «должен/переплатил».
+    """Текущий баланс жильца — единое число «должен/переплатил» с учётом
+    ОБОИХ счетов (209 коммуналка + 205 найм).
 
-    debt/overpayment живут в каждом MeterReading периода. «Актуальный
-    баланс» — это значения из САМОГО СВЕЖЕГО reading где есть ненулевое
-    сальдо (для room_id, чтобы при переезде не утянуть чужие данные
-    предыдущего жильца). Если нет — 0.
+    debt/overpayment живут в каждом MeterReading периода. Импорт 1С
+    обновляет их в АКТИВНОМ периоде, но если 209-импорт прошёл в Мае,
+    а 205-импорт в Январе — самые свежие сальдо лежат на РАЗНЫХ
+    reading-ах. Раньше брали один свежий с любым сальдо → теряли
+    второй счёт (Галко: 209-долг = 26420.92 виден, 205-долг = 3125.50
+    из старого reading «пропадал»).
 
-    balance_209 > 0  → жилец должен по коммунальным
-    balance_209 < 0  → переплата (есть на счёте)
-    balance_209 == 0 → ноль (либо нет истории, либо всё закрыто)
+    Фикс: отдельный поиск САМОГО СВЕЖЕГО reading где ненулевой 209,
+    и отдельный — где ненулевой 205. balance_209/205 берутся независимо.
+
+    balance_X > 0  → жилец должен по этому счёту
+    balance_X < 0  → переплата по этому счёту
+    balance_X == 0 → ноль
     """
     if not room_id:
         return {
             "balance_209": 0.0, "balance_205": 0.0, "total": 0.0,
-            "kind": "no_room", "source_reading_id": None,
-            "source_period_id": None,
+            "kind": "no_room", "source_209_reading_id": None,
+            "source_205_reading_id": None,
         }
 
-    latest = (await db.execute(
+    # Свежий reading с НЕНУЛЕВЫМ 209-сальдо
+    latest_209 = (await db.execute(
         select(MeterReading).where(
             MeterReading.room_id == room_id,
-            (MeterReading.debt_209 > 0)
-            | (MeterReading.debt_205 > 0)
-            | (MeterReading.overpayment_209 > 0)
-            | (MeterReading.overpayment_205 > 0),
+            (MeterReading.debt_209 > 0) | (MeterReading.overpayment_209 > 0),
         ).order_by(MeterReading.created_at.desc()).limit(1)
     )).scalars().first()
 
-    if not latest:
+    # Свежий reading с НЕНУЛЕВЫМ 205-сальдо (может быть тот же или другой)
+    latest_205 = (await db.execute(
+        select(MeterReading).where(
+            MeterReading.room_id == room_id,
+            (MeterReading.debt_205 > 0) | (MeterReading.overpayment_205 > 0),
+        ).order_by(MeterReading.created_at.desc()).limit(1)
+    )).scalars().first()
+
+    if not latest_209 and not latest_205:
         return {
             "balance_209": 0.0, "balance_205": 0.0, "total": 0.0,
-            "kind": "zero", "source_reading_id": None,
-            "source_period_id": None,
+            "kind": "zero", "source_209_reading_id": None,
+            "source_205_reading_id": None,
         }
 
-    debt_209 = float(latest.debt_209 or 0)
-    overpay_209 = float(latest.overpayment_209 or 0)
-    debt_205 = float(latest.debt_205 or 0)
-    overpay_205 = float(latest.overpayment_205 or 0)
+    debt_209 = float(latest_209.debt_209 or 0) if latest_209 else 0.0
+    overpay_209 = float(latest_209.overpayment_209 or 0) if latest_209 else 0.0
+    debt_205 = float(latest_205.debt_205 or 0) if latest_205 else 0.0
+    overpay_205 = float(latest_205.overpayment_205 or 0) if latest_205 else 0.0
 
     balance_209 = debt_209 - overpay_209
     balance_205 = debt_205 - overpay_205
     total = balance_209 + balance_205
 
     if total > 0:
-        kind = "debtor"      # должник
+        kind = "debtor"
     elif total < 0:
-        kind = "overpaid"    # переплата
+        kind = "overpaid"
     else:
-        kind = "even"        # ноль ровно (редко)
+        kind = "even"
 
     return {
         "balance_209": round(balance_209, 2),
@@ -1033,8 +1045,8 @@ async def _compute_user_balance(db: AsyncSession, user_id: int, room_id: Optiona
         "overpayment_209": overpay_209,
         "debt_205": debt_205,
         "overpayment_205": overpay_205,
-        "source_reading_id": latest.id,
-        "source_period_id": latest.period_id,
+        "source_209_reading_id": latest_209.id if latest_209 else None,
+        "source_205_reading_id": latest_205.id if latest_205 else None,
     }
 
 
