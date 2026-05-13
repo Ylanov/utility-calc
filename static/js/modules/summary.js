@@ -180,6 +180,14 @@ export const SummaryModule = {
                 return;
             }
 
+            // Кнопка «Создать квитанцию вручную» — для missing-жильцов с долгами.
+            const manualReceiptBtn = e.target.closest('button[data-manual-receipt-uid]');
+            if (manualReceiptBtn) {
+                e.stopPropagation();
+                this.createManualReceipt(Number(manualReceiptBtn.dataset.manualReceiptUid));
+                return;
+            }
+
             // Кнопка «Проверить расчёт» в строке истории.
             const explainBtn = e.target.closest('button[data-explain-id]');
             if (explainBtn) {
@@ -414,9 +422,15 @@ export const SummaryModule = {
             ? `<span style="color:#7c3aed; font-weight:700;">${fmtMoney(r.overpayment)}</span>`
             : '<span style="color:var(--text-tertiary);">—</span>';
 
+        // Для жильцов БЕЗ квитанции (нет approved reading) — кнопка
+        // «Создать квитанцию вручную». Полезно когда у жильца есть долг
+        // от импорта 1С, но показания ещё не подал — иначе долг копится
+        // вне квитанций и жилец его не видит в PDF.
         const pdfBtn = r.reading_id
             ? `<button class="action-btn primary-btn" data-pdf-id="${r.reading_id}" style="padding:4px 10px; font-size:11px;" title="Скачать квитанцию PDF"><i class="fa-solid fa-file-pdf"></i></button>`
-            : `<span style="color:var(--text-tertiary); font-size:11px;">—</span>`;
+            : (r.user_id
+                ? `<button class="action-btn success-btn" data-manual-receipt-uid="${r.user_id}" style="padding:4px 10px; font-size:11px;" title="Создать квитанцию вручную (учтёт долги/переплаты, нулевое потребление)"><i class="fa-solid fa-receipt"></i></button>`
+                : `<span style="color:var(--text-tertiary); font-size:11px;">—</span>`);
 
         const rowBg = isMissing ? 'background:rgba(254,226,226,0.4);' : (isExpanded ? 'background:rgba(59,130,246,0.05);' : '');
         const expandIcon = r.user_id
@@ -711,6 +725,36 @@ export const SummaryModule = {
             await api.download(`/admin/receipts/${id}/download`, `Kvitanciya_${id}.pdf`);
         } catch (e) {
             toast('Ошибка скачивания: ' + e.message, 'error');
+        }
+    },
+
+    async createManualReceipt(userId) {
+        if (!userId) return;
+        if (!this.state.selectedPeriodId) {
+            return toast('Сначала выберите период', 'warning');
+        }
+        if (!confirm(
+            'Создать квитанцию вручную?\n\n' +
+            'Будет создан approved-reading с НУЛЕВЫМ потреблением и текущими ' +
+            'долгами/переплатами жильца. Если переплата покрывает фикс-начисления, ' +
+            'итог будет отрицательным — это значит «остаток средств на счёте».'
+        )) return;
+
+        try {
+            const res = await api.post(
+                `/admin/readings/manual-receipt/${userId}?period_id=${this.state.selectedPeriodId}`,
+            );
+            const totalText = (res.total_cost ?? 0).toLocaleString('ru-RU', {
+                minimumFractionDigits: 2, maximumFractionDigits: 2,
+            });
+            const msg = res.is_overpayment
+                ? `Квитанция создана. У жильца ОСТАТОК ${Math.abs(res.total_cost).toLocaleString('ru-RU')} ₽ — платить в этом месяце не нужно.`
+                : `Квитанция создана. К оплате: ${totalText} ₽`;
+            toast(msg, res.is_overpayment ? 'info' : 'success');
+            // Перечитываем сводку чтобы кнопка PDF появилась
+            this.loadSummary();
+        } catch (e) {
+            toast('Ошибка: ' + e.message, 'error');
         }
     },
 

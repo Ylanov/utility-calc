@@ -91,6 +91,23 @@ async def delete_reading_record(
     return await admin_readings_manual.delete_reading(db, reading_id)
 
 
+@router.post("/api/admin/readings/manual-receipt/{user_id}")
+async def create_manual_receipt_endpoint(
+        user_id: int,
+        period_id: int | None = None,
+        current_user: User = Depends(allow_readings_manage),
+        db: AsyncSession = Depends(get_db),
+):
+    """Создать квитанцию для жильца без подачи показаний (только долги/
+    переплаты + фикс-часть тарифа). Использовать в финансовой отчётности
+    когда у жильца есть debt от импорта 1С, но показания ещё не подал.
+
+    Если total_209+total_205 < 0 → у жильца переплата (вернуть деньги или
+    зачесть в следующем периоде). UI должен показать это как «остаток».
+    """
+    return await admin_readings_manual.create_manual_receipt(db, user_id, period_id)
+
+
 @router.get("/api/admin/readings/manual-state/{user_id}")
 async def get_manual_reading_state(
         user_id: int,

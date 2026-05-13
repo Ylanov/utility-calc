@@ -239,6 +239,163 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
     return {"status": "success"}
 
 
+async def create_manual_receipt(
+    db: AsyncSession, user_id: int, period_id: int | None = None,
+):
+    """Создаёт квитанцию вручную БЕЗ ввода показаний счётчиков.
+
+    Use case: жилец имеет долг или переплату от импорта 1С, но не подал
+    показания за текущий период. Админ хочет всё равно сформировать ему
+    квитанцию — с нулевым потреблением, но с учётом долгов/переплат и
+    фиксированных начислений из тарифа (cost_maintenance, fixed_part).
+
+    Математика:
+      cost_* = calculate_utilities(volume=0, ...)  // только фикс-часть
+      total_209 = cost_total - cost_social_rent + debt_209 - overpay_209 + adj_209
+      total_205 = cost_social_rent              + debt_205 - overpay_205 + adj_205
+      total_cost = total_209 + total_205   // МОЖЕТ БЫТЬ < 0 = переплата
+
+    Источник debt/overpay (приоритет):
+      1) draft того же периода (если есть — там может быть свежий импорт 1С)
+      2) последний approved reading жильца (debt/overpay переносятся между
+         периодами автоматически — это «текущее сальдо»)
+      3) 0/0 если истории нет
+    """
+    target_period = None
+    if period_id is not None:
+        target_period = await db.get(BillingPeriod, period_id)
+    if target_period is None:
+        target_period = (await db.execute(
+            select(BillingPeriod).where(BillingPeriod.is_active)
+        )).scalars().first()
+    if not target_period:
+        raise HTTPException(400, "Нет активного периода")
+
+    user = (await db.execute(
+        select(User).options(selectinload(User.room)).where(User.id == user_id)
+    )).scalars().first()
+    if not user or user.is_deleted:
+        raise HTTPException(404, "Жилец не найден")
+    room = user.room
+    if not room:
+        raise HTTPException(400, "Жилец не привязан к помещению")
+
+    from app.modules.utility.services.tariff_cache import tariff_cache
+    t = tariff_cache.get_effective_tariff(user=user, room=room) or \
+        (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().first()
+
+    # Последний approved reading жильца в этой комнате — для показаний и
+    # для актуального сальдо. История по ПАРЕ (user_id, room_id), чтобы
+    # при переезде старая комната не «утянула» данные нового жильца.
+    prev = (await db.execute(
+        select(MeterReading).where(
+            MeterReading.user_id == user.id,
+            MeterReading.room_id == room.id,
+            MeterReading.is_approved.is_(True),
+        ).order_by(MeterReading.created_at.desc()).limit(1)
+    )).scalars().first()
+
+    # Draft того же периода (включая debt-only от импорта 1С).
+    draft = (await db.execute(
+        select(MeterReading).where(
+            MeterReading.room_id == room.id,
+            MeterReading.period_id == target_period.id,
+            MeterReading.is_approved.is_(False),
+        )
+    )).scalars().first()
+
+    # Берём долги/переплаты по приоритету draft → prev → 0
+    src = draft or prev
+    debt_209 = (src.debt_209 if src else ZERO) or ZERO
+    overpay_209 = (src.overpayment_209 if src else ZERO) or ZERO
+    debt_205 = (src.debt_205 if src else ZERO) or ZERO
+    overpay_205 = (src.overpayment_205 if src else ZERO) or ZERO
+
+    # Adjustments периода
+    adj_map = {row[0]: (row[1] or ZERO) for row in (await db.execute(
+        select(Adjustment.account_type, func.sum(Adjustment.amount))
+        .where(Adjustment.user_id == user.id, Adjustment.period_id == target_period.id)
+        .group_by(Adjustment.account_type)
+    )).all()}
+
+    # Расчёт фикс-составляющих: volume=0, тариф даст maintenance/social_rent
+    # /fixed_part если они есть. Если это первый период жильца (prev=None) —
+    # делаем zero-costs (baseline-логика).
+    if prev is None:
+        costs = {
+            "cost_hot_water": ZERO, "cost_cold_water": ZERO, "cost_sewage": ZERO,
+            "cost_electricity": ZERO, "cost_maintenance": ZERO, "cost_social_rent": ZERO,
+            "cost_waste": ZERO, "cost_fixed_part": ZERO, "total_cost": ZERO,
+        }
+    else:
+        costs = calculate_utilities(
+            user=user, room=room, tariff=t,
+            volume_hot=ZERO, volume_cold=ZERO,
+            volume_sewage=ZERO, volume_electricity_share=ZERO,
+        )
+
+    total_209 = (
+        (costs["total_cost"] - costs["cost_social_rent"])
+        + debt_209 - overpay_209 + adj_map.get("209", ZERO)
+    )
+    total_205 = (
+        costs["cost_social_rent"]
+        + debt_205 - overpay_205 + adj_map.get("205", ZERO)
+    )
+
+    # Показания счётчиков = prev (нулевое потребление в текущем периоде)
+    hot = prev.hot_water if prev else None
+    cold = prev.cold_water if prev else None
+    elect = prev.electricity if prev else None
+
+    if draft:
+        # Обновляем существующий черновик до approved
+        draft.hot_water = hot
+        draft.cold_water = cold
+        draft.electricity = elect
+        draft.debt_209 = debt_209
+        draft.overpayment_209 = overpay_209
+        draft.debt_205 = debt_205
+        draft.overpayment_205 = overpay_205
+        draft.anomaly_flags = "MANUAL_RECEIPT"
+        draft.anomaly_score = 0
+        for k, v in costs_for_model_fields(costs).items():
+            setattr(draft, k, v)
+        draft.total_209 = total_209
+        draft.total_205 = total_205
+        # total_cost синхронизируется триггером trg_readings_sync_total_cost
+        # из total_209+total_205, но для надёжности выставим явно
+        draft.total_cost = total_209 + total_205
+        draft.is_approved = True
+        result_reading = draft
+    else:
+        new = MeterReading(
+            user_id=user.id, room_id=room.id, period_id=target_period.id,
+            hot_water=hot, cold_water=cold, electricity=elect,
+            debt_209=debt_209, overpayment_209=overpay_209,
+            debt_205=debt_205, overpayment_205=overpay_205,
+            total_209=total_209, total_205=total_205,
+            total_cost=total_209 + total_205,
+            is_approved=True,
+            anomaly_flags="MANUAL_RECEIPT",
+            anomaly_score=0,
+            **costs_for_model_fields(costs),
+        )
+        db.add(new)
+        await db.flush()
+        result_reading = new
+
+    await db.commit()
+    return {
+        "status": "success",
+        "reading_id": result_reading.id,
+        "total_209": float(total_209),
+        "total_205": float(total_205),
+        "total_cost": float(total_209 + total_205),
+        "is_overpayment": (total_209 + total_205) < 0,
+    }
+
+
 async def delete_reading(db: AsyncSession, reading_id: int):
     """Удаление утверждённого/чернового MeterReading.
 
