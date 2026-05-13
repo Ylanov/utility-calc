@@ -448,7 +448,18 @@ export const SummaryModule = {
                 <td style="padding:8px 10px; font-family:monospace; font-size:12px;">${esc(r.room_number || '—')}</td>
                 <td style="padding:8px 10px; text-align:right; font-family:monospace;">${isMissing ? '—' : Number(r.total_209 || 0).toFixed(2)}</td>
                 <td style="padding:8px 10px; text-align:right; font-family:monospace;">${isMissing ? '—' : Number(r.total_205 || 0).toFixed(2)}</td>
-                <td style="padding:8px 10px; text-align:right; font-family:monospace; font-weight:700; color:#059669;">${isMissing ? '—' : fmtMoney(r.total_cost)}</td>
+                <td style="padding:8px 10px; text-align:right; font-family:monospace; font-weight:700;">
+                    ${(() => {
+                        if (isMissing) return '<span style="color:#9ca3af;">—</span>';
+                        const tc = Number(r.total_cost || 0);
+                        if (tc < 0) {
+                            // Переплата покрыла начисления — у жильца ОСТАТОК.
+                            return `<span style="color:#7c3aed; font-size:11px; text-transform:uppercase; letter-spacing:0.5px;">Остаток</span><br><span style="color:#7c3aed;">${fmtMoney(Math.abs(tc))}</span>`;
+                        }
+                        if (tc === 0) return '<span style="color:#9ca3af;">0,00 ₽</span>';
+                        return `<span style="color:#059669;">${fmtMoney(tc)}</span>`;
+                    })()}
+                </td>
                 <td style="padding:8px 10px; text-align:right;">${deltaCell}</td>
                 <td style="padding:8px 10px; text-align:center;">${sparkSvg(r.sparkline)}</td>
                 <td style="padding:8px 10px; text-align:right;">${debtCell}</td>
