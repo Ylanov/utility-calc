@@ -968,6 +968,73 @@ async def get_resident_finance_detail(
         "history": history,  # от свежих к старым
         "adjustments": adjustments,
         "contract": contract_data,
+        "balance": await _compute_user_balance(db, user.id, user.room_id),
+    }
+
+
+async def _compute_user_balance(db: AsyncSession, user_id: int, room_id: Optional[int]) -> dict:
+    """Текущий баланс жильца — единое число «должен/переплатил».
+
+    debt/overpayment живут в каждом MeterReading периода. «Актуальный
+    баланс» — это значения из САМОГО СВЕЖЕГО reading где есть ненулевое
+    сальдо (для room_id, чтобы при переезде не утянуть чужие данные
+    предыдущего жильца). Если нет — 0.
+
+    balance_209 > 0  → жилец должен по коммунальным
+    balance_209 < 0  → переплата (есть на счёте)
+    balance_209 == 0 → ноль (либо нет истории, либо всё закрыто)
+    """
+    if not room_id:
+        return {
+            "balance_209": 0.0, "balance_205": 0.0, "total": 0.0,
+            "kind": "no_room", "source_reading_id": None,
+            "source_period_id": None,
+        }
+
+    latest = (await db.execute(
+        select(MeterReading).where(
+            MeterReading.room_id == room_id,
+            (MeterReading.debt_209 > 0)
+            | (MeterReading.debt_205 > 0)
+            | (MeterReading.overpayment_209 > 0)
+            | (MeterReading.overpayment_205 > 0),
+        ).order_by(MeterReading.created_at.desc()).limit(1)
+    )).scalars().first()
+
+    if not latest:
+        return {
+            "balance_209": 0.0, "balance_205": 0.0, "total": 0.0,
+            "kind": "zero", "source_reading_id": None,
+            "source_period_id": None,
+        }
+
+    debt_209 = float(latest.debt_209 or 0)
+    overpay_209 = float(latest.overpayment_209 or 0)
+    debt_205 = float(latest.debt_205 or 0)
+    overpay_205 = float(latest.overpayment_205 or 0)
+
+    balance_209 = debt_209 - overpay_209
+    balance_205 = debt_205 - overpay_205
+    total = balance_209 + balance_205
+
+    if total > 0:
+        kind = "debtor"      # должник
+    elif total < 0:
+        kind = "overpaid"    # переплата
+    else:
+        kind = "even"        # ноль ровно (редко)
+
+    return {
+        "balance_209": round(balance_209, 2),
+        "balance_205": round(balance_205, 2),
+        "total": round(total, 2),
+        "kind": kind,
+        "debt_209": debt_209,
+        "overpayment_209": overpay_209,
+        "debt_205": debt_205,
+        "overpayment_205": overpay_205,
+        "source_reading_id": latest.id,
+        "source_period_id": latest.period_id,
     }
 
 

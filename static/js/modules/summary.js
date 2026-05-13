@@ -528,12 +528,76 @@ export const SummaryModule = {
         return `
             <div style="padding:16px 20px; display:grid; grid-template-columns: minmax(0,1.2fr) minmax(0,1fr); gap:20px;">
                 <div style="min-width:0;">
+                    ${this._renderBalanceBlock(data.balance)}
                     ${this._renderMetersHistory(data)}
                 </div>
                 <div style="min-width:0;">
                     ${this._renderContractBlock(data.contract)}
                     ${this._renderCurrentCostBreakdown(data.current)}
                     ${this._renderAdjustmentsBlock(data.adjustments)}
+                </div>
+            </div>`;
+    },
+
+    _renderBalanceBlock(balance) {
+        // Карточка «Текущий баланс жильца» — один из главных индикаторов:
+        // если +X — должник, если −X — переплата, если 0 — ровно.
+        // Баланс берётся из САМОГО СВЕЖЕГО reading жильца с ненулевым
+        // debt/overpay (см. _compute_user_balance на бэке). Это позволяет
+        // увидеть актуальное сальдо вне зависимости от того в каком
+        // периоде прошёл импорт 1С.
+        if (!balance) return '';
+        const total = Number(balance.total || 0);
+        const b209 = Number(balance.balance_209 || 0);
+        const b205 = Number(balance.balance_205 || 0);
+
+        let header, color, bg, border, hint;
+        if (balance.kind === 'debtor') {
+            header = '⚠️ ДОЛЖНИК';
+            color = '#b91c1c';
+            bg = '#fef2f2';
+            border = '#fecaca';
+            hint = `Жилец должен ${fmtMoney(total)}. Сумма автоматически попадёт в следующую квитанцию.`;
+        } else if (balance.kind === 'overpaid') {
+            header = '✅ ПЕРЕПЛАТА';
+            color = '#15803d';
+            bg = '#f0fdf4';
+            border = '#86efac';
+            hint = `У жильца остаток ${fmtMoney(Math.abs(total))} — будет зачтён в следующих квитанциях.`;
+        } else if (balance.kind === 'no_room') {
+            return ''; // нет смысла показывать
+        } else {
+            header = 'РОВНО 0';
+            color = '#6b7280';
+            bg = '#f9fafb';
+            border = '#e5e7eb';
+            hint = 'Сальдо нулевое — ни долгов, ни переплат.';
+        }
+
+        const acct = (label, val, accentColor) => {
+            if (val === 0 && balance.kind === 'even') return '';
+            const sign = val > 0 ? '+' : (val < 0 ? '−' : '');
+            const abs = Math.abs(val);
+            return `
+                <div style="display:flex; justify-content:space-between; padding:4px 0; font-size:12px;">
+                    <span style="color:var(--text-secondary);">${label}:</span>
+                    <span style="font-family:monospace; color:${accentColor};">${sign}${fmtMoney(abs).replace(' ₽', '')} ₽</span>
+                </div>`;
+        };
+        return `
+            <div style="margin-bottom:14px; padding:12px 14px; background:${bg}; border:1px solid ${border}; border-radius:8px;">
+                <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px;">
+                    <span style="font-size:11px; font-weight:600; color:${color}; text-transform:uppercase; letter-spacing:0.5px;">
+                        💰 Баланс — ${header}
+                    </span>
+                    <span style="font-size:18px; font-weight:700; color:${color}; font-family:monospace;">
+                        ${total >= 0 ? '+' : '−'}${fmtMoney(Math.abs(total)).replace(' ₽', '')} ₽
+                    </span>
+                </div>
+                ${acct('209 Коммуналка', b209, b209 > 0 ? '#b91c1c' : b209 < 0 ? '#15803d' : '#6b7280')}
+                ${acct('205 Найм',       b205, b205 > 0 ? '#b91c1c' : b205 < 0 ? '#15803d' : '#6b7280')}
+                <div style="font-size:11px; color:${color}; margin-top:6px; padding-top:6px; border-top:1px dashed ${border};">
+                    ${esc(hint)}
                 </div>
             </div>`;
     },
