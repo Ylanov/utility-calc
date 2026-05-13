@@ -1390,6 +1390,81 @@ async def debts_create_and_match(
 
 
 # =========================================================================
+# RESET BALANCE — обнулить баланс конкретного жильца
+# =========================================================================
+@router.post("/users/{user_id}/reset-balance")
+async def reset_user_balance(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Обнуляет debt_209/debt_205/overpayment_209/overpayment_205 у ВСЕХ
+    reading-ов жильца (по room_id). Полезно когда после отката импорта
+    у жильца остались «зависшие» сальдо от старых reading-ов в других
+    периодах — undo конкретного импорта восстанавливает snapshot только
+    для тех reading-ов, которые этот импорт трогал.
+
+    Returns: количество reading-ов обнулённых + до-сальдо для аудита.
+    """
+    _require_finance(current_user)
+
+    user = await db.get(User, user_id)
+    if not user or not user.room_id:
+        raise HTTPException(404, "Жилец не найден или без комнаты")
+
+    # Снимаем before-snapshot для audit_log (на случай если нужно откатить)
+    readings = (await db.execute(
+        select(MeterReading).where(
+            MeterReading.room_id == user.room_id,
+            (MeterReading.debt_209 > 0)
+            | (MeterReading.debt_205 > 0)
+            | (MeterReading.overpayment_209 > 0)
+            | (MeterReading.overpayment_205 > 0),
+        )
+    )).scalars().all()
+
+    if not readings:
+        return {
+            "status": "noop",
+            "user_id": user_id,
+            "username": user.username,
+            "reset_count": 0,
+        }
+
+    snapshot = []
+    for r in readings:
+        snapshot.append({
+            "reading_id": r.id,
+            "period_id": r.period_id,
+            "debt_209": str(r.debt_209 or 0),
+            "overpayment_209": str(r.overpayment_209 or 0),
+            "debt_205": str(r.debt_205 or 0),
+            "overpayment_205": str(r.overpayment_205 or 0),
+        })
+        r.debt_209 = Decimal("0.00")
+        r.overpayment_209 = Decimal("0.00")
+        r.debt_205 = Decimal("0.00")
+        r.overpayment_205 = Decimal("0.00")
+        # total_cost синхронизируется триггером (integrity_002)
+
+    # Audit log
+    from app.modules.utility.routers.admin_dashboard import write_audit_log
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action="reset_user_balance", entity_type="user", entity_id=user_id,
+        details={"reset_count": len(readings), "snapshot": snapshot},
+    )
+
+    await db.commit()
+    return {
+        "status": "ok",
+        "user_id": user_id,
+        "username": user.username,
+        "reset_count": len(readings),
+    }
+
+
+# =========================================================================
 # RECONCILIATION — сверка показаний с долгами (для Центра анализа)
 # =========================================================================
 

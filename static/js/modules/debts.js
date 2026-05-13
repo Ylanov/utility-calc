@@ -556,6 +556,14 @@ export const DebtsModule = {
                 title: 'История долгов через все импорты 1С',
                 onclick: () => this.openUserDebtHistory(u.id, u.username),
             }, '📊'));
+            // Кнопка «Сбросить баланс» — обнуляет debt/overpay у всех reading
+            // жильца. Полезно когда после отката импорта у жильца остались
+            // зависшие сальдо в других периодах.
+            actionsCell.appendChild(el('button', {
+                class: 'action-btn', style: { padding: '4px 8px', fontSize: '12px', background: '#fff', color: '#b91c1c', border: '1px solid #fecaca', marginRight: '4px' },
+                title: 'Сбросить баланс жильца — обнулить debt/overpay во ВСЕХ reading-ах. Использовать когда после отката импорта остались зависшие сальдо.',
+                onclick: () => this.resetUserBalance(u.id, u.username),
+            }, '🧹'));
             actionsCell.appendChild(el('button', {
                 class: 'action-btn', style: { padding: '4px 10px', fontSize: '12px', background: '#6366f1', color: '#fff' },
                 onclick: () => this.openAdjustModal(u.id, u.username),
@@ -1147,6 +1155,28 @@ export const DebtsModule = {
 
     closeNotFoundModal() {
         this.dom.notFoundModal?.classList.remove('open');
+    },
+
+    async resetUserBalance(userId, username) {
+        if (!confirm(
+            `Сбросить баланс жильца «${username}»?\n\n` +
+            'Будут обнулены debt_209, debt_205, overpayment_209, overpayment_205 у ВСЕХ ' +
+            'его reading-ов (во всех периодах). Действие можно отменить только через ' +
+            'журнал действий (audit_log).\n\n' +
+            'Используйте только если после отката импорта у жильца остались зависшие сальдо.'
+        )) return;
+        try {
+            const res = await api.post(`/financier/users/${userId}/reset-balance`);
+            if (res.status === 'noop') {
+                toast(`У ${username} баланс уже пустой`, 'info');
+            } else {
+                toast(`Сброшено reading-ов: ${res.reset_count}`, 'success');
+            }
+            this.reload();
+            this.loadStats();
+        } catch (e) {
+            toast('Ошибка: ' + e.message, 'error');
+        }
     },
 
     // ==========================================================================
