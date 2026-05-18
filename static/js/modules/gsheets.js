@@ -841,7 +841,7 @@ export const GSheetsModule = {
         }
     },
 
-    async approveRow(rowId, { skipConfirm = false, moveToRawRoom = null } = {}) {
+    async approveRow(rowId, { skipConfirm = false, moveToRawRoom = null, fixHot = null, fixCold = null } = {}) {
         const row = this.state.rows.find(r => r.id === rowId);
         if (!row) return;
 
@@ -855,13 +855,30 @@ export const GSheetsModule = {
             return;
         }
 
+        // Конфликт «value_too_large» — жилец забыл точку в показаниях
+        // (например 96916 вместо 96.916 м³). Открываем мини-модалку с выбором:
+        // «автоисправление» (фронт делит на 1000) или «вручную» (поля ввода).
+        // Параметры fix_hot/fix_cold отслеживают что диалог уже был — без них
+        // рекурсия зациклилась бы.
+        if (fixHot === null && fixCold === null &&
+            row.status === 'conflict' && row.conflict_reason &&
+            row.conflict_reason.toLowerCase().includes('value_too_large')) {
+            this._showDecimalFixDialog(row);
+            return;
+        }
+
         if (!skipConfirm && !confirm(`Утвердить показания жильца «${row.matched_username || row.raw_fio}»?\nБудет создан MeterReading.`)) return;
 
         // Оптимистичное удаление
         this._removeRowLocally(rowId, 'approved');
         try {
             const qs = moveToRawRoom === true ? '?move_to_raw_room=true' : '';
-            await api.post(`/admin/gsheets/rows/${rowId}/approve${qs}`);
+            // Если переданы fix_hot/fix_cold — отправляем их в body. Сервер
+            // обновит row.hot_water/cold_water перед созданием MeterReading.
+            const body = {};
+            if (fixHot !== null) body.fix_hot = fixHot;
+            if (fixCold !== null) body.fix_cold = fixCold;
+            await api.post(`/admin/gsheets/rows/${rowId}/approve${qs}`, body);
             toast('Показание утверждено', 'success');
             this.loadStats();
         } catch (e) {
@@ -876,6 +893,138 @@ export const GSheetsModule = {
             toast('Ошибка: ' + e.message, 'error');
             this.refresh();  // откатываемся на серверное состояние
         }
+    },
+
+    /**
+     * Диалог исправления десятичной точки для конфликта `value_too_large`.
+     * Показывает текущие значения (без точки), предлагает автоисправление
+     * (последние 3 цифры → дробная часть, т.е. деление на 1000) и форму
+     * ручного ввода с предзаполненными авто-значениями.
+     */
+    _showDecimalFixDialog(row) {
+        document.getElementById('gsheetsDecimalFixModal')?.remove();
+
+        // Авто-исправление: делим на 1000 (последние 3 цифры — дробная часть).
+        // Если уже маленькое (≤10000) — auto = текущее значение (мало вероятно,
+        // т.к. этот диалог открывается только для value_too_large, но защита).
+        const autoFix = (val) => {
+            const num = Number(val);
+            if (!isFinite(num) || num <= 10000) return num;
+            return num / 1000;
+        };
+
+        const curHot = Number(row.hot_water);
+        const curCold = Number(row.cold_water);
+        const autoHot = autoFix(curHot);
+        const autoCold = autoFix(curCold);
+        // Помечаем флагами какие именно поля переполнены — чтобы не дёргать
+        // не сломанные. Например жилец мог опечататься только в ГВС.
+        const hotOverflow = curHot > 10000;
+        const coldOverflow = curCold > 10000;
+
+        const modal = document.createElement('div');
+        modal.id = 'gsheetsDecimalFixModal';
+        modal.className = 'modal-overlay open';
+        modal.innerHTML = `
+            <div class="modal-window" style="width:560px;">
+                <div class="modal-header" style="background:#fef3c7; border-bottom:1px solid #fde68a;">
+                    <h3 style="color:#b45309;">
+                        <i class="fa-solid fa-triangle-exclamation"></i>
+                        Пропущена десятичная точка — ${escapeHtml(row.matched_username || row.raw_fio)}
+                    </h3>
+                    <button class="close-btn close-icon" data-dfx-close>&times;</button>
+                </div>
+                <div class="modal-form" style="padding:18px 22px; background:var(--bg-page);">
+                    <p style="margin:0 0 14px; font-size:13px; line-height:1.5;">
+                        Жилец ввёл показания без точки. Анализатор предлагает разделить
+                        число — последние 3 цифры считать дробной частью (м³).
+                        Проверьте, всё ли корректно:
+                    </p>
+
+                    <div style="background:#fff; border:1px solid var(--border-color); border-radius:8px; padding:14px; margin-bottom:14px;">
+                        <div style="display:grid; grid-template-columns: auto 1fr 1fr; gap:8px 14px; align-items:center; font-size:13px;">
+                            <div></div>
+                            <div style="font-weight:600; color:var(--text-secondary); font-size:11px; text-transform:uppercase;">Сейчас</div>
+                            <div style="font-weight:600; color:var(--success-color); font-size:11px; text-transform:uppercase;">Авто</div>
+
+                            <div style="color:var(--danger-color);">🔥 ГВС</div>
+                            <code style="color:${hotOverflow ? 'var(--danger-color)' : 'var(--text-main)'};">${curHot}</code>
+                            <code style="color:${hotOverflow ? 'var(--success-color)' : 'var(--text-secondary)'}; font-weight:600;">${autoHot.toFixed(3)}</code>
+
+                            <div style="color:var(--primary-color);">❄️ ХВС</div>
+                            <code style="color:${coldOverflow ? 'var(--danger-color)' : 'var(--text-main)'};">${curCold}</code>
+                            <code style="color:${coldOverflow ? 'var(--success-color)' : 'var(--text-secondary)'}; font-weight:600;">${autoCold.toFixed(3)}</code>
+                        </div>
+                    </div>
+
+                    <button type="button" class="action-btn primary-btn" data-dfx-action="auto"
+                            style="width:100%; padding:12px; margin-bottom:14px; text-align:left;">
+                        <b>✨ Принять автоисправление</b>
+                        <div style="font-size:12px; color:#dbeafe; margin-top:4px; font-weight:normal;">
+                            ГВС → ${autoHot.toFixed(3)} м³, ХВС → ${autoCold.toFixed(3)} м³. Сразу утвердим.
+                        </div>
+                    </button>
+
+                    <details style="background:#fff; border:1px solid var(--border-color); border-radius:8px; padding:10px 14px;">
+                        <summary style="cursor:pointer; font-weight:500; font-size:13px; color:var(--text-main);">
+                            ✏️ Исправить вручную
+                        </summary>
+                        <div style="margin-top:12px; display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                            <div class="form-group" style="margin:0;">
+                                <label style="font-size:11px; color:var(--danger-color);">🔥 ГВС, м³</label>
+                                <input type="number" step="0.001" min="0" max="10000"
+                                       id="dfxManualHot" value="${autoHot.toFixed(3)}">
+                            </div>
+                            <div class="form-group" style="margin:0;">
+                                <label style="font-size:11px; color:var(--primary-color);">❄️ ХВС, м³</label>
+                                <input type="number" step="0.001" min="0" max="10000"
+                                       id="dfxManualCold" value="${autoCold.toFixed(3)}">
+                            </div>
+                        </div>
+                        <button type="button" class="action-btn success-btn" data-dfx-action="manual"
+                                style="width:100%; margin-top:10px;">
+                            Сохранить вручную и утвердить
+                        </button>
+                    </details>
+                </div>
+                <div class="modal-footer">
+                    <button class="action-btn secondary-btn" data-dfx-close>Отмена</button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        const close = () => modal.remove();
+        modal.addEventListener('click', (e) => {
+            if (e.target.closest('[data-dfx-close]')) { close(); return; }
+            const action = e.target.closest('[data-dfx-action]');
+            if (!action) return;
+            let hotVal, coldVal;
+            if (action.dataset.dfxAction === 'auto') {
+                hotVal = autoHot;
+                coldVal = autoCold;
+            } else {
+                // manual
+                hotVal = parseFloat(document.getElementById('dfxManualHot').value);
+                coldVal = parseFloat(document.getElementById('dfxManualCold').value);
+                if (!isFinite(hotVal) || !isFinite(coldVal) || hotVal < 0 || coldVal < 0) {
+                    toast('Введите корректные положительные значения', 'error');
+                    return;
+                }
+                if (hotVal > 10000 || coldVal > 10000) {
+                    toast('Значения должны быть ≤ 10000 м³ — проверьте точку', 'error');
+                    return;
+                }
+            }
+            close();
+            // Шлём в approveRow с fix_hot / fix_cold. Сервер обновит row перед
+            // созданием MeterReading и сбросит conflict_reason.
+            this.approveRow(row.id, {
+                skipConfirm: true,
+                fixHot: hotVal,
+                fixCold: coldVal,
+            });
+        });
     },
 
     _showRoomConflictDialog(row) {

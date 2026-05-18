@@ -74,6 +74,20 @@ class BulkApproveRequest(BaseModel):
     row_ids: list[int]
 
 
+class ApproveRowBody(BaseModel):
+    """Опциональный body для approve_row.
+
+    Используется при конфликтах `value_too_large` — когда жилец ввёл показания
+    без десятичной точки (например `96916` вместо `96.916` м³). Админ выбирает
+    в UI либо «авто-исправление» (последние 3 цифры → дробная часть, делает
+    фронт), либо ручной ввод; в обоих случаях скорректированные значения
+    приходят сюда. См. инцидент мая 2026 — 1.48 млрд ₽ на дашборде из-за
+    пропущенных точек у нескольких жильцов.
+    """
+    fix_hot: Optional[Decimal] = None
+    fix_cold: Optional[Decimal] = None
+
+
 class CreateAndMatchRequest(BaseModel):
     """Создать нового жильца и привязать к нему текущую gsheets-row.
 
@@ -450,6 +464,8 @@ async def _apply_approve(
     row: GSheetsImportRow,
     current_user: User,
     move_to_raw_room: bool = False,
+    fix_hot: Optional[Decimal] = None,
+    fix_cold: Optional[Decimal] = None,
 ) -> MeterReading:
     """
     Создаёт MeterReading на основании импортированной строки.
@@ -459,7 +475,16 @@ async def _apply_approve(
     сначала переводим его в новую комнату (User.room_id), а потом создаём
     показание на неё. Используется когда админ решает, что правильная —
     та, что в таблице, а не та, что сейчас у жильца.
+
+    fix_hot / fix_cold — опциональное исправление показаний перед утверждением.
+    Используется когда у строки conflict_reason="value_too_large" (жилец
+    забыл точку: `96916` вместо `96.916`). Админ в UI выбирает «авто»
+    (фронт делит на 1000) или вводит вручную — итог приходит сюда.
+    Перевалидируем значения через MAX_WATER_METER_VALUE — если исправление
+    всё ещё слишком большое, возвращаем 400 и не утверждаем.
     """
+    from app.modules.utility.services.reading_validators import MAX_WATER_METER_VALUE
+
     if row.status in ("approved", "auto_approved") and row.reading_id:
         raise HTTPException(
             status_code=409,
@@ -472,10 +497,58 @@ async def _apply_approve(
             detail="Строка не сопоставлена с жильцом — используйте reassign",
         )
 
+    # Опциональное исправление десятичной точки (см. ApproveRowBody).
+    # Делаем ДО проверки hot_water/cold_water is None — на случай если
+    # value_too_large обнулил parsed-значения (сейчас не обнуляет, но запас).
+    if fix_hot is not None:
+        if fix_hot < 0 or fix_hot > MAX_WATER_METER_VALUE:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Исправленное значение ГВС {fix_hot} вне допустимого диапазона "
+                    f"(0…{MAX_WATER_METER_VALUE}). Проверьте десятичную точку."
+                ),
+            )
+        row.hot_water = fix_hot
+    if fix_cold is not None:
+        if fix_cold < 0 or fix_cold > MAX_WATER_METER_VALUE:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Исправленное значение ХВС {fix_cold} вне допустимого диапазона "
+                    f"(0…{MAX_WATER_METER_VALUE}). Проверьте десятичную точку."
+                ),
+            )
+        row.cold_water = fix_cold
+    # После исправления сбрасываем conflict_reason если он был только про value_too_large
+    # (т.е. админ исправил то, на что жаловался анализатор).
+    if (fix_hot is not None or fix_cold is not None) and row.conflict_reason:
+        if "value_too_large" in row.conflict_reason:
+            row.conflict_reason = None
+
     if row.hot_water is None or row.cold_water is None:
         raise HTTPException(
             status_code=400,
             detail="В импортированной строке не разобраны показания ГВС/ХВС",
+        )
+
+    # Защита от утверждения «больших» показаний без явного fix-исправления.
+    # Раньше bulk-approve мог пропустить row у которой hot_water=96916 (жилец
+    # забыл точку) и создать MeterReading со значением > MAX_WATER_METER_VALUE.
+    # Это и был механизм инцидента мая 2026 (1.48 млрд ₽ на дашборде).
+    # Теперь — если строка помечена value_too_large и админ не передал fix,
+    # отказываемся утверждать. Админ должен открыть диалог fix-decimal вручную.
+    if (
+        (row.hot_water is not None and row.hot_water > MAX_WATER_METER_VALUE)
+        or (row.cold_water is not None and row.cold_water > MAX_WATER_METER_VALUE)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Показания превышают допустимый максимум "
+                f"({MAX_WATER_METER_VALUE} м³) — вероятно пропущена десятичная точка. "
+                "Используйте диалог исправления точки (fix_hot / fix_cold) перед утверждением."
+            ),
         )
 
     user = await db.get(User, row.matched_user_id)
@@ -647,6 +720,7 @@ async def approve_row(
         description="Если True — при conflict-комнат переселяем жильца "
                     "в комнату из таблицы (обновляем User.room_id).",
     ),
+    body: Optional[ApproveRowBody] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -661,7 +735,12 @@ async def approve_row(
     )).scalars().first()
     if not row:
         raise HTTPException(status_code=404, detail="Строка не найдена")
-    reading = await _apply_approve(db, row, current_user, move_to_raw_room=move_to_raw_room)
+    reading = await _apply_approve(
+        db, row, current_user,
+        move_to_raw_room=move_to_raw_room,
+        fix_hot=body.fix_hot if body else None,
+        fix_cold=body.fix_cold if body else None,
+    )
     await db.commit()
     return {"status": "ok", "reading_id": reading.id}
 
