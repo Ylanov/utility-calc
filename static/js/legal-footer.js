@@ -26,18 +26,48 @@
         // Не дублируем — если футер уже есть на странице, ничего не делаем.
         if (document.getElementById('legal-footer')) return;
 
+        // Определяем тип layout body:
+        // - flex/grid-body (login.html) — обычный append «съезжает» вбок,
+        //   потому что footer становится flex-item. Используем position:fixed.
+        // - normal body (portal.html, privacy.html) — обычный append работает,
+        //   footer естественно ложится в конец прокручиваемого контента.
+        const bodyStyle = getComputedStyle(document.body);
+        const isFlexBody = ['flex', 'inline-flex', 'grid', 'inline-grid'].includes(bodyStyle.display);
+        const isDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+
         const footer = document.createElement('footer');
         footer.id = 'legal-footer';
         footer.setAttribute('role', 'contentinfo');
-        footer.style.cssText = `
-            margin-top: 48px;
-            padding: 24px 16px;
-            text-align: center;
-            border-top: 1px solid rgba(0,0,0,0.08);
-            color: #6b7280;
-            font-size: 12px;
-            line-height: 1.6;
-        `;
+        if (isFlexBody) {
+            // Sticky-к-дну для flex-страниц (login).
+            footer.style.cssText = `
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                z-index: 50;
+                padding: 10px 16px calc(10px + env(safe-area-inset-bottom, 0px));
+                text-align: center;
+                background: ${isDark ? 'rgba(15, 23, 42, 0.92)' : 'rgba(255, 255, 255, 0.92)'};
+                backdrop-filter: blur(12px);
+                -webkit-backdrop-filter: blur(12px);
+                border-top: 1px solid ${isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)'};
+                color: ${isDark ? '#94a3b8' : '#6b7280'};
+                font-size: 11px;
+                line-height: 1.5;
+            `;
+        } else {
+            // Обычный inline-footer для длинных страниц.
+            footer.style.cssText = `
+                margin-top: 48px;
+                padding: 24px 16px;
+                text-align: center;
+                border-top: 1px solid rgba(0,0,0,0.08);
+                color: #6b7280;
+                font-size: 12px;
+                line-height: 1.6;
+            `;
+        }
         const year = new Date().getFullYear();
         // Стартовое содержимое — без реквизитов. После /api/settings/operator-info
         // подставим имя организации и email/телефон (см. fetchOperatorInfo ниже).
