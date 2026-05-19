@@ -22,6 +22,12 @@ export const OperatorInfoModule = {
         opPostalAddress: 'operator_postal_address',
         opEmail: 'operator_email',
         opPhone: 'operator_phone',
+        // Поля 152-ФЗ (см. юр-аудит май 2026).
+        opRknRegistryNumber: 'operator_rkn_registry_number',
+        opResponsibleName: 'operator_responsible_name',
+        opResponsiblePosition: 'operator_responsible_position',
+        opResponsibleEmail: 'operator_responsible_email',
+        opInfosystemSecurityLevel: 'operator_infosystem_security_level',
     },
 
     async init() {

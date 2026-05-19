@@ -1036,6 +1036,52 @@
                                     <input type="tel" id="opPhone" maxlength="50" placeholder="+7 (495) 123-45-67">
                                 </div>
                             </div>
+
+                            <!-- Разделитель: блок 152-ФЗ. -->
+                            <h4 style="margin: 24px 0 12px; padding-top: 16px; border-top: 1px solid var(--border-color); font-size: 14px; color: var(--text-secondary);">
+                                <i class="fa-solid fa-balance-scale"></i> Сведения по 152-ФЗ
+                                <span style="font-weight: normal; font-size: 12px;">(после юр-аудита, обязательно)</span>
+                            </h4>
+
+                            <div class="form-group">
+                                <label>Регистрационный номер в Реестре операторов РКН <span class="hint-text" style="font-weight:normal;">(ст. 22)</span></label>
+                                <input type="text" id="opRknRegistryNumber" maxlength="50" placeholder="77-22-001234, или оставьте пустым если не подавали уведомление">
+                                <p class="hint-text" style="font-size:11px; margin:4px 0 0;">
+                                    Получается через <a href="https://pd.rkn.gov.ru/operators-registry/notification/form/" target="_blank">pd.rkn.gov.ru</a> — бесплатно, 10-15 минут.
+                                </p>
+                            </div>
+
+                            <div class="form-grid-2">
+                                <div class="form-group">
+                                    <label>ФИО ответственного за обработку ПД <span style="color: var(--danger-color);">*</span></label>
+                                    <input type="text" id="opResponsibleName" maxlength="200" placeholder="Иванов Иван Иванович">
+                                    <p class="hint-text" style="font-size:11px; margin:4px 0 0;">Ст. 22.1 152-ФЗ — обязательное лицо в организации.</p>
+                                </div>
+                                <div class="form-group">
+                                    <label>Должность ответственного</label>
+                                    <input type="text" id="opResponsiblePosition" maxlength="200" placeholder="Заместитель директора по правовым вопросам">
+                                </div>
+                            </div>
+                            <div class="form-grid-2">
+                                <div class="form-group">
+                                    <label>Email ответственного за обработку ПД</label>
+                                    <input type="email" id="opResponsibleEmail" maxlength="200" placeholder="dpo@asy-tk.ru">
+                                </div>
+                                <div class="form-group">
+                                    <label>Уровень защищённости ИС <span class="hint-text" style="font-weight:normal;">(ПП РФ № 1119)</span></label>
+                                    <select id="opInfosystemSecurityLevel">
+                                        <option value="">— не определён —</option>
+                                        <option value="УЗ-1">УЗ-1 (максимальный)</option>
+                                        <option value="УЗ-2">УЗ-2 (высокий)</option>
+                                        <option value="УЗ-3">УЗ-3 (средний)</option>
+                                        <option value="УЗ-4">УЗ-4 (низкий)</option>
+                                    </select>
+                                    <p class="hint-text" style="font-size:11px; margin:4px 0 0;">
+                                        Для ЖКХ-системы общежития обычно УЗ-3 или УЗ-4. Уточняется у юриста.
+                                    </p>
+                                </div>
+                            </div>
+
                             <div style="display:flex; justify-content:space-between; align-items:center; gap: 12px; margin-top: 16px;">
                                 <a href="/privacy.html" target="_blank" class="action-btn secondary-btn" style="padding: 8px 16px; font-size: 13px;">
                                     <i class="fa-solid fa-external-link-alt"></i> Посмотреть страницу политики

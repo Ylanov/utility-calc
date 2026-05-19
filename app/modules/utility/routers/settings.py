@@ -218,13 +218,20 @@ async def update_meter_format(
 # Список ключей, чтобы один источник правды — и в схеме, и в endpoint'ах,
 # и (потенциально) в миграциях seed-данных.
 _OPERATOR_KEYS = (
-    ("operator_name",            "Полное наименование организации",       ""),
-    ("operator_inn",             "ИНН",                                   ""),
-    ("operator_ogrn",            "ОГРН",                                  ""),
-    ("operator_legal_address",   "Юридический адрес",                     ""),
-    ("operator_postal_address",  "Почтовый адрес для корреспонденции",    ""),
-    ("operator_email",           "Электронная почта (для запросов по ПД)", "privacy@asy-tk.ru"),
-    ("operator_phone",           "Контактный телефон",                    ""),
+    ("operator_name",                       "Полное наименование организации",       ""),
+    ("operator_inn",                        "ИНН",                                   ""),
+    ("operator_ogrn",                       "ОГРН",                                  ""),
+    ("operator_legal_address",              "Юридический адрес",                     ""),
+    ("operator_postal_address",             "Почтовый адрес для корреспонденции",    ""),
+    ("operator_email",                      "Электронная почта (для запросов по ПД)", "privacy@asy-tk.ru"),
+    ("operator_phone",                      "Контактный телефон",                    ""),
+    # Дополнения по результатам юр-аудита 152-ФЗ (май 2026).
+    # Без этих полей политика обработки ПД формально неполная.
+    ("operator_rkn_registry_number",        "Регистрационный номер в Реестре операторов РКН (ст. 22)", ""),
+    ("operator_responsible_name",           "ФИО ответственного за организацию обработки ПД (ст. 22.1)", ""),
+    ("operator_responsible_position",       "Должность ответственного за обработку ПД", ""),
+    ("operator_responsible_email",          "Электронная почта ответственного за обработку ПД", ""),
+    ("operator_infosystem_security_level",  "Уровень защищённости ИС (УЗ-1..4, ПП РФ № 1119)", ""),
 )
 
 
@@ -241,6 +248,12 @@ class OperatorInfoSchema(BaseModel):
     operator_postal_address: Optional[str] = Field(None, max_length=500)
     operator_email: Optional[str] = Field(None, max_length=200)
     operator_phone: Optional[str] = Field(None, max_length=50)
+    # Поля 152-ФЗ.
+    operator_rkn_registry_number: Optional[str] = Field(None, max_length=50)
+    operator_responsible_name: Optional[str] = Field(None, max_length=200)
+    operator_responsible_position: Optional[str] = Field(None, max_length=200)
+    operator_responsible_email: Optional[str] = Field(None, max_length=200)
+    operator_infosystem_security_level: Optional[str] = Field(None, max_length=50)
 
 
 async def _load_operator_info(db: AsyncSession) -> dict:

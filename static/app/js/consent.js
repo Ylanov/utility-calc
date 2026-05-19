@@ -75,6 +75,10 @@ function renderModal(status, onAccepted) {
                         Данные хранятся на серверах в РФ, передаются третьим лицам только по
                         закону (суд, прокуратура, ФССП). Сторонние трекинговые системы не используются.
                     </p>
+                    <p style="margin-bottom: var(--sp-2);">
+                        <strong>Срок действия согласия:</strong> до достижения целей обработки
+                        или до отзыва. Отозвать можно в любое время в разделе «Мои данные».
+                    </p>
                     <p>
                         Полный текст —
                         <a href="/privacy.html" target="_blank" rel="noopener" style="color: var(--primary); font-weight: 600;">
