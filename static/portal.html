@@ -87,6 +87,57 @@
       ]
     }
     </script>
+
+    <!-- FAQPage микроразметка — Яндекс/Google показывают эти Q&A прямо
+         в результатах поиска (богатый сниппет). Это важный фактор CTR. -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Где взять логин и пароль для входа?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Логин — это ваш лицевой счёт (Л/С). Его выдают в общежитии при заселении вместе с временным паролем. При первом входе система попросит сменить пароль."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Какие счётчики нужно подавать?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "В личном кабинете отображаются только те счётчики, которые установлены в вашей комнате: горячая вода, холодная вода, электричество. Если счётчика нет — расход рассчитывается по нормативу."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "В какие дни принимаются показания?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Период приёма показаний устанавливается администрацией общежития, обычно с 23 по 26 число каждого месяца. В личном кабинете виден статус приёма."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Где скачать квитанцию для оплаты?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "После утверждения показаний бухгалтерией квитанция в формате PDF появляется в разделе «История квитанций» в личном кабинете жильца."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Как защищены мои персональные данные?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Передача данных шифруется TLS (HTTPS), пароли хранятся в виде хэшей bcrypt, у администраторов работает двухфакторная аутентификация. Все данные обрабатываются по 152-ФЗ. Серверы в РФ."
+          }
+        }
+      ]
+    }
+    </script>
 </head>
 <body class="portal-body">
     <div class="portal-container">
@@ -118,6 +169,179 @@
                  горюче-смазочных материалов). Модуль удалён из платформы
                  в apr 2026, карточка убрана. -->
         </div>
+
+        <!-- ============================================================
+             ВОЗМОЖНОСТИ СИСТЕМЫ — уникальный ценностный контент для SEO.
+             4 карточки с конкретными бенефитами для жильца / администрации.
+             ============================================================ -->
+        <section id="features" style="margin-top: 80px;" aria-labelledby="features-title">
+            <h2 id="features-title" style="text-align:center; font-size:28px; font-weight:700; margin-bottom:12px; color:#1a202c;">
+                Что умеет «ЖКХ Лидер»
+            </h2>
+            <p style="text-align:center; color:#4a5568; font-size:15px; max-width:640px; margin:0 auto 40px;">
+                Цифровой личный кабинет жильца общежития — от подачи показаний до получения справок,
+                всё онлайн в браузере или мобильном приложении.
+            </p>
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:20px; max-width:960px; margin:0 auto;">
+                <article style="padding:24px; background:#fff; border-radius:14px; box-shadow:0 2px 12px rgba(0,0,0,0.06); border:1px solid rgba(0,0,0,0.04);">
+                    <div style="width:48px; height:48px; background:#eef2ff; color:#1a73e8; border-radius:12px; display:flex; align-items:center; justify-content:center; margin-bottom:16px;">
+                        <i class="fa-solid fa-gauge-high" style="font-size:22px;"></i>
+                    </div>
+                    <h3 style="font-size:17px; font-weight:600; margin-bottom:8px; color:#1a202c;">Подача показаний</h3>
+                    <p style="font-size:14px; color:#4a5568; line-height:1.5;">
+                        Передавайте показания счётчиков горячей и холодной воды, электричества
+                        прямо со смартфона. Без очередей и бумажных бланков.
+                    </p>
+                </article>
+                <article style="padding:24px; background:#fff; border-radius:14px; box-shadow:0 2px 12px rgba(0,0,0,0.06); border:1px solid rgba(0,0,0,0.04);">
+                    <div style="width:48px; height:48px; background:#fef3c7; color:#d97706; border-radius:12px; display:flex; align-items:center; justify-content:center; margin-bottom:16px;">
+                        <i class="fa-solid fa-file-invoice-dollar" style="font-size:22px;"></i>
+                    </div>
+                    <h3 style="font-size:17px; font-weight:600; margin-bottom:8px; color:#1a202c;">Квитанции онлайн</h3>
+                    <p style="font-size:14px; color:#4a5568; line-height:1.5;">
+                        Скачивайте квитанции по форме ЕПД в PDF за любой период.
+                        История всех начислений и платежей под рукой.
+                    </p>
+                </article>
+                <article style="padding:24px; background:#fff; border-radius:14px; box-shadow:0 2px 12px rgba(0,0,0,0.06); border:1px solid rgba(0,0,0,0.04);">
+                    <div style="width:48px; height:48px; background:#d1fae5; color:#059669; border-radius:12px; display:flex; align-items:center; justify-content:center; margin-bottom:16px;">
+                        <i class="fa-solid fa-file-signature" style="font-size:22px;"></i>
+                    </div>
+                    <h3 style="font-size:17px; font-weight:600; margin-bottom:8px; color:#1a202c;">Справки и документы</h3>
+                    <p style="font-size:14px; color:#4a5568; line-height:1.5;">
+                        Заказывайте выписку из финансово-лицевого счёта (ФЛС) и другие справки
+                        — без визита в бухгалтерию.
+                    </p>
+                </article>
+                <article style="padding:24px; background:#fff; border-radius:14px; box-shadow:0 2px 12px rgba(0,0,0,0.06); border:1px solid rgba(0,0,0,0.04);">
+                    <div style="width:48px; height:48px; background:#fee2e2; color:#dc2626; border-radius:12px; display:flex; align-items:center; justify-content:center; margin-bottom:16px;">
+                        <i class="fa-solid fa-shield-halved" style="font-size:22px;"></i>
+                    </div>
+                    <h3 style="font-size:17px; font-weight:600; margin-bottom:8px; color:#1a202c;">Безопасность данных</h3>
+                    <p style="font-size:14px; color:#4a5568; line-height:1.5;">
+                        Шифрование TLS, двухфакторная аутентификация, защита по 152-ФЗ.
+                        Данные хранятся в РФ.
+                    </p>
+                </article>
+            </div>
+        </section>
+
+        <!-- ============================================================
+             КАК ЭТО РАБОТАЕТ — 3 простых шага.
+             ============================================================ -->
+        <section id="how-it-works" style="margin-top: 72px;" aria-labelledby="hiw-title">
+            <h2 id="hiw-title" style="text-align:center; font-size:28px; font-weight:700; margin-bottom:40px; color:#1a202c;">
+                Как пользоваться
+            </h2>
+            <ol style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:20px; max-width:960px; margin:0 auto; list-style:none; padding:0; counter-reset:hiw;">
+                <li style="counter-increment:hiw; padding:20px 24px; background:#fff; border-radius:14px; border:1px solid rgba(0,0,0,0.06); position:relative;">
+                    <div style="position:absolute; top:-14px; left:24px; width:32px; height:32px; background:#1a73e8; color:#fff; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700;">1</div>
+                    <h3 style="font-size:16px; font-weight:600; margin:10px 0 8px; color:#1a202c;">Войдите по логину</h3>
+                    <p style="font-size:14px; color:#4a5568; line-height:1.5;">
+                        Логин — номер вашего лицевого счёта, его выдают в общежитии.
+                        Пароль вы получили при заселении.
+                    </p>
+                </li>
+                <li style="counter-increment:hiw; padding:20px 24px; background:#fff; border-radius:14px; border:1px solid rgba(0,0,0,0.06); position:relative;">
+                    <div style="position:absolute; top:-14px; left:24px; width:32px; height:32px; background:#1a73e8; color:#fff; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700;">2</div>
+                    <h3 style="font-size:16px; font-weight:600; margin:10px 0 8px; color:#1a202c;">Введите показания</h3>
+                    <p style="font-size:14px; color:#4a5568; line-height:1.5;">
+                        В разделе «Показания» введите текущие цифры со счётчиков.
+                        Система автоматически рассчитает потребление и начисление.
+                    </p>
+                </li>
+                <li style="counter-increment:hiw; padding:20px 24px; background:#fff; border-radius:14px; border:1px solid rgba(0,0,0,0.06); position:relative;">
+                    <div style="position:absolute; top:-14px; left:24px; width:32px; height:32px; background:#1a73e8; color:#fff; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700;">3</div>
+                    <h3 style="font-size:16px; font-weight:600; margin:10px 0 8px; color:#1a202c;">Скачайте квитанцию</h3>
+                    <p style="font-size:14px; color:#4a5568; line-height:1.5;">
+                        После утверждения бухгалтерией квитанция в PDF появится
+                        в разделе «История» — можно оплачивать.
+                    </p>
+                </li>
+            </ol>
+        </section>
+
+        <!-- ============================================================
+             FAQ — ответы на типовые вопросы. Микроразметка FAQPage (JSON-LD
+             в <head>) позволит Яндексу/Google показывать ответы прямо в SERP.
+             ============================================================ -->
+        <section id="faq" style="margin-top: 72px; max-width: 720px; margin-left:auto; margin-right:auto;" aria-labelledby="faq-title">
+            <h2 id="faq-title" style="text-align:center; font-size:28px; font-weight:700; margin-bottom:32px; color:#1a202c;">
+                Частые вопросы
+            </h2>
+            <details style="background:#fff; border-radius:12px; border:1px solid rgba(0,0,0,0.06); margin-bottom:12px; padding:0;">
+                <summary style="padding:16px 20px; cursor:pointer; font-weight:600; font-size:15px; color:#1a202c;">
+                    Где взять логин и пароль для входа?
+                </summary>
+                <div style="padding:0 20px 16px; color:#4a5568; line-height:1.6; font-size:14px;">
+                    Логин — это ваш лицевой счёт (Л/С). Его выдают в общежитии при заселении вместе
+                    с временным паролем. При первом входе система попросит сменить пароль.
+                    Если вы потеряли данные — обратитесь к коменданту или в бухгалтерию общежития.
+                </div>
+            </details>
+            <details style="background:#fff; border-radius:12px; border:1px solid rgba(0,0,0,0.06); margin-bottom:12px; padding:0;">
+                <summary style="padding:16px 20px; cursor:pointer; font-weight:600; font-size:15px; color:#1a202c;">
+                    Какие счётчики нужно подавать?
+                </summary>
+                <div style="padding:0 20px 16px; color:#4a5568; line-height:1.6; font-size:14px;">
+                    В личном кабинете вы видите только те счётчики, которые установлены в вашей комнате:
+                    горячая вода, холодная вода, электричество. Если какого-то счётчика нет —
+                    расход рассчитывается по нормативу.
+                </div>
+            </details>
+            <details style="background:#fff; border-radius:12px; border:1px solid rgba(0,0,0,0.06); margin-bottom:12px; padding:0;">
+                <summary style="padding:16px 20px; cursor:pointer; font-weight:600; font-size:15px; color:#1a202c;">
+                    В какие дни принимаются показания?
+                </summary>
+                <div style="padding:0 20px 16px; color:#4a5568; line-height:1.6; font-size:14px;">
+                    Период приёма показаний устанавливается администрацией общежития (обычно с 23 по 26 число
+                    каждого месяца). В личном кабинете вы увидите статус: «приём открыт» или «приём закрыт».
+                    После закрытия периода бухгалтерия утверждает показания и формирует квитанции.
+                </div>
+            </details>
+            <details style="background:#fff; border-radius:12px; border:1px solid rgba(0,0,0,0.06); margin-bottom:12px; padding:0;">
+                <summary style="padding:16px 20px; cursor:pointer; font-weight:600; font-size:15px; color:#1a202c;">
+                    Где скачать квитанцию для оплаты?
+                </summary>
+                <div style="padding:0 20px 16px; color:#4a5568; line-height:1.6; font-size:14px;">
+                    После утверждения показаний бухгалтерией квитанция (форма ЕПД, PDF) появляется
+                    в разделе «История квитанций» в личном кабинете. Скачать можно в любой момент —
+                    история сохраняется бессрочно.
+                </div>
+            </details>
+            <details style="background:#fff; border-radius:12px; border:1px solid rgba(0,0,0,0.06); margin-bottom:12px; padding:0;">
+                <summary style="padding:16px 20px; cursor:pointer; font-weight:600; font-size:15px; color:#1a202c;">
+                    Можно ли оплатить квитанцию прямо на сайте?
+                </summary>
+                <div style="padding:0 20px 16px; color:#4a5568; line-height:1.6; font-size:14px;">
+                    Сейчас прямая онлайн-оплата на сайте не реализована — квитанция содержит реквизиты
+                    для оплаты в любом банке (по штрих-коду / QR-коду или вручную).
+                    Интеграция с платёжной системой запланирована в одном из ближайших обновлений.
+                </div>
+            </details>
+            <details style="background:#fff; border-radius:12px; border:1px solid rgba(0,0,0,0.06); margin-bottom:12px; padding:0;">
+                <summary style="padding:16px 20px; cursor:pointer; font-weight:600; font-size:15px; color:#1a202c;">
+                    Как защищены мои персональные данные?
+                </summary>
+                <div style="padding:0 20px 16px; color:#4a5568; line-height:1.6; font-size:14px;">
+                    Передача данных шифруется TLS (HTTPS), пароли хранятся в виде хэшей (bcrypt),
+                    у администраторов работает двухфакторная аутентификация. Все данные обрабатываются
+                    в соответствии с
+                    <a href="/privacy.html" style="color:#1a73e8;">152-ФЗ «О персональных данных»</a>.
+                    Серверы размещены в Российской Федерации.
+                </div>
+            </details>
+            <details style="background:#fff; border-radius:12px; border:1px solid rgba(0,0,0,0.06); margin-bottom:12px; padding:0;">
+                <summary style="padding:16px 20px; cursor:pointer; font-weight:600; font-size:15px; color:#1a202c;">
+                    Что делать, если есть ошибки в начислениях?
+                </summary>
+                <div style="padding:0 20px 16px; color:#4a5568; line-height:1.6; font-size:14px;">
+                    Если вы видите расхождение в квитанции (неправильные показания, дублирование начислений
+                    и т.п.) — обратитесь в бухгалтерию общежития. Все действия администраторов фиксируются
+                    в журнале действий, что позволяет быстро разобрать спорные ситуации.
+                </div>
+            </details>
+        </section>
 
         <!-- ========================================
              Скачать мобильное приложение «ЖКХ Лидер»
