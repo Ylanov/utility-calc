@@ -244,7 +244,9 @@ function handleRoute() {
     // Дашборд объединён со сверкой показаний; ручной ввод, тарифы и сводка
     // объединены в секцию "Операции" (tools). Старые ссылки перенаправляем
     // для обратной совместимости.
-    const validTabs = ['dashboard', 'tools', 'housing', 'users', 'debts', 'certs'];
+    // ВАЖНО: при добавлении новой вкладки — обязательно добавить её сюда,
+    // иначе clickByHash сделает fallback на dashboard.
+    const validTabs = ['dashboard', 'tools', 'housing', 'users', 'debts', 'certs', 'audit'];
     let tabToLoad = validTabs.includes(hash) ? hash : defaultTab;
     if (hash === 'readings') tabToLoad = 'dashboard';
     if (hash === 'manual' || hash === 'tariffs' || hash === 'accountant') tabToLoad = 'tools';
