@@ -135,9 +135,12 @@
             </div>
         </header>
 
-        <div class="placeholder">
-            <strong>⚠️ Внимание администратору:</strong> перед публикацией заполнить блок «Реквизиты оператора»
-            (фактическим юр. лицом, ИНН, адресом и контактами). Текущие плейсхолдеры — заглушки.
+        <!-- Уведомление администратору, что не все реквизиты заполнены.
+             Скрывается JS-ом если operator_name + operator_email непусты. -->
+        <div class="placeholder" id="adminWarning" style="display: none;">
+            <strong>⚠️ Внимание администратору:</strong> не заполнены обязательные реквизиты
+            оператора. Откройте админку → Операции → «Юридические реквизиты оператора»
+            и заполните их — без этого политика 152-ФЗ нерабочая.
         </div>
 
         <h2>1. Общие положения</h2>
@@ -154,15 +157,16 @@
         </p>
 
         <h2>2. Оператор персональных данных</h2>
-        <div class="contacts">
-            <!-- TODO: вписать реальные реквизиты оператора -->
-            <p><strong>Наименование организации:</strong> ___________________________</p>
-            <p><strong>ИНН:</strong> ___________________________</p>
-            <p><strong>ОГРН:</strong> ___________________________</p>
-            <p><strong>Юридический адрес:</strong> ___________________________</p>
-            <p><strong>Адрес для корреспонденции:</strong> ___________________________</p>
-            <p><strong>Электронная почта:</strong> <a href="mailto:privacy@asy-tk.ru">privacy@asy-tk.ru</a></p>
-            <p><strong>Контактный телефон:</strong> ___________________________</p>
+        <div class="contacts" id="operator-info-block">
+            <!-- Содержимое подтягивается JS из /api/settings/operator-info.
+                 Если поле пустое — показывается пунктирная заглушка «не указано». -->
+            <p><strong>Наименование организации:</strong> <span data-op="operator_name" class="op-value">—</span></p>
+            <p><strong>ИНН:</strong> <span data-op="operator_inn" class="op-value">—</span></p>
+            <p><strong>ОГРН:</strong> <span data-op="operator_ogrn" class="op-value">—</span></p>
+            <p><strong>Юридический адрес:</strong> <span data-op="operator_legal_address" class="op-value">—</span></p>
+            <p><strong>Адрес для корреспонденции:</strong> <span data-op="operator_postal_address" class="op-value">—</span></p>
+            <p><strong>Электронная почта:</strong> <a id="op-email-link" href="mailto:privacy@asy-tk.ru"><span data-op="operator_email" class="op-value">privacy@asy-tk.ru</span></a></p>
+            <p><strong>Контактный телефон:</strong> <span data-op="operator_phone" class="op-value">—</span></p>
         </div>
 
         <h2>3. Цели обработки персональных данных</h2>
@@ -302,8 +306,7 @@
             прав субъекта, обращайтесь:
         </p>
         <div class="contacts">
-            <!-- TODO: подставить тот же email что и выше -->
-            <p>Электронная почта: <a href="mailto:privacy@asy-tk.ru">privacy@asy-tk.ru</a></p>
+            <p>Электронная почта: <a id="op-email-link-2" href="mailto:privacy@asy-tk.ru"><span data-op="operator_email" class="op-value">privacy@asy-tk.ru</span></a></p>
             <p>Срок ответа на обращение: <strong>не более 30 дней</strong> с даты получения.</p>
         </div>
 
@@ -313,5 +316,52 @@
             № 1119 от 01.11.2012, а также рекомендациями Роскомнадзора.
         </p>
     </div>
+
+    <!-- Подвал + cookie-баннер с других страниц -->
+    <script src="/js/legal-footer.js" defer></script>
+
+    <!-- Подгрузка реквизитов оператора и подстановка в текст политики.
+         API публичный (без авторизации), кеширование на 5 минут на стороне браузера. -->
+    <script>
+        (function () {
+            'use strict';
+            fetch('/api/settings/operator-info', { credentials: 'omit' })
+                .then((r) => r.ok ? r.json() : null)
+                .then((info) => {
+                    if (!info) return;
+                    // Заполняем все <span data-op="operator_x">.
+                    document.querySelectorAll('[data-op]').forEach((el) => {
+                        const key = el.dataset.op;
+                        const val = info[key];
+                        if (val && String(val).trim()) {
+                            el.textContent = val;
+                            el.classList.remove('op-empty');
+                        } else {
+                            el.textContent = '— не указано —';
+                            el.classList.add('op-empty');
+                        }
+                    });
+                    // Обновляем mailto в ссылках на оператора.
+                    if (info.operator_email) {
+                        ['op-email-link', 'op-email-link-2'].forEach((id) => {
+                            const a = document.getElementById(id);
+                            if (a) a.href = 'mailto:' + info.operator_email;
+                        });
+                    }
+                    // Показываем admin-warning только если ключевые поля пустые.
+                    const missing = !info.operator_name || !info.operator_email;
+                    const warning = document.getElementById('adminWarning');
+                    if (warning) warning.style.display = missing ? '' : 'none';
+                })
+                .catch((e) => console.warn('[privacy] operator-info load failed:', e));
+        })();
+    </script>
+    <style>
+        .op-empty {
+            color: #ef4444;
+            font-style: italic;
+            font-weight: 500;
+        }
+    </style>
 </body>
 </html>

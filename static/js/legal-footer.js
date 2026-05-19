@@ -39,20 +39,46 @@
             line-height: 1.6;
         `;
         const year = new Date().getFullYear();
+        // Стартовое содержимое — без реквизитов. После /api/settings/operator-info
+        // подставим имя организации и email/телефон (см. fetchOperatorInfo ниже).
         footer.innerHTML = `
             <div style="max-width: 720px; margin: 0 auto;">
                 <div style="margin-bottom: 8px;">
                     <a href="/privacy.html" style="color: inherit; text-decoration: underline;">Политика обработки персональных данных</a>
                     <span style="margin: 0 8px; opacity: 0.4;">·</span>
-                    <a href="mailto:privacy@asy-tk.ru" style="color: inherit; text-decoration: underline;">Связаться с оператором</a>
+                    <a id="legalFooterContactLink" href="mailto:privacy@asy-tk.ru" style="color: inherit; text-decoration: underline;">Связаться с оператором</a>
                 </div>
                 <div style="opacity: 0.7;">
-                    © ${year} ЖКХ Лидер. Все права защищены.
+                    © ${year} <span id="legalFooterOrgName">ЖКХ Лидер</span>. Все права защищены.
                 </div>
-                <!-- TODO: добавить юр. реквизиты (ООО/ИП, ИНН, адрес) -->
+                <div id="legalFooterReqs" style="opacity: 0.55; margin-top: 4px; font-size: 11px;"></div>
             </div>
         `;
         document.body.appendChild(footer);
+
+        // Подтягиваем актуальные реквизиты — публичный endpoint, без авторизации.
+        // Один сетевой запрос на страницу, не критично если упадёт — футер
+        // покажет дефолтные значения.
+        fetch('/api/settings/operator-info', { credentials: 'omit' })
+            .then((r) => r.ok ? r.json() : null)
+            .then((info) => {
+                if (!info) return;
+                if (info.operator_name) {
+                    const el = document.getElementById('legalFooterOrgName');
+                    if (el) el.textContent = info.operator_name;
+                }
+                if (info.operator_email) {
+                    const a = document.getElementById('legalFooterContactLink');
+                    if (a) a.href = 'mailto:' + info.operator_email;
+                }
+                // Кратко: ИНН + город из юр. адреса (если есть). Без переполнения футера.
+                const reqs = [];
+                if (info.operator_inn) reqs.push('ИНН ' + info.operator_inn);
+                if (info.operator_phone) reqs.push(info.operator_phone);
+                const reqsEl = document.getElementById('legalFooterReqs');
+                if (reqsEl && reqs.length) reqsEl.textContent = reqs.join(' · ');
+            })
+            .catch(() => {});
     }
 
     // ─── Cookie-баннер ──────────────────────────────────────────────

@@ -1,9 +1,10 @@
 # app/modules/utility/routers/settings.py
 
 import logging
-from typing import Literal
+from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from pydantic import BaseModel, Field
 
 from app.core.database import get_db
@@ -206,3 +207,93 @@ async def update_meter_format(
         raise HTTPException(500, "Не удалось сохранить формат счётчиков")
 
     return {"status": "success", "message": "Формат счётчиков обновлён"}
+
+
+# ======================================================================
+# ЮРИДИЧЕСКИЕ РЕКВИЗИТЫ ОПЕРАТОРА (для политики 152-ФЗ).
+# Подставляются в /privacy.html и в footer всех страниц.
+# Хранятся в system_settings (key-value). Публичный GET без авторизации —
+# чтобы neavtorizovannyy жилец на login.html видел контакт оператора.
+# ======================================================================
+# Список ключей, чтобы один источник правды — и в схеме, и в endpoint'ах,
+# и (потенциально) в миграциях seed-данных.
+_OPERATOR_KEYS = (
+    ("operator_name",            "Полное наименование организации",       ""),
+    ("operator_inn",             "ИНН",                                   ""),
+    ("operator_ogrn",            "ОГРН",                                  ""),
+    ("operator_legal_address",   "Юридический адрес",                     ""),
+    ("operator_postal_address",  "Почтовый адрес для корреспонденции",    ""),
+    ("operator_email",           "Электронная почта (для запросов по ПД)", "privacy@asy-tk.ru"),
+    ("operator_phone",           "Контактный телефон",                    ""),
+)
+
+
+class OperatorInfoSchema(BaseModel):
+    """Реквизиты оператора персональных данных.
+
+    Все поля опциональные на уровне схемы (admin может оставить пустыми
+    на старте), но privacy.html подсвечивает плейсхолдером пустые.
+    """
+    operator_name: Optional[str] = Field(None, max_length=300)
+    operator_inn: Optional[str] = Field(None, max_length=20)
+    operator_ogrn: Optional[str] = Field(None, max_length=20)
+    operator_legal_address: Optional[str] = Field(None, max_length=500)
+    operator_postal_address: Optional[str] = Field(None, max_length=500)
+    operator_email: Optional[str] = Field(None, max_length=200)
+    operator_phone: Optional[str] = Field(None, max_length=50)
+
+
+async def _load_operator_info(db: AsyncSession) -> dict:
+    """Достаёт все operator_* ключи из system_settings одним запросом."""
+    keys = [k for k, _desc, _default in _OPERATOR_KEYS]
+    rows = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key.in_(keys))
+    )).scalars().all()
+    by_key = {r.key: r.value for r in rows}
+    defaults = {k: default for k, _desc, default in _OPERATOR_KEYS}
+    return {k: by_key.get(k, defaults.get(k, "")) for k in defaults}
+
+
+@router.get("/operator-info", response_model=OperatorInfoSchema)
+async def get_operator_info_public(db: AsyncSession = Depends(get_db)):
+    """ПУБЛИЧНЫЙ endpoint (без авторизации).
+
+    Используется в:
+      - /privacy.html — подставить реквизиты в текст политики;
+      - footer всех страниц — email/телефон для связи с оператором.
+    Это юридически открытая информация (по 152-ФЗ оператор обязан её
+    публиковать), не считается приватной.
+    """
+    info = await _load_operator_info(db)
+    return OperatorInfoSchema(**info)
+
+
+@router.put("/operator-info")
+async def update_operator_info(
+    data: OperatorInfoSchema,
+    current_user: User = Depends(allow_accountant_or_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Обновить реквизиты оператора. Только для admin/accountant/financier.
+
+    Изменение этих полей мгновенно отражается в /privacy.html и footer
+    (через клиентский GET /api/settings/operator-info).
+    """
+    try:
+        async def upsert(key: str, val: str, desc: str):
+            item = await db.get(SystemSetting, key)
+            if item:
+                item.value = val
+            else:
+                db.add(SystemSetting(key=key, value=val, description=desc))
+
+        updates = data.dict(exclude_unset=False)
+        for key, desc, _default in _OPERATOR_KEYS:
+            await upsert(key, updates.get(key) or "", desc)
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"operator-info update failed: {e}", exc_info=True)
+        raise HTTPException(500, "Не удалось сохранить реквизиты оператора")
+
+    return {"status": "success", "message": "Реквизиты оператора обновлены"}

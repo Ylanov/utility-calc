@@ -430,6 +430,15 @@ async function initModule(tabId) {
                         }
                         loadedModules.recalc.init();
                     },
+                    'operator-info': async () => {
+                        // Юр. реквизиты оператора (152-ФЗ) — секция в Операциях.
+                        // Lazy-загружается при первом раскрытии секции.
+                        if (!loadedModules.operatorInfo) {
+                            const { OperatorInfoModule } = await import('./modules/operator-info.js');
+                            loadedModules.operatorInfo = OperatorInfoModule;
+                        }
+                        loadedModules.operatorInfo.init();
+                    },
                 };
 
                 const initialized = new Set();
