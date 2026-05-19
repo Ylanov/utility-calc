@@ -53,27 +53,18 @@ async function init() {
         const { renderHome } = await import('./screens/home.js');
         await renderHome(root);
     });
+    // Фаза 2 — нативные PWA-экраны (вместо stub'ов).
     registerRoute('readings', async (root) => {
-        // Фаза 2: для начала редиректим на старый портал.
-        root.innerHTML = renderRedirectStub(
-            'Подача показаний',
-            'Этот экран ещё переезжает в новую версию. Пока используем привычную форму.',
-            '/?next=readings',
-        );
+        const { renderReadings } = await import('./screens/readings.js');
+        await renderReadings(root);
     });
     registerRoute('history', async (root) => {
-        root.innerHTML = renderRedirectStub(
-            'История квитанций',
-            'Этот экран ещё переезжает. Пока используем привычный портал.',
-            '/?next=history',
-        );
+        const { renderHistory } = await import('./screens/history.js');
+        await renderHistory(root);
     });
     registerRoute('profile', async (root) => {
-        root.innerHTML = renderRedirectStub(
-            'Профиль',
-            'Этот экран ещё переезжает. Пока пользуемся привычным порталом.',
-            '/?next=profile',
-        );
+        const { renderProfile } = await import('./screens/profile.js');
+        await renderProfile(root);
     });
 
     // ─── Старт ────────────────────────────────────────────────────────
@@ -87,34 +78,6 @@ async function init() {
     }
     const nav = document.getElementById('bottom-nav');
     if (nav) nav.classList.remove('hidden');
-}
-
-function renderRedirectStub(title, message, fallbackHref) {
-    return `
-        <div class="screen">
-            <header class="header">
-                <div class="header__greeting">
-                    <div class="header__hello">Скоро здесь будет</div>
-                    <div class="header__name">${escapeHtml(title)}</div>
-                </div>
-            </header>
-            <div class="card card--warning">
-                <div style="font-size: 14px; line-height: 1.5; color: var(--text-secondary);">
-                    ${escapeHtml(message)}
-                </div>
-                <a href="${fallbackHref}" style="
-                    display: inline-block;
-                    margin-top: var(--sp-4);
-                    padding: 12px 20px;
-                    background: var(--primary);
-                    color: white;
-                    border-radius: var(--radius-md);
-                    text-decoration: none;
-                    font-weight: 600;
-                ">Открыть старый портал</a>
-            </div>
-        </div>
-    `;
 }
 
 function escapeHtml(str) {

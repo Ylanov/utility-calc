@@ -1,0 +1,343 @@
+/* =========================================================================
+   PWA жильца — screens.css
+   Стили для конкретных экранов (readings, history, profile).
+   ========================================================================= */
+
+/* -- Большие meter inputs ---------------------------------------------- */
+.meter-cards {
+    display: flex;
+    flex-direction: column;
+    gap: var(--sp-3);
+    margin-bottom: var(--sp-5);
+}
+
+.meter-card {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--sp-4);
+}
+
+.meter-card.is-error {
+    border-color: var(--danger);
+    background: var(--danger-bg);
+}
+
+.meter-card__header {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    margin-bottom: var(--sp-3);
+}
+
+.meter-card__icon {
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    flex-shrink: 0;
+}
+
+.meter-card__icon--hot   { background: var(--danger-bg);  color: var(--danger); }
+.meter-card__icon--cold  { background: var(--primary-bg); color: var(--primary); }
+.meter-card__icon--elect { background: var(--warning-bg); color: #d97706; }
+
+.meter-card__title {
+    font-size: 16px;
+    font-weight: 600;
+    line-height: 1.2;
+}
+
+.meter-card__sub {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+
+.meter-card__prev {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: var(--sp-2);
+}
+
+.meter-input-row {
+    position: relative;
+    display: flex;
+    align-items: stretch;
+}
+
+/* Большое поле ввода — touch-friendly для пальца на телефоне.
+   font-size 24px важен: меньше 16px в iOS зумит viewport при focus. */
+.meter-input {
+    width: 100%;
+    font-size: 24px;
+    font-weight: 600;
+    padding: var(--sp-4);
+    padding-right: 56px;
+    border: 2px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-page);
+    color: var(--text-primary);
+    transition: border-color var(--transition-fast);
+    /* Убираем стрелочки в number input */
+    appearance: textfield;
+    -moz-appearance: textfield;
+}
+.meter-input::-webkit-outer-spin-button,
+.meter-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+
+.meter-input:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+.meter-card.is-error .meter-input {
+    border-color: var(--danger);
+}
+
+.meter-unit {
+    position: absolute;
+    right: var(--sp-3);
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 14px;
+    color: var(--text-secondary);
+    pointer-events: none;
+}
+
+.meter-error {
+    margin-top: var(--sp-2);
+    font-size: 13px;
+    color: var(--danger);
+    min-height: 18px;
+}
+
+.meter-hint {
+    margin-top: var(--sp-2);
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+/* -- Submit-button (большая, sticky на мобиле) ------------------------ */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--sp-2);
+    min-height: 52px;
+    padding: 0 var(--sp-5);
+    border-radius: var(--radius-md);
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform var(--transition-fast), background var(--transition-fast);
+    border: none;
+    width: 100%;
+}
+
+.btn:active { transform: scale(0.98); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn--primary {
+    background: var(--primary);
+    color: white;
+}
+.btn--primary:hover { background: var(--primary-hover); }
+
+.btn--success {
+    background: var(--success);
+    color: white;
+}
+
+.btn--secondary {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border: 1px solid var(--border);
+}
+
+.btn--ghost {
+    background: transparent;
+    color: var(--primary);
+}
+
+/* -- Status box (период открыт / закрыт / черновик) ------------------- */
+.status-box {
+    padding: var(--sp-4);
+    border-radius: var(--radius-md);
+    margin-bottom: var(--sp-4);
+    border-left: 4px solid;
+}
+
+.status-box--open    { background: var(--success-bg); border-color: var(--success); }
+.status-box--draft   { background: var(--warning-bg); border-color: var(--warning); }
+.status-box--locked  { background: var(--bg-surface); border-color: var(--text-muted); }
+.status-box--info    { background: var(--primary-bg); border-color: var(--primary); }
+
+.status-box__title {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 2px;
+}
+
+.status-box__sub {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+/* -- Расчёт квитанции ------------------------------------------------- */
+.receipt-preview {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--sp-4);
+    margin-top: var(--sp-4);
+}
+
+.receipt-preview__title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin-bottom: var(--sp-3);
+}
+
+.receipt-line {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--sp-2) 0;
+    border-bottom: 1px dashed var(--border);
+    font-size: 14px;
+}
+.receipt-line:last-child {
+    border-bottom: none;
+    padding-top: var(--sp-3);
+    border-top: 2px solid var(--border);
+    font-weight: 700;
+    font-size: 16px;
+}
+
+.receipt-line__label {
+    color: var(--text-secondary);
+}
+.receipt-line__value {
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+/* -- History items ---------------------------------------------------- */
+.history-month {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: var(--sp-4);
+    margin-bottom: var(--sp-3);
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+}
+
+.history-month__period {
+    font-size: 15px;
+    font-weight: 600;
+}
+
+.history-month__sub {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+
+.history-month__amount {
+    margin-left: auto;
+    text-align: right;
+}
+
+.history-month__amount-value {
+    font-size: 17px;
+    font-weight: 700;
+}
+
+.history-month__pdf-btn {
+    min-height: 40px;
+    min-width: 40px;
+    padding: 8px;
+    border-radius: var(--radius-md);
+    background: var(--primary-bg);
+    color: var(--primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-decoration: none;
+    margin-left: var(--sp-2);
+}
+
+/* -- Profile / settings items ----------------------------------------- */
+.setting-group {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    margin-bottom: var(--sp-4);
+}
+
+.setting-item {
+    display: flex;
+    align-items: center;
+    gap: var(--sp-3);
+    padding: var(--sp-4);
+    border-bottom: 1px solid var(--border);
+    color: var(--text-primary);
+    text-decoration: none;
+    background: var(--bg-elevated);
+    width: 100%;
+    text-align: left;
+    cursor: pointer;
+    border-left: none;
+    border-right: none;
+    border-top: none;
+}
+.setting-item:last-child { border-bottom: none; }
+.setting-item:active { background: var(--bg-surface); }
+
+.setting-item__icon {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-secondary);
+    flex-shrink: 0;
+}
+
+.setting-item__content {
+    flex: 1;
+    min-width: 0;
+}
+
+.setting-item__title {
+    font-size: 15px;
+    font-weight: 500;
+}
+
+.setting-item__sub {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+}
+
+.setting-item__value {
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+
+.setting-item__chevron {
+    color: var(--text-muted);
+    flex-shrink: 0;
+}

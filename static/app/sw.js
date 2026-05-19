@@ -14,22 +14,26 @@
  * до полной перерегистрации SW.
  */
 
-const CACHE_VERSION = 'v2';  // bump после добавления legal-footer.js
+const CACHE_VERSION = 'v3';  // bump после фазы 2 (новые экраны readings/history/profile)
 const CACHE_NAME = `jkh-lider-app-shell-${CACHE_VERSION}`;
 
 // App-shell — критичные ресурсы для отрисовки UI. Грузятся при install.
-// Версионирование сделаем на этапе деплоя (после Фазы 2, пока — простой список).
+// Новый экран = добавить путь сюда и поднять CACHE_VERSION.
 const APP_SHELL = [
     '/app/',
     '/app/index.html',
     '/app/css/main.css',
     '/app/css/components.css',
+    '/app/css/screens.css',
     '/app/js/main.js',
     '/app/js/api.js',
     '/app/js/auth.js',
     '/app/js/router.js',
     '/app/js/toast.js',
     '/app/js/screens/home.js',
+    '/app/js/screens/readings.js',
+    '/app/js/screens/history.js',
+    '/app/js/screens/profile.js',
     '/app/manifest.webmanifest',
     '/app/icons/icon.svg',
 ];
