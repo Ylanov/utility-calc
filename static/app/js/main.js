@@ -76,6 +76,11 @@ async function init() {
         const { renderMyData } = await import('./screens/my-data.js');
         await renderMyData(root);
     });
+    registerRoute('support', async (root) => {
+        // Обращения — жилец пишет вопрос, админ отвечает.
+        const { renderSupport } = await import('./screens/support.js');
+        await renderSupport(root);
+    });
 
     // ─── Старт ────────────────────────────────────────────────────────
     startRouter();

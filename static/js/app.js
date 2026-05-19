@@ -246,7 +246,7 @@ function handleRoute() {
     // для обратной совместимости.
     // ВАЖНО: при добавлении новой вкладки — обязательно добавить её сюда,
     // иначе clickByHash сделает fallback на dashboard.
-    const validTabs = ['dashboard', 'tools', 'housing', 'users', 'debts', 'certs', 'audit'];
+    const validTabs = ['dashboard', 'tools', 'housing', 'users', 'debts', 'certs', 'audit', 'tickets'];
     let tabToLoad = validTabs.includes(hash) ? hash : defaultTab;
     if (hash === 'readings') tabToLoad = 'dashboard';
     if (hash === 'manual' || hash === 'tariffs' || hash === 'accountant') tabToLoad = 'tools';
@@ -484,6 +484,14 @@ async function initModule(tabId) {
                 }
                 loadedModules.audit.init();
                 break;
+            // Обращения жильцов — вопросы в техподдержку.
+            case 'tickets':
+                if (!loadedModules.tickets) {
+                    const { TicketsModule } = await import('./modules/tickets.js');
+                    loadedModules.tickets = TicketsModule;
+                }
+                loadedModules.tickets.init();
+                break;
             default:
                 console.warn(`Модуль для вкладки "${tabId}" не найден.`);
         }
@@ -519,6 +527,9 @@ function refreshModuleData(tabId) {
             if (typeof mod.refreshAll === 'function') mod.refreshAll();
             break;
         case 'audit':
+            if (typeof mod.refresh === 'function') mod.refresh();
+            break;
+        case 'tickets':
             if (typeof mod.refresh === 'function') mod.refresh();
             break;
         // Операции: перезагружаем тарифы (lightweight), gsheets, очищаем поиск жильца

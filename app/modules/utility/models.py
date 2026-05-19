@@ -942,3 +942,26 @@ class CertificateRequest(Base):
         Index("idx_cert_user_created", "user_id", "created_at"),
         Index("idx_cert_status", "status"),
     )
+
+
+# ======================================================
+# SUPPORT TICKETS (обращения жильцов в техподдержку / админу).
+# Простая 1-к-1 модель: один вопрос + один ответ (без многошаговых диалогов).
+# При повторных вопросах жилец создаёт новый тикет. См. миграцию tickets_001.
+# ======================================================
+class SupportTicket(Base):
+    __tablename__ = "support_tickets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    subject = Column(String(200), nullable=False)
+    message = Column(Text, nullable=False)
+    # open | in_progress | answered | closed
+    status = Column(String(20), nullable=False, default="open", index=True)
+    admin_response = Column(Text, nullable=True)
+    responded_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    responded_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=_utcnow, nullable=False)
+
+    user = relationship("User", foreign_keys=[user_id])
+    responded_by = relationship("User", foreign_keys=[responded_by_id])

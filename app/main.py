@@ -49,6 +49,7 @@ from app.modules.utility.routers import (
     client_certificates,
     me_consent,
     admin_notifications,
+    tickets,
     admin_certificates,
     app_releases,
     qr,
@@ -398,6 +399,8 @@ app.include_router(admin_recalc.router)
 app.include_router(client_certificates.router)
 app.include_router(me_consent.router)
 app.include_router(admin_notifications.router)
+app.include_router(tickets.router_client)
+app.include_router(tickets.router_admin)
 app.include_router(admin_certificates.router)
 app.include_router(app_releases.router)
 app.include_router(qr.router)

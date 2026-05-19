@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.time_utils import utcnow
 from app.modules.utility.models import (
-    User, GSheetsImportRow, AuditLog, MeterReading,
+    User, GSheetsImportRow, AuditLog, MeterReading, SupportTicket,
 )
 from app.core.dependencies import RoleChecker
 
@@ -89,13 +89,25 @@ async def get_notifications(
         )
     )).scalar_one()
 
+    # 4) Открытые обращения жильцов (support tickets).
+    tickets_open_count = (await db.execute(
+        select(func.count(SupportTicket.id))
+        .where(SupportTicket.status.in_(["open", "in_progress"]))
+    )).scalar_one()
+    tickets_recent = (await db.execute(
+        select(SupportTicket)
+        .where(SupportTicket.status.in_(["open", "in_progress"]))
+        .order_by(SupportTicket.created_at.desc())
+        .limit(limit)
+    )).scalars().all()
+
     def _iso(dt):
         return dt.isoformat() if dt else None
 
     return {
         "total": (
             gsheets_conflict_count + gsheets_unmatched_count
-            + deletion_count + anomaly_count
+            + deletion_count + anomaly_count + tickets_open_count
         ),
         "categories": {
             "gsheets_conflicts": {
@@ -145,6 +157,20 @@ async def get_notifications(
                 "label": "Аномалии в показаниях",
                 "link": "/admin.html#dashboard",
                 "items": [],  # подробности — в дашборде
+            },
+            "tickets": {
+                "count": tickets_open_count,
+                "label": "Открытые обращения жильцов",
+                "link": "/admin.html#tickets",
+                "items": [
+                    {
+                        "id": t.id,
+                        "title": (t.subject or "")[:80],
+                        "subtitle": (t.message or "")[:120],
+                        "created_at": _iso(t.created_at),
+                    }
+                    for t in tickets_recent
+                ],
             },
         },
     }

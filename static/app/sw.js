@@ -14,7 +14,7 @@
  * до полной перерегистрации SW.
  */
 
-const CACHE_VERSION = 'v4';  // bump после фазы 2bc (consent + my-data)
+const CACHE_VERSION = 'v5';  // bump после добавления support.js (тикеты)
 const CACHE_NAME = `jkh-lider-app-shell-${CACHE_VERSION}`;
 
 // App-shell — критичные ресурсы для отрисовки UI. Грузятся при install.
@@ -36,6 +36,7 @@ const APP_SHELL = [
     '/app/js/screens/history.js',
     '/app/js/screens/profile.js',
     '/app/js/screens/my-data.js',
+    '/app/js/screens/support.js',
     '/app/manifest.webmanifest',
     '/app/icons/icon.svg',
 ];

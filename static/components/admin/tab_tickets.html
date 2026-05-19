@@ -1,0 +1,31 @@
+<!-- tab_tickets.html — обращения жильцов. -->
+<div id="tickets" class="tab-content">
+    <div class="card" style="margin-bottom: 0;">
+        <div class="card-header">
+            <h3><i class="fa-solid fa-comments" style="color: var(--primary-color); margin-right: 8px;"></i> Обращения жильцов</h3>
+            <div class="toolbar-controls" style="flex-wrap: wrap; gap: 8px;">
+                <select id="ticketsStatusFilter" style="min-width: 160px;">
+                    <option value="open">Открытые</option>
+                    <option value="in_progress">В работе</option>
+                    <option value="answered">Отвеченные</option>
+                    <option value="closed">Закрытые</option>
+                    <option value="">Все</option>
+                </select>
+                <button id="btnTicketsRefresh" class="icon-btn" title="Обновить">
+                    <i class="fa-solid fa-rotate-right"></i>
+                </button>
+            </div>
+        </div>
+
+        <p class="hint-text" style="padding: 0 16px 12px; font-size: 12px;">
+            Здесь видны вопросы жильцов, отправленные через личный кабинет.
+            Срок ответа — до 10 рабочих дней (ст. 20 152-ФЗ).
+        </p>
+
+        <div id="ticketsList" style="padding: 0 16px 16px;">
+            <div class="text-center" style="padding: 40px; color: var(--text-secondary);">
+                <i class="fa-solid fa-spinner fa-spin"></i> Загрузка...
+            </div>
+        </div>
+    </div>
+</div>
