@@ -1,0 +1,67 @@
+<!-- static/components/admin/tab_audit.html
+     Журнал действий администраторов (multi-admin прозрачность).
+     Источник данных: GET /api/admin/audit-log + /actions для фильтров.
+     Доступ: allow_dashboard (admin/accountant/financier). -->
+<div id="audit" class="tab-content">
+    <div class="card" style="margin-bottom: 0;">
+        <div class="card-header">
+            <h3><i class="fa-solid fa-clock-rotate-left" style="color: var(--primary-color); margin-right: 8px;"></i> Журнал действий</h3>
+            <div class="toolbar-controls" style="flex-wrap: wrap; gap: 8px;">
+                <select id="auditActionFilter" style="min-width: 200px;">
+                    <option value="">Все действия</option>
+                </select>
+                <select id="auditEntityFilter" style="min-width: 160px;">
+                    <option value="">Все сущности</option>
+                </select>
+                <input type="text" id="auditUserFilter"
+                       placeholder="Фильтр по администратору..."
+                       style="min-width: 220px;">
+                <select id="auditLimitFilter" style="min-width: 100px;">
+                    <option value="30">30 строк</option>
+                    <option value="50">50 строк</option>
+                    <option value="100" selected>100 строк</option>
+                    <option value="200">200 строк</option>
+                </select>
+                <button id="btnAuditRefresh" class="icon-btn" title="Обновить">
+                    <i class="fa-solid fa-rotate-right"></i>
+                </button>
+            </div>
+        </div>
+
+        <p class="hint-text" style="padding: 0 16px 12px; font-size: 12px;">
+            Фиксируются все действия модерации: создание / изменение жильцов, тарифов, периодов,
+            импорт долгов, утверждение показаний, согласие жильцов на ПД, заявки на удаление данных
+            и т.д. Хранится бессрочно (нужно для бухгалтерских проверок и разрешения споров).
+        </p>
+
+        <div class="table-responsive">
+            <table class="sticky-header-table">
+                <thead>
+                    <tr>
+                        <th style="width:160px;">Когда</th>
+                        <th style="width:180px;">Кто</th>
+                        <th style="width:200px;">Что сделал</th>
+                        <th style="width:120px;">Сущность</th>
+                        <th style="width:80px;">ID</th>
+                        <th>Детали</th>
+                    </tr>
+                </thead>
+                <tbody id="auditTableBody">
+                    <tr>
+                        <td colspan="6" class="text-center" style="padding: 40px; color: var(--text-secondary);">
+                            <i class="fa-solid fa-spinner fa-spin"></i> Загрузка журнала...
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="modal-footer" style="background: transparent; border: none; padding: 16px 0 0 0;">
+            <div class="pagination">
+                <button id="btnAuditPrev" class="page-btn"><i class="fa-solid fa-chevron-left"></i> Назад</button>
+                <span id="auditPageInfo" style="font-size: 13px; font-weight: 500; color: var(--text-secondary);">Стр. 1</span>
+                <button id="btnAuditNext" class="page-btn">Вперед <i class="fa-solid fa-chevron-right"></i></button>
+            </div>
+        </div>
+    </div>
+</div>

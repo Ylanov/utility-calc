@@ -156,7 +156,22 @@
                 <button class="tab-btn" data-tab="housing"><i class="fa-solid fa-city"></i><span>Жилфонд</span></button>
                 <button class="tab-btn" data-tab="users"><i class="fa-solid fa-users"></i><span>Жильцы</span></button>
                 <button class="tab-btn" data-tab="certs"><i class="fa-solid fa-file-lines"></i><span>Справки</span></button>
+                <button class="tab-btn" data-tab="audit"><i class="fa-solid fa-clock-rotate-left"></i><span>Журнал</span></button>
             </nav>
+
+            <!-- Колокольчик уведомлений (multi-admin прозрачность).
+                 Polling /api/admin/notifications каждые 30с, badge с количеством
+                 событий требующих внимания (GSheets конфликты, заявки на удаление ПД,
+                 аномалии). Инициализация — в js/admin-notifications.js. -->
+            <div class="notif-wrap" style="position: relative; margin-right: 12px;">
+                <button id="notifBtn" class="icon-btn" type="button"
+                        aria-label="Уведомления"
+                        style="position: relative; width: 40px; height: 40px;">
+                    <i class="fa-solid fa-bell" style="font-size: 18px;"></i>
+                    <span id="notifBadge" class="notif-badge" hidden></span>
+                </button>
+                <div id="notifDropdown" class="notif-dropdown" hidden></div>
+            </div>
 
             <!-- Аватар + dropdown. ID adminName / btnOpenAdminProfile /
                  logout-btn — НЕ ТРОГАЕМ: на них уже навешан JS в app.js
@@ -364,5 +379,7 @@
          Вынесен в external js/admin-header.js, потому что strict CSP
          для admin.html не разрешает 'unsafe-inline' в script-src. -->
     <script src="js/admin-header.js" defer></script>
+    <!-- Колокольчик уведомлений (multi-admin). Polling каждые 30с. -->
+    <script type="module" src="js/admin-notifications.js" defer></script>
 </body>
 </html>

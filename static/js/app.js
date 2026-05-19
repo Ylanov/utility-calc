@@ -474,6 +474,14 @@ async function initModule(tabId) {
                 }
                 loadedModules.certs.init();
                 break;
+            // Журнал действий админов (multi-admin прозрачность).
+            case 'audit':
+                if (!loadedModules.audit) {
+                    const { AuditModule } = await import('./modules/audit.js');
+                    loadedModules.audit = AuditModule;
+                }
+                loadedModules.audit.init();
+                break;
             default:
                 console.warn(`Модуль для вкладки "${tabId}" не найден.`);
         }
@@ -507,6 +515,9 @@ function refreshModuleData(tabId) {
             break;
         case 'certs':
             if (typeof mod.refreshAll === 'function') mod.refreshAll();
+            break;
+        case 'audit':
+            if (typeof mod.refresh === 'function') mod.refresh();
             break;
         // Операции: перезагружаем тарифы (lightweight), gsheets, очищаем поиск жильца
         case 'tools': {
