@@ -2,8 +2,8 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#1a73e8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#2563eb">
 
     <!-- ============================================================
          SEO meta tags
@@ -15,7 +15,7 @@
     <meta name="robots" content="index, follow">
     <link rel="canonical" href="https://asy-tk.ru/portal.html">
 
-    <!-- Open Graph для соц.сетей -->
+    <!-- Open Graph -->
     <meta property="og:type" content="website">
     <meta property="og:title" content="ЖКХ Лидер — Личный кабинет жильца">
     <meta property="og:description" content="Подача показаний счётчиков, квитанции, справки онлайн для жильцов общежитий.">
@@ -24,7 +24,6 @@
     <meta property="og:locale" content="ru_RU">
     <meta property="og:image" content="https://asy-tk.ru/app/icons/icon.svg">
 
-    <!-- Twitter Card (для предпросмотров в Twitter / других платформах) -->
     <meta name="twitter:card" content="summary">
     <meta name="twitter:title" content="ЖКХ Лидер — Личный кабинет жильца">
     <meta name="twitter:description" content="Подача показаний счётчиков и оплата ЖКХ онлайн.">
@@ -32,18 +31,561 @@
     <link rel="icon" type="image/svg+xml" href="/app/icons/icon.svg">
     <link rel="apple-touch-icon" href="/app/icons/icon.svg">
 
-    <!-- Быстрая загрузка шрифтов -->
+    <!-- Шрифт Inter (системный fallback есть). -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="preconnect" href="https://cdnjs.cloudflare.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="style.css">
+
+    <!-- ============================================================
+         Inline CSS — современный минимализм, mobile-first.
+         Цвета: чистая палитра blue/slate, dark theme авто.
+         Анимации: subtle fade-in при загрузке, hover lift на карточках.
+         ============================================================ -->
+    <style>
+        :root {
+            --primary: #2563eb;
+            --primary-dark: #1d4ed8;
+            --primary-light: #3b82f6;
+            --primary-bg: #eff6ff;
+            --text-strong: #0f172a;
+            --text-body: #334155;
+            --text-muted: #64748b;
+            --border: #e2e8f0;
+            --border-strong: #cbd5e1;
+            --bg-page: #ffffff;
+            --bg-soft: #f8fafc;
+            --bg-elevated: #ffffff;
+            --success: #10b981;
+            --warning: #f59e0b;
+            --danger: #ef4444;
+            --max-content: 1200px;
+            --radius-sm: 8px;
+            --radius-md: 12px;
+            --radius-lg: 20px;
+            --shadow-sm: 0 1px 3px rgba(15, 23, 42, 0.04);
+            --shadow-md: 0 4px 12px rgba(15, 23, 42, 0.06);
+            --shadow-lg: 0 20px 40px rgba(37, 99, 235, 0.12);
+        }
+
+        /* Dark theme — авто по системе */
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --primary-bg: rgba(59, 130, 246, 0.12);
+                --text-strong: #f1f5f9;
+                --text-body: #cbd5e1;
+                --text-muted: #94a3b8;
+                --border: #1e293b;
+                --border-strong: #334155;
+                --bg-page: #0f172a;
+                --bg-soft: #0b1220;
+                --bg-elevated: #1e293b;
+            }
+        }
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        html { scroll-behavior: smooth; }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', sans-serif;
+            font-size: 16px;
+            line-height: 1.65;
+            color: var(--text-body);
+            background: var(--bg-page);
+            -webkit-font-smoothing: antialiased;
+            -moz-osx-font-smoothing: grayscale;
+        }
+
+        a { color: inherit; text-decoration: none; }
+        button { font-family: inherit; cursor: pointer; border: none; background: none; color: inherit; }
+
+        .container {
+            max-width: var(--max-content);
+            margin: 0 auto;
+            padding: 0 24px;
+        }
+
+        /* ─── Top navigation ─────────────────────────────────────── */
+        .site-nav {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: saturate(180%) blur(20px);
+            -webkit-backdrop-filter: saturate(180%) blur(20px);
+            border-bottom: 1px solid var(--border);
+        }
+        @media (prefers-color-scheme: dark) {
+            .site-nav { background: rgba(15, 23, 42, 0.85); }
+        }
+        .site-nav__inner {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            height: 64px;
+        }
+        .site-nav__brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 700;
+            font-size: 17px;
+            color: var(--text-strong);
+            letter-spacing: -0.3px;
+        }
+        .site-nav__brand-mark {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-size: 16px;
+        }
+        .site-nav__links {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .site-nav__link {
+            padding: 8px 14px;
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-body);
+            border-radius: var(--radius-sm);
+            transition: background 150ms ease, color 150ms ease;
+        }
+        .site-nav__link:hover { background: var(--bg-soft); color: var(--text-strong); }
+
+        /* Hide menu links on narrow viewports — Login button остаётся. */
+        @media (max-width: 640px) {
+            .site-nav__link--menu { display: none; }
+        }
+
+        /* ─── Buttons ────────────────────────────────────────────── */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 11px 22px;
+            border-radius: 10px;
+            font-size: 15px;
+            font-weight: 600;
+            transition: transform 120ms ease, box-shadow 150ms ease, background 120ms ease;
+            white-space: nowrap;
+            line-height: 1;
+        }
+        .btn:active { transform: scale(0.97); }
+        .btn--primary {
+            background: var(--primary);
+            color: #fff;
+            box-shadow: 0 4px 14px rgba(37, 99, 235, 0.25);
+        }
+        .btn--primary:hover {
+            background: var(--primary-dark);
+            box-shadow: 0 6px 20px rgba(37, 99, 235, 0.35);
+        }
+        .btn--lg { padding: 14px 28px; font-size: 16px; border-radius: 12px; }
+        .btn--ghost {
+            background: var(--bg-soft);
+            color: var(--text-strong);
+        }
+        .btn--ghost:hover { background: var(--border); }
+
+        /* ─── Hero ───────────────────────────────────────────────── */
+        .hero {
+            position: relative;
+            padding: 100px 0 120px;
+            overflow: hidden;
+            background:
+                radial-gradient(60% 50% at 30% 0%, rgba(37, 99, 235, 0.10) 0%, transparent 70%),
+                radial-gradient(40% 40% at 80% 20%, rgba(99, 102, 241, 0.08) 0%, transparent 70%);
+        }
+        @media (max-width: 640px) {
+            .hero { padding: 60px 0 80px; }
+        }
+        .hero__badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 14px;
+            background: var(--primary-bg);
+            color: var(--primary);
+            border-radius: 999px;
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 24px;
+        }
+        .hero__badge .dot {
+            width: 6px; height: 6px;
+            background: var(--success);
+            border-radius: 50%;
+            animation: pulse 2s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.6; transform: scale(1.3); }
+        }
+        .hero__title {
+            font-size: clamp(36px, 6vw, 60px);
+            font-weight: 800;
+            line-height: 1.1;
+            letter-spacing: -1.5px;
+            color: var(--text-strong);
+            margin-bottom: 20px;
+            max-width: 720px;
+        }
+        .hero__title .accent {
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            color: transparent;
+        }
+        .hero__subtitle {
+            font-size: clamp(16px, 2.4vw, 19px);
+            color: var(--text-body);
+            line-height: 1.6;
+            max-width: 580px;
+            margin-bottom: 36px;
+        }
+        .hero__actions {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .hero__trust {
+            display: flex;
+            gap: 28px;
+            margin-top: 56px;
+            flex-wrap: wrap;
+            color: var(--text-muted);
+            font-size: 13px;
+        }
+        .hero__trust-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .hero__trust-item i { color: var(--success); font-size: 14px; }
+
+        /* ─── Section common ─────────────────────────────────────── */
+        .section {
+            padding: 80px 0;
+        }
+        @media (max-width: 640px) {
+            .section { padding: 56px 0; }
+        }
+        .section--soft { background: var(--bg-soft); }
+
+        .section__header {
+            text-align: center;
+            max-width: 680px;
+            margin: 0 auto 56px;
+        }
+        .section__eyebrow {
+            display: inline-block;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--primary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 12px;
+        }
+        .section__title {
+            font-size: clamp(28px, 4vw, 40px);
+            font-weight: 700;
+            color: var(--text-strong);
+            line-height: 1.2;
+            letter-spacing: -0.8px;
+            margin-bottom: 14px;
+        }
+        .section__lead {
+            font-size: 16px;
+            color: var(--text-body);
+        }
+
+        /* ─── Features grid ──────────────────────────────────────── */
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 20px;
+        }
+        .feature {
+            padding: 28px 26px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            transition: transform 200ms ease, box-shadow 200ms ease, border-color 200ms ease;
+        }
+        .feature:hover {
+            transform: translateY(-4px);
+            box-shadow: var(--shadow-md);
+            border-color: var(--border-strong);
+        }
+        .feature__icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            margin-bottom: 20px;
+        }
+        .feature__icon--blue   { background: #dbeafe; color: #2563eb; }
+        .feature__icon--amber  { background: #fef3c7; color: #d97706; }
+        .feature__icon--green  { background: #d1fae5; color: #059669; }
+        .feature__icon--rose   { background: #fee2e2; color: #dc2626; }
+        @media (prefers-color-scheme: dark) {
+            .feature__icon--blue   { background: rgba(37, 99, 235, 0.18); color: #93c5fd; }
+            .feature__icon--amber  { background: rgba(245, 158, 11, 0.16); color: #fcd34d; }
+            .feature__icon--green  { background: rgba(16, 185, 129, 0.16); color: #6ee7b7; }
+            .feature__icon--rose   { background: rgba(239, 68, 68, 0.16); color: #fca5a5; }
+        }
+        .feature__title {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-strong);
+            margin-bottom: 8px;
+            letter-spacing: -0.2px;
+        }
+        .feature__desc {
+            font-size: 14px;
+            color: var(--text-body);
+            line-height: 1.6;
+        }
+
+        /* ─── How it works (stepper) ────────────────────────────── */
+        .steps {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 20px;
+            counter-reset: step;
+            list-style: none;
+        }
+        .step {
+            padding: 28px 26px 24px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            position: relative;
+            counter-increment: step;
+        }
+        .step::before {
+            content: counter(step);
+            position: absolute;
+            top: -16px;
+            left: 24px;
+            width: 36px;
+            height: 36px;
+            background: var(--primary);
+            color: #fff;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 15px;
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+        }
+        .step__title {
+            font-size: 18px;
+            font-weight: 600;
+            color: var(--text-strong);
+            margin: 12px 0 8px;
+            letter-spacing: -0.2px;
+        }
+        .step__desc {
+            font-size: 14px;
+            color: var(--text-body);
+            line-height: 1.6;
+        }
+
+        /* ─── FAQ ────────────────────────────────────────────────── */
+        .faq {
+            max-width: 720px;
+            margin: 0 auto;
+        }
+        .faq__item {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            margin-bottom: 12px;
+            overflow: hidden;
+            transition: border-color 150ms ease;
+        }
+        .faq__item[open] { border-color: var(--primary); }
+        .faq__item summary {
+            padding: 18px 22px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 15px;
+            color: var(--text-strong);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 16px;
+            list-style: none;
+        }
+        .faq__item summary::-webkit-details-marker { display: none; }
+        .faq__item summary::after {
+            content: '+';
+            width: 24px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            font-weight: 400;
+            color: var(--text-muted);
+            border-radius: 50%;
+            background: var(--bg-soft);
+            transition: transform 200ms ease, background 150ms ease;
+        }
+        .faq__item[open] summary::after {
+            content: '−';
+            background: var(--primary-bg);
+            color: var(--primary);
+            transform: rotate(180deg);
+        }
+        .faq__answer {
+            padding: 0 22px 18px;
+            color: var(--text-body);
+            font-size: 14.5px;
+            line-height: 1.65;
+        }
+        .faq__answer a { color: var(--primary); font-weight: 500; }
+
+        /* ─── CTA / Login card ───────────────────────────────────── */
+        .login-card {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+            padding: 56px 48px;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: #fff;
+            border-radius: 24px;
+            overflow: hidden;
+            box-shadow: var(--shadow-lg);
+        }
+        .login-card::before {
+            content: '';
+            position: absolute;
+            top: -50%; right: -20%;
+            width: 600px; height: 600px;
+            background: radial-gradient(circle, rgba(255, 255, 255, 0.15) 0%, transparent 60%);
+            pointer-events: none;
+        }
+        .login-card__icon {
+            width: 64px; height: 64px;
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 16px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 26px;
+            margin-bottom: 20px;
+            position: relative; z-index: 1;
+        }
+        .login-card__title {
+            font-size: 26px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            letter-spacing: -0.4px;
+            position: relative; z-index: 1;
+        }
+        .login-card__sub {
+            font-size: 15px;
+            color: rgba(255, 255, 255, 0.85);
+            margin-bottom: 28px;
+            max-width: 380px;
+            position: relative; z-index: 1;
+        }
+        .login-card__btn {
+            background: #fff;
+            color: var(--primary);
+            padding: 14px 32px;
+            border-radius: 12px;
+            font-weight: 600;
+            font-size: 16px;
+            display: inline-flex; align-items: center; gap: 10px;
+            transition: transform 120ms ease, box-shadow 150ms ease;
+            position: relative; z-index: 1;
+        }
+        .login-card__btn:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(0,0,0,0.2); }
+
+        /* ─── Mobile app card ────────────────────────────────────── */
+        .mobile-app {
+            display: flex;
+            gap: 32px;
+            align-items: center;
+            padding: 36px 40px;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            flex-wrap: wrap;
+            box-shadow: var(--shadow-sm);
+        }
+        @media (max-width: 640px) {
+            .mobile-app { padding: 28px 24px; }
+        }
+        .mobile-app__info { flex: 1; min-width: 240px; }
+        .mobile-app__icon {
+            width: 44px; height: 44px;
+            background: var(--primary-bg);
+            color: var(--primary);
+            border-radius: 12px;
+            display: inline-flex; align-items: center; justify-content: center;
+            font-size: 20px;
+            margin-bottom: 14px;
+        }
+        .mobile-app__title {
+            font-size: 20px; font-weight: 700;
+            color: var(--text-strong);
+            margin-bottom: 8px;
+            letter-spacing: -0.3px;
+        }
+        .mobile-app__desc {
+            font-size: 14px; color: var(--text-body);
+            line-height: 1.6;
+            margin-bottom: 18px;
+        }
+        .mobile-app__qr {
+            width: 140px; height: 140px;
+            padding: 10px;
+            background: #fff;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 11px;
+            flex-shrink: 0;
+        }
+
+        /* ─── Animations ─────────────────────────────────────────── */
+        .fade-up {
+            opacity: 0;
+            transform: translateY(20px);
+            animation: fadeUp 600ms ease forwards;
+        }
+        .fade-up--d1 { animation-delay: 80ms; }
+        .fade-up--d2 { animation-delay: 160ms; }
+        .fade-up--d3 { animation-delay: 240ms; }
+        @keyframes fadeUp {
+            to { opacity: 1; transform: translateY(0); }
+        }
+    </style>
 
     <!-- ============================================================
          Структурированные данные (schema.org JSON-LD) — для поисковиков.
-         Organization + WebSite — базовый набор для индексации.
+         Organization + WebSite + WebApplication.
          ============================================================ -->
     <script type="application/ld+json">
     {
@@ -55,7 +597,7 @@
           "name": "ЖКХ Лидер",
           "url": "https://asy-tk.ru/",
           "logo": "https://asy-tk.ru/app/icons/icon.svg",
-          "description": "Информационная система управления коммунальными услугами общежитий: подача показаний счётчиков, расчёт квитанций, справки.",
+          "description": "Информационная система управления коммунальными услугами общежитий.",
           "areaServed": "RU",
           "contactPoint": {
             "@type": "ContactPoint",
@@ -77,322 +619,286 @@
           "name": "ЖКХ Лидер — Личный кабинет",
           "operatingSystem": "Any",
           "applicationCategory": "UtilitiesApplication",
-          "browserRequirements": "Requires JavaScript. Supports modern browsers (Chrome, Firefox, Safari, Edge).",
-          "offers": {
-            "@type": "Offer",
-            "price": "0",
-            "priceCurrency": "RUB"
-          }
+          "browserRequirements": "Requires JavaScript. Modern browsers (Chrome, Firefox, Safari, Edge).",
+          "offers": { "@type": "Offer", "price": "0", "priceCurrency": "RUB" }
         }
       ]
     }
     </script>
-
-    <!-- FAQPage микроразметка — Яндекс/Google показывают эти Q&A прямо
-         в результатах поиска (богатый сниппет). Это важный фактор CTR. -->
     <script type="application/ld+json">
     {
       "@context": "https://schema.org",
       "@type": "FAQPage",
       "mainEntity": [
-        {
-          "@type": "Question",
-          "name": "Где взять логин и пароль для входа?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Логин — это ваш лицевой счёт (Л/С). Его выдают в общежитии при заселении вместе с временным паролем. При первом входе система попросит сменить пароль."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Какие счётчики нужно подавать?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "В личном кабинете отображаются только те счётчики, которые установлены в вашей комнате: горячая вода, холодная вода, электричество. Если счётчика нет — расход рассчитывается по нормативу."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "В какие дни принимаются показания?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Период приёма показаний устанавливается администрацией общежития, обычно с 23 по 26 число каждого месяца. В личном кабинете виден статус приёма."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Где скачать квитанцию для оплаты?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "После утверждения показаний бухгалтерией квитанция в формате PDF появляется в разделе «История квитанций» в личном кабинете жильца."
-          }
-        },
-        {
-          "@type": "Question",
-          "name": "Как защищены мои персональные данные?",
-          "acceptedAnswer": {
-            "@type": "Answer",
-            "text": "Передача данных шифруется TLS (HTTPS), пароли хранятся в виде хэшей bcrypt, у администраторов работает двухфакторная аутентификация. Все данные обрабатываются по 152-ФЗ. Серверы в РФ."
-          }
-        }
+        { "@type": "Question", "name": "Где взять логин и пароль для входа?", "acceptedAnswer": { "@type": "Answer", "text": "Логин — это ваш лицевой счёт (Л/С). Его выдают в общежитии при заселении вместе с временным паролем." } },
+        { "@type": "Question", "name": "Какие счётчики нужно подавать?", "acceptedAnswer": { "@type": "Answer", "text": "В личном кабинете отображаются только те счётчики, которые установлены в вашей комнате: горячая вода, холодная вода, электричество." } },
+        { "@type": "Question", "name": "В какие дни принимаются показания?", "acceptedAnswer": { "@type": "Answer", "text": "Период приёма показаний устанавливается администрацией общежития, обычно с 23 по 26 число каждого месяца." } },
+        { "@type": "Question", "name": "Где скачать квитанцию для оплаты?", "acceptedAnswer": { "@type": "Answer", "text": "После утверждения показаний бухгалтерией квитанция в формате PDF появляется в разделе «История квитанций» в личном кабинете." } },
+        { "@type": "Question", "name": "Как защищены мои персональные данные?", "acceptedAnswer": { "@type": "Answer", "text": "Передача шифруется TLS, пароли хранятся в виде хэшей bcrypt, у администраторов работает 2FA. Все данные обрабатываются по 152-ФЗ. Серверы в РФ." } }
       ]
     }
     </script>
 </head>
-<body class="portal-body">
-    <div class="portal-container">
-        <header class="portal-header">
-            <h1>Единая Платформа</h1>
-            <p>Выберите информационную систему для начала работы</p>
-        </header>
+<body>
 
-        <!-- Раньше тут было 2 карточки: ЖКХ Лидер + СТРОБ Арсенал.
-             СТРОБ Арсенал отделён в отдельный проект (frontend перенесён
-             в /archive/arsenal-frontend/, backend остаётся в /api/arsenal/*
-             до полного переезда). На лендинге показываем только ЖКХ Лидер. -->
-        <div class="portal-grid" style="grid-template-columns: 1fr; max-width: 380px; margin: 0 auto;">
-            <a href="login.html" class="portal-card">
-                <div class="card-icon" style="color: var(--primary-color);">
-                    <i class="fa-solid fa-building-user"></i>
-                </div>
-                <div class="card-title">ЖКХ Лидер</div>
-                <div class="card-desc">Личный кабинет жильца общежития: показания, квитанции, справки</div>
+<!-- ─── Top navigation ─────────────────────────────────────────── -->
+<header class="site-nav">
+    <div class="container site-nav__inner">
+        <a href="/portal.html" class="site-nav__brand">
+            <span class="site-nav__brand-mark"><i class="fa-solid fa-building-user"></i></span>
+            ЖКХ Лидер
+        </a>
+        <nav class="site-nav__links">
+            <a href="#features" class="site-nav__link site-nav__link--menu">Возможности</a>
+            <a href="#how-it-works" class="site-nav__link site-nav__link--menu">Как пользоваться</a>
+            <a href="#faq" class="site-nav__link site-nav__link--menu">Вопросы</a>
+            <a href="/login.html" class="btn btn--primary" style="padding: 9px 18px; font-size: 14px;">Войти</a>
+        </nav>
+    </div>
+</header>
+
+<!-- ─── Hero ────────────────────────────────────────────────────── -->
+<section class="hero">
+    <div class="container">
+        <span class="hero__badge fade-up">
+            <span class="dot"></span>
+            Личный кабинет жильца общежития
+        </span>
+        <h1 class="hero__title fade-up fade-up--d1">
+            Управляйте своим ЖКХ <span class="accent">за пару секунд</span>
+        </h1>
+        <p class="hero__subtitle fade-up fade-up--d2">
+            Подавайте показания счётчиков, скачивайте квитанции и заказывайте справки
+            прямо со смартфона. Без очередей и бумажных бланков.
+        </p>
+        <div class="hero__actions fade-up fade-up--d3">
+            <a href="/login.html" class="btn btn--primary btn--lg">
+                <i class="fa-solid fa-arrow-right-to-bracket"></i>
+                Войти в личный кабинет
             </a>
+            <a href="#features" class="btn btn--ghost btn--lg">Узнать подробнее</a>
         </div>
-
-        <!-- ============================================================
-             ВОЗМОЖНОСТИ СИСТЕМЫ — уникальный ценностный контент для SEO.
-             4 карточки с конкретными бенефитами для жильца / администрации.
-             ============================================================ -->
-        <section id="features" style="margin-top: 80px;" aria-labelledby="features-title">
-            <h2 id="features-title" style="text-align:center; font-size:28px; font-weight:700; margin-bottom:12px; color:#1a202c;">
-                Что умеет «ЖКХ Лидер»
-            </h2>
-            <p style="text-align:center; color:#4a5568; font-size:15px; max-width:640px; margin:0 auto 40px;">
-                Цифровой личный кабинет жильца общежития — от подачи показаний до получения справок,
-                всё онлайн в браузере или мобильном приложении.
-            </p>
-            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:20px; max-width:960px; margin:0 auto;">
-                <article style="padding:24px; background:#fff; border-radius:14px; box-shadow:0 2px 12px rgba(0,0,0,0.06); border:1px solid rgba(0,0,0,0.04);">
-                    <div style="width:48px; height:48px; background:#eef2ff; color:#1a73e8; border-radius:12px; display:flex; align-items:center; justify-content:center; margin-bottom:16px;">
-                        <i class="fa-solid fa-gauge-high" style="font-size:22px;"></i>
-                    </div>
-                    <h3 style="font-size:17px; font-weight:600; margin-bottom:8px; color:#1a202c;">Подача показаний</h3>
-                    <p style="font-size:14px; color:#4a5568; line-height:1.5;">
-                        Передавайте показания счётчиков горячей и холодной воды, электричества
-                        прямо со смартфона. Без очередей и бумажных бланков.
-                    </p>
-                </article>
-                <article style="padding:24px; background:#fff; border-radius:14px; box-shadow:0 2px 12px rgba(0,0,0,0.06); border:1px solid rgba(0,0,0,0.04);">
-                    <div style="width:48px; height:48px; background:#fef3c7; color:#d97706; border-radius:12px; display:flex; align-items:center; justify-content:center; margin-bottom:16px;">
-                        <i class="fa-solid fa-file-invoice-dollar" style="font-size:22px;"></i>
-                    </div>
-                    <h3 style="font-size:17px; font-weight:600; margin-bottom:8px; color:#1a202c;">Квитанции онлайн</h3>
-                    <p style="font-size:14px; color:#4a5568; line-height:1.5;">
-                        Скачивайте квитанции по форме ЕПД в PDF за любой период.
-                        История всех начислений и платежей под рукой.
-                    </p>
-                </article>
-                <article style="padding:24px; background:#fff; border-radius:14px; box-shadow:0 2px 12px rgba(0,0,0,0.06); border:1px solid rgba(0,0,0,0.04);">
-                    <div style="width:48px; height:48px; background:#d1fae5; color:#059669; border-radius:12px; display:flex; align-items:center; justify-content:center; margin-bottom:16px;">
-                        <i class="fa-solid fa-file-signature" style="font-size:22px;"></i>
-                    </div>
-                    <h3 style="font-size:17px; font-weight:600; margin-bottom:8px; color:#1a202c;">Справки и документы</h3>
-                    <p style="font-size:14px; color:#4a5568; line-height:1.5;">
-                        Заказывайте выписку из финансово-лицевого счёта (ФЛС) и другие справки
-                        — без визита в бухгалтерию.
-                    </p>
-                </article>
-                <article style="padding:24px; background:#fff; border-radius:14px; box-shadow:0 2px 12px rgba(0,0,0,0.06); border:1px solid rgba(0,0,0,0.04);">
-                    <div style="width:48px; height:48px; background:#fee2e2; color:#dc2626; border-radius:12px; display:flex; align-items:center; justify-content:center; margin-bottom:16px;">
-                        <i class="fa-solid fa-shield-halved" style="font-size:22px;"></i>
-                    </div>
-                    <h3 style="font-size:17px; font-weight:600; margin-bottom:8px; color:#1a202c;">Безопасность данных</h3>
-                    <p style="font-size:14px; color:#4a5568; line-height:1.5;">
-                        Шифрование TLS, двухфакторная аутентификация, защита по 152-ФЗ.
-                        Данные хранятся в РФ.
-                    </p>
-                </article>
+        <div class="hero__trust fade-up fade-up--d3">
+            <div class="hero__trust-item">
+                <i class="fa-solid fa-circle-check"></i>
+                Защита по 152-ФЗ
             </div>
-        </section>
+            <div class="hero__trust-item">
+                <i class="fa-solid fa-circle-check"></i>
+                Шифрование TLS
+            </div>
+            <div class="hero__trust-item">
+                <i class="fa-solid fa-circle-check"></i>
+                Данные хранятся в РФ
+            </div>
+            <div class="hero__trust-item">
+                <i class="fa-solid fa-circle-check"></i>
+                Без сторонних трекеров
+            </div>
+        </div>
+    </div>
+</section>
 
-        <!-- ============================================================
-             КАК ЭТО РАБОТАЕТ — 3 простых шага.
-             ============================================================ -->
-        <section id="how-it-works" style="margin-top: 72px;" aria-labelledby="hiw-title">
-            <h2 id="hiw-title" style="text-align:center; font-size:28px; font-weight:700; margin-bottom:40px; color:#1a202c;">
-                Как пользоваться
-            </h2>
-            <ol style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:20px; max-width:960px; margin:0 auto; list-style:none; padding:0; counter-reset:hiw;">
-                <li style="counter-increment:hiw; padding:20px 24px; background:#fff; border-radius:14px; border:1px solid rgba(0,0,0,0.06); position:relative;">
-                    <div style="position:absolute; top:-14px; left:24px; width:32px; height:32px; background:#1a73e8; color:#fff; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700;">1</div>
-                    <h3 style="font-size:16px; font-weight:600; margin:10px 0 8px; color:#1a202c;">Войдите по логину</h3>
-                    <p style="font-size:14px; color:#4a5568; line-height:1.5;">
-                        Логин — номер вашего лицевого счёта, его выдают в общежитии.
-                        Пароль вы получили при заселении.
-                    </p>
-                </li>
-                <li style="counter-increment:hiw; padding:20px 24px; background:#fff; border-radius:14px; border:1px solid rgba(0,0,0,0.06); position:relative;">
-                    <div style="position:absolute; top:-14px; left:24px; width:32px; height:32px; background:#1a73e8; color:#fff; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700;">2</div>
-                    <h3 style="font-size:16px; font-weight:600; margin:10px 0 8px; color:#1a202c;">Введите показания</h3>
-                    <p style="font-size:14px; color:#4a5568; line-height:1.5;">
-                        В разделе «Показания» введите текущие цифры со счётчиков.
-                        Система автоматически рассчитает потребление и начисление.
-                    </p>
-                </li>
-                <li style="counter-increment:hiw; padding:20px 24px; background:#fff; border-radius:14px; border:1px solid rgba(0,0,0,0.06); position:relative;">
-                    <div style="position:absolute; top:-14px; left:24px; width:32px; height:32px; background:#1a73e8; color:#fff; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700;">3</div>
-                    <h3 style="font-size:16px; font-weight:600; margin:10px 0 8px; color:#1a202c;">Скачайте квитанцию</h3>
-                    <p style="font-size:14px; color:#4a5568; line-height:1.5;">
-                        После утверждения бухгалтерией квитанция в PDF появится
-                        в разделе «История» — можно оплачивать.
-                    </p>
-                </li>
-            </ol>
-        </section>
+<!-- ─── Features ───────────────────────────────────────────────── -->
+<section class="section section--soft" id="features">
+    <div class="container">
+        <div class="section__header">
+            <div class="section__eyebrow">Возможности</div>
+            <h2 class="section__title">Что умеет «ЖКХ Лидер»</h2>
+            <p class="section__lead">
+                Цифровой личный кабинет жильца общежития — от подачи показаний
+                до получения справок, всё онлайн.
+            </p>
+        </div>
+        <div class="features">
+            <article class="feature">
+                <div class="feature__icon feature__icon--blue"><i class="fa-solid fa-gauge-high"></i></div>
+                <h3 class="feature__title">Подача показаний</h3>
+                <p class="feature__desc">
+                    Передавайте показания счётчиков горячей и холодной воды, электричества
+                    прямо со смартфона. Без очередей и бумажных бланков.
+                </p>
+            </article>
+            <article class="feature">
+                <div class="feature__icon feature__icon--amber"><i class="fa-solid fa-file-invoice-dollar"></i></div>
+                <h3 class="feature__title">Квитанции онлайн</h3>
+                <p class="feature__desc">
+                    Скачивайте квитанции по форме ЕПД в PDF за любой период.
+                    История всех начислений и платежей всегда под рукой.
+                </p>
+            </article>
+            <article class="feature">
+                <div class="feature__icon feature__icon--green"><i class="fa-solid fa-file-signature"></i></div>
+                <h3 class="feature__title">Справки и документы</h3>
+                <p class="feature__desc">
+                    Заказывайте выписку из финансово-лицевого счёта (ФЛС)
+                    и другие справки — без визита в бухгалтерию.
+                </p>
+            </article>
+            <article class="feature">
+                <div class="feature__icon feature__icon--rose"><i class="fa-solid fa-shield-halved"></i></div>
+                <h3 class="feature__title">Безопасность данных</h3>
+                <p class="feature__desc">
+                    Шифрование TLS, двухфакторная аутентификация, защита по 152-ФЗ.
+                    Все данные хранятся на серверах в РФ.
+                </p>
+            </article>
+        </div>
+    </div>
+</section>
 
-        <!-- ============================================================
-             FAQ — ответы на типовые вопросы. Микроразметка FAQPage (JSON-LD
-             в <head>) позволит Яндексу/Google показывать ответы прямо в SERP.
-             ============================================================ -->
-        <section id="faq" style="margin-top: 72px; max-width: 720px; margin-left:auto; margin-right:auto;" aria-labelledby="faq-title">
-            <h2 id="faq-title" style="text-align:center; font-size:28px; font-weight:700; margin-bottom:32px; color:#1a202c;">
-                Частые вопросы
-            </h2>
-            <details style="background:#fff; border-radius:12px; border:1px solid rgba(0,0,0,0.06); margin-bottom:12px; padding:0;">
-                <summary style="padding:16px 20px; cursor:pointer; font-weight:600; font-size:15px; color:#1a202c;">
-                    Где взять логин и пароль для входа?
-                </summary>
-                <div style="padding:0 20px 16px; color:#4a5568; line-height:1.6; font-size:14px;">
+<!-- ─── How it works ───────────────────────────────────────────── -->
+<section class="section" id="how-it-works">
+    <div class="container">
+        <div class="section__header">
+            <div class="section__eyebrow">Как пользоваться</div>
+            <h2 class="section__title">Три простых шага</h2>
+            <p class="section__lead">От первого входа до оплаты — без сложных настроек.</p>
+        </div>
+        <ol class="steps">
+            <li class="step">
+                <h3 class="step__title">Войдите по логину</h3>
+                <p class="step__desc">
+                    Логин — номер вашего лицевого счёта, его выдают в общежитии.
+                    Пароль вы получили при заселении.
+                </p>
+            </li>
+            <li class="step">
+                <h3 class="step__title">Введите показания</h3>
+                <p class="step__desc">
+                    В разделе «Показания» введите текущие цифры со счётчиков.
+                    Система автоматически рассчитает потребление и начисление.
+                </p>
+            </li>
+            <li class="step">
+                <h3 class="step__title">Скачайте квитанцию</h3>
+                <p class="step__desc">
+                    После утверждения бухгалтерией квитанция в PDF появится
+                    в разделе «История» — можно оплачивать.
+                </p>
+            </li>
+        </ol>
+    </div>
+</section>
+
+<!-- ─── FAQ ────────────────────────────────────────────────────── -->
+<section class="section section--soft" id="faq">
+    <div class="container">
+        <div class="section__header">
+            <div class="section__eyebrow">FAQ</div>
+            <h2 class="section__title">Частые вопросы</h2>
+            <p class="section__lead">Ответы на типовые ситуации, с которыми обращаются жильцы.</p>
+        </div>
+        <div class="faq">
+            <details class="faq__item">
+                <summary>Где взять логин и пароль для входа?</summary>
+                <div class="faq__answer">
                     Логин — это ваш лицевой счёт (Л/С). Его выдают в общежитии при заселении вместе
                     с временным паролем. При первом входе система попросит сменить пароль.
-                    Если вы потеряли данные — обратитесь к коменданту или в бухгалтерию общежития.
+                    Если вы потеряли данные — обратитесь к коменданту или в бухгалтерию.
                 </div>
             </details>
-            <details style="background:#fff; border-radius:12px; border:1px solid rgba(0,0,0,0.06); margin-bottom:12px; padding:0;">
-                <summary style="padding:16px 20px; cursor:pointer; font-weight:600; font-size:15px; color:#1a202c;">
-                    Какие счётчики нужно подавать?
-                </summary>
-                <div style="padding:0 20px 16px; color:#4a5568; line-height:1.6; font-size:14px;">
+            <details class="faq__item">
+                <summary>Какие счётчики нужно подавать?</summary>
+                <div class="faq__answer">
                     В личном кабинете вы видите только те счётчики, которые установлены в вашей комнате:
                     горячая вода, холодная вода, электричество. Если какого-то счётчика нет —
                     расход рассчитывается по нормативу.
                 </div>
             </details>
-            <details style="background:#fff; border-radius:12px; border:1px solid rgba(0,0,0,0.06); margin-bottom:12px; padding:0;">
-                <summary style="padding:16px 20px; cursor:pointer; font-weight:600; font-size:15px; color:#1a202c;">
-                    В какие дни принимаются показания?
-                </summary>
-                <div style="padding:0 20px 16px; color:#4a5568; line-height:1.6; font-size:14px;">
-                    Период приёма показаний устанавливается администрацией общежития (обычно с 23 по 26 число
+            <details class="faq__item">
+                <summary>В какие дни принимаются показания?</summary>
+                <div class="faq__answer">
+                    Период приёма показаний устанавливается администрацией (обычно с 23 по 26 число
                     каждого месяца). В личном кабинете вы увидите статус: «приём открыт» или «приём закрыт».
                     После закрытия периода бухгалтерия утверждает показания и формирует квитанции.
                 </div>
             </details>
-            <details style="background:#fff; border-radius:12px; border:1px solid rgba(0,0,0,0.06); margin-bottom:12px; padding:0;">
-                <summary style="padding:16px 20px; cursor:pointer; font-weight:600; font-size:15px; color:#1a202c;">
-                    Где скачать квитанцию для оплаты?
-                </summary>
-                <div style="padding:0 20px 16px; color:#4a5568; line-height:1.6; font-size:14px;">
+            <details class="faq__item">
+                <summary>Где скачать квитанцию для оплаты?</summary>
+                <div class="faq__answer">
                     После утверждения показаний бухгалтерией квитанция (форма ЕПД, PDF) появляется
-                    в разделе «История квитанций» в личном кабинете. Скачать можно в любой момент —
-                    история сохраняется бессрочно.
+                    в разделе «История квитанций» в личном кабинете. Скачать можно в любой момент.
                 </div>
             </details>
-            <details style="background:#fff; border-radius:12px; border:1px solid rgba(0,0,0,0.06); margin-bottom:12px; padding:0;">
-                <summary style="padding:16px 20px; cursor:pointer; font-weight:600; font-size:15px; color:#1a202c;">
-                    Можно ли оплатить квитанцию прямо на сайте?
-                </summary>
-                <div style="padding:0 20px 16px; color:#4a5568; line-height:1.6; font-size:14px;">
-                    Сейчас прямая онлайн-оплата на сайте не реализована — квитанция содержит реквизиты
-                    для оплаты в любом банке (по штрих-коду / QR-коду или вручную).
-                    Интеграция с платёжной системой запланирована в одном из ближайших обновлений.
+            <details class="faq__item">
+                <summary>Можно ли оплатить квитанцию прямо на сайте?</summary>
+                <div class="faq__answer">
+                    Сейчас прямая онлайн-оплата не реализована — квитанция содержит реквизиты
+                    для оплаты в любом банке (по QR-коду или вручную).
+                    Интеграция с платёжной системой запланирована в ближайших обновлениях.
                 </div>
             </details>
-            <details style="background:#fff; border-radius:12px; border:1px solid rgba(0,0,0,0.06); margin-bottom:12px; padding:0;">
-                <summary style="padding:16px 20px; cursor:pointer; font-weight:600; font-size:15px; color:#1a202c;">
-                    Как защищены мои персональные данные?
-                </summary>
-                <div style="padding:0 20px 16px; color:#4a5568; line-height:1.6; font-size:14px;">
+            <details class="faq__item">
+                <summary>Как защищены мои персональные данные?</summary>
+                <div class="faq__answer">
                     Передача данных шифруется TLS (HTTPS), пароли хранятся в виде хэшей (bcrypt),
                     у администраторов работает двухфакторная аутентификация. Все данные обрабатываются
-                    в соответствии с
-                    <a href="/privacy.html" style="color:#1a73e8;">152-ФЗ «О персональных данных»</a>.
+                    в соответствии с <a href="/privacy.html">152-ФЗ «О персональных данных»</a>.
                     Серверы размещены в Российской Федерации.
                 </div>
             </details>
-            <details style="background:#fff; border-radius:12px; border:1px solid rgba(0,0,0,0.06); margin-bottom:12px; padding:0;">
-                <summary style="padding:16px 20px; cursor:pointer; font-weight:600; font-size:15px; color:#1a202c;">
-                    Что делать, если есть ошибки в начислениях?
-                </summary>
-                <div style="padding:0 20px 16px; color:#4a5568; line-height:1.6; font-size:14px;">
-                    Если вы видите расхождение в квитанции (неправильные показания, дублирование начислений
-                    и т.п.) — обратитесь в бухгалтерию общежития. Все действия администраторов фиксируются
-                    в журнале действий, что позволяет быстро разобрать спорные ситуации.
+            <details class="faq__item">
+                <summary>Что делать, если есть ошибки в начислениях?</summary>
+                <div class="faq__answer">
+                    Если вы видите расхождение в квитанции — обратитесь в бухгалтерию общежития.
+                    Все действия администраторов фиксируются в журнале действий, что позволяет
+                    быстро разобрать спорные ситуации.
                 </div>
             </details>
-        </section>
+        </div>
+    </div>
+</section>
 
-        <!-- ========================================
-             Скачать мобильное приложение «ЖКХ Лидер»
-             Видна всем (даже до логина) — заполняется JS только если на сервере
-             есть опубликованный APK. Иначе блок скрыт.
-             ======================================== -->
-        <!-- Карточка «Мобильное приложение». Стилизована как остальные portal-card:
-             белый фон, лёгкая тень, тёмный текст. По умолчанию display:none —
-             показывается JS только если на сервере есть опубликованный APK. -->
-        <div id="portalAppBlock" style="
-            display:none;
-            margin: 60px auto 0;
-            padding: 24px 28px;
-            background: #fff;
-            border-radius: 16px;
-            box-shadow: 0 4px 24px rgba(0,0,0,0.08);
-            max-width: 720px;
-            border: 1px solid rgba(0,0,0,0.06);
-        ">
-            <div style="display:flex; gap:24px; align-items:center; flex-wrap:wrap; justify-content:space-between;">
-                <div style="flex:1; min-width:260px;">
-                    <h3 style="margin:0 0 10px 0; color:#1a202c; font-size:20px; font-weight:600; display:flex; align-items:center; gap:12px;">
-                        <span style="display:inline-flex; align-items:center; justify-content:center; width:40px; height:40px; background:#eef2ff; color:#6366f1; border-radius:10px;">
-                            <i class="fa-solid fa-mobile-screen-button" style="font-size:18px;"></i>
-                        </span>
-                        Мобильное приложение «ЖКХ Лидер»
-                    </h3>
-                    <p style="margin:0 0 18px 0; color:#4a5568; font-size:14px; line-height:1.5;">
+<!-- ─── Mobile app + CTA login ─────────────────────────────────── -->
+<section class="section">
+    <div class="container">
+        <div style="display: grid; gap: 24px; grid-template-columns: 1fr;">
+            <!-- CTA login -->
+            <div class="login-card">
+                <div class="login-card__icon"><i class="fa-solid fa-building-user"></i></div>
+                <h2 class="login-card__title">Готовы начать?</h2>
+                <p class="login-card__sub">
+                    Войдите в личный кабинет по логину (лицевому счёту) и паролю,
+                    которые вы получили в общежитии.
+                </p>
+                <a href="/login.html" class="login-card__btn">
+                    Войти в личный кабинет
+                    <i class="fa-solid fa-arrow-right"></i>
+                </a>
+            </div>
+
+            <!-- Mobile app block. Показывается JS только если на сервере есть APK. -->
+            <div id="portalAppBlock" class="mobile-app" style="display: none;">
+                <div class="mobile-app__info">
+                    <div class="mobile-app__icon"><i class="fa-solid fa-mobile-screen-button"></i></div>
+                    <div class="mobile-app__title">Мобильное приложение «ЖКХ Лидер»</div>
+                    <div class="mobile-app__desc">
                         Подавайте показания и смотрите квитанции в один тап со смартфона.
                         Установите APK напрямую — без Google Play.
-                    </p>
-                    <a id="portalAppDownloadLink" href="#" download
-                       style="display:inline-flex; align-items:center; gap:8px; padding:11px 20px; background:#1a73e8; color:#fff; border-radius:10px; text-decoration:none; font-weight:600; font-size:14px; transition:background 0.15s;"
-                       onmouseover="this.style.background='#1557b0'"
-                       onmouseout="this.style.background='#1a73e8'"
-                       onfocus="this.style.background='#1557b0'"
-                       onblur="this.style.background='#1a73e8'">
+                    </div>
+                    <a id="portalAppDownloadLink" href="#" download class="btn btn--primary">
                         <i class="fa-brands fa-android"></i>
                         <span id="portalAppVersionLabel">Скачать APK</span>
                     </a>
                 </div>
-                <div style="text-align:center; flex-shrink:0;">
-                    <div id="portalAppQR" style="width:140px; height:140px; padding:8px; background:#fff; border:1px solid #e2e8f0; border-radius:10px; display:flex; align-items:center; justify-content:center;">
-                        <span style="color:#a0aec0; font-size:11px;">QR-код</span>
+                <div style="text-align: center; flex-shrink: 0;">
+                    <div id="portalAppQR" class="mobile-app__qr">
+                        <span>QR-код</span>
                     </div>
-                    <p style="margin:8px 0 0 0; font-size:11px; color:#718096;">
-                        <i class="fa-solid fa-qrcode"></i> Отсканируйте с телефона
+                    <p style="margin: 8px 0 0; font-size: 11px; color: var(--text-muted);">
+                        <i class="fa-solid fa-qrcode"></i> Сканируйте с телефона
                     </p>
                 </div>
             </div>
         </div>
-
-        <footer class="portal-footer" style="margin-top: 80px; color: var(--text-secondary); font-size: 13px;">
-            &copy; 2026 ФГКУ ЦСООР "Лидер". Все права защищены.
-        </footer>
     </div>
+</section>
 
-    <!-- Логика «Скачать APK» вынесена в external js/portal.js —
-         раньше была inline, мешала убрать 'unsafe-inline' из CSP. -->
-    <script src="js/portal.js" defer></script>
-    <!-- Юр. обвязка: cookie-баннер + ссылки на политику ПД (152-ФЗ). -->
-    <script src="js/legal-footer.js" defer></script>
+<!-- Логика «Скачать APK» вынесена в external js/portal.js —
+     раньше была inline, мешала убрать 'unsafe-inline' из CSP. -->
+<script src="js/portal.js" defer></script>
+<!-- Юр. обвязка: cookie-баннер + ссылки на политику ПД (152-ФЗ). -->
+<script src="js/legal-footer.js" defer></script>
 </body>
 </html>
