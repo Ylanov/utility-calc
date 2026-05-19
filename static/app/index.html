@@ -76,5 +76,8 @@
 
     <!-- Entry point. CSP-friendly: только external scripts (см. nginx aleks CSP). -->
     <script type="module" src="/app/js/main.js"></script>
+    <!-- Юридический футер + cookie-баннер (152-ФЗ). Лежит на /js/ старого
+         портала, путь работает за счёт того что весь /static/ доступен через корень. -->
+    <script src="/js/legal-footer.js" defer></script>
 </body>
 </html>

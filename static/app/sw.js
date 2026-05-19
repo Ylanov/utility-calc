@@ -14,7 +14,7 @@
  * до полной перерегистрации SW.
  */
 
-const CACHE_VERSION = 'v1';
+const CACHE_VERSION = 'v2';  // bump после добавления legal-footer.js
 const CACHE_NAME = `jkh-lider-app-shell-${CACHE_VERSION}`;
 
 // App-shell — критичные ресурсы для отрисовки UI. Грузятся при install.
