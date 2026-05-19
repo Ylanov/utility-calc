@@ -1,5 +1,5 @@
 x-app-base: &app-base
-  image: ghcr.io/Ylanov/utility-calc:latest
+  image: ghcr.io/ylanov/utility-calc:latest
   restart: always
   env_file: ./.env
   environment:
@@ -25,7 +25,7 @@ services:
   # Теперь web дожидается завершения этого контейнера (service_completed_successfully).
   # =========================================================================
   migrate:
-    image: ghcr.io/Ylanov/utility-calc:latest
+    image: ghcr.io/ylanov/utility-calc:latest
     container_name: utility_calc_migrate
     restart: "no"
     env_file: ./.env
@@ -281,7 +281,7 @@ services:
 
   nginx:
     # ИСПОЛЬЗУЕМ ВАШ ЖЕ ОБРАЗ (он содержит папку static из Dockerfile)
-    image: ghcr.io/Ylanov/utility-calc:latest
+    image: ghcr.io/ylanov/utility-calc:latest
     container_name: utility_calc_nginx
     restart: always
     ports:
