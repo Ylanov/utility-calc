@@ -101,6 +101,22 @@ async def get_notifications(
         .limit(limit)
     )).scalars().all()
 
+    # 5) Заявки на сброс пароля (из audit_log).
+    # Не оставляем «вечный» бэйдж — фильтр по recent_hours.
+    password_reset_count = (await db.execute(
+        select(func.count(AuditLog.id))
+        .where(
+            AuditLog.action == "password_reset_request",
+            AuditLog.created_at >= cutoff,
+        )
+    )).scalar_one()
+    password_reset_recent = (await db.execute(
+        select(AuditLog)
+        .where(AuditLog.action == "password_reset_request")
+        .order_by(AuditLog.created_at.desc())
+        .limit(limit)
+    )).scalars().all()
+
     def _iso(dt):
         return dt.isoformat() if dt else None
 
@@ -108,6 +124,7 @@ async def get_notifications(
         "total": (
             gsheets_conflict_count + gsheets_unmatched_count
             + deletion_count + anomaly_count + tickets_open_count
+            + password_reset_count
         ),
         "categories": {
             "gsheets_conflicts": {
@@ -170,6 +187,24 @@ async def get_notifications(
                         "created_at": _iso(t.created_at),
                     }
                     for t in tickets_recent
+                ],
+            },
+            "password_resets": {
+                "count": password_reset_count,
+                "label": "Заявки на сброс пароля",
+                "link": "/admin.html#users",
+                "items": [
+                    {
+                        "id": a.id,
+                        "title": (a.details or {}).get("full_name", "—"),
+                        "subtitle": (
+                            f"{(a.details or {}).get('dormitory_name', '')} "
+                            f"ком. {(a.details or {}).get('room_number', '')} · "
+                            f"тел/email: {(a.details or {}).get('contact', '—')}"
+                        )[:160],
+                        "created_at": _iso(a.created_at),
+                    }
+                    for a in password_reset_recent
                 ],
             },
         },

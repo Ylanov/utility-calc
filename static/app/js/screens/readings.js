@@ -256,7 +256,7 @@ function bindForm(root) {
         submitBtn.textContent = 'Отправка…';
         try {
             await api.post('/calculate', data);
-            toast.success('Показания приняты');
+            toast.success('Спасибо! Показания приняты. Квитанция появится в «Истории» после закрытия периода.');
             // Перезагружаем экран — увидим новый статус (draft), расчёт.
             await renderReadings(root);
         } catch (e) {

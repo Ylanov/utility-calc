@@ -63,27 +63,71 @@
         </div>
     </form>
 
-    <!-- ИНФО-МОДАЛКА «Забыли пароль?»
-         Раньше тут была форма с полем «площадь помещения» как контрольным
-         вопросом. Площадь — слабый knowledge factor (соседи / бывшие жильцы
-         её знают), и сам endpoint только регистрировал заявку, ничего не
-         сбрасывая. Удалено в may 2026: жилец теперь просто видит текст
-         «обратитесь в бухгалтерию», без формы и без обращений к серверу. -->
+    <!-- МОДАЛКА «Забыли пароль?»
+         Жилец заполняет ФИО + комнату + контакт → отправляется заявка
+         администратору (через audit_log). Админ видит её в журнале
+         + в колокольчике уведомлений и сбрасывает пароль вручную.
+         Сами не сбрасываем по форме — это слабый knowledge factor. -->
     <div id="resetModal" class="modal-overlay">
-        <div class="modal-window" style="width: 450px;">
+        <div class="modal-window" style="width: 480px;">
             <div class="modal-header">
                 <h3>Восстановление доступа</h3>
                 <button type="button" class="close-icon" id="btnCloseIconReset">&times;</button>
             </div>
-            <div class="modal-form" style="padding-top: 16px;">
-                <div style="background: var(--primary-bg); border-left: 4px solid var(--primary-color); padding: 20px; border-radius: var(--radius-sm); margin-bottom: 24px;">
-                    <p style="margin: 0 0 12px 0; font-size: 14px; font-weight: 600; color: var(--text-main);">Сброс пароля выполняет бухгалтерия</p>
-                    <p style="margin: 0; font-size: 13px; color: var(--text-secondary); line-height: 1.6;">
-                        Для получения нового пароля свяжитесь с бухгалтерией —
-                        сотрудник выдаст временный пароль лично или по телефону.
-                        Самостоятельный сброс через сайт отключён в целях безопасности.
-                    </p>
+            <form id="forgotPasswordForm" class="modal-form" style="padding-top: 16px;">
+                <p style="margin: 0 0 16px; font-size: 13px; color: var(--text-secondary); line-height: 1.5;">
+                    Заполните данные — администратор свяжется с вами по указанному контакту
+                    в течение 10 рабочих дней и выдаст временный пароль.
+                </p>
+
+                <div class="form-group">
+                    <label>ФИО полностью <span style="color: var(--danger-color);">*</span></label>
+                    <input type="text" id="fpFullName" required minlength="3" maxlength="300"
+                           placeholder="Иванов Иван Иванович">
                 </div>
+
+                <div class="form-group">
+                    <label>Общежитие <span style="color: var(--danger-color);">*</span></label>
+                    <input type="text" id="fpDormitoryName" required minlength="1" maxlength="100"
+                           placeholder="4дв.стр.8">
+                </div>
+
+                <div class="form-group">
+                    <label>Номер комнаты <span style="color: var(--danger-color);">*</span></label>
+                    <input type="text" id="fpRoomNumber" required minlength="1" maxlength="20"
+                           placeholder="313">
+                </div>
+
+                <div class="form-group">
+                    <label>Контакт для связи (телефон или email) <span style="color: var(--danger-color);">*</span></label>
+                    <input type="text" id="fpContact" required maxlength="200"
+                           placeholder="+7 (___) ___-__-__ или email">
+                </div>
+
+                <div class="form-group">
+                    <label>Дополнительный комментарий (необязательно)</label>
+                    <textarea id="fpNote" rows="2" maxlength="1000"
+                              placeholder="Например: «не помню логин» или особые обстоятельства"></textarea>
+                </div>
+
+                <div style="background: var(--primary-bg); border-left: 4px solid var(--primary-color); padding: 12px 16px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 12px; color: var(--text-secondary); line-height: 1.5;">
+                    <i class="fa-solid fa-shield-halved" style="color: var(--primary-color); margin-right: 4px;"></i>
+                    Сам пароль сбрасывает только администратор — это защита от мошенников,
+                    которые могут знать ваши ФИО и адрес.
+                </div>
+
+                <button type="submit" id="btnSendForgot" class="action-btn primary-btn full-width" style="padding: 12px;">
+                    <i class="fa-solid fa-paper-plane"></i> Отправить заявку
+                </button>
+            </form>
+            <!-- Экран после успешной отправки (скрыт по умолчанию) -->
+            <div id="forgotSuccess" class="modal-form hide" style="padding: 24px; text-align: center;">
+                <div style="font-size: 48px; margin-bottom: 12px;">✅</div>
+                <h4 style="margin: 0 0 8px; color: var(--text-main);">Заявка принята</h4>
+                <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 20px;">
+                    Администратор свяжется с вами по указанному контакту
+                    в течение 10 рабочих дней.
+                </p>
                 <button type="button" id="btnCloseSuccess" class="action-btn primary-btn full-width" style="padding: 12px;">Понятно</button>
             </div>
         </div>

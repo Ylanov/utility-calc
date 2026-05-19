@@ -108,6 +108,13 @@ async def initial_setup(
 
     if data.new_password:
         current_user.hashed_password = get_password_hash(data.new_password)
+        # Сбрасываем счётчик неудачных попыток и блокировку. Это критично:
+        # если жилец до сетапа пытался войти с временным паролем и ошибся
+        # несколько раз (или его уже залочило MAX_FAILED_LOGINS=3 попытками),
+        # после смены пароля он бы не смог войти даже с правильным новым.
+        # Раньше из-за этого жильцы писали «поменял пароль — не могу войти».
+        current_user.failed_login_count = 0
+        current_user.locked_until = None
 
     current_user.is_initial_setup_done = True
     db.add(current_user)
@@ -139,6 +146,10 @@ async def change_password(
         raise HTTPException(status_code=400, detail="Неверный текущий пароль")
 
     current_user.hashed_password = get_password_hash(data.new_password)
+    # Сбрасываем lockout state — после смены пароля жилец гарантированно
+    # должен иметь возможность войти с новым (см. /me/setup для деталей).
+    current_user.failed_login_count = 0
+    current_user.locked_until = None
     db.add(current_user)
 
     # ЗАПИСЬ В ЖУРНАЛ: Смена пароля

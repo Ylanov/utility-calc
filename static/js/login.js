@@ -78,9 +78,21 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // ==========================================
-    // «ЗАБЫЛИ ПАРОЛЬ?» — ПРОСТО ИНФО-МОДАЛКА
+    // «ЗАБЫЛИ ПАРОЛЬ?» — ФОРМА ОБРАЩЕНИЯ К АДМИНУ
     // ==========================================
-    const closeResetModal = () => resetModal.classList.remove('open');
+    const forgotForm = document.getElementById('forgotPasswordForm');
+    const forgotSuccess = document.getElementById('forgotSuccess');
+    const btnSendForgot = document.getElementById('btnSendForgot');
+
+    const closeResetModal = () => {
+        resetModal.classList.remove('open');
+        // Сбрасываем форму при закрытии — следующее открытие будет чистым.
+        if (forgotForm) {
+            forgotForm.reset();
+            forgotForm.classList.remove('hide');
+            forgotSuccess.classList.add('hide');
+        }
+    };
 
     btnForgotPass.addEventListener('click', (e) => {
         e.preventDefault();
@@ -90,8 +102,42 @@ document.addEventListener('DOMContentLoaded', () => {
     btnCloseIconReset.addEventListener('click', closeResetModal);
     btnCloseSuccess.addEventListener('click', closeResetModal);
 
-    // Закрытие по клику вне модалки
     resetModal.addEventListener('mousedown', (e) => {
         if (e.target === resetModal) closeResetModal();
+    });
+
+    // Отправка формы
+    forgotForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const payload = {
+            full_name:      document.getElementById('fpFullName').value.trim(),
+            dormitory_name: document.getElementById('fpDormitoryName').value.trim(),
+            room_number:    document.getElementById('fpRoomNumber').value.trim(),
+            contact:        document.getElementById('fpContact').value.trim(),
+            note:           document.getElementById('fpNote').value.trim() || null,
+        };
+        if (!payload.full_name || !payload.dormitory_name || !payload.room_number || !payload.contact) {
+            toast('Заполните все обязательные поля', 'warning');
+            return;
+        }
+        setLoading(btnSendForgot, true, 'Отправка...');
+        try {
+            const res = await fetch('/api/auth/forgot-password', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.detail || 'Не удалось отправить заявку');
+            }
+            // Показываем экран успеха.
+            forgotForm.classList.add('hide');
+            forgotSuccess.classList.remove('hide');
+        } catch (err) {
+            toast(err.message, 'error');
+        } finally {
+            setLoading(btnSendForgot, false, '<i class="fa-solid fa-paper-plane"></i> Отправить заявку');
+        }
     });
 });

@@ -242,26 +242,12 @@ export const ClientReadings = {
     },
 
     renderResults(data) {
+        // Предварительный расчёт убран по решению admin'а (may 2026):
+        // жильцы пугались разных сумм между «предварительно» и финальной
+        // квитанцией (например, из-за корректировок бухгалтера). Теперь
+        // показываем нейтральный статус «ждите квитанцию в конце периода».
         if (!this.dom.resultArea) return;
-
-        if (!data.total_cost && data.total_cost !== 0) {
-            this.dom.resultArea.classList.add('hide');
-            return;
-        }
-
-        this.dom.resultArea.classList.remove('hide');
-        const fmt = (val) => `${Number(val || 0).toFixed(2)} ₽`;
-
-        const map = {
-            rHot: data.cost_hot_water, rCold: data.cost_cold_water, rSew: data.cost_sewage,
-            rEl: data.cost_electricity, rMain: data.cost_maintenance, rRent: data.cost_social_rent,
-            rWaste: data.cost_waste, rFix: data.cost_fixed_part, rTotal: data.total_cost
-        };
-
-        for (const[id, val] of Object.entries(map)) {
-            const elem = document.getElementById(id);
-            if (elem) elem.textContent = fmt(val);
-        }
+        this.dom.resultArea.classList.add('hide');
     },
 
     validate() {
@@ -344,7 +330,7 @@ export const ClientReadings = {
 
         try {
             await api.post('/calculate', data);
-            toast('Показания успешно сохранены', 'success');
+            toast('Спасибо! Показания приняты. Квитанция появится в разделе «История» после закрытия периода.', 'success');
             await this.loadState(); // Перезагружаем UI
         } catch (e) {
             toast(e.message, 'error');
