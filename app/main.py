@@ -47,6 +47,7 @@ from app.modules.utility.routers import (
     admin_analyzer,
     admin_recalc,
     client_certificates,
+    me_consent,
     admin_certificates,
     app_releases,
     qr,
@@ -394,6 +395,7 @@ app.include_router(admin_gsheets.router)
 app.include_router(admin_analyzer.router)
 app.include_router(admin_recalc.router)
 app.include_router(client_certificates.router)
+app.include_router(me_consent.router)
 app.include_router(admin_certificates.router)
 app.include_router(app_releases.router)
 app.include_router(qr.router)

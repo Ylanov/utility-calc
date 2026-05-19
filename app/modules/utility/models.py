@@ -132,6 +132,15 @@ class User(Base):
     # НОВОЕ: Отслеживание последнего изменения
     updated_at = Column(DateTime, nullable=True, onupdate=_utcnow)
 
+    # Согласие на обработку ПД (152-ФЗ). Фиксируем сам факт согласия —
+    # когда, с какого IP и на какую версию политики. См. миграцию
+    # pdn_001_consent и константу PDN_CURRENT_VERSION в services/pdn_consent.
+    # NULL = согласие не давалось → при следующем входе попросим подписать.
+    # При обновлении политики (bump версии) — попросим переподписать.
+    pdn_consent_at = Column(DateTime, nullable=True)
+    pdn_consent_ip = Column(String(45), nullable=True)
+    pdn_consent_version = Column(String(10), nullable=True)
+
     # ======================================================
     # Паспорт и личные данные — нужны для заказа справок
     # (выписка из ФЛС и др.). Все nullable — жилец заполняет

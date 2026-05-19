@@ -14,7 +14,7 @@
  * до полной перерегистрации SW.
  */
 
-const CACHE_VERSION = 'v3';  // bump после фазы 2 (новые экраны readings/history/profile)
+const CACHE_VERSION = 'v4';  // bump после фазы 2bc (consent + my-data)
 const CACHE_NAME = `jkh-lider-app-shell-${CACHE_VERSION}`;
 
 // App-shell — критичные ресурсы для отрисовки UI. Грузятся при install.
@@ -28,12 +28,14 @@ const APP_SHELL = [
     '/app/js/main.js',
     '/app/js/api.js',
     '/app/js/auth.js',
+    '/app/js/consent.js',
     '/app/js/router.js',
     '/app/js/toast.js',
     '/app/js/screens/home.js',
     '/app/js/screens/readings.js',
     '/app/js/screens/history.js',
     '/app/js/screens/profile.js',
+    '/app/js/screens/my-data.js',
     '/app/manifest.webmanifest',
     '/app/icons/icon.svg',
 ];

@@ -111,6 +111,20 @@ function render(me) {
             <!-- Юридический блок: данные и политика (152-ФЗ) -->
             <div class="section-title">Персональные данные</div>
             <div class="setting-group">
+                <a class="setting-item" href="#/my-data">
+                    <div class="setting-item__icon">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/>
+                            <circle cx="9" cy="7" r="4"/>
+                            <path d="M22 11h-6M22 15h-6M22 19h-3"/>
+                        </svg>
+                    </div>
+                    <div class="setting-item__content">
+                        <div class="setting-item__title">Мои данные</div>
+                        <div class="setting-item__sub">Просмотр, экспорт, запрос удаления</div>
+                    </div>
+                    <div class="setting-item__chevron">›</div>
+                </a>
                 <a class="setting-item" href="/privacy.html" target="_blank" rel="noopener">
                     <div class="setting-item__icon">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -119,7 +133,7 @@ function render(me) {
                     </div>
                     <div class="setting-item__content">
                         <div class="setting-item__title">Политика обработки данных</div>
-                        <div class="setting-item__sub">152-ФЗ — как мы обрабатываем ПД</div>
+                        <div class="setting-item__sub">152-ФЗ — полный текст</div>
                     </div>
                     <div class="setting-item__chevron">›</div>
                 </a>

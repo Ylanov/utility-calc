@@ -12,6 +12,7 @@
  * только когда жилец на них переходит, не блокирует первую отрисовку.
  */
 import { ensureAuthenticated } from './auth.js';
+import { ensureConsent } from './consent.js';
 import { registerRoute, startRouter } from './router.js';
 
 // ─── Service Worker ────────────────────────────────────────────────────
@@ -31,6 +32,10 @@ async function init() {
     // на /login.html?next=/app/ и эта функция не вернёт управление.
     try {
         await ensureAuthenticated();
+        // После авторизации — проверяем согласие на обработку ПД (152-ФЗ).
+        // Если жилец не подписал текущую версию политики — покажется
+        // блокирующая модалка; промис разрешится только после подписи.
+        await ensureConsent();
     } catch (e) {
         console.error('[auth] failed:', e);
         // Жилец увидит сообщение об ошибке на splash; пусть переходит на логин.
@@ -65,6 +70,11 @@ async function init() {
     registerRoute('profile', async (root) => {
         const { renderProfile } = await import('./screens/profile.js');
         await renderProfile(root);
+    });
+    registerRoute('my-data', async (root) => {
+        // Экран «Мои данные» — реализация прав по 152-ФЗ (ст. 14, 21).
+        const { renderMyData } = await import('./screens/my-data.js');
+        await renderMyData(root);
     });
 
     // ─── Старт ────────────────────────────────────────────────────────
