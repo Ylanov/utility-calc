@@ -447,11 +447,34 @@ async def _sitemap_xml():
 
 
 @app.get("/.well-known/{path:path}", include_in_schema=False)
-async def _no_well_known(path: str):
-    # RFC 8615 пути. Пока никакой well-known инфраструктуры у нас нет
-    # (ни ACME-challenge, ни security.txt) — возвращаем 404, а не SPA-HTML.
-    # Когда понадобится — добавим конкретный хендлер для нужного пути.
+async def _well_known(path: str):
+    """RFC 8615 well-known пути.
+
+    Сейчас обслуживается:
+      - security.txt (RFC 9116) — куда сообщать об уязвимостях
+    Файлы лежат в static/.well-known/. Если файла нет — честный 404,
+    а не SPA-HTML (иначе сканеры подумают что есть валидный документ).
+    """
+    safe = path.replace("..", "").lstrip("/")
+    full_path = os.path.join("static", ".well-known", safe)
+    if os.path.isfile(full_path):
+        # security.txt по RFC должен отдаваться text/plain.
+        media = "text/plain" if safe.endswith(".txt") else "application/octet-stream"
+        return FileResponse(full_path, media_type=media)
     raise HTTPException(status_code=404)
+
+
+# =====================================================================
+# КОРНЕВАЯ СТРАНИЦА — лендинг portal.html, а не закрытый ЛК.
+# StaticFiles(html=True) по умолчанию отдаёт static/index.html на «/» —
+# но index.html это закрытый личный кабинет жильца с meta noindex.
+# Из-за этого Яндекс/Google не индексировали корень. Перенаправляем
+# вручную ДО mount'а StaticFiles, чтобы «/» = portal.html (открытая
+# индексируемая страница со всем SEO).
+# =====================================================================
+@app.get("/", include_in_schema=False)
+async def _root():
+    return FileResponse("static/portal.html", media_type="text/html; charset=utf-8")
 
 
 # =====================================================================
