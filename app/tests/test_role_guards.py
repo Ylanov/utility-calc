@@ -87,8 +87,15 @@ def test_role_checker_blocks_user_for_admin_endpoint():
     assert exc_info.value.status_code == 403
 
 
-def test_role_checker_financier_allows_accountant():
-    """allow_financier разрешает accountant и admin (см. определение в dependencies.py)."""
-    for role in ("financier", "accountant", "admin"):
-        user = _FakeUser(role)
-        assert allow_financier(user) is user
+def test_role_checker_financier_admin_only():
+    """allow_financier теперь алиас для admin-only (см. roles_001_simplify).
+    Раньше пускал financier/accountant/admin — после упрощения только admin."""
+    # admin проходит.
+    assert allow_financier(_FakeUser("admin")) is _FakeUser("admin").__class__("admin") or True
+    user_admin = _FakeUser("admin")
+    assert allow_financier(user_admin) is user_admin
+    # Старые роли (если кто-то ещё с ними в БД) — отбиваются.
+    for role in ("financier", "accountant"):
+        with pytest.raises(HTTPException) as exc_info:
+            allow_financier(_FakeUser(role))
+        assert exc_info.value.status_code == 403

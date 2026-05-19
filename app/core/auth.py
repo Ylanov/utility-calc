@@ -148,6 +148,10 @@ async def get_current_user(
         username: Optional[str] = payload.get("sub")
         token_role: Optional[str] = payload.get("role")
         token_scope: Optional[str] = payload.get("scope", "full")
+        # tv (token version) — int счётчик, инкрементируется при logout /
+        # change-password / pdn-consent-revoke. Старые токены становятся
+        # сразу невалидными. См. миграцию token_001_version.
+        token_tv: Optional[int] = payload.get("tv")
 
         if username is None:
             raise credentials_exception
@@ -179,6 +183,16 @@ async def get_current_user(
     # Если админу понизили права (admin → user), его старый токен с role="admin"
     # до сих пор работал бы — теперь такой токен будет отклонён.
     if token_role and token_role != user.role:
+        raise credentials_exception
+
+    # token_version check — отзыв сессии. JWT с tv=N валиден только пока
+    # user.token_version == N. Logout / change-password инкрементируют
+    # счётчик → все ранее выданные токены становятся невалидными.
+    # Если в токене tv отсутствует (старый токен до миграции) — считаем 0
+    # для backward compat, но если в БД token_version > 0 — токен невалиден.
+    current_tv = user.token_version or 0
+    token_tv_int = token_tv if token_tv is not None else 0
+    if token_tv_int != current_tv:
         raise credentials_exception
 
     # Сохраняем user_id в contextvar — все логи в рамках запроса будут с

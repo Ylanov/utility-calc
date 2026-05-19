@@ -61,8 +61,10 @@ document.addEventListener('DOMContentLoaded', () => {
             // что исключает смешивание сессий разных пользователей
             Auth.setSession(data.role, username, data.access_token);
 
-            // Перенаправляем в зависимости от роли
-            if (['admin', 'accountant', 'financier'].includes(data.role)) {
+            // Перенаправляем в зависимости от роли.
+            // Только 2 роли (см. roles_001_simplify, май 2026): admin / user.
+            // Старые accountant/financier были смержены в admin миграцией.
+            if (data.role === 'admin') {
                 window.location.replace('admin.html');
             } else {
                 window.location.replace('index.html');

@@ -303,6 +303,11 @@ async def start_receipt_generation(reading_id: int, current_user: User = Depends
 
 @router.get("/api/admin/tasks/{task_id}")
 async def get_task_status(task_id: str, current_user: User = Depends(get_current_user)):
+    # Раньше любой авторизованный пользователь мог запросить статус
+    # админской задачи и получить presigned-URL на PDF/Excel. Теперь
+    # только admin (см. упрощение ролей — раньше было accountant/admin).
+    if current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Только для администратора")
     task_result = AsyncResult(task_id)
     if task_result.state == 'PENDING':
         return {"state": "PENDING", "status": "Pending..."}

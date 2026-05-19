@@ -141,6 +141,13 @@ class User(Base):
     pdn_consent_ip = Column(String(45), nullable=True)
     pdn_consent_version = Column(String(10), nullable=True)
 
+    # Версия токенов для отзыва сессий (см. миграцию token_001_version).
+    # JWT содержит claim `tv: <значение>`. При decode сравниваем — если
+    # не совпадает (потому что после выдачи токена админ сделал logout
+    # или сменил пароль), 401. Старт с 0, инкрементируется при logout
+    # / change-password / pdn-consent-revoke.
+    token_version = Column(Integer, default=0, nullable=False, server_default="0")
+
     # ======================================================
     # Паспорт и личные данные — нужны для заказа справок
     # (выписка из ФЛС и др.). Все nullable — жилец заполняет

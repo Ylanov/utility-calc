@@ -95,7 +95,13 @@ async def initial_setup(
         db: AsyncSession = Depends(get_db),
         current_user: User = Depends(get_current_user)
 ):
-    if current_user.is_initial_setup_done and current_user.role == "user":
+    # Setup доступен только при первичной настройке. Раньше проверка была
+    # `role=="user"` — это позволяло админу с уже сделанным сетапом снова
+    # вызвать /me/setup и сменить пароль БЕЗ старого пароля. При краже
+    # токена админа это закрепляло доступ навсегда. Теперь блокируется
+    # для всех ролей одинаково. Для смены пароля — /me/change-password
+    # с обязательным старым паролем.
+    if current_user.is_initial_setup_done:
         raise HTTPException(status_code=400, detail="Первичная настройка уже пройдена.")
 
     if data.new_username and data.new_username != current_user.username:
@@ -115,6 +121,9 @@ async def initial_setup(
         # Раньше из-за этого жильцы писали «поменял пароль — не могу войти».
         current_user.failed_login_count = 0
         current_user.locked_until = None
+        # Отзываем все прежние токены — даже текущий (юзер должен
+        # перелогиниться с новым паролем). Защита от token-replay.
+        current_user.token_version = (current_user.token_version or 0) + 1
 
     current_user.is_initial_setup_done = True
     db.add(current_user)
@@ -150,6 +159,8 @@ async def change_password(
     # должен иметь возможность войти с новым (см. /me/setup для деталей).
     current_user.failed_login_count = 0
     current_user.locked_until = None
+    # Отзываем все прежние токены — нужно перелогиниться с новым паролем.
+    current_user.token_version = (current_user.token_version or 0) + 1
     db.add(current_user)
 
     # ЗАПИСЬ В ЖУРНАЛ: Смена пароля
@@ -768,12 +779,26 @@ async def import_users(
     if not file.filename.endswith(('.xlsx', '.xls')):
         raise HTTPException(status_code=400, detail="Только файлы Excel (.xlsx, .xls)")
 
+    # Лимит размера файла — защита от zip-бомб и DoS через большой upload.
+    # nginx ставит client_max_body_size 10M, но если кто-то ходит мимо
+    # nginx напрямую на backend — этой защиты нет. Дублируем на уровне
+    # приложения. 20M с запасом — реальные импорты редко больше 5M.
+    MAX_EXCEL_BYTES = 20 * 1024 * 1024
+    # Content-Length может отсутствовать (chunked), тогда читаем безопасно
+    # через ограниченный буфер.
+    declared_size = (file.size if hasattr(file, "size") else None) or 0
+    if declared_size and declared_size > MAX_EXCEL_BYTES:
+        raise HTTPException(status_code=413, detail="Файл слишком большой (макс. 20 МБ)")
+
     header = await file.read(8)
     await file.seek(0)
     if not (header.startswith(b"PK\x03\x04") or header.startswith(b"\xd0\xcf\x11\xe0")):
         raise HTTPException(status_code=400, detail="Неверная сигнатура Excel файла")
 
-    content = await file.read()
+    # Читаем с ограничением (на случай если Content-Length отсутствовал).
+    content = await file.read(MAX_EXCEL_BYTES + 1)
+    if len(content) > MAX_EXCEL_BYTES:
+        raise HTTPException(status_code=413, detail="Файл слишком большой (макс. 20 МБ)")
 
     # Выполняем импорт
     result = await import_users_from_excel(content, db)

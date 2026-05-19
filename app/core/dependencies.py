@@ -116,12 +116,11 @@ class RoleChecker:
         self.allowed_roles = allowed_roles
 
     def __call__(self, user: User = Depends(get_current_user)) -> User:
-        # admin всегда имеет права бухгалтера и финансиста
-        effective_roles = self.allowed_roles.copy()
-        if "accountant" in effective_roles and "admin" not in effective_roles:
-            effective_roles.append("admin")
-
-        if user.role not in effective_roles:
+        # admin всегда проходит (даже если в allowed_roles только user — но
+        # пока этот сценарий не используется; admin может всё).
+        if user.role == "admin":
+            return user
+        if user.role not in self.allowed_roles:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Недостаточно прав"
@@ -129,8 +128,14 @@ class RoleChecker:
         return user
 
 
-allow_accountant = RoleChecker(["accountant", "admin"])
-allow_financier = RoleChecker(["financier", "accountant", "admin"])
+# В системе осталось ДВЕ роли: admin и user (см. миграцию roles_001_simplify).
+# Раньше были accountant и financier с частичным доступом — теперь они все
+# слиты в admin. Алиасы ниже оставлены для обратной совместимости с уже
+# написанным кодом (роутеры используют `Depends(allow_accountant)` и т.п.).
+# Все они теперь = admin-only.
+allow_admin = RoleChecker(["admin"])
+allow_accountant = allow_admin
+allow_financier = allow_admin
 
 
 # =====================================================

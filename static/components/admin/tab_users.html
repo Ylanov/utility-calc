@@ -20,10 +20,11 @@
                 <div class="form-grid-2 mb-3">
                     <div class="form-group">
                         <label>Роль</label>
+                        <!-- В системе только 2 роли: жилец (user) и админ.
+                             Раньше были accountant/financier — слиты в admin
+                             в roles_001_simplify (май 2026). -->
                         <select id="newRole">
                             <option value="user">Жилец</option>
-                            <option value="accountant">Бухгалтер</option>
-                            <option value="financier">Финансист</option>
                             <option value="admin">Администратор</option>
                         </select>
                     </div>
@@ -325,10 +326,9 @@
                     <div class="form-grid-2" style="margin-bottom: 24px;">
                         <div class="form-group">
                             <label>Роль</label>
+                            <!-- Только 2 роли (см. roles_001_simplify) -->
                             <select id="editRole">
                                 <option value="user">Жилец</option>
-                                <option value="accountant">Бухгалтер</option>
-                                <option value="financier">Финансист</option>
                                 <option value="admin">Администратор</option>
                             </select>
                         </div>

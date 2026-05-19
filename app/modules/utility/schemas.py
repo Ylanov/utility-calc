@@ -73,7 +73,11 @@ class RoomResponse(BaseModel):
 # USER SCHEMAS
 # ======================================================
 
-AllowedRole = Literal["user", "accountant", "financier", "admin"]
+# В системе только 2 роли (см. миграцию roles_001_simplify, май 2026):
+#   user — жилец общежития
+#   admin — сотрудник с полными правами
+# Раньше были accountant/financier — слиты в admin для упрощения.
+AllowedRole = Literal["user", "admin"]
 AllowedAccountType = Literal["209", "205"]
 
 

@@ -1,5 +1,6 @@
 # app/core/config.py
 
+import os
 from pydantic_settings import BaseSettings
 from pydantic import ConfigDict, field_validator
 from typing import Literal, Optional
@@ -124,6 +125,11 @@ class Settings(BaseSettings):
         # ENVIRONMENT/SENTRY_DSN/прочие dev-настройки переопределили прод
         # без правки самого `.env` (который уезжает в Docker на сервер).
         # На сервере `.env.local` отсутствует — кортеж тихо пропускает его.
+        #
+        # ВАЖНО (security): если на проде случайно положить `.env.local`
+        # (например забыли убрать после dev-тестов), он переопределит
+        # `.env` и может выключить production-режим (ENVIRONMENT=development
+        # → seed admin/admin, DEBUG=true и т.п.). Защита ниже.
         env_file=(".env", ".env.local"),
         env_file_encoding="utf-8",
         extra="ignore"
@@ -131,6 +137,20 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+# =====================================================
+# ЗАЩИТА ОТ СЛУЧАЙНОГО .env.local НА ПРОДЕ
+# =====================================================
+# Если ENVIRONMENT=production, но .env.local физически лежит на диске —
+# это аномалия (его быть не должно). Падаем с ошибкой при старте, чтобы
+# админ его убрал, вместо тихого dev-режима на проде.
+if settings.ENVIRONMENT == "production" and os.path.isfile(".env.local"):
+    raise RuntimeError(
+        "Security: на production-сервере обнаружен .env.local. "
+        "Этот файл предназначен только для dev — удалите его. "
+        "Все настройки prod должны быть в .env."
+    )
 
 # =====================================================================
 # ВАЛИДАЦИЯ НА СТАРТЕ (production)

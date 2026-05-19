@@ -175,8 +175,11 @@ services:
       DB_PORT: 5432
       GUNICORN_MAX_WORKERS: 4
       GUNICORN_THREADS: 4
+    # Биндим только на localhost — наружу 8001 НЕ торчит. Доступ только
+    # через nginx (rate limits, CSP, размеры body, security headers).
+    # На aleks к web_jkh обращается utility_nginx через docker-сеть.
     ports:
-      - "8001:8000"
+      - "127.0.0.1:8001:8000"
     ulimits:
       nofile:
         soft: 65535
@@ -222,8 +225,9 @@ services:
       DB_PORT: 5432
       GUNICORN_MAX_WORKERS: 4
       GUNICORN_THREADS: 4
+    # Только localhost — наружу не торчим, доступ через docker-сеть.
     ports:
-      - "8002:8000"
+      - "127.0.0.1:8002:8000"
     ulimits:
       nofile:
         soft: 65535

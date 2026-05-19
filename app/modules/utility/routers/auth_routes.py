@@ -141,8 +141,15 @@ async def login(
     # Обычный путь: 2FA не настроена — выдаём полный токен.
     # =====================================================================
     user.last_login_at = now
+    # tv (token_version) — позволяет отозвать сессию через инкремент
+    # счётчика в БД (см. /api/logout, /me/change-password).
     access_token = create_access_token(
-        data={"sub": user.username, "role": user.role, "scope": "full"}
+        data={
+            "sub": user.username,
+            "role": user.role,
+            "scope": "full",
+            "tv": user.token_version or 0,
+        }
     )
 
     await write_audit_log(
@@ -216,7 +223,10 @@ async def verify_2fa_login(
     user.locked_until = None
     user.last_login_at = now
 
-    access_token = create_access_token(data={"sub": user.username, "role": user.role, "scope": "full"})
+    access_token = create_access_token(data={
+        "sub": user.username, "role": user.role, "scope": "full",
+        "tv": user.token_version or 0,
+    })
 
     await write_audit_log(
         db, user.id, user.username,
@@ -263,14 +273,25 @@ async def activate_2fa(
     return {"status": "activated", "message": "Двухфакторная аутентификация успешно включена"}
 
 
-# --- 5. ВЫХОД (Без изменений) ---
+# --- 5. ВЫХОД ---
 @router.post("/api/logout")
-async def logout(response: Response):
+async def logout(
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Logout с отзывом токена.
+
+    Инкрементируем User.token_version — все ранее выданные JWT с прежним
+    `tv` становятся невалидными. Это закрывает дырку «токен украли через
+    XSS и логин-аут не помогает» (см. token_001_version миграция).
+    """
+    current_user.token_version = (current_user.token_version or 0) + 1
+    await db.commit()
+
     # delete_cookie оставлен для безопасности: после деплоя у части
     # пользователей в браузере ещё валиден старый HttpOnly cookie с
-    # max_age=2 часа от прошлой login-сессии. Этот вызов гарантированно
-    # его удалит при первом logout. Сам cookie новые login'ы больше не
-    # ставят (см. комментарий выше set_auth_cookie).
+    # max_age=2 часа от прошлой login-сессии.
     response.delete_cookie(
         key="access_token",
         samesite="strict",

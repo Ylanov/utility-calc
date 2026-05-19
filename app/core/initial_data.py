@@ -24,6 +24,18 @@ async def seed_data():
     logger.info("Starting initial data seeding...")
 
     # 1. Сидинг базы ЖКХ (Utility DB)
+    # ВАЖНО: автоматический seed `admin/admin` отключён в production!
+    # Раньше скрипт при каждом старте СБРАСЫВАЛ пароль админа на 'admin' —
+    # это означало что после рестарта контейнера любой кто знал URL
+    # /login.html мог войти с admin/admin (если хотя бы один раз
+    # запускался initial_data в prod). Теперь:
+    #   - в dev (ENVIRONMENT != production): создаём admin/admin при отсутствии
+    #     И сбрасываем пароль (как было) — удобно для разработки
+    #   - в production: создаём admin/admin ТОЛЬКО если юзера нет вообще,
+    #     НИКОГДА не сбрасываем пароль существующего админа
+    from app.core.config import settings as _s
+    is_dev = _s.ENVIRONMENT != "production"
+
     async with AsyncSessionLocal() as db:
         try:
             # Администратор ЖКХ
@@ -31,21 +43,30 @@ async def seed_data():
             admin = admin_result.scalars().first()
 
             if not admin:
-                # Если нет - создаем
+                # Если нет - создаём (только в dev! В prod создание тоже
+                # допустимо как bootstrap первого админа, но логируем громко).
                 admin = User(
                     username="admin",
                     hashed_password=get_password_hash("admin"),
-                    role="accountant",
-                    is_deleted=False,  # Важно для новой логики
-                    is_initial_setup_done=False  # Чтобы проверить модалку
+                    role="admin",  # упрощено в roles_001 (раньше было 'accountant')
+                    is_deleted=False,
+                    is_initial_setup_done=False  # модалка попросит сменить пароль
                 )
                 db.add(admin)
-                logger.info("Utility DB: 'admin' user created.")
-            else:
-                # Если есть - ПРИНУДИТЕЛЬНО СБРАСЫВАЕМ ПАРОЛЬ (для dev режима)
+                if is_dev:
+                    logger.info("Utility DB: 'admin' user created (dev).")
+                else:
+                    logger.warning(
+                        "Utility DB: 'admin' user created with DEFAULT password 'admin' "
+                        "— СМЕНИТЕ НЕМЕДЛЕННО через /me/setup или CLI."
+                    )
+            elif is_dev:
+                # Только в dev — сбрасываем пароль на 'admin' (удобно для тестов).
+                # В prod НИКОГДА не трогаем существующий пароль.
                 admin.hashed_password = get_password_hash("admin")
-                admin.is_deleted = False  # На случай если случайно удалили
-                logger.info("Utility DB: 'admin' password reset to default.")
+                admin.is_deleted = False
+                logger.info("Utility DB: 'admin' password reset to default (dev).")
+            # В production: existing admin не трогаем — это критично.
 
             # Тариф (Создаем базовый профиль)
             tariff_result = await db.execute(select(Tariff).where(Tariff.id == 1))
