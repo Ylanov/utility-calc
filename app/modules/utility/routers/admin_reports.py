@@ -24,6 +24,7 @@ from app.modules.utility.models import User, MeterReading, Tariff, BillingPeriod
 from app.core.dependencies import get_current_user
 from app.modules.utility.services.pdf_generator import generate_receipt_pdf
 from app.modules.utility.services.s3_client import s3_service
+from app.modules.utility.services.period_helpers import period_chron_key
 from app.modules.utility.tasks import generate_receipt_task, start_bulk_receipt_generation
 
 logger = logging.getLogger(__name__)
@@ -761,54 +762,69 @@ async def get_resident_finance_detail(
     if not period:
         raise HTTPException(400, "Периоды не заведены — нет данных для показа")
 
-    # 2) 6 последних периодов (включая текущий) для истории.
-    periods = (await db.execute(
-        select(BillingPeriod)
-        .where(BillingPeriod.id <= period.id)
-        .order_by(BillingPeriod.id.desc())
-        .limit(history_periods)
-    )).scalars().all()
+    # 2) N последних периодов (включая текущий) для истории — БИЛЛИНГОВО.
+    # Раньше сортировали по `BillingPeriod.id.desc()`, но id отражает порядок
+    # создания записи в БД, а не биллинговый месяц. Если админ задним числом
+    # импортировал «Февраль 2026» в мае, у него period.id > чем у мая, и в
+    # таблице февраль появлялся ВЫШЕ майских данных. Из-за этого дельты тоже
+    # съезжали (prev определялось по created_at, см. _prev_for ниже).
+    # Теперь сортируем по распарсенному `(year, month)` имени периода —
+    # хронологически. Нестандартные имена («Начальный период», тестовые)
+    # получают ключ (0, 0) и оказываются в самом начале (baseline).
+    all_periods = (await db.execute(select(BillingPeriod))).scalars().all()
+    cur_key = period_chron_key(period.name)
+    # Только периоды у которых биллинговая хронология <= текущей.
+    # Это аналог прежнего `BillingPeriod.id <= period.id`, но корректный.
+    periods_filtered = [p for p in all_periods if period_chron_key(p.name) <= cur_key]
+    periods = sorted(
+        periods_filtered,
+        key=lambda p: period_chron_key(p.name),
+        reverse=True,
+    )[:history_periods]
     period_ids = [p.id for p in periods]
     period_name_map = {p.id: p.name for p in periods}
 
-    # 3) Одним запросом — все approved показания жильца за эти периоды.
-    #    По id-шникам забираем также `created_at` для Source-логики.
+    # 3) Одним запросом — все показания жильца за эти периоды (включая drafts).
     readings = (await db.execute(
         select(MeterReading)
         .where(
             MeterReading.user_id == user_id,
             MeterReading.period_id.in_(period_ids) if period_ids else False,
         )
-        .order_by(MeterReading.period_id.desc())
     )).scalars().all()
 
-    # Для дельт по счётчикам нам нужно предыдущее approved показание по КОМНАТЕ
-    # для каждого reading. Соберём всю approved-историю комнаты за охваченный
-    # диапазон + немного запаса (ещё 1 период), чтобы найти prev для самого
-    # раннего показания.
-    # История approved ЖИЛЬЦА В ЭТОЙ КОМНАТЕ — не всей комнаты.
-    # При смене жильца prev другого жильца не должен влиять на дельту.
-    room_hist_raw = []
-    if user.room_id and period_ids:
-        room_hist_raw = (await db.execute(
-            select(MeterReading)
+    # Для дельт нужно предыдущее approved показание ЖИЛЬЦА В ЭТОЙ КОМНАТЕ
+    # в БИЛЛИНГОВОЙ хронологии (не по created_at — задний-числом импорт ломает).
+    # Загружаем ВСЕ его approved readings (а не только за выбранные history N),
+    # потому что предыдущее показание для самого раннего из N может лежать
+    # ВНЕ выборки. Затем строим словарь reading.id → prev_reading.
+    prev_reading_map: dict[int, Optional[MeterReading]] = {}
+    if user.room_id:
+        all_user_readings = (await db.execute(
+            select(MeterReading, BillingPeriod)
+            .join(BillingPeriod, BillingPeriod.id == MeterReading.period_id)
             .where(
                 MeterReading.user_id == user_id,
                 MeterReading.room_id == user.room_id,
                 MeterReading.is_approved.is_(True),
             )
-            .order_by(MeterReading.created_at.asc())
-        )).scalars().all()
+        )).all()
+        # Сортируем хронологически ASC: baseline → старые → новые.
+        all_user_readings_chronological = sorted(
+            all_user_readings,
+            key=lambda row: period_chron_key(row[1].name),
+        )
+        # Двигаемся по цепочке: текущему reading prev = предыдущий в хронологии.
+        prev_reading: Optional[MeterReading] = None
+        for r, _bp in all_user_readings_chronological:
+            prev_reading_map[r.id] = prev_reading
+            prev_reading = r
 
     def _prev_for(reading):
-        """Ближайшее approved показание этого жильца в этой комнате со временем СТРОГО раньше."""
-        prev = None
-        for rr in room_hist_raw:
-            if rr.created_at and reading.created_at and rr.created_at < reading.created_at and rr.is_approved:
-                prev = rr
-            elif rr.created_at and reading.created_at and rr.created_at >= reading.created_at:
-                break
-        return prev
+        """Предыдущее approved показание жильца в биллинговой хронологии
+        (а не по `created_at` — задний-числом импорт ломал предыдущую логику,
+        см. инцидент мая 2026 с Сорокиным С.А.)."""
+        return prev_reading_map.get(reading.id)
 
     # 4) Корректировки за эти периоды.
     adjustments = []
