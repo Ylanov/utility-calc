@@ -31,12 +31,22 @@ export async function ensureAuthenticated() {
     if (_meCache) return _meCache;
     try {
         _meCache = await api.get('/me');
-        return _meCache;
     } catch (e) {
         // 401 обработается в api.js (редирект). Любая другая ошибка — кидаем.
         if (e.status !== 401) throw e;
         return new Promise(() => {});
     }
+
+    // Жильцовский PWA — только для role="user". Админ/бухгалтер/финансист
+    // не имеют комнаты, тарифа и других данных жильца — их редиректим в
+    // админ-панель. Это soft-проверка (UX), на бэке тот же защита через
+    // require_resident — все /api/me/*, /api/calculate, /api/client/* вернут
+    // 403 для не-жильцов.
+    if (_meCache && _meCache.role && _meCache.role !== 'user') {
+        window.location.href = '/admin.html';
+        return new Promise(() => {});
+    }
+    return _meCache;
 }
 
 export function getCachedMe() {

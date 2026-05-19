@@ -35,7 +35,7 @@ from sqlalchemy.future import select
 from sqlalchemy import desc
 
 from app.core.database import get_db
-from app.core.dependencies import get_current_user
+from app.core.dependencies import require_resident
 from app.modules.utility.models import (
     User, FamilyMember, RentalContract, CertificateRequest,
 )
@@ -159,7 +159,7 @@ async def _load_user_with_room(db: AsyncSession, user_id: int) -> User:
 
 @router.get("/api/me/profile", response_model=ProfileResponse)
 async def get_my_profile(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_resident),
     db: AsyncSession = Depends(get_db),
 ):
     # Перезагружаем с eager-load комнаты — иначе current_user.room триггерит
@@ -192,7 +192,7 @@ async def get_my_profile(
 @router.put("/api/me/profile", response_model=ProfileResponse)
 async def update_my_profile(
     data: ProfileUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_resident),
     db: AsyncSession = Depends(get_db),
 ):
     """Жилец сам заполняет паспортные данные и должность.
@@ -214,7 +214,7 @@ async def update_my_profile(
 
 @router.get("/api/me/family", response_model=List[FamilyMemberSchema])
 async def list_my_family(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_resident),
     db: AsyncSession = Depends(get_db),
 ):
     rows = (await db.execute(
@@ -227,7 +227,7 @@ async def list_my_family(
 @router.post("/api/me/family", response_model=FamilyMemberSchema)
 async def add_family_member(
     data: FamilyMemberSchema,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_resident),
     db: AsyncSession = Depends(get_db),
 ):
     if data.role == "spouse":
@@ -263,7 +263,7 @@ async def add_family_member(
 async def update_family_member(
     member_id: int,
     data: FamilyMemberSchema,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_resident),
     db: AsyncSession = Depends(get_db),
 ):
     member = await db.get(FamilyMember, member_id)
@@ -281,7 +281,7 @@ async def update_family_member(
 @router.delete("/api/me/family/{member_id}", status_code=204)
 async def delete_family_member(
     member_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_resident),
     db: AsyncSession = Depends(get_db),
 ):
     member = await db.get(FamilyMember, member_id)
@@ -326,7 +326,7 @@ class RentalContractUpdate(BaseModel):
 
 @router.get("/api/me/rental-contracts", response_model=List[RentalContractBrief])
 async def list_my_contracts(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_resident),
     db: AsyncSession = Depends(get_db),
 ):
     rows = (await db.execute(
@@ -355,7 +355,7 @@ async def _deactivate_others(db: AsyncSession, user_id: int, except_id: Optional
 @router.post("/api/me/rental-contracts", response_model=RentalContractBrief)
 async def create_my_contract(
     data: RentalContractCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_resident),
     db: AsyncSession = Depends(get_db),
 ):
     """Жилец создаёт новый договор (после переезда — просто добавляет).
@@ -382,7 +382,7 @@ async def create_my_contract(
 async def update_my_contract(
     contract_id: int,
     data: RentalContractUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_resident),
     db: AsyncSession = Depends(get_db),
 ):
     """Правка метаданных своего договора. Файл не трогаем — для замены
@@ -404,7 +404,7 @@ async def update_my_contract(
 @router.post("/api/me/rental-contracts/{contract_id}/activate", response_model=RentalContractBrief)
 async def activate_my_contract(
     contract_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_resident),
     db: AsyncSession = Depends(get_db),
 ):
     """Сделать конкретный договор активным (актуальным).
@@ -423,7 +423,7 @@ async def activate_my_contract(
 @router.delete("/api/me/rental-contracts/{contract_id}", status_code=204)
 async def delete_my_contract(
     contract_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_resident),
     db: AsyncSession = Depends(get_db),
 ):
     """Удаление своего договора. Файл из MinIO тоже чистим.
@@ -450,7 +450,7 @@ async def delete_my_contract(
 async def upload_my_contract_pdf(
     contract_id: int,
     file: UploadFile = File(...),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_resident),
     db: AsyncSession = Depends(get_db),
 ):
     """Прикрепить/заменить PDF-скан к своему договору.
@@ -504,7 +504,7 @@ async def upload_my_contract_pdf(
 @router.get("/api/me/rental-contracts/{contract_id}/download")
 async def download_my_contract(
     contract_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_resident),
     db: AsyncSession = Depends(get_db),
 ):
     contract = await db.get(RentalContract, contract_id)
@@ -532,7 +532,7 @@ async def download_my_contract(
 
 @router.get("/api/me/certificates", response_model=List[CertificateRequestOut])
 async def list_my_certificates(
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_resident),
     db: AsyncSession = Depends(get_db),
 ):
     rows = (await db.execute(
@@ -553,7 +553,7 @@ async def list_my_certificates(
 @router.post("/api/me/certificates", response_model=CertificateRequestOut)
 async def create_certificate_request(
     data: CertificateRequestCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_resident),
     db: AsyncSession = Depends(get_db),
 ):
     """Жилец заказывает справку. Сразу генерируем PDF и сохраняем в MinIO.
@@ -707,7 +707,7 @@ async def create_certificate_request(
 @router.get("/api/me/certificates/{cert_id}/download")
 async def download_my_certificate(
     cert_id: int,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_resident),
     db: AsyncSession = Depends(get_db),
 ):
     cert = await db.get(CertificateRequest, cert_id)

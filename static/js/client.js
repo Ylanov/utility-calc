@@ -8,6 +8,16 @@ if (!Auth.isAuthenticated()) {
     window.location.replace('login.html');
 }
 
+// --- 1b. Защита от админов в портале жильца ---
+// Жильцовский портал — только для role="user". Админ/бухгалтер/финансист
+// не имеют комнаты, тарифа, балансов — для них здесь нет смысла. Бэкенд
+// тоже их отсечёт через require_resident (вернёт 403 на /api/me/*),
+// но этот ранний редирект чище — никаких ложных ошибок «доступ запрещён».
+const _role = Auth.getRole && Auth.getRole();
+if (_role && _role !== 'user') {
+    window.location.replace('admin.html');
+}
+
 // --- 2. Глобальный перехватчик ошибок (Error Boundary) ---
 window.addEventListener('unhandledrejection', (event) => {
     console.error('Unhandled Rejection:', event.reason);

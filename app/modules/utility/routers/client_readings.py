@@ -17,7 +17,7 @@ from sqlalchemy import func
 from app.core.database import get_db
 from app.modules.utility.models import User, MeterReading, Tariff, BillingPeriod, Adjustment, Room
 from app.modules.utility.schemas import ReadingSchema, ReadingStateResponse
-from app.core.dependencies import get_current_user
+from app.core.dependencies import require_resident
 from app.modules.utility.services.calculations import calculate_utilities
 from app.modules.utility.services.pdf_generator import generate_receipt_pdf
 from app.modules.utility.services.s3_client import s3_service
@@ -72,7 +72,7 @@ class ReadingService:
 # =========================
 @router.get("/api/readings/state", response_model=ReadingStateResponse)
 async def get_reading_state(
-        current_user: User = Depends(get_current_user),
+        current_user: User = Depends(require_resident),
         db: AsyncSession = Depends(get_db)
 ):
     user = (await db.execute(
@@ -182,7 +182,7 @@ async def get_reading_state(
 @router.post("/api/calculate")
 async def save_reading(
         data: ReadingSchema,
-        current_user: User = Depends(get_current_user),
+        current_user: User = Depends(require_resident),
         db: AsyncSession = Depends(get_db)
 ):
     hot, cold, elect = ReadingService.parse_input(data)
@@ -428,7 +428,7 @@ async def save_reading(
 # =========================
 @router.get("/api/client/finance")
 async def get_client_finance(
-        current_user: User = Depends(get_current_user),
+        current_user: User = Depends(require_resident),
         db: AsyncSession = Depends(get_db),
 ):
     """
@@ -496,7 +496,7 @@ async def get_client_finance(
 # =========================
 @router.get("/api/readings/history")
 async def get_client_history(
-        current_user: User = Depends(get_current_user),
+        current_user: User = Depends(require_resident),
         db: AsyncSession = Depends(get_db),
         page: int = 1,
         limit: int = 24,
@@ -635,7 +635,7 @@ async def _prepare_client_receipt_context(
 @router.get("/api/client/receipts/{reading_id}")
 async def download_client_receipt(
         reading_id: int,
-        current_user: User = Depends(get_current_user),
+        current_user: User = Depends(require_resident),
         db: AsyncSession = Depends(get_db)
 ):
     """
@@ -685,7 +685,7 @@ async def download_client_receipt(
 @router.get("/api/client/receipts/{reading_id}/download")
 async def stream_client_receipt(
         reading_id: int,
-        current_user: User = Depends(get_current_user),
+        current_user: User = Depends(require_resident),
         db: AsyncSession = Depends(get_db)
 ):
     """

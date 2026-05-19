@@ -131,3 +131,39 @@ class RoleChecker:
 
 allow_accountant = RoleChecker(["accountant", "admin"])
 allow_financier = RoleChecker(["financier", "accountant", "admin"])
+
+
+# =====================================================
+# ЭКСКЛЮЗИВНЫЙ ДОСТУП ЖИЛЬЦА
+# =====================================================
+# `require_resident` — только role="user". Применяется к эндпоинтам
+# жильца: подача показаний, история, баланс, профиль, справки.
+#
+# Зачем: админы/бухгалтеры/финансисты НЕ должны подавать показания
+# за себя — у них нет комнаты, нет тарифа, и любая такая «подача»
+# создавала бы мусорный MeterReading. Раньше эндпоинты `/api/calculate`,
+# `/api/readings/state`, `/api/client/finance` принимали любого
+# залогиненного пользователя — что было ошибкой проектирования.
+#
+# В отличие от RoleChecker(["user"]) — здесь мы НЕ даём admin'у привилегию
+# войти в эти эндпоинты «как accountant прокси к user». Эта запрет
+# жёсткий: только role == "user" (роль жильца).
+def require_resident(user: User = Depends(get_current_user)) -> User:
+    """Разрешает доступ ТОЛЬКО жильцу (role='user').
+
+    Для admin/accountant/financier возвращает 403 — у них нет личного
+    кабинета жильца. Если им нужно посмотреть данные жильца — есть
+    отдельные admin-эндпоинты (`/api/admin/residents/{id}/finance-detail`).
+
+    Sync (не async) сознательно — никакой I/O тут нет, и легче тестировать
+    без event loop / anyio.
+    """
+    if user.role != "user":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=(
+                "Этот раздел только для жильцов. "
+                "Вы вошли как сотрудник — перейдите в админ-панель."
+            ),
+        )
+    return user
