@@ -1,0 +1,49 @@
+{
+    "name": "ЖКХ Лидер",
+    "short_name": "ЖКХ",
+    "description": "Личный кабинет жильца общежития — показания, квитанции, баланс, справки.",
+    "start_url": "/app/",
+    "scope": "/app/",
+    "display": "standalone",
+    "orientation": "portrait",
+    "background_color": "#ffffff",
+    "theme_color": "#2563eb",
+    "lang": "ru",
+    "categories": ["utilities", "lifestyle"],
+    "icons": [
+        {
+            "src": "/app/icons/icon.svg",
+            "sizes": "any",
+            "type": "image/svg+xml",
+            "purpose": "any"
+        },
+        {
+            "src": "/app/icons/icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "/app/icons/icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any maskable"
+        }
+    ],
+    "shortcuts": [
+        {
+            "name": "Подать показания",
+            "short_name": "Подать",
+            "description": "Быстро подать показания за текущий период",
+            "url": "/app/#/readings",
+            "icons": [{"src": "/app/icons/icon-192.png", "sizes": "192x192"}]
+        },
+        {
+            "name": "История квитанций",
+            "short_name": "История",
+            "description": "Просмотр всех квитанций и скачивание PDF",
+            "url": "/app/#/history",
+            "icons": [{"src": "/app/icons/icon-192.png", "sizes": "192x192"}]
+        }
+    ]
+}
