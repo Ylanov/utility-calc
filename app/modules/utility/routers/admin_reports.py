@@ -448,16 +448,26 @@ async def get_accountant_summary_v2(
     # Раньше было захардкожено 6; админ хотел видеть глубже — сделали
     # настраиваемым. Берём ВСЕ utility-readings этих жильцов одним
     # запросом, фильтруем в Python: дешевле чем N запросов по жильцам.
+    #
+    # ВАЖНО: «прошлые» периоды определяем по БИЛЛИНГОВОЙ хронологии
+    # (parsed name → year, month), а не по `BillingPeriod.id`. Иначе
+    # подача задним числом (Февраль 2026 импортирован в мае) ломает
+    # сортировку и считает Δ относительно «не того» предыдущего. См.
+    # инцидент мая 2026 с Сорокиным С.А. и helper period_helpers.py.
     user_ids = [r[0].id for r in rows]
     history_map: dict[int, list[MeterReading]] = {uid: [] for uid in user_ids}
     if user_ids:
-        prev_periods = (await db.execute(
-            select(BillingPeriod)
-            .where(BillingPeriod.id < period.id)
-            .order_by(BillingPeriod.id.desc())
-            .limit(history_periods)
-        )).scalars().all()
-        prev_period_ids = [p.id for p in prev_periods]
+        all_periods = (await db.execute(select(BillingPeriod))).scalars().all()
+        cur_key = period_chron_key(period.name)
+        # Строго раньше текущего по хронологии (для Δ нужны только прошлые).
+        prev_periods_sorted = sorted(
+            (p for p in all_periods if period_chron_key(p.name) < cur_key),
+            key=lambda p: period_chron_key(p.name),
+            reverse=True,  # DESC — самый свежий первый
+        )[:history_periods]
+        prev_period_ids = [p.id for p in prev_periods_sorted]
+        # period_id → chronological_key — для сортировки readings ниже.
+        period_id_to_key = {p.id: period_chron_key(p.name) for p in prev_periods_sorted}
 
         if prev_period_ids:
             hist_rows = (await db.execute(
@@ -468,14 +478,17 @@ async def get_accountant_summary_v2(
                     MeterReading.is_approved.is_(True),
                 )
             )).scalars().all()
-            # Сортируем по period_id (старые → новые) внутри каждого жильца
+            # Сортируем по БИЛЛИНГОВОЙ хронологии ASC (старые → новые).
+            # `prev_costs[-1]` будет САМЫМ СВЕЖИМ прошлым → правильная Δ.
+            # Раньше сортировали по `period_id` — задним-числом импорт давал
+            # «прошлым» Февральскую призрачную подачу с миллионными cost.
             tmp: dict[int, list] = {}
             for hr in hist_rows:
                 tmp.setdefault(hr.user_id, []).append(hr)
             for uid in user_ids:
                 history_map[uid] = sorted(
                     tmp.get(uid, []),
-                    key=lambda r: r.period_id or 0
+                    key=lambda r: period_id_to_key.get(r.period_id, (0, 0)),
                 )
 
     # 4) MISSING_RECEIPT — жильцы с комнатой, но без MeterReading в этом периоде.
