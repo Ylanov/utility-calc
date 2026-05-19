@@ -1,0 +1,75 @@
+# robots.txt для asy-tk.ru — Единая Платформа Управления (ЖКХ Лидер).
+#
+# Принципы:
+#   - публичные страницы (лендинг, политика ПД) — открыты для индексации
+#   - всё что требует авторизации (личный кабинет жильца, админка, API,
+#     PWA) — закрыто (Disallow), там нет смысла индексировать
+#   - служебные пути (генерируемые файлы, компоненты, верификации) — закрыты
+
+User-agent: *
+
+# Публичная часть
+Allow: /portal.html
+Allow: /login.html
+Allow: /privacy.html
+Allow: /style.css
+Allow: /js/portal.js
+Allow: /js/legal-footer.js
+
+# Закрытая часть (доступ только по логину)
+Disallow: /admin.html
+Disallow: /admin/
+Disallow: /api/
+Disallow: /app/
+Disallow: /index.html
+
+# Служебное
+Disallow: /static/generated_files/
+Disallow: /components/
+Disallow: /yandex_
+Disallow: /.well-known/
+
+# Карта сайта
+Sitemap: https://asy-tk.ru/sitemap.xml
+
+# Главное зеркало (для Яндекса; устаревшая директива, но не мешает)
+Host: https://asy-tk.ru
+
+# ===== Специальные правила для отдельных ботов =====
+
+# Яндекс — основной поисковик в РФ. Никаких дополнительных ограничений.
+User-agent: Yandex
+Crawl-delay: 1
+Allow: /portal.html
+Allow: /login.html
+Allow: /privacy.html
+Disallow: /admin.html
+Disallow: /admin/
+Disallow: /api/
+Disallow: /app/
+Disallow: /index.html
+
+# Google — англоязычный обход, используем по умолчанию.
+User-agent: Googlebot
+Allow: /portal.html
+Allow: /login.html
+Allow: /privacy.html
+Disallow: /admin.html
+Disallow: /admin/
+Disallow: /api/
+Disallow: /app/
+Disallow: /index.html
+
+# AI-боты — запрещаем парсинг ПД жильцов (152-ФЗ).
+User-agent: GPTBot
+Disallow: /
+User-agent: ChatGPT-User
+Disallow: /
+User-agent: anthropic-ai
+Disallow: /
+User-agent: Claude-Web
+Disallow: /
+User-agent: CCBot
+Disallow: /
+User-agent: Google-Extended
+Disallow: /

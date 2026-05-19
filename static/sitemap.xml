@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    Карта сайта для asy-tk.ru.
+
+    Включаем ТОЛЬКО публичные страницы — те что не требуют авторизации.
+    Личный кабинет, админка, API в карту НЕ попадают (там нет смысла
+    индексировать, и /admin* + /api/* + /app/* закрыты в robots.txt).
+
+    После значительных обновлений политики или интерфейса обновляем lastmod
+    у соответствующих <url>.
+-->
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+
+    <!-- Главная — лендинг «Выбор системы» (ЖКХ Лидер / Арсенал) -->
+    <url>
+        <loc>https://asy-tk.ru/portal.html</loc>
+        <lastmod>2026-05-19</lastmod>
+        <changefreq>monthly</changefreq>
+        <priority>1.0</priority>
+    </url>
+
+    <!-- Вход в систему. Главная точка входа для жильцов с поисковика. -->
+    <url>
+        <loc>https://asy-tk.ru/login.html</loc>
+        <lastmod>2026-05-19</lastmod>
+        <changefreq>monthly</changefreq>
+        <priority>0.8</priority>
+    </url>
+
+    <!-- Политика обработки персональных данных (152-ФЗ).
+         Обновляется при правках самой политики (bump PDN_CURRENT_VERSION). -->
+    <url>
+        <loc>https://asy-tk.ru/privacy.html</loc>
+        <lastmod>2026-05-19</lastmod>
+        <changefreq>yearly</changefreq>
+        <priority>0.5</priority>
+    </url>
+
+</urlset>

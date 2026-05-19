@@ -1,0 +1,12 @@
+# RFC 9116 security.txt — куда сообщать об уязвимостях.
+# Доступен по адресу: https://asy-tk.ru/.well-known/security.txt
+#
+# Если вы нашли уязвимость безопасности в системе, пожалуйста, сообщите
+# нам по контактам ниже. Мы рассматриваем все сообщения добросовестно
+# и не преследуем reseachers за ответственное раскрытие.
+
+Contact: mailto:privacy@asy-tk.ru
+Expires: 2027-05-19T00:00:00.000Z
+Preferred-Languages: ru, en
+Canonical: https://asy-tk.ru/.well-known/security.txt
+Policy: https://asy-tk.ru/privacy.html

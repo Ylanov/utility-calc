@@ -4,7 +4,33 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#1a73e8">
-    <title>Единая Платформа Управления</title>
+
+    <!-- ============================================================
+         SEO meta tags
+         ============================================================ -->
+    <title>ЖКХ Лидер — Личный кабинет жильца общежития | asy-tk.ru</title>
+    <meta name="description" content="Личный кабинет жильца общежития: подача показаний счётчиков (ГВС, ХВС, электричество), просмотр квитанций ЖКХ, история платежей, заказ справки ФЛС онлайн.">
+    <meta name="keywords" content="личный кабинет ЖКХ, показания счётчиков, квитанции, общежитие, ФЛС, справка, asy-tk">
+    <meta name="author" content="ЖКХ Лидер">
+    <meta name="robots" content="index, follow">
+    <link rel="canonical" href="https://asy-tk.ru/portal.html">
+
+    <!-- Open Graph для соц.сетей -->
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="ЖКХ Лидер — Личный кабинет жильца">
+    <meta property="og:description" content="Подача показаний счётчиков, квитанции, справки онлайн для жильцов общежитий.">
+    <meta property="og:url" content="https://asy-tk.ru/portal.html">
+    <meta property="og:site_name" content="ЖКХ Лидер">
+    <meta property="og:locale" content="ru_RU">
+    <meta property="og:image" content="https://asy-tk.ru/app/icons/icon.svg">
+
+    <!-- Twitter Card (для предпросмотров в Twitter / других платформах) -->
+    <meta name="twitter:card" content="summary">
+    <meta name="twitter:title" content="ЖКХ Лидер — Личный кабинет жильца">
+    <meta name="twitter:description" content="Подача показаний счётчиков и оплата ЖКХ онлайн.">
+
+    <link rel="icon" type="image/svg+xml" href="/app/icons/icon.svg">
+    <link rel="apple-touch-icon" href="/app/icons/icon.svg">
 
     <!-- Быстрая загрузка шрифтов -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -14,6 +40,53 @@
 
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="style.css">
+
+    <!-- ============================================================
+         Структурированные данные (schema.org JSON-LD) — для поисковиков.
+         Organization + WebSite — базовый набор для индексации.
+         ============================================================ -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Organization",
+          "@id": "https://asy-tk.ru/#organization",
+          "name": "ЖКХ Лидер",
+          "url": "https://asy-tk.ru/",
+          "logo": "https://asy-tk.ru/app/icons/icon.svg",
+          "description": "Информационная система управления коммунальными услугами общежитий: подача показаний счётчиков, расчёт квитанций, справки.",
+          "areaServed": "RU",
+          "contactPoint": {
+            "@type": "ContactPoint",
+            "email": "privacy@asy-tk.ru",
+            "contactType": "customer service",
+            "availableLanguage": "ru"
+          }
+        },
+        {
+          "@type": "WebSite",
+          "@id": "https://asy-tk.ru/#website",
+          "url": "https://asy-tk.ru/",
+          "name": "ЖКХ Лидер",
+          "publisher": { "@id": "https://asy-tk.ru/#organization" },
+          "inLanguage": "ru-RU"
+        },
+        {
+          "@type": "WebApplication",
+          "name": "ЖКХ Лидер — Личный кабинет",
+          "operatingSystem": "Any",
+          "applicationCategory": "UtilitiesApplication",
+          "browserRequirements": "Requires JavaScript. Supports modern browsers (Chrome, Firefox, Safari, Edge).",
+          "offers": {
+            "@type": "Offer",
+            "price": "0",
+            "priceCurrency": "RUB"
+          }
+        }
+      ]
+    }
+    </script>
 </head>
 <body class="portal-body">
     <div class="portal-container">
