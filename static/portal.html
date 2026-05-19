@@ -146,28 +146,18 @@
             <p>Выберите информационную систему для начала работы</p>
         </header>
 
-        <div class="portal-grid">
-            <!-- Кнопка 1: ЖКХ Лидер -->
+        <!-- Раньше тут было 2 карточки: ЖКХ Лидер + СТРОБ Арсенал.
+             СТРОБ Арсенал отделён в отдельный проект (frontend перенесён
+             в /archive/arsenal-frontend/, backend остаётся в /api/arsenal/*
+             до полного переезда). На лендинге показываем только ЖКХ Лидер. -->
+        <div class="portal-grid" style="grid-template-columns: 1fr; max-width: 380px; margin: 0 auto;">
             <a href="login.html" class="portal-card">
                 <div class="card-icon" style="color: var(--primary-color);">
                     <i class="fa-solid fa-building-user"></i>
                 </div>
                 <div class="card-title">ЖКХ Лидер</div>
-                <div class="card-desc">Управление жилфондом, тарифами и начислениями</div>
+                <div class="card-desc">Личный кабинет жильца общежития: показания, квитанции, справки</div>
             </a>
-
-            <!-- Кнопка 2: СТРОБ Арсенал -->
-            <a href="arsenal_login.html" class="portal-card">
-                <div class="card-icon" style="color: var(--danger-color);">
-                    <i class="fa-solid fa-shield-halved"></i>
-                </div>
-                <div class="card-title">СТРОБ Арсенал</div>
-                <div class="card-desc">Автоматизированная система ведения номерного учета вооружения</div>
-            </a>
-
-            <!-- Раньше здесь была карточка «СТРОБ ГСМ» (модуль учёта
-                 горюче-смазочных материалов). Модуль удалён из платформы
-                 в apr 2026, карточка убрана. -->
         </div>
 
         <!-- ============================================================
