@@ -896,36 +896,53 @@
                             </div>
 
                             <!-- ==============================================
-                                 ГДЕ ПРИМЕНЯЕТСЯ + МАССОВАЯ ПРИВЯЗКА
-                                 Видно сколько комнат/жильцов работает на этом
-                                 тарифе и можно одной кнопкой назначить тариф
-                                 целому общежитию.
+                                 ГДЕ ПРИМЕНЯЕТСЯ — сколько комнат/жильцов
+                                 использует этот тариф. Оформлено как .tcard
+                                 для согласованности.
                                  ============================================== -->
-                            <div id="tariffUsageBlock" style="margin-top:18px; padding:14px; border:1px solid var(--border-color); border-radius:10px; display:none;">
-                                <h4 style="margin:0 0 10px 0; font-size:13px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.5px;">
-                                    <i class="fa-solid fa-sitemap"></i> Где применяется этот тариф
-                                </h4>
-                                <div id="tariffUsageStats" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:10px; margin-bottom:12px;"></div>
-                                <div id="tariffUsageDetails" style="font-size:12px;"></div>
+                            <div id="tariffUsageBlock" class="tcard" style="--t-accent:#3b82f6; --t-accent-bg:rgba(59,130,246,0.07); display:none;">
+                                <div class="tcard-head">
+                                    <span class="tcard-icon"><i class="fa-solid fa-sitemap"></i></span>
+                                    <div>
+                                        <div class="tcard-title">Где применяется этот тариф</div>
+                                        <div class="tcard-subtitle">Комнаты и жильцы, к которым тариф фактически применяется</div>
+                                    </div>
+                                </div>
+                                <div class="tcard-body">
+                                    <div id="tariffUsageStats" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:10px; margin-bottom:12px;"></div>
+                                    <div id="tariffUsageDetails" style="font-size:12px;"></div>
+                                </div>
                             </div>
 
-                            <div style="margin-top:18px; padding:14px; border:1px solid var(--border-color); border-radius:10px; background:#f0fdf4;">
-                                <h4 style="margin:0 0 10px 0; font-size:13px; color:#065f46; text-transform:uppercase; letter-spacing:.5px;">
-                                    <i class="fa-solid fa-building-circle-check"></i> Применить ко всему общежитию
-                                </h4>
-                                <p class="hint-text" style="font-size:12px; margin:0 0 10px 0;">
-                                    Выбранный тариф будет назначен всем комнатам общежития. Комнатный тариф имеет приоритет над персональным тарифом жильца.
-                                </p>
-                                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-                                    <select id="assignDormSelect" style="flex:1; min-width:200px; padding:7px 10px; font-size:13px;">
-                                        <option value="">Выберите общежитие…</option>
-                                    </select>
-                                    <button type="button" id="btnAssignDorm" class="action-btn success-btn" style="padding:7px 14px; font-size:13px;">
-                                        <i class="fa-solid fa-link"></i> Привязать
-                                    </button>
-                                    <button type="button" id="btnUnassignDorm" class="action-btn secondary-btn" style="padding:7px 14px; font-size:13px;" title="Снять комнатный тариф — жильцы вернутся на персональный или дефолтный">
-                                        <i class="fa-solid fa-link-slash"></i> Снять
-                                    </button>
+                            <!-- ==============================================
+                                 «Применить ко всему общежитию» — оформлено
+                                 как .tcard для согласованности с другими
+                                 секциями (вода/электр/фикс/койка/сезонность).
+                                 ============================================== -->
+                            <div class="tcard" style="--t-accent:#0891b2; --t-accent-bg:rgba(8,145,178,0.07);">
+                                <div class="tcard-head">
+                                    <span class="tcard-icon"><i class="fa-solid fa-building-circle-check"></i></span>
+                                    <div>
+                                        <div class="tcard-title">Применить ко всему общежитию</div>
+                                        <div class="tcard-subtitle">Тариф будет назначен всем комнатам выбранного общежития</div>
+                                    </div>
+                                </div>
+                                <div class="tcard-body">
+                                    <p class="hint-text" style="margin:0 0 12px 0; font-size:12px;">
+                                        Комнатный тариф имеет <b>приоритет</b> над персональным тарифом жильца.
+                                        «Снять» удалит привязку — жильцы вернутся на персональный/дефолтный.
+                                    </p>
+                                    <div style="display:grid; grid-template-columns:1fr auto auto; gap:8px; align-items:stretch;">
+                                        <select id="assignDormSelect" style="height:40px; padding:0 12px; font-size:13.5px; border-radius:8px; border:1px solid var(--border-color); background:var(--bg-card);">
+                                            <option value="">Выберите общежитие…</option>
+                                        </select>
+                                        <button type="button" id="btnAssignDorm" class="action-btn success-btn" style="height:40px; padding:0 18px; font-size:13.5px; font-weight:600; border-radius:8px; display:inline-flex; align-items:center; gap:6px;">
+                                            <i class="fa-solid fa-link"></i> Привязать
+                                        </button>
+                                        <button type="button" id="btnUnassignDorm" class="action-btn secondary-btn" style="height:40px; padding:0 16px; font-size:13.5px; border-radius:8px; display:inline-flex; align-items:center; gap:6px;" title="Снять комнатный тариф — жильцы вернутся на персональный или дефолтный">
+                                            <i class="fa-solid fa-link-slash"></i> Снять
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
 

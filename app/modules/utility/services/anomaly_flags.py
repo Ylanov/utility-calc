@@ -38,7 +38,35 @@ SOURCE_MARKERS: frozenset[str] = frozenset({
     "ONE_TIME_CHARGE",
     "ONE_TIME_CHARGE_BASELINE",
     "PENDING",
+    # Маркеры авто-начисления невозвратчикам (см. billing.close_current_period).
+    # Не аномалии — это нормальное поведение системы при пропуске жильцом подачи.
+    "AUTO_AVG",
+    "AUTO_AVG_FALLBACK",
+    "AUTO_NORM_SANCTION",
+    "AUTO_NO_HISTORY",
+    "MANUAL_RECEIPT",     # admin создал квитанцию вручную (без подачи показаний)
+    "POST_SKIP_RECALC",   # маркер reading'а прошедшего retroactive recalc
 })
+
+# Маркеры-префиксы (data-patches помеченные датой). Используется
+# is_source_marker() для prefix-проверки, потому что SOURCE_MARKERS — frozenset
+# и не поддерживает шаблоны. Эти маркеры — следы ручной коррекции данных
+# админом, не аномалии-инциденты.
+_SOURCE_PREFIXES: tuple[str, ...] = (
+    "BASELINE_LEGACY",   # BASELINE_LEGACY_FALSE_POSITIVE_PATCHED_2026_05_20,
+                         # BASELINE_LEGACY_APR_2026_MASS_PATCH и т.д.
+    "RECALCED_",         # данные пересчитаны (через retroactive recalc)
+)
+
+
+def is_source_marker(token: str) -> bool:
+    """True если токен — служебный source-маркер (включая prefix-патчи)."""
+    if not token:
+        return False
+    t = token.strip()
+    if t in SOURCE_MARKERS:
+        return True
+    return any(t.startswith(p) for p in _SOURCE_PREFIXES)
 
 
 def real_flags(flags_csv: str | None) -> list[str]:
@@ -48,14 +76,20 @@ def real_flags(flags_csv: str | None) -> list[str]:
 
         real_flags("AUTO_GENERATED,SPIKE_HOT,PENDING") -> ["SPIKE_HOT"]
         real_flags("AUTO_GENERATED")                   -> []
+        real_flags("MANUAL_RECEIPT")                   -> []
+        real_flags("BASELINE_LEGACY_APR_2026")         -> []
+        real_flags("SPIKE_HOT|RECALCED_2026-05-20")    -> ["SPIKE_HOT"]
         real_flags(None)                               -> []
     """
     if not flags_csv:
         return []
+    # CSV-формат: разделитель ','. Также поддерживаем '|' (legacy формат
+    # из skip_recalc, где "AUTO_AVG|RECALCED_2026-05-20").
+    raw = flags_csv.replace("|", ",")
     return [
         token.strip()
-        for token in flags_csv.split(",")
-        if token.strip() and token.strip() not in SOURCE_MARKERS
+        for token in raw.split(",")
+        if token.strip() and not is_source_marker(token.strip())
     ]
 
 

@@ -38,7 +38,9 @@ from app.modules.utility.models import (
 )
 from app.modules.utility.routers.admin_dashboard import write_audit_log
 from app.modules.utility.services.analyzer_config import config, dismissals
-from app.modules.utility.services.anomaly_flags import SOURCE_MARKERS as _SOURCE_MARKERS
+from app.modules.utility.services.anomaly_flags import (
+    is_source_marker as _is_source_marker,
+)
 
 router = APIRouter(prefix="/api/admin/analyzer", tags=["Admin Analyzer"])
 
@@ -82,10 +84,12 @@ async def analyzer_dashboard(
         if not flags_str or flags_str == "PENDING":
             continue
         # Оставляем только реальные флаги, без source-маркеров.
+        # is_source_marker умеет матчить prefix-патчи типа BASELINE_LEGACY_*.
+        # Также поддерживает разделитель '|' (skip_recalc формат).
         real_flags = [
             f.strip()
-            for f in flags_str.split(",")
-            if f.strip() and f.strip() not in _SOURCE_MARKERS
+            for f in flags_str.replace("|", ",").split(",")
+            if f.strip() and not _is_source_marker(f.strip())
         ]
         if not real_flags:
             continue  # Только маркеры источника — это не аномалия.
@@ -716,9 +720,9 @@ async def get_flag_heatmap(
         if not raw_flags or not uid:
             continue
         dorm = user_dorm.get(uid, "—")
-        for token in raw_flags.split(","):
+        for token in raw_flags.replace("|", ",").split(","):
             t = token.strip()
-            if not t or t in _SOURCE_MARKERS:
+            if not t or _is_source_marker(t):
                 continue
             cells[(dorm, t)] += 1
             flags_set.add(t)
@@ -1101,12 +1105,13 @@ def _severity_from_score(score: int) -> str:
 
 def _pick_primary_flag(flags_csv: str | None) -> str | None:
     """Из строки 'FLAG1,FLAG2,SOURCE_MARKER' выбираем первый реальный флаг
-    (не source-marker)."""
+    (не source-marker). Поддерживаем prefix-патчи (BASELINE_LEGACY_*) и
+    разделитель '|' (используется skip_recalc для маркеров RECALCED_*)."""
     if not flags_csv:
         return None
-    for token in flags_csv.split(","):
+    for token in flags_csv.replace("|", ",").split(","):
         t = token.strip()
-        if t and t not in _SOURCE_MARKERS:
+        if t and not _is_source_marker(t):
             return t
     return None
 
