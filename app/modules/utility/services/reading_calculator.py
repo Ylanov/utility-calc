@@ -88,6 +88,7 @@ def compute_reading_breakdown(
             "sanity_warning": None,
             "is_baseline": True,
             "meter_decreased": False,
+            "prev_is_auto": False,
         }
 
     p_hot = _to_dec(prev_reading.hot_water)
@@ -98,16 +99,31 @@ def compute_reading_breakdown(
     cur_cold = _to_dec(current_cold)
     cur_elect = _to_dec(current_elect)
 
-    # Дельты с защитой от отрицательных (счётчик не должен уменьшаться,
-    # но на исторических данных бывает — не падаем, просто ставим 0).
-    # ВАЖНО (инцидент мая 2026, жилец Шиян): отрицательная дельта —
-    # это «счётчик упал», физически невозможное событие. Должна сигналить
-    # аномалия + блокироваться auto-approve. Возвращаем флаг meter_decreased
-    # вверх, caller решает что делать (gsheets_sync.promote: status=conflict;
-    # admin_readings_approve: уже валидатор ловит).
-    meter_decreased = (
+    # Дельты с защитой от отрицательных. Различаем 2 случая:
+    #
+    # 1) prev — manual-подача (или GSHEETS_IMPORT/AUTO/без флага). Если cur<prev,
+    #    это «счётчик упал» — физически невозможно. meter_decreased=True,
+    #    caller (gsheets promote) переводит в conflict.
+    #
+    # 2) prev — AUTO_AVG/AUTO_NORM_SANCTION/AUTO_NO_HISTORY (мы САМИ начислили
+    #    по среднему, потому что жилец пропустил месяц). Если cur<prev — это
+    #    значит «AUTO переоценил». Это НЕ баг данных, нужно принять и
+    #    пересчитать (см. skip_recalc.py). meter_decreased=False, но возвращаем
+    #    prev_is_auto=True — caller вызовет ретроактивный пересчёт.
+    AUTO_FLAGS = (
+        "AUTO_AVG", "AUTO_NORM_SANCTION",
+        "AUTO_AVG_FALLBACK", "AUTO_NO_HISTORY",
+        "AUTO_GENERATED",  # legacy
+    )
+    prev_flags = (prev_reading.anomaly_flags or "").upper()
+    prev_is_auto = any(f in prev_flags for f in AUTO_FLAGS)
+
+    raw_decreased = (
         cur_hot < p_hot or cur_cold < p_cold or cur_elect < p_elect
     )
+    # meter_decreased сигналим ТОЛЬКО если prev manual, чтобы автокоррекция
+    # после возврата (см. услугу skip_recalc) не блокировалась.
+    meter_decreased = raw_decreased and not prev_is_auto
     d_hot = max(ZERO, cur_hot - p_hot)
     d_cold = max(ZERO, cur_cold - p_cold)
     d_elect = max(ZERO, cur_elect - p_elect)
@@ -154,9 +170,12 @@ def compute_reading_breakdown(
         "total_205":        total_205,
         "sanity_warning":   costs.get("sanity_warning"),
         "is_baseline":      False,
-        # Сигнал «счётчик упал». Caller (gsheets promote) использует чтобы
-        # НЕ авто-апрувить такие подачи, а отправить в conflict для разбора.
+        # Сигнал «счётчик упал» — только когда prev manual (см. AUTO_FLAGS).
+        # gsheets promote по этому флагу переводит в conflict для ручного разбора.
         "meter_decreased":  meter_decreased,
+        # prev_is_auto=True значит prev был AUTO_AVG / AUTO_NORM_SANCTION и т.п.
+        # Caller может запустить retroactive recalc (skip_recalc.py).
+        "prev_is_auto":     prev_is_auto,
     }
 
 
