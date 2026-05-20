@@ -260,6 +260,13 @@ class Tariff(Base):
     # для long-term defaulters.
     norm_coefficient = Column(Numeric(5, 2), default=3.0, nullable=False)
 
+    # Тип тарифа: 'family' (для семей и обычных жильцов с счётчиками) или
+    # 'singles' (для коммунальных квартир с холостяками — billing_mode=per_capita).
+    # Метка для UI (другой цвет в селекторе) и отчётов «Жильцы → Холостяки».
+    # На расчёт НЕ влияет — расчёт смотрит на user.billing_mode + tariff.per_capita_amount.
+    # См. миграцию tariffs_type_001_family_singles.
+    tariff_type = Column(String(20), default="family", nullable=False, server_default="family")
+
     # Дата вступления в силу. Если задана в будущем — тариф "запланирован" (is_active=False)
     # и автоматически активируется Celery-задачей в эту дату.
     effective_from = Column(DateTime, nullable=True, index=True)

@@ -32,7 +32,7 @@ import time
 from typing import Any
 
 from fastapi import APIRouter, Depends, Response
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -226,6 +226,74 @@ def _send_sentry(checks: list[dict]) -> None:
         # Sentry не настроен или нет интернета — это OK, deep-health не должен
         # сам падать только потому что Sentry недоступен.
         logger.warning("[HEALTH-DEEP] Sentry capture failed (not critical)")
+
+
+@router.get("/singles-apartments")
+async def list_singles_apartments(
+    current_user: User = Depends(allow_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Список квартир-коммуналок где живут ≥2 холостяка.
+
+    Запрос мая 2026: «в одной квартире могут жить 2-3 холостяка,
+    нужно вести учёт отдельно».
+
+    Группируем активных жильцов с billing_mode='per_capita' по комнате,
+    оставляем те где count ≥ 2. Возвращаем:
+      [
+        {
+          "room_id": 154, "room_number": "212", "dormitory_name": "4дв.стр.5",
+          "singles_count": 3, "tariff_ids": [1],
+          "users": [
+            {"id": 232, "username": "Шиян ..."},
+            {"id": ..., "username": "..."},
+            ...
+          ]
+        },
+        ...
+      ]
+
+    Используется в UI Жильцы → новая вкладка/модалка «Квартиры холостяков».
+    """
+    from app.modules.utility.models import Room
+    rooms_with_singles = (await db.execute(
+        select(
+            User.room_id,
+            Room.room_number, Room.dormitory_name,
+            func.count(User.id).label("singles_count"),
+            func.array_agg(User.id).label("user_ids"),
+            func.array_agg(User.username).label("usernames"),
+            func.array_agg(User.tariff_id).label("tariff_ids"),
+        )
+        .join(Room, Room.id == User.room_id)
+        .where(
+            User.is_deleted.is_(False),
+            User.role == "user",
+            User.billing_mode == "per_capita",
+            User.room_id.is_not(None),
+        )
+        .group_by(User.room_id, Room.room_number, Room.dormitory_name)
+        .having(func.count(User.id) >= 2)
+        .order_by(func.count(User.id).desc())
+    )).all()
+
+    return {
+        "total": len(rooms_with_singles),
+        "apartments": [
+            {
+                "room_id": r[0],
+                "room_number": r[1],
+                "dormitory_name": r[2],
+                "singles_count": r[3],
+                "users": [
+                    {"id": uid, "username": uname}
+                    for uid, uname in zip(r[4], r[5])
+                ],
+                "tariff_ids": list(set(t for t in (r[6] or []) if t)),
+            }
+            for r in rooms_with_singles
+        ],
+    }
 
 
 @router.get("/health/deep")

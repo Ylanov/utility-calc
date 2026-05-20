@@ -285,16 +285,21 @@ export const TariffsModule = {
             const opt = document.createElement('option');
             opt.value = t.id;
 
-            // ИСПРАВЛЕНИЕ: Показываем количество жильцов на тарифе в селекторе.
-            // Администратор видит "Базовый тариф (12 чел.)" вместо просто "Базовый тариф".
-            // Это критично перед редактированием или удалением — сразу видно масштаб влияния.
+            // Префикс для singles-тарифов (легко отличить визуально).
+            const isSingles = (t.tariff_type === 'singles');
+            const prefix = isSingles ? '👤 ' : '🏠 ';
+
+            // Показываем количество жильцов на тарифе.
             if (t.user_count !== undefined && t.user_count > 0) {
-                opt.textContent = `${t.name} (${t.user_count} чел.)`;
+                opt.textContent = `${prefix}${t.name} (${t.user_count} чел.)`;
             } else if (t.user_count !== undefined) {
-                opt.textContent = `${t.name} (нет жильцов)`;
+                opt.textContent = `${prefix}${t.name} (нет жильцов)`;
             } else {
-                opt.textContent = t.name;
+                opt.textContent = `${prefix}${t.name}`;
             }
+            // Также подкрашиваем option (работает только в Firefox, в Chrome игнор —
+            // но префикс-эмодзи всё равно отличает).
+            if (isSingles) opt.style.color = '#7c3aed';
 
             this.dom.selector.appendChild(opt);
         });
@@ -343,6 +348,14 @@ export const TariffsModule = {
                 : '3.00';
         }
 
+        // Тип тарифа: family/singles (см. tariffs_type_001_family_singles).
+        // Старые тарифы без поля → 'family' по default.
+        const ttype = tariff.tariff_type || 'family';
+        const radioFam = document.getElementById('t_type_family');
+        const radioSng = document.getElementById('t_type_singles');
+        if (radioFam) radioFam.checked = (ttype === 'family');
+        if (radioSng) radioSng.checked = (ttype === 'singles');
+
         // Сезонность per-tariff (heating + hw_heating). См. миграцию
         // tariffs_seasonal_002_per_tariff. heating_active=true + даты=null →
         // круглогодично. Даты приходят как "YYYY-MM-DD" из сервера.
@@ -386,6 +399,12 @@ export const TariffsModule = {
         // norm_coefficient — дефолт 3.00 для нового тарифа.
         const coefInp = document.getElementById('t_norm_coef');
         if (coefInp) coefInp.value = '3.00';
+
+        // Тип тарифа — default 'family' для нового.
+        const radioFam = document.getElementById('t_type_family');
+        const radioSng = document.getElementById('t_type_singles');
+        if (radioFam) radioFam.checked = true;
+        if (radioSng) radioSng.checked = false;
 
         // Сезонность по умолчанию — круглогодично активна.
         ['t_heating_active', 't_hw_heating_active'].forEach(id => {
@@ -658,6 +677,10 @@ export const TariffsModule = {
         data.hw_heating_active = cb('t_hw_heating_active');
         data.hw_heating_season_start = dt('t_hw_heating_start');
         data.hw_heating_season_end = dt('t_hw_heating_end');
+
+        // Тип тарифа (radio: family / singles).
+        const ttypeRadio = document.querySelector('input[name="t_type"]:checked');
+        data.tariff_type = ttypeRadio ? ttypeRadio.value : 'family';
 
         setLoading(btnSubmit, true, 'Сохранение...');
 

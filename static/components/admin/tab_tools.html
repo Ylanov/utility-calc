@@ -403,6 +403,31 @@
                                 <i class="fa-solid fa-clock"></i> <strong>Запланированный тариф:</strong> будет автоматически активирован в указанную дату. До этого момента он <b>не применяется</b> в расчётах.
                             </div>
 
+                            <!-- =============================================
+                                 ТИП ТАРИФА: family / singles
+                                 Запрос мая 2026: в общежитиях встречаются
+                                 коммунальные квартиры где живут 2-3 холостяка.
+                                 У них отдельные тарифы (per_capita-mode).
+                                 См. миграцию tariffs_type_001_family_singles.
+                                 ============================================= -->
+                            <div style="display:flex; gap:10px; margin-bottom:18px; padding:10px 14px; border:1px solid var(--border-color); border-radius:10px; background:var(--bg-page);">
+                                <span style="font-weight:600; font-size:13px; color:var(--text-secondary); align-self:center;">
+                                    <i class="fa-solid fa-tag"></i> Назначение тарифа:
+                                </span>
+                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer; padding:6px 12px; border:1px solid var(--border-color); border-radius:8px; background:var(--bg-card);">
+                                    <input type="radio" name="t_type" id="t_type_family" value="family" checked
+                                           style="accent-color:#059669;">
+                                    <i class="fa-solid fa-people-roof" style="color:#059669;"></i>
+                                    <span style="font-size:13px; font-weight:500;">Семейный (по счётчикам)</span>
+                                </label>
+                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer; padding:6px 12px; border:1px solid var(--border-color); border-radius:8px; background:var(--bg-card);">
+                                    <input type="radio" name="t_type" id="t_type_singles" value="singles"
+                                           style="accent-color:#7c3aed;">
+                                    <i class="fa-solid fa-user-tie" style="color:#7c3aed;"></i>
+                                    <span style="font-size:13px; font-weight:500;">Для холостяков (койко-место)</span>
+                                </label>
+                            </div>
+
                             <h4 style="margin: 18px 0 14px 0; font-size: 13px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; font-weight: 700;">
                                 <i class="fa-solid fa-coins"></i> Ставки тарифа
                             </h4>

@@ -195,6 +195,8 @@ class TariffSchema(BaseModel):
     # Множитель норматива для не-подающих 4+ мес. (default 3.0). См.
     # tariffs_norm_001_coefficient.
     norm_coefficient: Decimal = Decimal("3.00")
+    # Тип тарифа: 'family' / 'singles'. См. tariffs_type_001_family_singles.
+    tariff_type: str = "family"
     # Дата вступления в силу (необязательная)
     effective_from: Optional[datetime] = None
     # ==============================================================
