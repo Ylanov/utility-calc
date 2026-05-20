@@ -5,7 +5,6 @@ import zipfile
 import logging
 import tempfile
 import asyncio
-from contextlib import contextmanager
 from datetime import datetime, timezone
 
 from app.core.time_utils import utcnow
@@ -18,7 +17,14 @@ from fastapi_cache.backends.redis import RedisBackend
 from redis import Redis
 
 from app.worker import celery
-from app.core.database import SessionLocalSync
+# sync_db_session жил исторически тут. Перенесли в app.core.database, чтобы
+# tariff_cache мог импортировать его без circular dep (см. инцидент мая 2026:
+# tariff_cache хотел `from app.core.database import sync_db_session`, но
+# функция была только здесь → ImportError → cache навсегда пустой → все
+# promote_auto_approved падали с no_active_tariff). Реэкспортируем имя для
+# обратной совместимости — старые импорты `from app.modules.utility.tasks
+# import sync_db_session` продолжают работать.
+from app.core.database import SessionLocalSync, sync_db_session  # noqa: F401
 from app.core.config import settings
 from app.modules.utility.models import MeterReading, Tariff, BillingPeriod, Adjustment, SystemSetting, User
 from app.modules.utility.services.pdf_generator import generate_receipt_pdf
@@ -32,29 +38,6 @@ logger = logging.getLogger(__name__)
 def get_sync_db():
     # Сохранён для обратной совместимости. В новом коде используй sync_db_session().
     return SessionLocalSync()
-
-
-@contextmanager
-def sync_db_session():
-    """
-    Контекст-менеджер для sync-сессии внутри Celery-задач.
-
-    Гарантирует:
-    - rollback при любом исключении (SQLAlchemy session leak не возникнет);
-    - close в finally (возврат соединения в пул/закрытие).
-
-    Раньше в задачах был паттерн `db = None; try: db = get_sync_db(); ...`
-    — при redeploy или неожиданном исключении в get_sync_db() сессия не
-    закрывалась, и через 2-3 часа пиковой нагрузки pool исчерпывался.
-    """
-    session = SessionLocalSync()
-    try:
-        yield session
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
 
 @celery.task(

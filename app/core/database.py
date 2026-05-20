@@ -1,6 +1,7 @@
 # app/core/database.py
 
 import logging
+from contextlib import contextmanager
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy import create_engine
@@ -89,6 +90,36 @@ SessionLocalSync = sessionmaker(
     autocommit=False,
     autoflush=False
 )
+
+
+@contextmanager
+def sync_db_session():
+    """Контекст-менеджер sync-сессии для Celery / helper-модулей.
+
+    Используется в местах, где нет async event loop:
+      - tariff_cache._ensure_loaded (lazy-загрузка тарифов из БД)
+      - app.modules.utility.tasks.sync_db_session (тот же контекст-менеджер,
+        исторически продублирован — оба импорта работают)
+      - app.scripts.* — оффлайн-утилиты пересчёта
+
+    Гарантирует rollback при исключении и close в finally — без этого
+    sessions «утекают» из пула при необработанных ошибках в задачах.
+
+    Раньше эта функция была ТОЛЬКО в app/modules/utility/tasks.py, а
+    tariff_cache.py пытался импортировать её отсюда → ImportError тихо
+    проглатывался except'ом и кеш тарифов навсегда оставался пустым.
+    Инцидент мая 2026 (Левшин + 23 жильца): все promote_auto_approved
+    возвращали no_active_tariff, потому что get_effective_tariff()
+    смотрел в пустой кеш.
+    """
+    session = SessionLocalSync()
+    try:
+        yield session
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 async def get_db():
