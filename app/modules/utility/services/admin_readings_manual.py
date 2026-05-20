@@ -17,9 +17,20 @@ from app.modules.utility.services.anomaly_detector import check_reading_for_anom
 ZERO = Decimal("0.00")
 
 async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
-    """Сохранение черновика бухгалтером вручную."""
-    active_period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))).scalars().first()
-    if not active_period: raise HTTPException(status_code=400, detail="Расчетный период закрыт.")
+    """Сохранение черновика бухгалтером вручную.
+
+    Если data.period_id задан — используем его (для ввода за прошлый
+    месяц). Если None — берём текущий active_period (back-compat).
+    """
+    if data.period_id is not None:
+        # Админ ввёл за конкретный период. Проверяем что такой существует.
+        active_period = await db.get(BillingPeriod, data.period_id)
+        if active_period is None:
+            raise HTTPException(status_code=400, detail=f"Период id={data.period_id} не найден.")
+    else:
+        active_period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))).scalars().first()
+        if not active_period:
+            raise HTTPException(status_code=400, detail="Расчетный период закрыт.")
 
     user = (await db.execute(
         select(User).options(selectinload(User.room)).where(User.id == data.user_id))).scalars().first()

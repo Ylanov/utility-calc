@@ -38,6 +38,8 @@ export const ManualModule = {
             lblPrevCold: document.getElementById('manPrevCold'),
             lblPrevElect: document.getElementById('manPrevElect'),
 
+            periodSelect: document.getElementById('manualPeriodSelect'),
+            periodWarn: document.getElementById('manualPeriodWarn'),
             btnSubmit: document.getElementById('btnSaveManual')
         };
     },
@@ -56,14 +58,71 @@ export const ManualModule = {
             this.dom.form.addEventListener('submit', (e) => this.handleSubmit(e));
         }
 
-        // Автоматическая замена запятой на точку для скорости ввода с numpad
+        // Автоматическая замена запятой на точку + auto-format 5+3 на blur.
+        // Аналогично client-readings.js. Админ вводит «1.4» → получает
+        // «00001.400» — единый формат с жильцом.
         ['inHot', 'inCold', 'inElect'].forEach(key => {
-            if (this.dom[key]) {
-                this.dom[key].addEventListener('input', function() {
-                    this.value = this.value.replace(',', '.');
-                });
-            }
+            const inp = this.dom[key];
+            if (!inp) return;
+            inp.addEventListener('input', () => {
+                let v = inp.value.replace(',', '.').replace(/[^\d.]/g, '');
+                const firstDot = v.indexOf('.');
+                if (firstDot !== -1) {
+                    v = v.slice(0, firstDot + 1) + v.slice(firstDot + 1).replace(/\./g, '');
+                }
+                inp.value = v;
+            });
+            inp.addEventListener('blur', () => {
+                if (inp.dataset.strictFormat !== '5_3') return;
+                const raw = (inp.value || '').trim();
+                if (!raw) return;
+                const m = raw.match(/^(\d{1,5})(?:\.(\d{0,3}))?$/);
+                if (!m) return;
+                inp.value = m[1].padStart(5, '0') + '.' + (m[2] || '').padEnd(3, '0');
+            });
         });
+
+        // Period dropdown — загружаем при первом открытии секции.
+        if (this.dom.periodSelect) {
+            this.dom.periodSelect.addEventListener('change', () => this._updatePeriodWarn());
+            this._loadPeriods();
+        }
+    },
+
+    async _loadPeriods() {
+        if (!this.dom.periodSelect) return;
+        try {
+            const periods = await api.get('/admin/periods/history');
+            // Сортируем: сначала активный, потом по created_at desc.
+            const items = Array.isArray(periods) ? periods : (periods.items || []);
+            items.sort((a, b) => {
+                if (a.is_active && !b.is_active) return -1;
+                if (!a.is_active && b.is_active) return 1;
+                return (b.id || 0) - (a.id || 0);
+            });
+            // Сохраняем дефолт-option «текущий».
+            const cur = this.dom.periodSelect.querySelector('option[value=""]');
+            this.dom.periodSelect.innerHTML = '';
+            if (cur) this.dom.periodSelect.appendChild(cur);
+            items.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = String(p.id);
+                opt.textContent = p.name + (p.is_active ? ' (активный)' : ' (закрытый)');
+                this.dom.periodSelect.appendChild(opt);
+            });
+            this._updatePeriodWarn();
+        } catch (e) {
+            console.warn('manual: не удалось загрузить периоды:', e.message);
+        }
+    },
+
+    _updatePeriodWarn() {
+        if (!this.dom.periodWarn || !this.dom.periodSelect) return;
+        const v = this.dom.periodSelect.value;
+        // Если выбран НЕ active (т.е. явно прошлый период) — показываем warning.
+        const opt = this.dom.periodSelect.options[this.dom.periodSelect.selectedIndex];
+        const isPast = v && opt && !opt.textContent.includes('(активный)');
+        this.dom.periodWarn.style.display = isPast ? 'block' : 'none';
     },
 
     async searchUsers(query) {
@@ -183,8 +242,12 @@ export const ManualModule = {
             user_id: parseInt(this.state.selectedUserId),
             hot_water: parseFloat(this.dom.inHot.value),
             cold_water: parseFloat(this.dom.inCold.value),
-            electricity: parseFloat(this.dom.inElect.value)
+            electricity: parseFloat(this.dom.inElect.value),
         };
+        // Если выбран конкретный период — передаём period_id.
+        // Пустая строка → не передаём (back-compat: будет использован active).
+        const pid = this.dom.periodSelect?.value;
+        if (pid) payload.period_id = parseInt(pid);
 
         try {
             await api.post('/admin/readings/manual', payload);

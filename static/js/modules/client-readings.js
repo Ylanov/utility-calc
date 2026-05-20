@@ -54,36 +54,59 @@ export const ClientReadings = {
         }
 
         // Автозамена запятой на точку, валидация на лету, auto-format на blur.
+        // + sync визуального табло (8 ячеек: 5 чёрных + 3 красных).
+        const syncDisplay = (inputEl) => {
+            const display = document.querySelector(
+                `.meter-display[data-display-for="${inputEl.id}"]`
+            );
+            if (!display) return;
+            // Канонизируем значение в 8-цифровое представление для отображения.
+            // Алгоритм: убираем не-цифры/точку, разбиваем по точке, обрезаем
+            // до 5 целых + 3 дробных, padStart/padEnd для отображения.
+            const raw = (inputEl.value || '').replace(',', '.');
+            const m = raw.match(/^(\d{0,5})(?:\.(\d{0,3}))?/);
+            const intPart = (m && m[1] ? m[1] : '').padStart(5, '0').slice(-5);
+            const fracPart = (m && m[2] ? m[2] : '').padEnd(3, '0').slice(0, 3);
+            const all = intPart + fracPart;  // 8 chars
+            display.querySelectorAll('.meter-cell').forEach((cell, i) => {
+                cell.textContent = all[i] || '0';
+            });
+        };
+
         ['hot', 'cold', 'elect'].forEach(key => {
             const input = this.dom.inputs[key];
             if (input) {
                 input.addEventListener('input', (e) => {
-                    // Разрешаем только цифры и одну точку — фильтр на лету.
                     let v = e.target.value.replace(',', '.');
                     v = v.replace(/[^\d.]/g, '');
-                    // Только одна точка (берём первую).
                     const firstDot = v.indexOf('.');
                     if (firstDot !== -1) {
                         v = v.slice(0, firstDot + 1) + v.slice(firstDot + 1).replace(/\./g, '');
                     }
                     e.target.value = v;
+                    syncDisplay(e.target);
                     this.validate();
                 });
 
-                // На потере фокуса: дополняем формат до 5+3 (если включён
-                // strict-режим). «1.4» → «00001.400», «1427» → «01427.000»,
-                // «01427.9» → «01427.900».
                 input.addEventListener('blur', (e) => {
                     if (e.target.dataset.strictFormat !== '5_3') return;
                     const raw = (e.target.value || '').trim();
-                    if (!raw) return;
+                    if (!raw) {
+                        syncDisplay(e.target);  // обнулим табло до 00000.000
+                        return;
+                    }
                     const m = raw.match(/^(\d{1,5})(?:\.(\d{0,3}))?$/);
-                    if (!m) return;  // не подходит под шаблон — пусть serverside ругается
+                    if (!m) return;
                     const intPart = m[1].padStart(5, '0');
                     const fracPart = (m[2] || '').padEnd(3, '0');
                     e.target.value = `${intPart}.${fracPart}`;
+                    syncDisplay(e.target);
                     this.validate();
                 });
+
+                // Первичная инициализация при загрузке (если уже есть значение
+                // от draft или fill из state).
+                syncDisplay(input);
             }
         });
     },
@@ -238,6 +261,12 @@ export const ClientReadings = {
             if (hasHw && this.dom.inputs.hot) this.dom.inputs.hot.value = data.current_hot;
             if (hasCw && this.dom.inputs.cold) this.dom.inputs.cold.value = data.current_cold;
             if (hasEl && this.dom.inputs.elect) this.dom.inputs.elect.value = data.current_elect;
+            // Триггерим input-event чтобы пере-syncнулось табло счётчиков
+            // (5 чёрных + 3 красных ячейки под каждым input).
+            ['hot', 'cold', 'elect'].forEach(k => {
+                const inp = this.dom.inputs[k];
+                if (inp && inp.value) inp.dispatchEvent(new Event('input', { bubbles: true }));
+            });
             this.validate();
         }
     },

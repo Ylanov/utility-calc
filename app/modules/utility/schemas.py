@@ -333,6 +333,11 @@ class AdminManualReadingSchema(BaseModel):
     is_moving_out: bool = False
     total_days_in_month: int = Field(30, ge=1, le=31)
     days_lived: int = Field(30, ge=0, le=31)
+    # Опциональный целевой период. Если None — берётся active_period.
+    # Запрос мая 2026: админу нужно вводить показания за прошлые месяцы
+    # (когда жилец задним числом сообщил данные, или нужна коррекция).
+    # Без поля админ был ограничен только текущим периодом.
+    period_id: Optional[int] = None
 
 
 class OneTimeChargeSchema(BaseModel):

@@ -117,12 +117,32 @@
                                 <form id="manualReadingForm" class="styled-form">
                                     <input type="hidden" id="manualUserId">
 
+                                    <!-- Выбор периода. Default = active. Админ может выбрать
+                                         прошлый период если нужно задним числом ввести данные. -->
+                                    <div class="form-group mb-4">
+                                        <label style="font-size:14px; font-weight:600;">
+                                            <i class="fa-regular fa-calendar"></i> За какой период
+                                            <span style="font-weight:normal; color:var(--text-secondary); font-size:11px;">
+                                                (по умолчанию — текущий)
+                                            </span>
+                                        </label>
+                                        <select id="manualPeriodSelect" style="font-size: 14px;">
+                                            <option value="">— Текущий активный период —</option>
+                                        </select>
+                                        <small id="manualPeriodWarn" class="hint-text" style="display:none; color:#b45309; margin-top:4px; font-size:11.5px;">
+                                            ⚠️ Вы вводите за <b>прошлый период</b>. Это пересчёт — будет сохранён как обновление reading'а.
+                                        </small>
+                                    </div>
+
                                     <div class="form-group mb-4">
                                         <label style="display:flex; justify-content:space-between; font-size:14px;">
                                             <span><span style="color:#dc2626;">🔥</span> Горячая вода (м³)</span>
                                             <span style="color:var(--text-secondary);">Пред: <b id="manPrevHot">0.000</b></span>
                                         </label>
-                                        <input type="number" step="0.001" id="manHot" required placeholder="Текущее значение" style="font-size: 18px; font-weight: bold;">
+                                        <input type="text" inputmode="decimal" pattern="\d{1,5}\.\d{3}"
+                                               id="manHot" required placeholder="00000.000"
+                                               data-strict-format="5_3"
+                                               style="font-size: 18px; font-weight: bold; font-family: monospace; text-align: center; letter-spacing: 2px;">
                                     </div>
 
                                     <div class="form-group mb-4">
@@ -130,7 +150,10 @@
                                             <span><span style="color:#2563eb;">💧</span> Холодная вода (м³)</span>
                                             <span style="color:var(--text-secondary);">Пред: <b id="manPrevCold">0.000</b></span>
                                         </label>
-                                        <input type="number" step="0.001" id="manCold" required placeholder="Текущее значение" style="font-size: 18px; font-weight: bold;">
+                                        <input type="text" inputmode="decimal" pattern="\d{1,5}\.\d{3}"
+                                               id="manCold" required placeholder="00000.000"
+                                               data-strict-format="5_3"
+                                               style="font-size: 18px; font-weight: bold; font-family: monospace; text-align: center; letter-spacing: 2px;">
                                     </div>
 
                                     <div class="form-group mb-4">
@@ -138,7 +161,10 @@
                                             <span><span style="color:#d97706;">⚡</span> Электричество (кВт⋅ч)</span>
                                             <span style="color:var(--text-secondary);">Пред: <b id="manPrevElect">0.000</b></span>
                                         </label>
-                                        <input type="number" step="0.001" id="manElect" required placeholder="Текущее значение" style="font-size: 18px; font-weight: bold;">
+                                        <input type="text" inputmode="decimal" pattern="\d{1,5}\.\d{3}"
+                                               id="manElect" required placeholder="00000.000"
+                                               data-strict-format="5_3"
+                                               style="font-size: 18px; font-weight: bold; font-family: monospace; text-align: center; letter-spacing: 2px;">
                                     </div>
 
                                     <button type="submit" class="action-btn success-btn full-width" id="btnSaveManual" style="padding: 12px; font-size: 15px;"><i class="fa-solid fa-floppy-disk"></i> Сохранить показания (Черновик)</button>
