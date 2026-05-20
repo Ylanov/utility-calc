@@ -69,7 +69,16 @@ export const ClientReadings = {
             const fracPart = (m && m[2] ? m[2] : '').padEnd(3, '0').slice(0, 3);
             const all = intPart + fracPart;  // 8 chars
             display.querySelectorAll('.meter-cell').forEach((cell, i) => {
-                cell.textContent = all[i] || '0';
+                const newChar = all[i] || '0';
+                if (cell.textContent !== newChar) {
+                    cell.textContent = newChar;
+                    // Анимация «прокрутки барабана» — добавляем класс,
+                    // снимаем после завершения keyframes (.25s).
+                    cell.classList.remove('changed');
+                    // force reflow для перезапуска анимации
+                    void cell.offsetWidth;
+                    cell.classList.add('changed');
+                }
             });
         };
 

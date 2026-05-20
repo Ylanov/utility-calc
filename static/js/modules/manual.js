@@ -58,9 +58,28 @@ export const ManualModule = {
             this.dom.form.addEventListener('submit', (e) => this.handleSubmit(e));
         }
 
-        // Автоматическая замена запятой на точку + auto-format 5+3 на blur.
-        // Аналогично client-readings.js. Админ вводит «1.4» → получает
-        // «00001.400» — единый формат с жильцом.
+        // Авто-замена запятой, auto-format 5+3 на blur, sync табло.
+        // Имитация счётчика (5 белых + 3 красных барабана) под input'ом —
+        // см. .mtr-display в tab_tools.html. JS обновляет ячейки real-time.
+        const syncMtr = (inp) => {
+            const display = document.querySelector(`.mtr-display[data-mtr-for="${inp.id}"]`);
+            if (!display) return;
+            const raw = (inp.value || '').replace(',', '.');
+            const m = raw.match(/^(\d{0,5})(?:\.(\d{0,3}))?/);
+            const intPart = (m && m[1] ? m[1] : '').padStart(5, '0').slice(-5);
+            const fracPart = (m && m[2] ? m[2] : '').padEnd(3, '0').slice(0, 3);
+            const all = intPart + fracPart;
+            display.querySelectorAll('.mtr-cell').forEach((cell, i) => {
+                const newChar = all[i] || '0';
+                if (cell.textContent !== newChar) {
+                    cell.textContent = newChar;
+                    cell.classList.remove('changed');
+                    void cell.offsetWidth;  // force reflow для перезапуска анимации
+                    cell.classList.add('changed');
+                }
+            });
+        };
+
         ['inHot', 'inCold', 'inElect'].forEach(key => {
             const inp = this.dom[key];
             if (!inp) return;
@@ -71,15 +90,19 @@ export const ManualModule = {
                     v = v.slice(0, firstDot + 1) + v.slice(firstDot + 1).replace(/\./g, '');
                 }
                 inp.value = v;
+                syncMtr(inp);
             });
             inp.addEventListener('blur', () => {
                 if (inp.dataset.strictFormat !== '5_3') return;
                 const raw = (inp.value || '').trim();
-                if (!raw) return;
+                if (!raw) { syncMtr(inp); return; }
                 const m = raw.match(/^(\d{1,5})(?:\.(\d{0,3}))?$/);
                 if (!m) return;
                 inp.value = m[1].padStart(5, '0') + '.' + (m[2] || '').padEnd(3, '0');
+                syncMtr(inp);
             });
+            // Первичная инициализация (нули на старте).
+            syncMtr(inp);
         });
 
         // Period dropdown — загружаем при первом открытии секции.
