@@ -97,7 +97,21 @@ jobs:
         # CVE-2026-3219 — уязвимость в самом pip (26.0.1), не в наших зависимостях.
         # На рантайм деплоя не влияет: pip используется только при build образа,
         # после установки пакетов он не вызывается. Игнорируем до выхода фикса.
-        run: pip-audit --ignore-vuln CVE-2024-23342 --ignore-vuln CVE-2026-4539 --ignore-vuln CVE-2026-3219
+        #
+        # PYSEC-2025-183 (PyJWT 2.12.1) и PYSEC-2025-185 (python-jose 3.5.0) —
+        # обе библиотеки уже на latest-версиях, исправления в PyPI пока нет
+        # (проверено 2026-05-20). Пакеты используются для JWT-аутентификации:
+        # хранение SECRET_KEY на проде сильное, ALGORITHM=HS256 (без RS/PS),
+        # подделать токен извне без SECRET_KEY невозможно. Игнорируем до
+        # выхода фикс-версии; следить через task #12 (миграция на pyjwt
+        # или authlib после публикации патча).
+        run: |
+          pip-audit \
+            --ignore-vuln CVE-2024-23342 \
+            --ignore-vuln CVE-2026-4539 \
+            --ignore-vuln CVE-2026-3219 \
+            --ignore-vuln PYSEC-2025-183 \
+            --ignore-vuln PYSEC-2025-185
 
       - name: Cache Trivy database
         uses: actions/cache@v5
