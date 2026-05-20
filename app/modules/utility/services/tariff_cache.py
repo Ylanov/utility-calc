@@ -19,6 +19,7 @@
 """
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from typing import TYPE_CHECKING, Optional
@@ -29,7 +30,14 @@ if TYPE_CHECKING:
     from app.modules.utility.models import Tariff
 
 
+logger = logging.getLogger(__name__)
+
 _CACHE_TTL_SECONDS = 600  # 10 минут — баланс между «свежо» и «не дёргать БД»
+# Если первая загрузка тарифов упала (DB blip / транзакция повисла) —
+# не блокируем повторную попытку на 10 минут. Иначе worker-процесс
+# может час крутиться с пустым кешем и каждое promote возвращать
+# no_active_tariff. См. инцидент мая 2026 (Левшин + 23 жильца).
+_ERROR_RETRY_SECONDS = 5
 
 
 class TariffCache:
@@ -53,6 +61,14 @@ class TariffCache:
                 from app.modules.utility.models import Tariff
                 with sync_db_session() as db:
                     rows = db.query(Tariff).filter(Tariff.is_active.is_(True)).all()
+                    if not rows:
+                        # Пустой набор != ошибка — БД отвечает, но активных тарифов нет.
+                        # Это нормальный edge-case (свежий деплой до сидирования),
+                        # обновляем _loaded_at как обычно.
+                        logger.warning(
+                            "[TARIFF-CACHE] no active tariffs in DB — cache empty for %ss",
+                            _CACHE_TTL_SECONDS,
+                        )
                     self._tariffs = {t.id: t for t in rows}
                     # default = id=1 если есть, иначе любой первый активный
                     self._default_id = 1 if 1 in self._tariffs else (
@@ -60,8 +76,14 @@ class TariffCache:
                     )
                     self._loaded_at = time.time()
             except Exception:
-                # БД ещё не доступна (тесты / миграция) — оставляем пустой кеш.
-                self._loaded_at = time.time()
+                # Конкретно DB-ошибка / connection blip — НЕ хороним кеш на 10 минут.
+                # Раньше тут было `self._loaded_at = time.time()`, и если первая
+                # попытка падала, get_effective_tariff() возвращал None весь TTL.
+                # 24 жильца под promote → 24 × no_active_tariff (см. инцидент Левшина).
+                # Теперь логируем exception и ставим короткий retry-окно.
+                logger.exception("[TARIFF-CACHE] failed to load tariffs from DB")
+                self._loaded_at = time.time() - (_CACHE_TTL_SECONDS - _ERROR_RETRY_SECONDS)
+                # → следующий _ensure_loaded через 5 секунд снова попытается
 
     def invalidate(self) -> None:
         """Сбросить кеш — вызывать после PATCH/POST/DELETE тарифов или Room.tariff_id."""
