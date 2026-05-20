@@ -192,6 +192,9 @@ class TariffSchema(BaseModel):
     hw_norm_per_capita: DecimalVolume = Decimal("0.000")
     cw_norm_per_capita: DecimalVolume = Decimal("0.000")
     el_norm_per_capita: DecimalVolume = Decimal("0.000")
+    # Множитель норматива для не-подающих 4+ мес. (default 3.0). См.
+    # tariffs_norm_001_coefficient.
+    norm_coefficient: Decimal = Decimal("3.00")
     # Дата вступления в силу (необязательная)
     effective_from: Optional[datetime] = None
     # ==============================================================

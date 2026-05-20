@@ -87,6 +87,7 @@ def compute_reading_breakdown(
             "total_209": ZERO, "total_205": ZERO,
             "sanity_warning": None,
             "is_baseline": True,
+            "meter_decreased": False,
         }
 
     p_hot = _to_dec(prev_reading.hot_water)
@@ -99,6 +100,14 @@ def compute_reading_breakdown(
 
     # Дельты с защитой от отрицательных (счётчик не должен уменьшаться,
     # но на исторических данных бывает — не падаем, просто ставим 0).
+    # ВАЖНО (инцидент мая 2026, жилец Шиян): отрицательная дельта —
+    # это «счётчик упал», физически невозможное событие. Должна сигналить
+    # аномалия + блокироваться auto-approve. Возвращаем флаг meter_decreased
+    # вверх, caller решает что делать (gsheets_sync.promote: status=conflict;
+    # admin_readings_approve: уже валидатор ловит).
+    meter_decreased = (
+        cur_hot < p_hot or cur_cold < p_cold or cur_elect < p_elect
+    )
     d_hot = max(ZERO, cur_hot - p_hot)
     d_cold = max(ZERO, cur_cold - p_cold)
     d_elect = max(ZERO, cur_elect - p_elect)
@@ -145,6 +154,9 @@ def compute_reading_breakdown(
         "total_205":        total_205,
         "sanity_warning":   costs.get("sanity_warning"),
         "is_baseline":      False,
+        # Сигнал «счётчик упал». Caller (gsheets promote) использует чтобы
+        # НЕ авто-апрувить такие подачи, а отправить в conflict для разбора.
+        "meter_decreased":  meter_decreased,
     }
 
 

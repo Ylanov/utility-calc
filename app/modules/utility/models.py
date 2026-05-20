@@ -252,6 +252,13 @@ class Tariff(Base):
     hw_norm_per_capita = Column(Numeric(10, 3), default=0.0, nullable=False)  # м³ ГВС/чел/мес
     cw_norm_per_capita = Column(Numeric(10, 3), default=0.0, nullable=False)  # м³ ХВС/чел/мес
     el_norm_per_capita = Column(Numeric(10, 3), default=0.0, nullable=False)  # кВт·ч/чел/мес
+    # Коэффициент-множитель к нормативу для жильцов, не подающих показания
+    # 4+ месяцев подряд (санкция за длительное игнорирование). См.
+    # миграцию tariffs_norm_001_coefficient. Default 3.0 — типовая
+    # санкция в РФ ЖКХ. На обычное начисление (has_X_meter=False) НЕ
+    # влияет — используется только в billing.close_current_period
+    # для long-term defaulters.
+    norm_coefficient = Column(Numeric(5, 2), default=3.0, nullable=False)
 
     # Дата вступления в силу. Если задана в будущем — тариф "запланирован" (is_active=False)
     # и автоматически активируется Celery-задачей в эту дату.

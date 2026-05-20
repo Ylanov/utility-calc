@@ -377,6 +377,11 @@
 
                             <!-- ==============================================
                                  ГРУППА 2: ЭЛЕКТРИЧЕСТВО
+                                 ОДН (electricity_per_sqm) убран из формы
+                                 по запросу мая 2026 — фактически не используется
+                                 в Лидере/ФИЛИ. Поле остаётся в БД для back-compat
+                                 (старые тарифы могут иметь ненулевые значения),
+                                 но скрыто из UI. Сохраняем 0.00 на сабмите.
                                  ============================================== -->
                             <fieldset class="tariff-group" style="border:1px solid var(--border-color); border-radius:12px; padding:14px 16px 16px; margin-bottom:14px;">
                                 <legend style="padding:0 8px; font-size:12px; font-weight:700; color:#d97706; text-transform:uppercase; letter-spacing:.5px;">
@@ -388,12 +393,9 @@
                                         <input type="number" step="0.01" id="t_el_rate" required>
                                         <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">Основная ставка по счётчику. Доля жильца в комнатном расходе.</small>
                                     </div>
-                                    <div class="form-group" style="margin: 0;">
-                                        <label style="color: #d97706;"><i class="fa-solid fa-house-flag"></i> ОДН, ₽/м²</label>
-                                        <input type="number" step="0.01" id="t_el_sqm" required>
-                                        <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">Общедомовые нужды — освещение коридоров, лифты. Считается за площадь.</small>
-                                    </div>
                                 </div>
+                                <!-- скрытое поле ОДН — не показываем админу, но сохраняем 0 для совместимости -->
+                                <input type="hidden" id="t_el_sqm" value="0">
                             </fieldset>
 
                             <!-- ==============================================
@@ -522,39 +524,79 @@
                             </fieldset>
 
                             <!-- ==============================================
-                                 НОРМАТИВЫ для жильцов БЕЗ счётчиков
-                                 (User.has_X_meter=False). Расход тогда =
-                                 norm × residents_count. См. миграцию
-                                 meters_001_per_user_config.
-                                 0 = нет норматива (расход = 0).
+                                 НОРМАТИВЫ — раскрывающаяся «кнопка» с тремя
+                                 нормативами + коэффициент-санкция для
+                                 жильцов не подающих 4+ месяцев подряд.
                                  ============================================== -->
-                            <h4 style="margin:18px 0 8px 0; font-size:13px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.4px;">
-                                <i class="fa-solid fa-gauge-simple-high"></i> Нормативы (на 1 жильца в месяц, если нет счётчика)
-                            </h4>
-                            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:12px;">
-                                <div class="form-group" style="margin: 0;">
-                                    <label title="Норматив ГВС, м³ на 1 человека в месяц. Применяется только к жильцам с has_hw_meter=false." style="color: var(--danger-color);">
-                                        🔥 ГВС, м³/чел
-                                    </label>
-                                    <input type="number" step="0.001" min="0" id="t_hw_norm" value="0">
+                            <details class="norms-card" style="border:1px solid var(--border-color); border-radius:12px; padding:0; margin-bottom:14px; background:rgba(124,58,237,0.05); overflow:hidden;">
+                                <summary style="cursor:pointer; padding:12px 16px; display:flex; align-items:center; justify-content:space-between; user-select:none; list-style:none;">
+                                    <span style="display:flex; align-items:center; gap:10px;">
+                                        <span style="width:36px; height:36px; border-radius:50%; background:rgba(124,58,237,0.15); display:flex; align-items:center; justify-content:center; color:#7c3aed;">
+                                            <i class="fa-solid fa-gauge-simple-high"></i>
+                                        </span>
+                                        <span>
+                                            <strong style="font-size:14px; color:#7c3aed; display:block;">Нормативы потребления</strong>
+                                            <span class="hint-text" style="font-size:11.5px;">
+                                                Для жильцов БЕЗ счётчика и для злостных «невозвратчиков»
+                                            </span>
+                                        </span>
+                                    </span>
+                                    <span style="color:var(--text-secondary); font-size:12px;">
+                                        <i class="fa-solid fa-chevron-down"></i> развернуть
+                                    </span>
+                                </summary>
+
+                                <div style="padding:14px 16px 16px 16px; border-top:1px dashed var(--border-color);">
+                                    <p class="hint-text" style="margin:0 0 12px 0; font-size:12px;">
+                                        <b>Когда используется:</b><br>
+                                        1) Жилец у которого счётчик отмечен как «отсутствует» — потребление считается как
+                                        <code>норматив × количество жильцов</code>.<br>
+                                        2) Жилец не подал показания <b>4-й месяц подряд</b> — система применяет
+                                        <code>норматив × жильцов × коэффициент</code> (санкция за длительное игнорирование).
+                                        Первые 3 месяца берётся «среднее» за прошлые подачи.
+                                    </p>
+
+                                    <!-- Нормативы (3 поля) -->
+                                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:12px;">
+                                        <div class="form-group" style="margin: 0;">
+                                            <label style="color: var(--danger-color);" title="Норматив ГВС, м³ на 1 человека в месяц.">
+                                                <i class="fa-solid fa-fire"></i> ГВС, м³/чел
+                                            </label>
+                                            <input type="number" step="0.001" min="0" id="t_hw_norm" value="0">
+                                            <small class="hint-text" style="font-size:10px;">Типовой норматив: 3.93 м³</small>
+                                        </div>
+                                        <div class="form-group" style="margin: 0;">
+                                            <label style="color: var(--primary-color);" title="Норматив ХВС, м³ на 1 человека в месяц.">
+                                                <i class="fa-solid fa-droplet"></i> ХВС, м³/чел
+                                            </label>
+                                            <input type="number" step="0.001" min="0" id="t_cw_norm" value="0">
+                                            <small class="hint-text" style="font-size:10px;">Типовой норматив: 5.95 м³</small>
+                                        </div>
+                                        <div class="form-group" style="margin: 0;">
+                                            <label style="color: #d97706;" title="Норматив электричества, кВт·ч на 1 человека в месяц.">
+                                                <i class="fa-solid fa-bolt"></i> Свет, кВт·ч/чел
+                                            </label>
+                                            <input type="number" step="0.001" min="0" id="t_el_norm" value="0">
+                                            <small class="hint-text" style="font-size:10px;">Типовой норматив: 120-180</small>
+                                        </div>
+                                    </div>
+
+                                    <!-- Коэффициент-санкция -->
+                                    <div style="margin-top:14px; padding:12px; background:rgba(220,38,38,0.04); border:1px dashed #fca5a5; border-radius:8px;">
+                                        <label for="t_norm_coef" style="display:block; font-weight:600; color:#b91c1c; font-size:12.5px; margin-bottom:6px;">
+                                            <i class="fa-solid fa-gavel"></i> Коэффициент для «невозвратчиков»
+                                        </label>
+                                        <div style="display:flex; align-items:center; gap:10px;">
+                                            <input type="number" step="0.01" min="1" max="10" id="t_norm_coef" value="3.00"
+                                                   style="width:100px; font-weight:600; text-align:center; font-size:15px;">
+                                            <span style="font-size:11.5px; color:var(--text-secondary);">
+                                                ×&nbsp;норматив. Применяется к жильцам с <b>4+ месяцев без подачи</b>.<br>
+                                                Типовое значение по РФ: <code>3.00</code>. Поставьте <code>1.00</code> чтобы отключить санкцию.
+                                            </span>
+                                        </div>
+                                    </div>
                                 </div>
-                                <div class="form-group" style="margin: 0;">
-                                    <label title="Норматив ХВС, м³ на 1 человека в месяц. Применяется только к жильцам с has_cw_meter=false." style="color: var(--primary-color);">
-                                        ❄️ ХВС, м³/чел
-                                    </label>
-                                    <input type="number" step="0.001" min="0" id="t_cw_norm" value="0">
-                                </div>
-                                <div class="form-group" style="margin: 0;">
-                                    <label title="Норматив электричества, кВт·ч на 1 человека в месяц. Применяется только к жильцам с has_el_meter=false." style="color: #d97706;">
-                                        ⚡ Свет, кВт·ч/чел
-                                    </label>
-                                    <input type="number" step="0.001" min="0" id="t_el_norm" value="0">
-                                </div>
-                            </div>
-                            <p class="hint-text" style="margin:8px 0 0; font-size:11px;">
-                                Используется только для жильцов, у которых соответствующий счётчик
-                                отмечен как «отсутствует» в карточке. 0 = нет норматива → нулевое потребление.
-                            </p>
+                            </details>
 
                             <!-- ==============================================
                                  КАЛЬКУЛЯТОР-ПРЕВЬЮ

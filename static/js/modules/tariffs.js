@@ -26,6 +26,8 @@ export const TariffsModule = {
         hw_norm_per_capita: 't_hw_norm',
         cw_norm_per_capita: 't_cw_norm',
         el_norm_per_capita: 't_el_norm',
+        // Коэффициент-санкция для «невозвратчиков» (см. tariffs_norm_001_coefficient).
+        norm_coefficient: 't_norm_coef',
     },
 
     // Утилита: форматировать дату для отображения
@@ -322,7 +324,8 @@ export const TariffsModule = {
         this._updateScheduledAlert();
 
         // Проходим по нашей карте и заполняем инпуты с ценами.
-        // Нормативы (Numeric(10,3)) — 3 знака; цены/ставки — 2 знака.
+        // Нормативы потребления (Numeric(10,3)) — 3 знака; цены/ставки — 2 знака.
+        // norm_coefficient — 2 знака (это не объём, а множитель типа 3.00).
         const NORM_KEYS = new Set(['hw_norm_per_capita', 'cw_norm_per_capita', 'el_norm_per_capita']);
         for (const [dbKey, htmlId] of Object.entries(this.MAPPING)) {
             const input = document.getElementById(htmlId);
@@ -330,6 +333,14 @@ export const TariffsModule = {
                 const decimals = NORM_KEYS.has(dbKey) ? 3 : 2;
                 input.value = Number(tariff[dbKey]).toFixed(decimals);
             }
+        }
+        // norm_coefficient — если в тарифе ещё не задан (старый тариф до миграции),
+        // ставим дефолт 3.00.
+        const coefInp = document.getElementById('t_norm_coef');
+        if (coefInp) {
+            coefInp.value = (tariff.norm_coefficient !== undefined && tariff.norm_coefficient !== null)
+                ? Number(tariff.norm_coefficient).toFixed(2)
+                : '3.00';
         }
 
         // Сезонность per-tariff (heating + hw_heating). См. миграцию
@@ -372,6 +383,9 @@ export const TariffsModule = {
             const input = document.getElementById(htmlId);
             if (input) input.value = "0.00";
         }
+        // norm_coefficient — дефолт 3.00 для нового тарифа.
+        const coefInp = document.getElementById('t_norm_coef');
+        if (coefInp) coefInp.value = '3.00';
 
         // Сезонность по умолчанию — круглогодично активна.
         ['t_heating_active', 't_hw_heating_active'].forEach(id => {

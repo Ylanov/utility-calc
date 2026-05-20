@@ -779,7 +779,12 @@ def promote_auto_approved_rows(db: Session) -> dict:
     ).all()
 
     if not rows:
-        return {"created": 0, "skipped": 0, "bound": 0, "errors": []}
+        # Раньше тут не было period_name в payload — caller-скрипты ловили
+        # KeyError. Возвращаем стабильный shape всегда.
+        return {
+            "created": 0, "skipped": 0, "bound": 0, "errors": [],
+            "period_name": active_period.name,
+        }
 
     # Группируем по жильцу + выбираем самую свежую подачу как «основную».
     by_user: dict[int, list] = {}
@@ -961,6 +966,38 @@ def promote_auto_approved_rows(db: Session) -> dict:
             )
         except CalculationError as e:
             _skip(uid, f"calculation_error: {e}", user_rows)
+            continue
+
+        # «Счётчик упал»: новое значение < предыдущего. Физически невозможно.
+        # Возможные причины: смена счётчика без оформления, ошибка ввода
+        # жильцом (написал текущие 0183 вместо 1830), смена жильца в комнате
+        # с обнулением. Раньше тихо проглатывалось (max(0, cur-prev)) и
+        # MeterReading создавался с total=0 — жилец видел «-213505 ₽ переплата»
+        # из-за прошлых корректировок. После инцидента Шияна (май 2026):
+        # не авто-апрувим, переводим строки в conflict + понятный reason.
+        if breakdown.get("meter_decreased"):
+            from sqlalchemy import update as _sa_update
+            from app.modules.utility.models import GSheetsImportRow as _GR
+            reason = (
+                f"meter_decreased: счётчик 'упал' — "
+                f"hot {prev_reading.hot_water}→{primary.hot_water}, "
+                f"cold {prev_reading.cold_water}→{primary.cold_water}. "
+                f"Возможные причины: смена счётчика без оформления, "
+                f"ошибка ввода жильца, или сменился жилец в комнате. "
+                f"Проверьте вручную (Замена счётчика / приёмка комнаты)."
+            )
+            db.execute(
+                _sa_update(_GR)
+                .where(_GR.id.in_([r.id for r in user_rows]))
+                .values(status="conflict", conflict_reason=reason)
+            )
+            _skip(uid, reason, user_rows)
+            logger.warning(
+                "[GSHEETS-PROMOTE] METER_DECREASED user=%s prev=hot:%s,cold:%s "
+                "current=hot:%s,cold:%s",
+                uid, prev_reading.hot_water, prev_reading.cold_water,
+                primary.hot_water, primary.cold_water,
+            )
             continue
 
         # cost_* поля для setattr (без total_cost / sanity_warning).

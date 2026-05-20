@@ -112,8 +112,11 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
             .subquery()
         )
 
+        # row_num <= 6 — последние 6 reading'ов, нужны для:
+        # 1) подсчёта miss_count (сколько подряд AUTO_GENERATED / AUTO_AVG / AUTO_NORM)
+        # 2) среднего по 3-4 manual-подачам
         recent_history_result = await db.execute(
-            select(ranked_readings_subquery).where(ranked_readings_subquery.c.row_num <= 4)
+            select(ranked_readings_subquery).where(ranked_readings_subquery.c.row_num <= 6)
         )
 
         history_map = defaultdict(list)
@@ -122,6 +125,14 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
             history_map[getattr(row, "room_id")].append(reading_obj)
 
         insert_values = []
+
+        def _is_auto(reading) -> bool:
+            """True если reading создан автоматически (а не подан вручную)."""
+            flags = (reading.anomaly_flags or "").upper()
+            return any(
+                t in flags for t in
+                ("AUTO_GENERATED", "AUTO_AVG", "AUTO_NORM_SANCTION", "BASELINE")
+            )
 
         # Расчет внутри чанка
         for user in chunk_users:
@@ -134,33 +145,80 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
             history = history_map.get(user.room_id, [])
             history.sort(key=lambda r: r.created_at, reverse=True)
 
-            if len(history) >= 2:
-                d_hot, d_cold, d_el = [], [], []
-                for j in range(len(history) - 1):
-                    curr, prev = history[j], history[j + 1]
-                    d_hot.append(max(zero, D(curr.hot_water) - D(prev.hot_water)))
-                    d_cold.append(max(zero, D(curr.cold_water) - D(prev.cold_water)))
-                    d_el.append(max(zero, D(curr.electricity) - D(prev.electricity)))
+            # Сколько последних периодов подряд reading был AUTO (не вручную).
+            miss_count = 0
+            for r in history:
+                if _is_auto(r):
+                    miss_count += 1
+                else:
+                    break
 
-                cnt = len(d_hot)
-                new_hot = D(history[0].hot_water) + (sum(d_hot) / cnt)
-                new_cold = D(history[0].cold_water) + (sum(d_cold) / cnt)
-                new_elect = D(history[0].electricity) + (sum(d_el) / cnt)
-            elif len(history) == 1:
-                new_hot, new_cold, new_elect = D(history[0].hot_water), D(history[0].cold_water), D(history[0].electricity)
-            else:
-                new_hot, new_cold, new_elect = zero, zero, zero
+            # Manual history (для расчёта среднего «нормально подавал»).
+            manual_history = [r for r in history if not _is_auto(r)]
 
+            # Решение какую стратегию применить.
+            # Порог санкции: 3 подряд AUTO → следующий (текущий) уже 4-й → норматив × коэф.
+            # До этого — берём среднее по manual_history (если есть) или
+            # baseline+norm (если у жильца вообще нет manual-подач).
+            sanction_threshold = 3
+            apply_sanction = miss_count >= sanction_threshold
+            residents = D(user.residents_count or 1)
+
+            anomaly_flag = "AUTO_GENERATED"
+            new_hot, new_cold, new_elect = zero, zero, zero
+            vol_hot = vol_cold = delta_elect = zero
             last_hot = D(history[0].hot_water) if history else zero
             last_cold = D(history[0].cold_water) if history else zero
             last_elect = D(history[0].electricity) if history else zero
 
-            vol_hot = max(zero, new_hot - last_hot)
-            vol_cold = max(zero, new_cold - last_cold)
-            delta_elect = max(zero, new_elect - last_elect)
+            if apply_sanction:
+                # Санкция: норматив × жильцов × коэффициент. Накопленное
+                # значение += санкционное потребление.
+                coef = D(getattr(user_tariff, "norm_coefficient", 0) or 3)
+                vol_hot = D(user_tariff.hw_norm_per_capita or 0) * residents * coef
+                vol_cold = D(user_tariff.cw_norm_per_capita or 0) * residents * coef
+                delta_elect = D(user_tariff.el_norm_per_capita or 0) * residents * coef
+                new_hot = last_hot + vol_hot
+                new_cold = last_cold + vol_cold
+                new_elect = last_elect + delta_elect
+                anomaly_flag = "AUTO_NORM_SANCTION"
+            elif len(manual_history) >= 2:
+                # Среднее по дельтам между подряд идущими manual-readings.
+                d_hot, d_cold, d_el = [], [], []
+                # manual_history отсортирован desc по created_at; берём пары соседей.
+                for j in range(len(manual_history) - 1):
+                    curr, prev = manual_history[j], manual_history[j + 1]
+                    d_hot.append(max(zero, D(curr.hot_water) - D(prev.hot_water)))
+                    d_cold.append(max(zero, D(curr.cold_water) - D(prev.cold_water)))
+                    d_el.append(max(zero, D(curr.electricity) - D(prev.electricity)))
+                cnt = D(len(d_hot)) if d_hot else D(1)
+                avg_hot = sum(d_hot, zero) / cnt
+                avg_cold = sum(d_cold, zero) / cnt
+                avg_el = sum(d_el, zero) / cnt
+                vol_hot, vol_cold, delta_elect = avg_hot, avg_cold, avg_el
+                new_hot = last_hot + avg_hot
+                new_cold = last_cold + avg_cold
+                new_elect = last_elect + avg_el
+                anomaly_flag = "AUTO_AVG"
+            elif len(manual_history) == 1:
+                # Одна подача — не от чего считать дельту, используем баранье
+                # «то же значение, что и в прошлый раз» (расход 0). Так было
+                # и в старом коде.
+                last = manual_history[0]
+                new_hot, new_cold, new_elect = D(last.hot_water), D(last.cold_water), D(last.electricity)
+                anomaly_flag = "AUTO_AVG_FALLBACK"
+            else:
+                # Нет manual-истории совсем. На данной итерации — оставляем zero
+                # (только фикс-часть начислится). В следующий релиз можно
+                # добавить «средний расход по общежитию» через отдельный SQL.
+                # Тут же оптимизировать не критично — это редкий кейс (только
+                # новые жильцы которые ни разу не подавали).
+                anomaly_flag = "AUTO_NO_HISTORY"
 
-            residents = D(user.residents_count)
-            total_residents = D(user.room.total_room_residents if user.room and user.room.total_room_residents > 0 else 1)
+            total_residents = D(
+                user.room.total_room_residents
+                if user.room and user.room.total_room_residents > 0 else 1
+            )
             share_kwh = max(zero, (residents / total_residents) * delta_elect)
 
             _heating = (
@@ -188,8 +246,8 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
                 "debt_209": zero_money, "overpayment_209": zero_money,
                 "debt_205": zero_money, "overpayment_205": zero_money,
                 "total_209": cost_utils_209, "total_205": cost_rent_205,
-                "is_approved": True, "anomaly_flags": "AUTO_GENERATED", "anomaly_score": 0,
-                "created_at": datetime.now(timezone.utc).replace(tzinfo=None),  # ИСПРАВЛЕНИЕ
+                "is_approved": True, "anomaly_flags": anomaly_flag, "anomaly_score": 0,
+                "created_at": datetime.now(timezone.utc).replace(tzinfo=None),
                 **costs
             })
             generated_count += 1
