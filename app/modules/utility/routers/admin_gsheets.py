@@ -153,6 +153,54 @@ async def trigger_sync(
 
 
 # =========================================================================
+# SYNC STATUS — поллится фронтом после POST /sync, возвращает прогресс/итог.
+# Раньше /sync был fire-and-forget: админ получал task_id и refreshed
+# таблицу через 5-15 секунд. Если sync падал или возвращал «unmatched: 1»
+# (как в инциденте с Левшиным) — админ ничего не видел.
+# Теперь UI может опросить и показать конкретные stats.
+# =========================================================================
+@router.get("/sync-status/{task_id}")
+async def get_sync_status(
+    task_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    """Возвращает состояние Celery-таска sync_gsheets_task.
+
+    Состояния:
+      PENDING  — задача в очереди, ещё не запущена
+      STARTED  — выполняется
+      SUCCESS  — закончилась, в `result` — словарь со статистикой
+      FAILURE  — упала с исключением, в `result` — текст ошибки
+      RETRY    — выполнялась, упала, ушла на retry
+      REVOKED  — отменена
+
+    Frontend поллит этот endpoint каждые 2-3 секунды до состояния
+    SUCCESS / FAILURE / REVOKED, потом показывает результат тостом.
+    """
+    require_admin(current_user)
+
+    # Импорт celery лениво — модуль admin_gsheets не должен загружать
+    # broker connection просто за счёт регистрации router'а.
+    from app.worker import celery as _celery
+    res = _celery.AsyncResult(task_id)
+
+    payload: dict = {
+        "task_id": task_id,
+        "state": res.state,
+        "ready": res.ready(),
+    }
+    if res.state == "SUCCESS":
+        # result — это dict, который вернул sync_gsheets_task: inserted/duplicate/
+        # unmatched/conflicts/skipped_too_old/auto_approved/matched/promoted_readings.
+        payload["result"] = res.result
+    elif res.state == "FAILURE":
+        # str(exc) — короткая причина для тоста; полный traceback пишется в
+        # Celery worker logs, в UI его не показываем.
+        payload["error"] = str(res.result) if res.result else "unknown error"
+    return payload
+
+
+# =========================================================================
 # PROMOTE AUTO-APPROVED — продвижение auto_approved в реальные MeterReading
 # =========================================================================
 # Обычно это делается автоматически в конце sync, но если старые данные

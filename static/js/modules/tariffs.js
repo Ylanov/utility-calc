@@ -773,12 +773,23 @@ export const TariffsModule = {
         if (this.dom.gcalUnitTarget) this.dom.gcalUnitTarget.textContent = unit;
         if (this.dom.gcalNormUnit) this.dom.gcalNormUnit.textContent = unit;
         if (this.dom.gcalResultUnit) this.dom.gcalResultUnit.textContent = unit;
-        // Типовой норматив по региону — подсказка не строгое значение.
-        if (this.dom.gcalNormGcal && !this.dom.gcalNormGcal.value) {
-            this.dom.gcalNormGcal.value = isHeat ? '0.0185' : '0.0628';
+        // ВСЕГДА чистим оба поля при открытии. Раньше калькулятор «помнил»
+        // значения между тарифами — открыл для тарифа A, ввёл 2150 / 0.0185,
+        // закрыл; открыл для тарифа B — там же 2150 / 0.0185 (хотя у B
+        // другой поставщик). Пользователь решал, что калькулятор «общий».
+        // Чистим оба input'а и результат.
+        if (this.dom.gcalRubPerGcal) this.dom.gcalRubPerGcal.value = '';
+        if (this.dom.gcalNormGcal) this.dom.gcalNormGcal.value = '';
+        if (this.dom.gcalResult) this.dom.gcalResult.textContent = '— ₽';
+        // placeholder с типовым нормативом по региону подсказывает админу,
+        // но НЕ подставляется автоматически (см. выше).
+        if (this.dom.gcalNormGcal) {
+            this.dom.gcalNormGcal.placeholder =
+                isHeat ? 'Например: 0.0185' : 'Например: 0.0628';
         }
-        this._recalcGcal();
         this.dom.gcalModal.classList.add('open');
+        // Фокус на первое поле — удобно для админа: открыл → сразу пишет.
+        setTimeout(() => this.dom.gcalRubPerGcal?.focus(), 50);
     },
 
     closeGcalCalc() {

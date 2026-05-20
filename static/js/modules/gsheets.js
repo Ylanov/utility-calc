@@ -792,17 +792,75 @@ export const GSheetsModule = {
         const originalHTML = btn.innerHTML;
         btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Запуск…';
         try {
-            await api.post('/admin/gsheets/sync', {});
-            toast('Синхронизация запущена. Новые строки появятся через 5-10 секунд.', 'success');
-            // Ждём 5 секунд → обновляем (через auto-refresh само обновится, но пользователь ждёт).
-            setTimeout(() => this.refresh(), 5000);
-            setTimeout(() => this.refresh(), 15000);
+            const startResp = await api.post('/admin/gsheets/sync', {});
+            const taskId = startResp?.task_id;
+            if (!taskId) {
+                // Старый формат / без celery — fallback на «слепое» обновление.
+                toast('Синхронизация запущена. Обновляю через 5 секунд.', 'success');
+                setTimeout(() => this.refresh(), 5000);
+                return;
+            }
+
+            // Поллим задачу до завершения и показываем конкретные stats.
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Идёт sync…';
+            const result = await this._pollSyncTask(taskId);
+
+            if (result.state === 'FAILURE') {
+                toast('Sync упал: ' + (result.error || 'неизвестная ошибка'), 'error');
+                return;
+            }
+
+            const s = result.result || {};
+            // Краткая сводка: что обработано. unmatched/conflict/skipped_too_old —
+            // ВАЖНО показать, потому что эти ситуации тихо «съедали» подачи раньше.
+            const parts = [];
+            if (s.inserted)        parts.push(`+${s.inserted} новых`);
+            if (s.matched)         parts.push(`матч: ${s.matched}`);
+            if (s.auto_approved)   parts.push(`авто-апрув: ${s.auto_approved}`);
+            if (s.pending) parts.push(`на проверке: ${s.pending}`);
+            if (s.promoted_readings) parts.push(`создано MeterReading: ${s.promoted_readings}`);
+            if (s.unmatched) parts.push(`не найдено жильцов: ${s.unmatched}`);
+            if (s.conflicts) parts.push(`конфликтов: ${s.conflicts}`);
+            if (s.skipped_too_old) parts.push(`пропущено старых: ${s.skipped_too_old}`);
+            if (s.duplicate) parts.push(`дублей: ${s.duplicate}`);
+            if (s.errors) parts.push(`ошибок: ${s.errors}`);
+            const summary = parts.length ? parts.join(' · ') : 'нет изменений';
+
+            // Если есть unmatched/conflicts — это «нужна реакция», warning,
+            // иначе обычный success.
+            const flavor = (s.unmatched || s.conflicts || s.errors) ? 'warning' : 'success';
+            toast(`Sync завершён: ${summary}`, flavor);
+
+            // Обновим таблицу — если есть unmatched/conflict, админ сразу их увидит.
+            this.refresh();
         } catch (e) {
             toast('Не удалось запустить: ' + e.message, 'error');
         } finally {
             btn.disabled = false;
             btn.innerHTML = originalHTML;
         }
+    },
+
+    /**
+     * Поллит /admin/gsheets/sync-status/<id> каждые 2с пока state не SUCCESS/FAILURE.
+     * Таймаут 90с — типичный sync 5-10 сек, исторический import до 25 мин.
+     * Дальше пользователь и так увидит результат через auto-refresh.
+     */
+    async _pollSyncTask(taskId) {
+        const startedAt = Date.now();
+        const TIMEOUT_MS = 90_000;
+        const INTERVAL_MS = 2000;
+        while (Date.now() - startedAt < TIMEOUT_MS) {
+            try {
+                const data = await api.get(`/admin/gsheets/sync-status/${taskId}`);
+                if (data.ready) return data;
+            } catch (e) {
+                // Сетевой блип — повторяем, пока не вышел таймаут.
+                console.warn('[gsheets] poll failed:', e.message);
+            }
+            await new Promise(r => setTimeout(r, INTERVAL_MS));
+        }
+        return { state: 'TIMEOUT', error: 'sync занял больше 90с, проверьте логи worker-а' };
     },
 
     // Прогон promote_auto_approved_rows — для случаев, когда auto_approved

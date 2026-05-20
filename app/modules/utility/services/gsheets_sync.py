@@ -534,6 +534,11 @@ def sync_gsheets(
         "inserted": 0, "duplicate": 0,
         "matched": 0, "unmatched": 0,
         "conflicts": 0, "auto_approved": 0,
+        # Раньше `pending` сидел внутри `matched` без отдельного счётчика —
+        # админ видел «матч: 10», и не понимал, что 3 из них требуют ручной
+        # проверки. После инцидента с Левшиным (его подача висела как
+        # pending и не доехала до MeterReading) выделяем явно.
+        "pending": 0,
         "errors": 0,
         "skipped_too_old": 0,
     }
@@ -669,6 +674,10 @@ def sync_gsheets(
                 stats["auto_approved"] += 1
                 stats["matched"] += 1
             else:
+                # pending — матч есть, но score между fuzzy_threshold и auto_approve.
+                # Требует ручного «утвердить» в админке. Отдельный счётчик чтобы
+                # админ сразу видел «3 на проверке» в тоасте sync.
+                stats["pending"] += 1
                 stats["matched"] += 1
         else:
             stats["duplicate"] += 1
@@ -793,14 +802,26 @@ def promote_auto_approved_rows(db: Session) -> dict:
         for u in db.query(User).filter(User.id.in_(user_ids)).all()
     }
 
+    # Ищем ВСЕ существующие reading'и (approved И draft) в активном периоде.
+    # Раньше смотрели только approved — но если у жильца висит draft (например
+    # admin создал заготовку через manual receipt, или два sync'а гонялись
+    # параллельно и оставили дубль), promote всё равно делал INSERT и падал
+    # на UNIQUE constraint (или silent rollback всей транзакции). После
+    # инцидента с Левшиным (24 жильца в мае стояли с processed_at=NULL)
+    # переходим на UPSERT: approved → bind, draft → update + approve, нет
+    # ничего → insert.
+    existing_by_user: dict[int, list[MeterReading]] = {}
+    for mr in db.query(MeterReading).filter(
+        MeterReading.user_id.in_(user_ids),
+        MeterReading.period_id == active_period.id,
+    ).all():
+        existing_by_user.setdefault(mr.user_id, []).append(mr)
+    # approved-кэш для быстрого bind-case
     existing_dup_by_user: dict[int, MeterReading] = {
-        mr.user_id: mr
-        for mr in db.query(MeterReading).filter(
-            MeterReading.user_id.in_(user_ids),
-            MeterReading.period_id == active_period.id,
-            MeterReading.is_approved.is_(True),
-        ).all()
+        uid: next((mr for mr in lst if mr.is_approved), None)
+        for uid, lst in existing_by_user.items()
     }
+    existing_dup_by_user = {k: v for k, v in existing_dup_by_user.items() if v is not None}
 
     # Последнее утверждённое показание по каждому жильцу — для дельт при
     # расчёте. Раньше брали только electricity (gsheets его не передаёт),
@@ -862,20 +883,27 @@ def promote_auto_approved_rows(db: Session) -> dict:
     bound = 0
     errors: list[dict] = []
 
+    # Helper: однотипно регистрируем skip-причину (с WARN-логом, чтобы
+    # видеть в worker logs, а не только в payload errors[]).
+    def _skip(uid, reason, user_rows, **extra):
+        nonlocal skipped
+        skipped += len(user_rows)
+        payload = {"user_id": uid, "reason": reason,
+                   "rows": [r.id for r in user_rows], **extra}
+        errors.append(payload)
+        logger.warning("[GSHEETS-PROMOTE] skip user=%s rows=%s reason=%s extra=%s",
+                       uid, [r.id for r in user_rows], reason, extra)
+
     for uid, user_rows in by_user.items():
         user = users_by_id_local.get(uid)
         if not user or user.is_deleted or not user.room_id:
-            skipped += len(user_rows)
-            errors.append({"user_id": uid, "reason": "user_missing_or_no_room",
-                           "rows": [r.id for r in user_rows]})
+            _skip(uid, "user_missing_or_no_room", user_rows)
             continue
 
         # Холостяк (per_capita) не подаёт показания счётчика — все его строки
         # помечаем как обработанные (без reading), чтобы не висели в auto_approved.
         if getattr(user, "billing_mode", "by_meter") == "per_capita":
-            skipped += len(user_rows)
-            errors.append({"user_id": uid, "reason": "per_capita_no_meter",
-                           "rows": [r.id for r in user_rows]})
+            _skip(uid, "per_capita_no_meter", user_rows)
             continue
 
         # Если в текущем периоде уже есть утверждённый MeterReading — биндим
@@ -898,14 +926,8 @@ def promote_auto_approved_rows(db: Session) -> dict:
         # строки с status=auto_approved + reading_id=NULL для разбора.
         if (primary.hot_water and primary.hot_water > MAX_WATER_METER_VALUE) or \
            (primary.cold_water and primary.cold_water > MAX_WATER_METER_VALUE):
-            skipped += len(user_rows)
-            errors.append({
-                "user_id": uid,
-                "reason": "value_too_large_skipped",
-                "rows": [r.id for r in user_rows],
-                "hot": str(primary.hot_water),
-                "cold": str(primary.cold_water),
-            })
+            _skip(uid, "value_too_large_skipped", user_rows,
+                  hot=str(primary.hot_water), cold=str(primary.cold_water))
             continue
 
         # Электричество в gsheets не передаётся — берём последнее известное.
@@ -921,14 +943,7 @@ def promote_auto_approved_rows(db: Session) -> dict:
             if room_obj else None
         )
         if tariff is None:
-            # Без тарифа считать нечем — пропускаем создание reading
-            # с понятной причиной (а не молча ставим total=0).
-            skipped += len(user_rows)
-            errors.append({
-                "user_id": uid,
-                "reason": "no_active_tariff",
-                "rows": [r.id for r in user_rows],
-            })
+            _skip(uid, "no_active_tariff", user_rows)
             continue
 
         try:
@@ -942,13 +957,7 @@ def promote_auto_approved_rows(db: Session) -> dict:
                 hot_water_heating_active=_seasonal.hot_water_heating_active,
             )
         except CalculationError as e:
-            # Тариф пустой → не создаём бракованный reading, логируем.
-            skipped += len(user_rows)
-            errors.append({
-                "user_id": uid,
-                "reason": f"calculation_error: {e}",
-                "rows": [r.id for r in user_rows],
-            })
+            _skip(uid, f"calculation_error: {e}", user_rows)
             continue
 
         # cost_* поля для setattr (без total_cost / sanity_warning).
@@ -957,28 +966,77 @@ def promote_auto_approved_rows(db: Session) -> dict:
         is_baseline = breakdown["is_baseline"]
         anomaly_flag = "GSHEETS_AUTO_BASELINE" if is_baseline else "GSHEETS_AUTO"
 
-        reading = MeterReading(
-            user_id=user.id,
-            room_id=user.room_id,
-            period_id=active_period.id,
-            hot_water=primary.hot_water,
-            cold_water=primary.cold_water,
-            electricity=electricity_value,
-            is_approved=True,
-            anomaly_flags=anomaly_flag,
-            anomaly_score=0,
-            total_cost=breakdown["total_cost"],
-            total_209=breakdown["total_209"],
-            total_205=breakdown["total_205"],
-            **costs_for_model_fields(breakdown),
-        )
+        # UPSERT-логика. Раньше промоут делал ТОЛЬКО INSERT — если у жильца
+        # уже висел draft (admin создал manual receipt, или какой-то sync
+        # оставил дубль), новая вставка падала на UNIQUE-constraint и тихо
+        # rollback'ила всю транзакцию. После инцидента с Левшиным (24
+        # жильца стояли с processed_at=NULL, errors=24) делаем:
+        #   1) если есть draft → берём свежайший, обновляем поля, approve;
+        #   2) лишние draft'ы того же жильца удаляем (это были артефакты);
+        #   3) если drafts нет → создаём новый reading.
+        existing_lst = existing_by_user.get(uid, [])
+        drafts = [r for r in existing_lst if not r.is_approved]
+        reading = None
+        if drafts:
+            # Берём САМЫЙ свежий draft по created_at — туда писал последний sync.
+            drafts.sort(key=lambda r: r.created_at, reverse=True)
+            reading = drafts[0]
+            # Остальные drafts удаляем — они артефакты дублирования.
+            for stale in drafts[1:]:
+                logger.warning(
+                    "[GSHEETS-PROMOTE] user=%s removing stale draft reading id=%s",
+                    uid, stale.id,
+                )
+                db.delete(stale)
+            # Обновляем поля свежими значениями.
+            reading.hot_water = primary.hot_water
+            reading.cold_water = primary.cold_water
+            reading.electricity = electricity_value
+            reading.is_approved = True
+            reading.anomaly_flags = anomaly_flag
+            reading.anomaly_score = 0
+            reading.total_cost = breakdown["total_cost"]
+            reading.total_209 = breakdown["total_209"]
+            reading.total_205 = breakdown["total_205"]
+            for k, v in costs_for_model_fields(breakdown).items():
+                setattr(reading, k, v)
+        else:
+            reading = MeterReading(
+                user_id=user.id,
+                room_id=user.room_id,
+                period_id=active_period.id,
+                hot_water=primary.hot_water,
+                cold_water=primary.cold_water,
+                electricity=electricity_value,
+                is_approved=True,
+                anomaly_flags=anomaly_flag,
+                anomaly_score=0,
+                total_cost=breakdown["total_cost"],
+                total_209=breakdown["total_209"],
+                total_205=breakdown["total_205"],
+                **costs_for_model_fields(breakdown),
+            )
+            db.add(reading)
+
         if breakdown.get("sanity_warning"):
             logger.warning(
                 "[GSHEETS-PROMOTE] user=%s sanity_warning: %s",
                 uid, breakdown["sanity_warning"],
             )
-        db.add(reading)
-        db.flush()
+
+        # flush в SAVEPOINT'е — если упадёт IntegrityError на UNIQUE/FK/чём-то
+        # ещё, не валим ВСЮ транзакцию (24 других жильца). Просто скипаем
+        # этого и идём дальше.
+        from sqlalchemy.exc import IntegrityError
+        try:
+            with db.begin_nested():  # SAVEPOINT
+                db.flush()
+        except IntegrityError as e:
+            _skip(uid, f"integrity_error: {e.orig}", user_rows)
+            continue
+        except Exception as e:
+            _skip(uid, f"flush_error: {type(e).__name__}: {e}", user_rows)
+            continue
 
         for r in user_rows:
             r.reading_id = reading.id
