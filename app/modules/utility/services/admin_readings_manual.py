@@ -84,16 +84,17 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
             "total_cost": ZERO,
         }
     else:
-        # Сезонные флаги — глобальные SystemSetting'и (отопит. сезон / подогрев ГВС).
-        # Сюда попадаем когда админ вручную сохраняет черновик за жильца, поэтому
-        # уважаем те же переключатели что и /api/calculate.
+        # Сезонные флаги: global emergency override AND per-tariff (heating_active + даты).
+        # См. комментарий в client_readings POST /api/calculate.
         from app.modules.utility.routers.settings import _load_seasonal
         _seasonal = await _load_seasonal(db)
+        _heating = _seasonal.heating_season_active and t.is_heating_active_now()
+        _hw = _seasonal.hot_water_heating_active and t.is_hw_heating_active_now()
         costs = calculate_utilities(
             user=user, room=room, tariff=t, volume_hot=d_hot, volume_cold=d_cold,
             volume_sewage=d_hot + d_cold, volume_electricity_share=user_share_elect,
-            heating_season_active=_seasonal.heating_season_active,
-            hot_water_heating_active=_seasonal.hot_water_heating_active,
+            heating_season_active=_heating,
+            hot_water_heating_active=_hw,
         )
 
     temp_reading = MeterReading(hot_water=data.hot_water, cold_water=data.cold_water, electricity=data.electricity)
@@ -201,14 +202,16 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
             "total_cost": ZERO,
         }
     else:
-        # См. комментарий в save_manual_entry — те же сезонные флаги.
+        # См. комментарий в save_manual_entry — те же сезонные флаги (global + per-tariff).
         from app.modules.utility.routers.settings import _load_seasonal
         _seasonal = await _load_seasonal(db)
+        _heating = _seasonal.heating_season_active and t.is_heating_active_now()
+        _hw = _seasonal.hot_water_heating_active and t.is_hw_heating_active_now()
         costs = calculate_utilities(
             user=user, room=room, tariff=t, volume_hot=d_hot, volume_cold=d_cold,
             volume_sewage=d_hot + d_cold, volume_electricity_share=user_share_elect, fraction=fraction,
-            heating_season_active=_seasonal.heating_season_active,
-            hot_water_heating_active=_seasonal.hot_water_heating_active,
+            heating_season_active=_heating,
+            hot_water_heating_active=_hw,
         )
 
     adj_map = {row[0]: (row[1] or ZERO) for row in

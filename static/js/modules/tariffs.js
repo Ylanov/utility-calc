@@ -332,6 +332,24 @@ export const TariffsModule = {
             }
         }
 
+        // Сезонность per-tariff (heating + hw_heating). См. миграцию
+        // tariffs_seasonal_002_per_tariff. heating_active=true + даты=null →
+        // круглогодично. Даты приходят как "YYYY-MM-DD" из сервера.
+        const setCb = (id, v) => {
+            const el = document.getElementById(id);
+            if (el) el.checked = (v === undefined || v === null) ? true : !!v;
+        };
+        const setDate = (id, v) => {
+            const el = document.getElementById(id);
+            if (el) el.value = v ? String(v).substring(0, 10) : '';
+        };
+        setCb('t_heating_active', tariff.heating_active);
+        setDate('t_heating_start', tariff.heating_season_start);
+        setDate('t_heating_end', tariff.heating_season_end);
+        setCb('t_hw_heating_active', tariff.hw_heating_active);
+        setDate('t_hw_heating_start', tariff.hw_heating_season_start);
+        setDate('t_hw_heating_end', tariff.hw_heating_season_end);
+
         // Базовый тариф (id=1) удалять нельзя, прячем кнопку
         if (this.dom.btnDelete) {
             this.dom.btnDelete.style.display = (tariff.id === 1) ? 'none' : 'block';
@@ -354,6 +372,16 @@ export const TariffsModule = {
             const input = document.getElementById(htmlId);
             if (input) input.value = "0.00";
         }
+
+        // Сезонность по умолчанию — круглогодично активна.
+        ['t_heating_active', 't_hw_heating_active'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.checked = true;
+        });
+        ['t_heating_start', 't_heating_end', 't_hw_heating_start', 't_hw_heating_end'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.value = '';
+        });
 
         if (this.dom.btnDelete) this.dom.btnDelete.style.display = 'none';
         // Скрываем «Где применяется» — у нового тарифа ещё некого
@@ -599,6 +627,23 @@ export const TariffsModule = {
                 data[dbKey] = parseFloat(input.value) || 0;
             }
         }
+
+        // Сезонность per-tariff (см. миграцию tariffs_seasonal_002_per_tariff).
+        // Пустая дата → null (круглогодично). Чекбоксы → bool.
+        const cb = (id) => {
+            const el = document.getElementById(id);
+            return el ? !!el.checked : true;
+        };
+        const dt = (id) => {
+            const el = document.getElementById(id);
+            return (el && el.value) ? el.value : null;  // "YYYY-MM-DD" or null
+        };
+        data.heating_active = cb('t_heating_active');
+        data.heating_season_start = dt('t_heating_start');
+        data.heating_season_end = dt('t_heating_end');
+        data.hw_heating_active = cb('t_hw_heating_active');
+        data.hw_heating_season_start = dt('t_hw_heating_start');
+        data.hw_heating_season_end = dt('t_hw_heating_end');
 
         setLoading(btnSubmit, true, 'Сохранение...');
 

@@ -345,16 +345,24 @@ async def save_reading(
             "total_cost": ZERO_MONEY,
         }
     else:
-        # Сезонные флаги (отопление / подогрев ГВС) — один SystemSetting,
-        # читается за один запрос. При выключенном сезоне calculate_utilities
-        # обнуляет соответствующие тарифные ставки (но FAIL-LOUD остаётся
-        # для случая, когда тариф вообще пуст).
+        # Сезонные флаги. Двухуровневая логика (с tariffs_seasonal_002):
+        #   1. Глобальный SystemSetting — emergency «stop». Если false,
+        #      отключает статью у всех тарифов.
+        #   2. Per-tariff поля (heating_active + heating_season_start/end).
+        #      Тариф сам решает, активна ли статья сегодня.
+        # Реально активно = global AND tariff.is_*_now().
         from app.modules.utility.routers.settings import _load_seasonal
         seasonal = await _load_seasonal(db)
+        heating_now = (
+            seasonal.heating_season_active and tariff.is_heating_active_now()
+        )
+        hw_heating_now = (
+            seasonal.hot_water_heating_active and tariff.is_hw_heating_active_now()
+        )
         costs = ReadingService.calculate_costs(
             user, room, tariff, hot, cold, elect, p_hot, p_cold, p_elect,
-            heating_season_active=seasonal.heating_season_active,
-            hot_water_heating_active=seasonal.hot_water_heating_active,
+            heating_season_active=heating_now,
+            hot_water_heating_active=hw_heating_now,
         )
 
     # 6. Сборка долгов и итогов

@@ -197,16 +197,26 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
         vol_cold = max(ZERO, cur_cold - p_cold)
         user_elect_share = max(ZERO, (Decimal(residents_count) / Decimal(total_room)) * (cur_elect - p_elect))
 
+        # Per-tariff (heating_active + даты) + global emergency override.
+        _eff_tariff = user_tariff or default_tariff
+        _heating = (
+            _seasonal.heating_season_active
+            and _eff_tariff.is_heating_active_now()
+        )
+        _hw = (
+            _seasonal.hot_water_heating_active
+            and _eff_tariff.is_hw_heating_active_now()
+        )
         costs = calculate_utilities(
             user=user,
             room=room,
-            tariff=user_tariff or default_tariff,
+            tariff=_eff_tariff,
             volume_hot=vol_hot,
             volume_cold=vol_cold,
             volume_sewage=vol_hot + vol_cold,
             volume_electricity_share=user_elect_share,
-            heating_season_active=_seasonal.heating_season_active,
-            hot_water_heating_active=_seasonal.hot_water_heating_active,
+            heating_season_active=_heating,
+            hot_water_heating_active=_hw,
         )
 
         user_adjs = adj_map.get(user.id, {'209': ZERO, '205': ZERO})
@@ -338,9 +348,11 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
         d_elect_final = max(ZERO, ((Decimal(residents_count) / Decimal(total_room)) * (
                 D(reading.electricity) - p_elect)) - correction_data.electricity_correction)
 
-        # Сезонные флаги: тот же глобальный SystemSetting, который читает /api/calculate.
+        # Сезонные флаги: global emergency override AND per-tariff (heating_active + даты).
         from app.modules.utility.routers.settings import _load_seasonal
         _seasonal = await _load_seasonal(db)
+        _heating = _seasonal.heating_season_active and t.is_heating_active_now()
+        _hw = _seasonal.hot_water_heating_active and t.is_hw_heating_active_now()
         costs = calculate_utilities(
             user=user,
             room=room,
@@ -349,8 +361,8 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
             volume_cold=d_cold_final,
             volume_sewage=max(ZERO, (d_hot_final + d_cold_final) - correction_data.sewage_correction),
             volume_electricity_share=d_elect_final,
-            heating_season_active=_seasonal.heating_season_active,
-            hot_water_heating_active=_seasonal.hot_water_heating_active,
+            heating_season_active=_heating,
+            hot_water_heating_active=_hw,
         )
 
     adj_res = await db.execute(

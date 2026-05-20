@@ -163,12 +163,20 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
             total_residents = D(user.room.total_room_residents if user.room and user.room.total_room_residents > 0 else 1)
             share_kwh = max(zero, (residents / total_residents) * delta_elect)
 
+            _heating = (
+                _seasonal.heating_season_active
+                and user_tariff.is_heating_active_now()
+            )
+            _hw = (
+                _seasonal.hot_water_heating_active
+                and user_tariff.is_hw_heating_active_now()
+            )
             costs = calculate_utilities(
                 user=user, room=user.room, tariff=user_tariff,
                 volume_hot=vol_hot, volume_cold=vol_cold,
                 volume_sewage=vol_hot + vol_cold, volume_electricity_share=share_kwh,
-                heating_season_active=_seasonal.heating_season_active,
-                hot_water_heating_active=_seasonal.hot_water_heating_active,
+                heating_season_active=_heating,
+                hot_water_heating_active=_hw,
             )
 
             cost_rent_205 = costs['cost_social_rent']

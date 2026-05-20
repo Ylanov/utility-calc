@@ -144,8 +144,8 @@
                         <i class="fa-solid fa-temperature-three-quarters"></i>
                     </span>
                     <span class="accordion-title-text">
-                        <strong>Сезонные надбавки</strong>
-                        <span class="subtitle">Включить/выключить отопление и подогрев ГВС — сразу для всех жильцов</span>
+                        <strong>Сезонные надбавки — аварийный выключатель</strong>
+                        <span class="subtitle">Глобальный override (перебивает настройки тарифов). Обычно — управляйте сезонами внутри тарифа.</span>
                     </span>
                 </span>
                 <i class="fa-solid fa-chevron-down accordion-chevron"></i>
@@ -153,6 +153,14 @@
             <div class="accordion-body">
                 <div class="accordion-content">
                     <div class="inner">
+                        <div style="padding:12px 14px; background:#fef3c7; color:#92400e; border:1px solid #fde68a; border-radius:8px; margin-bottom:14px; font-size:13px;">
+                            <i class="fa-solid fa-triangle-exclamation"></i>
+                            <b>Это аварийный выключатель.</b> Сезонные графики теперь живут в самом тарифе
+                            (профиль тарификации → «Сезонность этого тарифа»). Эти переключатели нужны, только
+                            если надо <b>срочно отключить</b> отопление или подогрев ГВС <b>для всех тарифов сразу</b>
+                            (например, авария поставщика). Если переключатель выключен — соответствующая статья
+                            не начисляется ни у одного тарифа, даже если в тарифе по графику она должна быть активна.
+                        </div>
                         <div id="seasonalLoading" style="padding:14px; text-align:center; color:var(--text-secondary);">
                             <i class="fa-solid fa-spinner fa-spin"></i> Загрузка состояния…
                         </div>
@@ -162,12 +170,11 @@
                             <div class="seasonal-card" style="display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px 18px; border:1px solid var(--border-color); border-radius:12px; margin-bottom:12px; background:var(--bg-card);">
                                 <div style="flex:1; min-width:0;">
                                     <div style="font-weight:600; font-size:15px; color:var(--text-main); display:flex; align-items:center; gap:8px;">
-                                        <i class="fa-solid fa-fire" style="color:#dc2626;"></i> Отопительный сезон
+                                        <i class="fa-solid fa-fire" style="color:#dc2626;"></i> Глобальный override: отопление
                                     </div>
                                     <p style="font-size:12.5px; color:var(--text-secondary); margin:6px 0 0;">
-                                        Когда выключен — статья «отопление» (₽/м²) не начисляется ни одному жильцу,
-                                        даже если в тарифе указана ненулевая ставка.<br>
-                                        Типовой период работы в Иркутской области: <b>15 октября — 15 апреля</b>.
+                                        Выключите, чтобы отключить начисление за отопление <b>у всех тарифов сразу</b>,
+                                        игнорируя их собственный график. Обычно держите включённым.
                                     </p>
                                 </div>
                                 <label class="toggle-switch" style="display:inline-flex; align-items:center; gap:10px; cursor:pointer; user-select:none;">
@@ -183,11 +190,11 @@
                             <div class="seasonal-card" style="display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px 18px; border:1px solid var(--border-color); border-radius:12px; margin-bottom:12px; background:var(--bg-card);">
                                 <div style="flex:1; min-width:0;">
                                     <div style="font-weight:600; font-size:15px; color:var(--text-main); display:flex; align-items:center; gap:8px;">
-                                        <i class="fa-solid fa-droplet" style="color:#f59e0b;"></i> Подогрев ГВС
+                                        <i class="fa-solid fa-droplet" style="color:#f59e0b;"></i> Глобальный override: подогрев ГВС
                                     </div>
                                     <p style="font-size:12.5px; color:var(--text-secondary); margin:6px 0 0;">
-                                        Когда выключен — ГВС считается только за подачу воды (без «подогрева»).
-                                        Используйте на время летней профилактики ТЭЦ, когда горячая вода фактически не подаётся.
+                                        Выключите, чтобы отключить «подогрев ГВС» <b>у всех тарифов сразу</b>.
+                                        Аварийный сценарий — обычный летний график настраивается внутри тарифа.
                                     </p>
                                 </div>
                                 <label class="toggle-switch" style="display:inline-flex; align-items:center; gap:10px; cursor:pointer; user-select:none;">
@@ -440,6 +447,76 @@
                                             Они не подают показания счётчиков — платят эту сумму.
                                             0 = тариф для одиночек не применяется.
                                         </small>
+                                    </div>
+                                </div>
+                            </fieldset>
+
+                            <!-- ==============================================
+                                 ГРУППА 5: СЕЗОННОСТЬ (per-tariff)
+                                 См. миграцию tariffs_seasonal_002_per_tariff.
+                                 Каждый тариф знает свой график:
+                                 - heating вкл/выкл + start/end (год игнорируется)
+                                 - hw_heating вкл/выкл + start/end
+                                 Глобальные SystemSetting'и в Операциях остаются
+                                 как EMERGENCY override (выключают для всех тарифов).
+                                 ============================================== -->
+                            <fieldset class="tariff-group" style="border:1px solid var(--border-color); border-radius:12px; padding:14px 16px 16px; margin-bottom:14px; background:rgba(220,38,38,0.04);">
+                                <legend style="padding:0 8px; font-size:12px; font-weight:700; color:#b91c1c; text-transform:uppercase; letter-spacing:.5px;">
+                                    <i class="fa-solid fa-temperature-three-quarters"></i> Сезонность этого тарифа
+                                </legend>
+                                <p class="hint-text" style="margin:0 0 12px 0; font-size:12px;">
+                                    Каждый тариф работает по своему графику. Например: «ЦСООР Лидер» — отопление с 15.10 по 15.04,
+                                    «ФИЛИ» — с 01.11 по 30.04. Если даты не заданы — статья работает круглый год.
+                                    <br><b>Год в датах не важен</b> — учитываются только месяц и день.
+                                </p>
+
+                                <!-- ── Отопление ────────────────────────────── -->
+                                <div style="display:grid; grid-template-columns:1fr; gap:8px; padding:10px 12px; border:1px solid var(--border-color); border-radius:10px; background:var(--bg-card); margin-bottom:10px;">
+                                    <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+                                        <input type="checkbox" id="t_heating_active" checked
+                                               style="width:18px; height:18px; cursor:pointer;">
+                                        <span style="font-weight:600; color:#dc2626;">
+                                            <i class="fa-solid fa-fire"></i> Отопление активно в этом тарифе
+                                        </span>
+                                    </label>
+                                    <div id="t_heating_dates_block" style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:6px;">
+                                        <div class="form-group" style="margin:0;">
+                                            <label style="font-size:11px;">Сезон с (вкл.)</label>
+                                            <input type="date" id="t_heating_start"
+                                                   title="Дата начала отопительного сезона. Год игнорируется — учитывается только месяц и день.">
+                                            <small class="hint-text" style="font-size:10px;">Пусто = круглогодично</small>
+                                        </div>
+                                        <div class="form-group" style="margin:0;">
+                                            <label style="font-size:11px;">Сезон по (вкл.)</label>
+                                            <input type="date" id="t_heating_end"
+                                                   title="Дата окончания отопительного сезона. Год игнорируется.">
+                                            <small class="hint-text" style="font-size:10px;">Пусто = круглогодично</small>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- ── Подогрев ГВС ─────────────────────────── -->
+                                <div style="display:grid; grid-template-columns:1fr; gap:8px; padding:10px 12px; border:1px solid var(--border-color); border-radius:10px; background:var(--bg-card);">
+                                    <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+                                        <input type="checkbox" id="t_hw_heating_active" checked
+                                               style="width:18px; height:18px; cursor:pointer;">
+                                        <span style="font-weight:600; color:#f59e0b;">
+                                            <i class="fa-solid fa-droplet"></i> Подогрев ГВС активен в этом тарифе
+                                        </span>
+                                    </label>
+                                    <div id="t_hw_heating_dates_block" style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:6px;">
+                                        <div class="form-group" style="margin:0;">
+                                            <label style="font-size:11px;">Подогрев с (вкл.)</label>
+                                            <input type="date" id="t_hw_heating_start"
+                                                   title="Когда поставщик начинает подавать горячую воду. Год игнорируется.">
+                                            <small class="hint-text" style="font-size:10px;">Пусто = круглогодично</small>
+                                        </div>
+                                        <div class="form-group" style="margin:0;">
+                                            <label style="font-size:11px;">Подогрев по (вкл.)</label>
+                                            <input type="date" id="t_hw_heating_end"
+                                                   title="Когда поставщик прекращает подогрев (летняя профилактика ТЭЦ).">
+                                            <small class="hint-text" style="font-size:10px;">Пусто = круглогодично</small>
+                                        </div>
                                     </div>
                                 </div>
                             </fieldset>

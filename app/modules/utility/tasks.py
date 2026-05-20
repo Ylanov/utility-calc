@@ -838,15 +838,16 @@ def sync_gsheets_task(sheet_id: str = "", gid: str = "", limit: int | None = Non
 # ==========================================================================
 
 def _recalc_compute_one(db_session, reading, user, room, prev_reading, tariffs_by_active,
-                        heating_season_active: bool = True,
-                        hot_water_heating_active: bool = True):
+                        global_heating_on: bool = True,
+                        global_hw_on: bool = True):
     """Пересчитать одно approved-показание с актуальным тарифом.
 
     Возвращает (new_totals_dict, new_costs_dict). НЕ пишет в БД.
     prev_reading — последнее утверждённое показание по комнате СТРОГО ДО текущего
     (для вычисления дельт; None если эта запись — первая по комнате).
-    heating_season_active / hot_water_heating_active — сезонные флаги; передаются
-    из вызывающего batch (читаются один раз через load_seasonal_sync, см. recalc_period).
+    global_heating_on / global_hw_on — глобальные SystemSetting (emergency override).
+    Per-tariff поля (heating_active, heating_season_start/end и т.п.) — берутся
+    из выбранного tariff внутри функции через is_*_active_now().
     """
     from decimal import Decimal
     from app.modules.utility.services.tariff_cache import tariff_cache
@@ -894,13 +895,16 @@ def _recalc_compute_one(db_session, reading, user, room, prev_reading, tariffs_b
     total_room = Decimal(room.total_room_residents if room.total_room_residents and room.total_room_residents > 0 else 1)
     d_elect = max(ZERO, ((residents / total_room) * (D(reading.electricity) - p_elect)) - elect_corr)
 
+    # global flags AND per-tariff (heating_active, season_start/end в самом tariff)
+    _heating = global_heating_on and tariff.is_heating_active_now()
+    _hw = global_hw_on and tariff.is_hw_heating_active_now()
     costs = calculate_utilities(
         user=user, room=room, tariff=tariff,
         volume_hot=d_hot, volume_cold=d_cold,
         volume_sewage=max(ZERO, (d_hot + d_cold) - sewage_corr),
         volume_electricity_share=d_elect,
-        heating_season_active=heating_season_active,
-        hot_water_heating_active=hot_water_heating_active,
+        heating_season_active=_heating,
+        hot_water_heating_active=_hw,
     )
 
     cost_205 = costs["cost_social_rent"]
@@ -1061,10 +1065,13 @@ def _recalc_run(job_id: int, apply: bool):
                             prev = cand
                             break
 
+                    # Per-tariff внутри _recalc_compute_one — там tariff
+                    # выбирается через tariff_cache для каждой строки,
+                    # поэтому seasonal-логику применяем там же.
                     new_fields = _recalc_compute_one(
                         db, r, user, room, prev, fallback_tariff,
-                        heating_season_active=_seasonal.heating_season_active,
-                        hot_water_heating_active=_seasonal.hot_water_heating_active,
+                        global_heating_on=_seasonal.heating_season_active,
+                        global_hw_on=_seasonal.hot_water_heating_active,
                     )
 
                     old_total = Decimal(str(r.total_cost or 0))

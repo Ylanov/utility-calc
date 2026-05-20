@@ -1222,17 +1222,18 @@ async def _build_explain_response(reading_id: int, db: AsyncSession) -> dict:
             }
         else:
             # Сезонные флаги — отчёт «Проверить расчёт» обязан использовать
-            # тот же набор переключателей, что и реальный /api/calculate,
-            # иначе будут ложные расхождения «stored vs recalculated».
+            # тот же набор что и реальный /api/calculate: global + per-tariff.
             from app.modules.utility.routers.settings import _load_seasonal
             _seasonal = await _load_seasonal(db)
+            _heating = _seasonal.heating_season_active and tariff.is_heating_active_now()
+            _hw = _seasonal.hot_water_heating_active and tariff.is_hw_heating_active_now()
             calc_result = calculate_utilities(
                 user=user, room=room, tariff=tariff,
                 volume_hot=d_hot, volume_cold=d_cold,
                 volume_sewage=d_sewage,
                 volume_electricity_share=elect_share,
-                heating_season_active=_seasonal.heating_season_active,
-                hot_water_heating_active=_seasonal.hot_water_heating_active,
+                heating_season_active=_heating,
+                hot_water_heating_active=_hw,
             )
     except CalculationError as e:
         calc_error = str(e)

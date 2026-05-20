@@ -44,6 +44,7 @@ from app.modules.utility.routers import (
     admin_dashboard,
     admin_initial_readings,
     admin_gsheets,
+    admin_system_health,
     admin_analyzer,
     admin_recalc,
     client_certificates,
@@ -220,6 +221,29 @@ async def lifespan(app: FastAPI):
     if APP_MODE in ("all", "arsenal_gsm"):
         await ensure_admin_exists_safe(ArsenalSessionLocal, ArsenalUser, "Arsenal")
 
+    # Стартап-чек tariff_cache. Раньше silent ImportError в _ensure_loaded
+    # давал пустой кеш на ВЕСЬ uptime воркера (см. инцидент мая 2026,
+    # Левшин). Теперь явно тыкаем кеш при старте и логируем результат.
+    # Если кеш пустой — это уже ВИДНО в worker logs WARNING при boot.
+    if APP_MODE in ("all", "jkh"):
+        try:
+            from app.modules.utility.services.tariff_cache import tariff_cache
+            tariff_cache.invalidate()
+            active = tariff_cache.get_all_active()
+            if active:
+                logger.info(
+                    "[STARTUP] tariff_cache OK: %d active tariffs loaded",
+                    len(active),
+                )
+            else:
+                logger.warning(
+                    "[STARTUP] tariff_cache EMPTY — no active tariffs loaded. "
+                    "Проверьте /api/admin/system/health/deep, иначе все расчёты "
+                    "будут возвращать no_active_tariff."
+                )
+        except Exception:
+            logger.exception("[STARTUP] tariff_cache prewarm failed")
+
     yield
 
     logger.info("Application shutdown")
@@ -394,6 +418,7 @@ app.include_router(admin_dashboard.router)
 
 app.include_router(admin_initial_readings.router)
 app.include_router(admin_gsheets.router)
+app.include_router(admin_system_health.router)
 app.include_router(admin_analyzer.router)
 app.include_router(admin_recalc.router)
 app.include_router(client_certificates.router)

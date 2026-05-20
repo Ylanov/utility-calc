@@ -2,7 +2,7 @@
 
 from pydantic import BaseModel, condecimal, Field, ConfigDict
 from typing import Optional, List, Generic, TypeVar, Literal
-from datetime import datetime
+from datetime import datetime, date
 from decimal import Decimal
 
 # ======================================================
@@ -194,6 +194,18 @@ class TariffSchema(BaseModel):
     el_norm_per_capita: DecimalVolume = Decimal("0.000")
     # Дата вступления в силу (необязательная)
     effective_from: Optional[datetime] = None
+    # ==============================================================
+    # СЕЗОННОСТЬ per-tariff. См. миграцию tariffs_seasonal_002_per_tariff
+    # и модель Tariff.is_heating_active_now / is_hw_heating_active_now.
+    # heating_active — мастер-выключатель статьи «отопление» в тарифе.
+    # heating_season_start/end — диапазон дат (год игнорируется). NULL = круглогодично.
+    # ==============================================================
+    heating_active: bool = True
+    heating_season_start: Optional[date] = None
+    heating_season_end: Optional[date] = None
+    hw_heating_active: bool = True
+    hw_heating_season_start: Optional[date] = None
+    hw_heating_season_end: Optional[date] = None
 
     model_config = ConfigDict(from_attributes=True)
 

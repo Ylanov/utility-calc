@@ -160,6 +160,9 @@ async def detect_drift_in_period(
         prev = prev_q.scalars().first()
 
         # Считаем — может упасть на CalculationError при пустом тарифе.
+        # Per-tariff (heating_active+даты) AND global emergency override.
+        _heating = _seasonal.heating_season_active and tariff.is_heating_active_now()
+        _hw = _seasonal.hot_water_heating_active and tariff.is_hw_heating_active_now()
         try:
             breakdown = compute_reading_breakdown(
                 user=user, room=room, tariff=tariff,
@@ -167,8 +170,8 @@ async def detect_drift_in_period(
                 current_cold=r.cold_water or 0,
                 current_elect=r.electricity or 0,
                 prev_reading=prev,
-                heating_season_active=_seasonal.heating_season_active,
-                hot_water_heating_active=_seasonal.hot_water_heating_active,
+                heating_season_active=_heating,
+                hot_water_heating_active=_hw,
             )
         except CalculationError as e:
             errors.append({

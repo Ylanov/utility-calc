@@ -257,8 +257,69 @@ class Tariff(Base):
     # и автоматически активируется Celery-задачей в эту дату.
     effective_from = Column(DateTime, nullable=True, index=True)
 
+    # =====================================================================
+    # СЕЗОННОСТЬ (см. миграцию tariffs_seasonal_002_per_tariff).
+    # Каждый тариф знает, активна ли статья «отопление» и «подогрев ГВС»
+    # на сегодня. Раньше это были два глобальных SystemSetting на всю
+    # систему — теперь per-tariff (разные общежития могут иметь разные
+    # графики поставщиков тепла).
+    #
+    # heating_active=True + start=end=NULL → круглогодично (на всякий случай
+    # можно вручную выключить через heating_active=False).
+    # heating_active=True + start/end заданы → активен только когда
+    # сегодняшняя MM-DD попадает в диапазон (year игнорируется).
+    # heating_active=False → не начисляется никогда, что бы ни было в датах.
+    #
+    # Глобальные SystemSetting heating_season_active / hot_water_heating_active
+    # сохраняются как EMERGENCY override: если они false, отключаются
+    # все тарифы сразу. Это страховочный «stop» для админа.
+    # =====================================================================
+    heating_active = Column(Boolean, nullable=False, server_default="true")
+    heating_season_start = Column(Date, nullable=True)
+    heating_season_end = Column(Date, nullable=True)
+    hw_heating_active = Column(Boolean, nullable=False, server_default="true")
+    hw_heating_season_start = Column(Date, nullable=True)
+    hw_heating_season_end = Column(Date, nullable=True)
+
     # Отслеживание последнего изменения
     updated_at = Column(DateTime, nullable=True, onupdate=_utcnow)
+
+    # ------------------------------------------------------------------
+    # Хелперы для расчёта: «активна ли статья на сегодня?»
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _in_season(start, end, today) -> bool:
+        """True если today.MM-DD попадает в [start.MM-DD, end.MM-DD].
+        Год полностью игнорируется. Диапазон может переходить через
+        Новый год (start > end по календарю): 15.10 → 15.04.
+        """
+        if start is None and end is None:
+            return True
+        if start is None or end is None:
+            return True
+        s = (start.month, start.day)
+        e = (end.month, end.day)
+        t = (today.month, today.day)
+        if s <= e:
+            return s <= t <= e
+        # Перетёк через Новый год.
+        return t >= s or t <= e
+
+    def is_heating_active_now(self, today=None) -> bool:
+        """Применяется ли статья «отопление» при расчёте на сегодня."""
+        from datetime import date as _date
+        if not self.heating_active:
+            return False
+        today = today or _date.today()
+        return self._in_season(self.heating_season_start, self.heating_season_end, today)
+
+    def is_hw_heating_active_now(self, today=None) -> bool:
+        """Применяется ли статья «подогрев ГВС» на сегодня."""
+        from datetime import date as _date
+        if not self.hw_heating_active:
+            return False
+        today = today or _date.today()
+        return self._in_season(self.hw_heating_season_start, self.hw_heating_season_end, today)
 
 
 # ======================================================

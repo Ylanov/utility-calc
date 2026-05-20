@@ -409,19 +409,20 @@ async def preview_calculation(
         Decimal(str(data.residents_count)) / Decimal(str(data.total_room_residents))
         * data.volume_electricity
     )
-    # Превью отражает СОСТОЯНИЕ сезонных переключателей — иначе админ
-    # выключает отопление, но в калькуляторе видит начисление за heating
-    # и думает, что флаг не работает.
+    # Превью отражает СОСТОЯНИЕ сезонных переключателей: глобальный
+    # SystemSetting + per-tariff (heating_active + даты).
     from app.modules.utility.routers.settings import _load_seasonal
     _seasonal = await _load_seasonal(db)
+    _heating = _seasonal.heating_season_active and tariff.is_heating_active_now()
+    _hw = _seasonal.hot_water_heating_active and tariff.is_hw_heating_active_now()
     costs = calculate_utilities(
         user=fake_user, room=fake_room, tariff=tariff,
         volume_hot=data.volume_hot,
         volume_cold=data.volume_cold,
         volume_sewage=data.volume_hot + data.volume_cold,
         volume_electricity_share=elect_share,
-        heating_season_active=_seasonal.heating_season_active,
-        hot_water_heating_active=_seasonal.hot_water_heating_active,
+        heating_season_active=_heating,
+        hot_water_heating_active=_hw,
     )
     # Раскладываем по 209/205 как в реальном approve
     cost_205 = costs.get("cost_social_rent", Decimal("0"))

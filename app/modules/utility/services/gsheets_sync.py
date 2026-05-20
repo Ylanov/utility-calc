@@ -946,6 +946,9 @@ def promote_auto_approved_rows(db: Session) -> dict:
             _skip(uid, "no_active_tariff", user_rows)
             continue
 
+        # Per-tariff (heating_active + даты) AND global emergency override.
+        _heating = _seasonal.heating_season_active and tariff.is_heating_active_now()
+        _hw = _seasonal.hot_water_heating_active and tariff.is_hw_heating_active_now()
         try:
             breakdown = compute_reading_breakdown(
                 user=user, room=room_obj, tariff=tariff,
@@ -953,8 +956,8 @@ def promote_auto_approved_rows(db: Session) -> dict:
                 current_cold=primary.cold_water,
                 current_elect=electricity_value,
                 prev_reading=prev_reading,
-                heating_season_active=_seasonal.heating_season_active,
-                hot_water_heating_active=_seasonal.hot_water_heating_active,
+                heating_season_active=_heating,
+                hot_water_heating_active=_hw,
             )
         except CalculationError as e:
             _skip(uid, f"calculation_error: {e}", user_rows)
