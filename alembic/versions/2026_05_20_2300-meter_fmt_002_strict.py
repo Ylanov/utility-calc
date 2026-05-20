@@ -1,4 +1,9 @@
-"""meter_format_002_update_to_5_3_strict — обновить настройки формата.
+"""meter_fmt_002_strict — обновить SystemSetting на 5_3_strict.
+
+ИМЯ РЕВИЗИИ намеренно короткое (≤32 символа). Исходное
+'meter_format_002_update_to_5_3_strict' (37 chars) переполняло
+alembic_version.version_num VARCHAR(32) → CI ловил
+StringDataRightTruncationError на UPDATE alembic_version.
 
 В мае 2026 формат ввода был ужесточён: вместо «5 цифр без точки»
 теперь обязательный 5+3 (8 цифр). См. коммит feat(meters): жёсткий
@@ -15,7 +20,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = 'meter_format_002_update_to_5_3_strict'
+revision = 'meter_fmt_002_strict'
 down_revision = 'tariffs_type_001_family_singles'
 branch_labels = None
 depends_on = None
