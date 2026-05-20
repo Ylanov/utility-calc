@@ -235,7 +235,13 @@ export const SummaryModule = {
                 this.loadData();
             });
             this.dom.periodSelector.appendChild(sel);
-            this.state.selectedPeriodId = this.periodsCache[0].id;
+            // Default = АКТИВНЫЙ период. Раньше брался periodsCache[0]
+            // (самый новый по id), что не всегда совпадает с активным —
+            // админ открывал Финотчёт и видел не текущий месяц.
+            const active = this.periodsCache.find(p => p.is_active);
+            const defaultId = active ? active.id : this.periodsCache[0].id;
+            this.state.selectedPeriodId = defaultId;
+            sel.value = String(defaultId);
             this.loadData();
         } catch (e) {
             this.dom.periodSelector.textContent = 'Ошибка загрузки периодов.';
