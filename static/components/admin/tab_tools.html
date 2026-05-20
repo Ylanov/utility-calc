@@ -4,6 +4,65 @@
 
      ID всех input/button/form сохранены из tab_manual.html и tab_tariffs.html,
      поэтому ManualModule и TariffsModule работают без правок. -->
+
+<!--
+  Стили формы тарифа: цветные «карточки» с border-left + чёткие шапки.
+  Цвет задаётся через --t-accent, чтобы один CSS отрабатывал все секции
+  (вода/электр./фикс/койка/сезон). Раньше все fieldset'ы имели одинаковый
+  серый border — админ не мог быстро отличить «вода» от «электричества».
+-->
+<style>
+  .tcard {
+    --t-accent: #64748b;
+    --t-accent-bg: rgba(100, 116, 139, 0.06);
+    border: 1px solid var(--border-color);
+    border-left: 4px solid var(--t-accent);
+    border-radius: 10px;
+    padding: 0;
+    margin: 0 0 14px 0;
+    background: var(--bg-card);
+    overflow: hidden;
+  }
+  .tcard-head {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 16px;
+    background: var(--t-accent-bg);
+    border-bottom: 1px solid var(--border-color);
+  }
+  .tcard-head .tcard-icon {
+    width: 34px; height: 34px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--t-accent); color: #fff;
+    flex-shrink: 0; font-size: 13px;
+  }
+  .tcard-head .tcard-title {
+    font-weight: 700; font-size: 14px; color: var(--text-main);
+    line-height: 1.2;
+  }
+  .tcard-head .tcard-subtitle {
+    font-size: 11.5px; color: var(--text-secondary);
+    line-height: 1.3; margin-top: 2px;
+  }
+  .tcard-body { padding: 14px 16px 16px 16px; }
+  /* Палитра — единый набор. Меняем --t-accent в inline-style каждой секции. */
+  .tcard.t-water    { --t-accent: #2563eb; --t-accent-bg: rgba(37,99,235,.07); }
+  .tcard.t-electric { --t-accent: #d97706; --t-accent-bg: rgba(217,119,6,.08); }
+  .tcard.t-fixed    { --t-accent: #059669; --t-accent-bg: rgba(5,150,105,.07); }
+  .tcard.t-bed      { --t-accent: #7c3aed; --t-accent-bg: rgba(124,58,237,.08); }
+  .tcard.t-season   { --t-accent: #dc2626; --t-accent-bg: rgba(220,38,38,.06); }
+  .tcard.t-norms    { --t-accent: #8b5cf6; --t-accent-bg: rgba(139,92,246,.07); }
+  /* Sticky save bar — кнопка «Сохранить» прилипает к низу экрана. */
+  .tariff-save-bar {
+    position: sticky; bottom: 0;
+    background: var(--bg-card);
+    border-top: 1px solid var(--border-color);
+    padding: 12px 16px;
+    margin: 16px -16px -16px -16px;
+    display: flex; justify-content: flex-end; gap: 10px;
+    z-index: 5;
+    box-shadow: 0 -4px 8px rgba(0,0,0,.04);
+  }
+</style>
 <div id="tools" class="tab-content">
 
     <div class="accordion-group" id="toolsAccordion">
@@ -344,184 +403,203 @@
                                 <i class="fa-solid fa-clock"></i> <strong>Запланированный тариф:</strong> будет автоматически активирован в указанную дату. До этого момента он <b>не применяется</b> в расчётах.
                             </div>
 
-                            <h4 style="margin-bottom: 16px; font-size: 15px; color: var(--text-main); border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">Стоимость ресурсов и услуг (₽)</h4>
+                            <h4 style="margin: 18px 0 14px 0; font-size: 13px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; font-weight: 700;">
+                                <i class="fa-solid fa-coins"></i> Ставки тарифа
+                            </h4>
 
                             <!-- ==============================================
-                                 ГРУППА 1: ВОДА (по счётчику, ₽/м³)
+                                 СЕКЦИЯ 1: ВОДА (по счётчику, ₽/м³)
                                  ============================================== -->
-                            <fieldset class="tariff-group" style="border:1px solid var(--border-color); border-radius:12px; padding:14px 16px 16px; margin-bottom:14px;">
-                                <legend style="padding:0 8px; font-size:12px; font-weight:700; color:var(--primary-color); text-transform:uppercase; letter-spacing:.5px;">
-                                    <i class="fa-solid fa-droplet"></i> Вода (по счётчику, ₽/м³)
-                                </legend>
-                                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px;">
-                                    <div class="form-group" style="margin: 0;">
-                                        <label style="color: var(--primary-color);"><i class="fa-solid fa-faucet"></i> Подача воды</label>
-                                        <input type="number" step="0.01" id="t_w_sup" required>
-                                        <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">Холодная вода: только подача. Горячая вода = подача + подогрев.</small>
-                                    </div>
-                                    <div class="form-group" style="margin: 0;">
-                                        <label style="color: var(--danger-color);"><i class="fa-solid fa-fire"></i> Подогрев ГВС</label>
-                                        <input type="number" step="0.01" id="t_w_heat" required>
-                                        <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">Доплата на м³ горячей. Можно посчитать из Гкал — кнопка ниже.</small>
-                                        <button type="button" id="btnOpenGcalCalc" class="action-btn secondary-btn" style="margin-top:8px; padding:5px 10px; font-size:11px;">
-                                            <i class="fa-solid fa-calculator"></i> Калькулятор Гкал → ₽/м³
-                                        </button>
-                                    </div>
-                                    <div class="form-group" style="margin: 0;">
-                                        <label style="color: var(--text-secondary);"><i class="fa-solid fa-sink"></i> Водоотведение</label>
-                                        <input type="number" step="0.01" id="t_sew" required>
-                                        <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">За (ГВС + ХВС) м³. Канализация — не считается отдельно.</small>
+                            <div class="tcard t-water">
+                                <div class="tcard-head">
+                                    <span class="tcard-icon"><i class="fa-solid fa-droplet"></i></span>
+                                    <div>
+                                        <div class="tcard-title">Вода</div>
+                                        <div class="tcard-subtitle">Ставки по счётчику, ₽ за 1 м³</div>
                                     </div>
                                 </div>
-                            </fieldset>
-
-                            <!-- ==============================================
-                                 ГРУППА 2: ЭЛЕКТРИЧЕСТВО
-                                 ОДН (electricity_per_sqm) убран из формы
-                                 по запросу мая 2026 — фактически не используется
-                                 в Лидере/ФИЛИ. Поле остаётся в БД для back-compat
-                                 (старые тарифы могут иметь ненулевые значения),
-                                 но скрыто из UI. Сохраняем 0.00 на сабмите.
-                                 ============================================== -->
-                            <fieldset class="tariff-group" style="border:1px solid var(--border-color); border-radius:12px; padding:14px 16px 16px; margin-bottom:14px;">
-                                <legend style="padding:0 8px; font-size:12px; font-weight:700; color:#d97706; text-transform:uppercase; letter-spacing:.5px;">
-                                    <i class="fa-solid fa-bolt"></i> Электричество
-                                </legend>
-                                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px;">
-                                    <div class="form-group" style="margin: 0;">
-                                        <label style="color: #d97706;"><i class="fa-solid fa-bolt"></i> ₽ за 1 кВт·ч</label>
-                                        <input type="number" step="0.01" id="t_el_rate" required>
-                                        <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">Основная ставка по счётчику. Доля жильца в комнатном расходе.</small>
-                                    </div>
-                                </div>
-                                <!-- скрытое поле ОДН — не показываем админу, но сохраняем 0 для совместимости -->
-                                <input type="hidden" id="t_el_sqm" value="0">
-                            </fieldset>
-
-                            <!-- ==============================================
-                                 ГРУППА 3: ФИКСИРОВАННЫЕ НА м² (площадь × ставка)
-                                 ============================================== -->
-                            <fieldset class="tariff-group" style="border:1px solid var(--border-color); border-radius:12px; padding:14px 16px 16px; margin-bottom:14px;">
-                                <legend style="padding:0 8px; font-size:12px; font-weight:700; color:#059669; text-transform:uppercase; letter-spacing:.5px;">
-                                    <i class="fa-solid fa-house"></i> Фиксированные начисления (₽/м²)
-                                </legend>
-                                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px;">
-                                    <div class="form-group" style="margin: 0;">
-                                        <label><i class="fa-solid fa-screwdriver-wrench"></i> Содержание и ремонт</label>
-                                        <input type="number" step="0.01" id="t_main" required>
-                                        <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">Содержание здания и текущий ремонт. На счёт 209.</small>
-                                    </div>
-                                    <div class="form-group" style="margin: 0;">
-                                        <label><i class="fa-solid fa-key"></i> Наём жилья</label>
-                                        <input type="number" step="0.01" id="t_rent" required>
-                                        <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">Социальный наём — единственная статья на счёт 205.</small>
-                                    </div>
-                                    <div class="form-group" style="margin: 0;">
-                                        <label><i class="fa-solid fa-trash"></i> ТКО / Мусор</label>
-                                        <input type="number" step="0.01" id="t_waste" required>
-                                        <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">Твёрдые коммунальные отходы (вывоз). Берём за м², несмотря на «чел» в старых счетах.</small>
-                                    </div>
-                                    <div class="form-group" style="margin: 0;">
-                                        <label style="color:#dc2626;"><i class="fa-solid fa-temperature-three-quarters"></i> Отопление</label>
-                                        <input type="number" step="0.01" id="t_heat" required>
-                                        <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">Сезонная статья — отключается переключателем «Сезонные надбавки».
-                                        Если поставщик присылает в Гкал, используйте калькулятор:</small>
-                                        <button type="button" id="btnOpenGcalCalcHeat" class="action-btn secondary-btn" style="margin-top:6px; padding:5px 10px; font-size:11px;">
-                                            <i class="fa-solid fa-calculator"></i> Калькулятор Гкал → ₽/м²
-                                        </button>
-                                    </div>
-                                </div>
-                            </fieldset>
-
-                            <!-- ==============================================
-                                 ГРУППА 4: КОЙКО-МЕСТО (только для одиночек)
-                                 ============================================== -->
-                            <fieldset class="tariff-group" style="border:1px solid var(--border-color); border-radius:12px; padding:14px 16px 16px; margin-bottom:14px; background:rgba(124,58,237,0.04);">
-                                <legend style="padding:0 8px; font-size:12px; font-weight:700; color:#7c3aed; text-transform:uppercase; letter-spacing:.5px;">
-                                    <i class="fa-solid fa-bed"></i> Койко-место (одиночки)
-                                </legend>
-                                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
-                                    <div class="form-group" style="margin: 0;">
-                                        <label style="color:#7c3aed;"><i class="fa-solid fa-bed"></i> Сумма за место, ₽/мес</label>
-                                        <input type="number" step="0.01" min="0" id="t_per_capita" value="0">
-                                        <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">
-                                            Фиксированная сумма для жильцов с типом «холостяк» (<code>billing_mode=per_capita</code>).
-                                            Они не подают показания счётчиков — платят эту сумму.
-                                            0 = тариф для одиночек не применяется.
-                                        </small>
-                                    </div>
-                                </div>
-                            </fieldset>
-
-                            <!-- ==============================================
-                                 ГРУППА 5: СЕЗОННОСТЬ (per-tariff)
-                                 См. миграцию tariffs_seasonal_002_per_tariff.
-                                 Каждый тариф знает свой график:
-                                 - heating вкл/выкл + start/end (год игнорируется)
-                                 - hw_heating вкл/выкл + start/end
-                                 Глобальные SystemSetting'и в Операциях остаются
-                                 как EMERGENCY override (выключают для всех тарифов).
-                                 ============================================== -->
-                            <fieldset class="tariff-group" style="border:1px solid var(--border-color); border-radius:12px; padding:14px 16px 16px; margin-bottom:14px; background:rgba(220,38,38,0.04);">
-                                <legend style="padding:0 8px; font-size:12px; font-weight:700; color:#b91c1c; text-transform:uppercase; letter-spacing:.5px;">
-                                    <i class="fa-solid fa-temperature-three-quarters"></i> Сезонность этого тарифа
-                                </legend>
-                                <p class="hint-text" style="margin:0 0 12px 0; font-size:12px;">
-                                    Каждый тариф работает по своему графику. Например: «ЦСООР Лидер» — отопление с 15.10 по 15.04,
-                                    «ФИЛИ» — с 01.11 по 30.04. Если даты не заданы — статья работает круглый год.
-                                    <br><b>Год в датах не важен</b> — учитываются только месяц и день.
-                                </p>
-
-                                <!-- ── Отопление ────────────────────────────── -->
-                                <div style="display:grid; grid-template-columns:1fr; gap:8px; padding:10px 12px; border:1px solid var(--border-color); border-radius:10px; background:var(--bg-card); margin-bottom:10px;">
-                                    <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
-                                        <input type="checkbox" id="t_heating_active" checked
-                                               style="width:18px; height:18px; cursor:pointer;">
-                                        <span style="font-weight:600; color:#dc2626;">
-                                            <i class="fa-solid fa-fire"></i> Отопление активно в этом тарифе
-                                        </span>
-                                    </label>
-                                    <div id="t_heating_dates_block" style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:6px;">
-                                        <div class="form-group" style="margin:0;">
-                                            <label style="font-size:11px;">Сезон с (вкл.)</label>
-                                            <input type="date" id="t_heating_start"
-                                                   title="Дата начала отопительного сезона. Год игнорируется — учитывается только месяц и день.">
-                                            <small class="hint-text" style="font-size:10px;">Пусто = круглогодично</small>
+                                <div class="tcard-body">
+                                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:14px;">
+                                        <div class="form-group" style="margin: 0;">
+                                            <label><i class="fa-solid fa-faucet" style="color:#2563eb;"></i> Подача воды</label>
+                                            <input type="number" step="0.01" id="t_w_sup" required>
+                                            <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">Холодная: только подача. Горячая = подача + подогрев.</small>
                                         </div>
-                                        <div class="form-group" style="margin:0;">
-                                            <label style="font-size:11px;">Сезон по (вкл.)</label>
-                                            <input type="date" id="t_heating_end"
-                                                   title="Дата окончания отопительного сезона. Год игнорируется.">
-                                            <small class="hint-text" style="font-size:10px;">Пусто = круглогодично</small>
+                                        <div class="form-group" style="margin: 0;">
+                                            <label><i class="fa-solid fa-fire" style="color:#dc2626;"></i> Подогрев ГВС</label>
+                                            <input type="number" step="0.01" id="t_w_heat" required>
+                                            <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">Доплата на м³ горячей. Поставщик в Гкал?</small>
+                                            <button type="button" id="btnOpenGcalCalc" class="action-btn secondary-btn" style="margin-top:6px; padding:5px 10px; font-size:11px;">
+                                                <i class="fa-solid fa-calculator"></i> Калькулятор Гкал
+                                            </button>
+                                        </div>
+                                        <div class="form-group" style="margin: 0;">
+                                            <label><i class="fa-solid fa-sink" style="color:#64748b;"></i> Водоотведение</label>
+                                            <input type="number" step="0.01" id="t_sew" required>
+                                            <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">За (ГВС + ХВС) м³ суммарно.</small>
                                         </div>
                                     </div>
                                 </div>
+                            </div>
 
-                                <!-- ── Подогрев ГВС ─────────────────────────── -->
-                                <div style="display:grid; grid-template-columns:1fr; gap:8px; padding:10px 12px; border:1px solid var(--border-color); border-radius:10px; background:var(--bg-card);">
-                                    <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
-                                        <input type="checkbox" id="t_hw_heating_active" checked
-                                               style="width:18px; height:18px; cursor:pointer;">
-                                        <span style="font-weight:600; color:#f59e0b;">
-                                            <i class="fa-solid fa-droplet"></i> Подогрев ГВС активен в этом тарифе
-                                        </span>
-                                    </label>
-                                    <div id="t_hw_heating_dates_block" style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:6px;">
-                                        <div class="form-group" style="margin:0;">
-                                            <label style="font-size:11px;">Подогрев с (вкл.)</label>
-                                            <input type="date" id="t_hw_heating_start"
-                                                   title="Когда поставщик начинает подавать горячую воду. Год игнорируется.">
-                                            <small class="hint-text" style="font-size:10px;">Пусто = круглогодично</small>
+                            <!-- ==============================================
+                                 СЕКЦИЯ 2: ЭЛЕКТРИЧЕСТВО (ОДН скрыт, см. tariffs_norm_001)
+                                 ============================================== -->
+                            <div class="tcard t-electric">
+                                <div class="tcard-head">
+                                    <span class="tcard-icon"><i class="fa-solid fa-bolt"></i></span>
+                                    <div>
+                                        <div class="tcard-title">Электричество</div>
+                                        <div class="tcard-subtitle">Ставка по счётчику, ₽ за 1 кВт·ч</div>
+                                    </div>
+                                </div>
+                                <div class="tcard-body">
+                                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:14px;">
+                                        <div class="form-group" style="margin: 0;">
+                                            <label><i class="fa-solid fa-plug" style="color:#d97706;"></i> ₽ за 1 кВт·ч</label>
+                                            <input type="number" step="0.01" id="t_el_rate" required>
+                                            <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">Основная ставка. Доля жильца считается от расхода комнаты.</small>
                                         </div>
-                                        <div class="form-group" style="margin:0;">
-                                            <label style="font-size:11px;">Подогрев по (вкл.)</label>
-                                            <input type="date" id="t_hw_heating_end"
-                                                   title="Когда поставщик прекращает подогрев (летняя профилактика ТЭЦ).">
-                                            <small class="hint-text" style="font-size:10px;">Пусто = круглогодично</small>
+                                    </div>
+                                    <input type="hidden" id="t_el_sqm" value="0">
+                                </div>
+                            </div>
+
+                            <!-- ==============================================
+                                 СЕКЦИЯ 3: ФИКСИРОВАННЫЕ НА м²
+                                 ============================================== -->
+                            <div class="tcard t-fixed">
+                                <div class="tcard-head">
+                                    <span class="tcard-icon"><i class="fa-solid fa-house"></i></span>
+                                    <div>
+                                        <div class="tcard-title">Фиксированные начисления</div>
+                                        <div class="tcard-subtitle">Площадь × ставка, ₽ за 1 м²</div>
+                                    </div>
+                                </div>
+                                <div class="tcard-body">
+                                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:14px;">
+                                        <div class="form-group" style="margin: 0;">
+                                            <label><i class="fa-solid fa-screwdriver-wrench" style="color:#059669;"></i> Содержание и ремонт</label>
+                                            <input type="number" step="0.01" id="t_main" required>
+                                            <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">Здание и текущий ремонт → счёт 209.</small>
+                                        </div>
+                                        <div class="form-group" style="margin: 0;">
+                                            <label><i class="fa-solid fa-key" style="color:#059669;"></i> Наём жилья</label>
+                                            <input type="number" step="0.01" id="t_rent" required>
+                                            <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">Соц. наём — единственная статья счёт 205.</small>
+                                        </div>
+                                        <div class="form-group" style="margin: 0;">
+                                            <label><i class="fa-solid fa-trash" style="color:#059669;"></i> ТКО / Мусор</label>
+                                            <input type="number" step="0.01" id="t_waste" required>
+                                            <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">Вывоз ТКО, ₽ за м².</small>
+                                        </div>
+                                        <div class="form-group" style="margin: 0;">
+                                            <label><i class="fa-solid fa-temperature-three-quarters" style="color:#dc2626;"></i> Отопление</label>
+                                            <input type="number" step="0.01" id="t_heat" required>
+                                            <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">Сезонная статья — см. «Сезонность» ниже.</small>
+                                            <button type="button" id="btnOpenGcalCalcHeat" class="action-btn secondary-btn" style="margin-top:6px; padding:5px 10px; font-size:11px;">
+                                                <i class="fa-solid fa-calculator"></i> Калькулятор Гкал
+                                            </button>
                                         </div>
                                     </div>
                                 </div>
-                            </fieldset>
+                            </div>
+
+                            <!-- ==============================================
+                                 СЕКЦИЯ 4: КОЙКО-МЕСТО
+                                 ============================================== -->
+                            <div class="tcard t-bed">
+                                <div class="tcard-head">
+                                    <span class="tcard-icon"><i class="fa-solid fa-bed"></i></span>
+                                    <div>
+                                        <div class="tcard-title">Койко-место (одиночки)</div>
+                                        <div class="tcard-subtitle">Для жильцов с <code>billing_mode = per_capita</code></div>
+                                    </div>
+                                </div>
+                                <div class="tcard-body">
+                                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:14px;">
+                                        <div class="form-group" style="margin: 0;">
+                                            <label><i class="fa-solid fa-ruble-sign" style="color:#7c3aed;"></i> Сумма за место, ₽/мес</label>
+                                            <input type="number" step="0.01" min="0" id="t_per_capita" value="0">
+                                            <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">
+                                                Фикс. сумма для холостяков (счётчики не подают).
+                                                <b>0</b> — тариф для одиночек не используется.
+                                            </small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <h4 style="margin: 22px 0 14px 0; font-size: 13px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; font-weight: 700;">
+                                <i class="fa-solid fa-snowflake"></i> Сезонные правила
+                            </h4>
+
+                            <!-- ==============================================
+                                 СЕКЦИЯ 5: СЕЗОННОСТЬ (per-tariff)
+                                 Каждый тариф знает свой график (heating + hw).
+                                 Глобальные SystemSetting'и — emergency override.
+                                 ============================================== -->
+                            <div class="tcard t-season">
+                                <div class="tcard-head">
+                                    <span class="tcard-icon"><i class="fa-solid fa-temperature-three-quarters"></i></span>
+                                    <div>
+                                        <div class="tcard-title">Сезонность этого тарифа</div>
+                                        <div class="tcard-subtitle">График отопления и подогрева ГВС — год игнорируется, важны только месяц и день</div>
+                                    </div>
+                                </div>
+                                <div class="tcard-body">
+                                    <p class="hint-text" style="margin:0 0 14px 0; font-size:12px;">
+                                        Пример: «ЦСООР Лидер» — отопление с 15.10 по 15.04,
+                                        «ФИЛИ» — с 01.11 по 30.04. Даты пусто = статья работает круглый год.
+                                    </p>
+
+                                    <!-- ── Отопление ── -->
+                                    <div style="border:1px solid var(--border-color); border-left:3px solid #dc2626; border-radius:8px; padding:12px 14px; background:var(--bg-page); margin-bottom:10px;">
+                                        <label style="display:flex; align-items:center; gap:10px; cursor:pointer; margin-bottom:8px;">
+                                            <input type="checkbox" id="t_heating_active" checked
+                                                   style="width:18px; height:18px; cursor:pointer; accent-color:#dc2626;">
+                                            <span style="font-weight:700; font-size:13.5px; color:#b91c1c;">
+                                                <i class="fa-solid fa-fire"></i> Отопление активно
+                                            </span>
+                                        </label>
+                                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+                                            <div class="form-group" style="margin:0;">
+                                                <label style="font-size:11.5px; color:var(--text-secondary);">Начало сезона</label>
+                                                <input type="date" id="t_heating_start"
+                                                       title="Дата начала отопительного сезона. Год игнорируется.">
+                                            </div>
+                                            <div class="form-group" style="margin:0;">
+                                                <label style="font-size:11.5px; color:var(--text-secondary);">Конец сезона</label>
+                                                <input type="date" id="t_heating_end"
+                                                       title="Дата окончания отопительного сезона. Год игнорируется.">
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- ── Подогрев ГВС ── -->
+                                    <div style="border:1px solid var(--border-color); border-left:3px solid #f59e0b; border-radius:8px; padding:12px 14px; background:var(--bg-page);">
+                                        <label style="display:flex; align-items:center; gap:10px; cursor:pointer; margin-bottom:8px;">
+                                            <input type="checkbox" id="t_hw_heating_active" checked
+                                                   style="width:18px; height:18px; cursor:pointer; accent-color:#f59e0b;">
+                                            <span style="font-weight:700; font-size:13.5px; color:#b45309;">
+                                                <i class="fa-solid fa-droplet"></i> Подогрев ГВС активен
+                                            </span>
+                                        </label>
+                                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+                                            <div class="form-group" style="margin:0;">
+                                                <label style="font-size:11.5px; color:var(--text-secondary);">Начало подогрева</label>
+                                                <input type="date" id="t_hw_heating_start"
+                                                       title="Когда поставщик начинает подогрев ГВС.">
+                                            </div>
+                                            <div class="form-group" style="margin:0;">
+                                                <label style="font-size:11.5px; color:var(--text-secondary);">Конец подогрева</label>
+                                                <input type="date" id="t_hw_heating_end"
+                                                       title="Когда поставщик прекращает подогрев (летняя профилактика ТЭЦ).">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
 
                             <!-- ==============================================
                                  НОРМАТИВЫ — раскрывающаяся «кнопка» с тремя
@@ -669,8 +747,13 @@
                                 </div>
                             </div>
 
-                            <div style="margin-top: 32px; text-align: right;">
-                                <button type="submit" class="action-btn success-btn" style="padding: 12px 24px; font-size: 15px;"><i class="fa-solid fa-check"></i> Сохранить изменения тарифа</button>
+                            <!-- STICKY SAVE BAR — приклеивается к низу при прокрутке формы.
+                                 Раньше «Сохранить» был в самом низу и админ при длинной форме
+                                 терял его из виду — приходилось скроллить туда-обратно. -->
+                            <div class="tariff-save-bar">
+                                <button type="submit" class="action-btn success-btn" style="padding: 12px 28px; font-size: 15px; font-weight:600;">
+                                    <i class="fa-solid fa-check"></i> Сохранить изменения тарифа
+                                </button>
                             </div>
                         </form>
                     </div>
