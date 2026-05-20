@@ -53,12 +53,35 @@ export const ClientReadings = {
             this.dom.form.addEventListener('submit', (e) => this.handleSubmit(e));
         }
 
-        // Автозамена запятой на точку и валидация на лету
+        // Автозамена запятой на точку, валидация на лету, auto-format на blur.
         ['hot', 'cold', 'elect'].forEach(key => {
             const input = this.dom.inputs[key];
             if (input) {
                 input.addEventListener('input', (e) => {
-                    e.target.value = e.target.value.replace(',', '.');
+                    // Разрешаем только цифры и одну точку — фильтр на лету.
+                    let v = e.target.value.replace(',', '.');
+                    v = v.replace(/[^\d.]/g, '');
+                    // Только одна точка (берём первую).
+                    const firstDot = v.indexOf('.');
+                    if (firstDot !== -1) {
+                        v = v.slice(0, firstDot + 1) + v.slice(firstDot + 1).replace(/\./g, '');
+                    }
+                    e.target.value = v;
+                    this.validate();
+                });
+
+                // На потере фокуса: дополняем формат до 5+3 (если включён
+                // strict-режим). «1.4» → «00001.400», «1427» → «01427.000»,
+                // «01427.9» → «01427.900».
+                input.addEventListener('blur', (e) => {
+                    if (e.target.dataset.strictFormat !== '5_3') return;
+                    const raw = (e.target.value || '').trim();
+                    if (!raw) return;
+                    const m = raw.match(/^(\d{1,5})(?:\.(\d{0,3}))?$/);
+                    if (!m) return;  // не подходит под шаблон — пусть serverside ругается
+                    const intPart = m[1].padStart(5, '0');
+                    const fracPart = (m[2] || '').padEnd(3, '0');
+                    e.target.value = `${intPart}.${fracPart}`;
                     this.validate();
                 });
             }

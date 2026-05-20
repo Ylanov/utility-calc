@@ -28,6 +28,7 @@
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Optional
@@ -87,6 +88,39 @@ class ValidationResult:
 
     def __bool__(self) -> bool:
         return self.ok
+
+
+# =====================================================================
+# Строгая проверка raw-формата (для format=5_3_strict)
+# =====================================================================
+
+# Pattern: 1-5 цифр до точки + точка + ровно 3 цифры после.
+# Допускаем 1-5 цифр до точки (а не строго 5) потому что HTML number-input
+# отбрасывает ведущие нули при отправке; auto-format на клиенте их добавит,
+# но если каким-то образом не сработает — серверный pattern всё равно
+# отсеет «1.4» (2 цифры) и «1234567.890» (7 цифр).
+STRICT_5_3_PATTERN = re.compile(r"^\d{1,5}\.\d{3}$")
+
+
+def validate_raw_format(raw: Optional[str], fmt: str) -> Optional[str]:
+    """Возвращает None если raw подходит формату, иначе строку с ошибкой.
+
+    Используется ТОЛЬКО для format='5_3_strict' (жёсткий 5+3).
+    Для 5_no_decimal / 5_with_decimal / any — формат свободный,
+    эта функция возвращает None.
+    """
+    if fmt != "5_3_strict":
+        return None
+    if not raw:
+        return "значение не задано"
+    s = str(raw).strip().replace(",", ".")
+    if not STRICT_5_3_PATTERN.match(s):
+        return (
+            f"значение '{raw}' не в формате 5+3 (пример: 01427.957). "
+            "Введите ровно 8 цифр счётчика — 5 целых и 3 дробных через точку. "
+            "Если число короткое, допишите ведущие нули и нули после точки."
+        )
+    return None
 
 
 # =====================================================================

@@ -133,19 +133,23 @@ async def get_reading_state(
 
     # Подсказка по формату ввода (см. /api/settings/meter-format). Берём
     # одним запросом, не блокируем основной flow если SystemSetting пуст.
+    # Дефолт май 2026: '5_3_strict' (РОВНО 8 цифр = 5 целых + 3 дробных) —
+    # стандарт российских счётчиков воды. Раньше жильцы подавали кто 1,
+    # кто 2, кто 8 цифр, расчёт ехал.
     from app.modules.utility.models import SystemSetting
     fmt_row = await db.get(SystemSetting, "meter_format_hint")
     ex_row = await db.get(SystemSetting, "meter_example_hot")
     instr_row = await db.get(SystemSetting, "meter_instructions")
-    meter_format_value = (fmt_row.value if fmt_row else "5_no_decimal")
+    meter_format_value = (fmt_row.value if fmt_row else "5_3_strict")
     meter_example_value = (
-        ex_row.value if ex_row else "01433"
+        ex_row.value if ex_row else "01433.887"
     )
     meter_instructions_value = (
         instr_row.value if instr_row else
-        "Запишите только ПЕРВЫЕ 5 цифр счётчика (целая часть). "
-        "Дробные цифры после точки — НЕ нужны. "
-        "Пример: на счётчике «01433.887» вводите 01433 или 1433."
+        "ВСЕГДА вводите все 8 цифр счётчика: 5 цифр до точки + 3 после. "
+        "Если на счётчике значение короткое (например «1.4») — допишите "
+        "ведущие нули: «00001.400». Это стандарт счётчиков воды в РФ. "
+        "Пример: «01433.887»."
     )
 
     return {
@@ -211,6 +215,25 @@ async def save_reading(
 
     if not user or not user.room_id:
         raise HTTPException(status_code=400, detail="Вы не привязаны к помещению для подачи показаний.")
+
+    # Проверка raw-формата (если включён 5_3_strict — жёсткий 5+3).
+    # Делается ДО parse_input, чтобы вернуть жильцу конкретную ошибку
+    # «не 8 цифр» вместо «некорректный формат данных».
+    from app.modules.utility.models import SystemSetting
+    from app.modules.utility.services.reading_validators import validate_raw_format
+    fmt_row = await db.get(SystemSetting, "meter_format_hint")
+    fmt = (fmt_row.value if fmt_row else "5_3_strict")
+    if fmt == "5_3_strict":
+        for name, raw in [
+            ("hot_water", data.hot_water),
+            ("cold_water", data.cold_water),
+            ("electricity", data.electricity),
+        ]:
+            # raw_input приходит как Pydantic-validated number или строка;
+            # приводим к str для проверки на pattern.
+            err = validate_raw_format(str(raw) if raw is not None else None, fmt)
+            if err:
+                raise HTTPException(400, f"{name}: {err}")
 
     room = user.room
 
