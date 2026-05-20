@@ -85,6 +85,12 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
     generated_count = 0
     chunk_size = 500  # ИСПРАВЛЕНИЕ: Разбиваем на пачки по 500 комнат
 
+    # Сезонные флаги читаем ОДИН раз перед всеми чанками (это batch-генерация
+    # для невозвратчиков при закрытии периода — может быть несколько тысяч
+    # жильцов, без кеширования +N SELECT'ов).
+    from app.modules.utility.routers.settings import _load_seasonal
+    _seasonal = await _load_seasonal(db)
+
     # 5. ОБРАБОТКА БАТЧАМИ (Защита RAM)
     for i in range(0, len(users_to_process), chunk_size):
         chunk_users = users_to_process[i:i + chunk_size]
@@ -160,7 +166,9 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
             costs = calculate_utilities(
                 user=user, room=user.room, tariff=user_tariff,
                 volume_hot=vol_hot, volume_cold=vol_cold,
-                volume_sewage=vol_hot + vol_cold, volume_electricity_share=share_kwh
+                volume_sewage=vol_hot + vol_cold, volume_electricity_share=share_kwh,
+                heating_season_active=_seasonal.heating_season_active,
+                hot_water_heating_active=_seasonal.hot_water_heating_active,
             )
 
             cost_rent_205 = costs['cost_social_rent']

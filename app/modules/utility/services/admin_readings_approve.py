@@ -128,6 +128,11 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
             adj_map[uid] = {'209': ZERO, '205': ZERO}
         adj_map[uid][str(acc_type)] = amount or ZERO
 
+    # Сезонные флаги читаем ОДИН раз на весь bulk — иначе 5000 жильцов × один
+    # запрос в SystemSetting на каждого. Дальше в цикле передаём в calculate_utilities.
+    from app.modules.utility.routers.settings import _load_seasonal
+    _seasonal = await _load_seasonal(db)
+
     update_mappings = []
     room_updates = []
 
@@ -199,7 +204,9 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
             volume_hot=vol_hot,
             volume_cold=vol_cold,
             volume_sewage=vol_hot + vol_cold,
-            volume_electricity_share=user_elect_share
+            volume_electricity_share=user_elect_share,
+            heating_season_active=_seasonal.heating_season_active,
+            hot_water_heating_active=_seasonal.hot_water_heating_active,
         )
 
         user_adjs = adj_map.get(user.id, {'209': ZERO, '205': ZERO})
@@ -331,6 +338,9 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
         d_elect_final = max(ZERO, ((Decimal(residents_count) / Decimal(total_room)) * (
                 D(reading.electricity) - p_elect)) - correction_data.electricity_correction)
 
+        # Сезонные флаги: тот же глобальный SystemSetting, который читает /api/calculate.
+        from app.modules.utility.routers.settings import _load_seasonal
+        _seasonal = await _load_seasonal(db)
         costs = calculate_utilities(
             user=user,
             room=room,
@@ -338,7 +348,9 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
             volume_hot=d_hot_final,
             volume_cold=d_cold_final,
             volume_sewage=max(ZERO, (d_hot_final + d_cold_final) - correction_data.sewage_correction),
-            volume_electricity_share=d_elect_final
+            volume_electricity_share=d_elect_final,
+            heating_season_active=_seasonal.heating_season_active,
+            hot_water_heating_active=_seasonal.hot_water_heating_active,
         )
 
     adj_res = await db.execute(

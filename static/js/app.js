@@ -390,6 +390,16 @@ async function initModule(tabId) {
                         }
                         loadedModules.tariffs.init();
                     },
+                    seasonal: async () => {
+                        // Сезонные переключатели (отопление / подогрев ГВС) — управляются
+                        // тем же модулем TariffsModule. Полная инициализация дешёвая
+                        // (всего GET /settings/seasonal), но idempotent через isInitialized.
+                        if (!loadedModules.tariffs) {
+                            const { TariffsModule } = await import('./modules/tariffs.js');
+                            loadedModules.tariffs = TariffsModule;
+                        }
+                        loadedModules.tariffs.init();
+                    },
                     tariffs: async () => {
                         if (!loadedModules.tariffs) {
                             const { TariffsModule } = await import('./modules/tariffs.js');

@@ -852,6 +852,10 @@ def promote_auto_approved_rows(db: Session) -> dict:
     from app.modules.utility.services.calculations import (
         costs_for_model_fields,
     )
+    # Сезонные флаги — читаем один раз перед циклом, иначе по запросу
+    # на каждую строку gsheets под нагрузкой.
+    from app.modules.utility.routers.settings import load_seasonal_sync
+    _seasonal = load_seasonal_sync(db)
 
     created = 0
     skipped = 0
@@ -934,6 +938,8 @@ def promote_auto_approved_rows(db: Session) -> dict:
                 current_cold=primary.cold_water,
                 current_elect=electricity_value,
                 prev_reading=prev_reading,
+                heating_season_active=_seasonal.heating_season_active,
+                hot_water_heating_active=_seasonal.hot_water_heating_active,
             )
         except CalculationError as e:
             # Тариф пустой → не создаём бракованный reading, логируем.

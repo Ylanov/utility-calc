@@ -44,7 +44,12 @@ class ReadingService:
             raise HTTPException(400, "Некорректный формат данных")
 
     @staticmethod
-    def calculate_costs(user: User, room: Room, tariff: Tariff, hot, cold, elect, p_hot, p_cold, p_elect):
+    def calculate_costs(
+        user: User, room: Room, tariff: Tariff,
+        hot, cold, elect, p_hot, p_cold, p_elect,
+        heating_season_active: bool = True,
+        hot_water_heating_active: bool = True,
+    ):
         d_hot = hot - p_hot
         d_cold = cold - p_cold
         d_elect = elect - p_elect
@@ -63,7 +68,9 @@ class ReadingService:
             volume_hot=d_hot,
             volume_cold=d_cold,
             volume_sewage=sewage,
-            volume_electricity_share=elect_share
+            volume_electricity_share=elect_share,
+            heating_season_active=heating_season_active,
+            hot_water_heating_active=hot_water_heating_active,
         )
 
 
@@ -338,7 +345,17 @@ async def save_reading(
             "total_cost": ZERO_MONEY,
         }
     else:
-        costs = ReadingService.calculate_costs(user, room, tariff, hot, cold, elect, p_hot, p_cold, p_elect)
+        # Сезонные флаги (отопление / подогрев ГВС) — один SystemSetting,
+        # читается за один запрос. При выключенном сезоне calculate_utilities
+        # обнуляет соответствующие тарифные ставки (но FAIL-LOUD остаётся
+        # для случая, когда тариф вообще пуст).
+        from app.modules.utility.routers.settings import _load_seasonal
+        seasonal = await _load_seasonal(db)
+        costs = ReadingService.calculate_costs(
+            user, room, tariff, hot, cold, elect, p_hot, p_cold, p_elect,
+            heating_season_active=seasonal.heating_season_active,
+            hot_water_heating_active=seasonal.hot_water_heating_active,
+        )
 
     # 6. Сборка долгов и итогов
     d_209 = draft.debt_209 or Decimal("0.00") if draft else Decimal("0.00")

@@ -638,6 +638,130 @@ def test_present_meter_ignores_norm():
 
 
 # ──────────────────────────────────────────────────────────────
+# ТЕСТЫ СЕЗОННЫХ ПЕРЕКЛЮЧАТЕЛЕЙ
+# Админ может выключить «отопительный сезон» или «подогрев ГВС»
+# одним глобальным флагом — calculate_utilities обязан занулить
+# соответствующие компоненты квитанции для всех жильцов сразу.
+# ──────────────────────────────────────────────────────────────
+
+def test_seasonal_heating_off_zeroes_fixed_part_heating():
+    """heating_season_active=False → cost_fixed_part не включает heating.
+    Остаётся только electricity_per_sqm (ОДН свет)."""
+    user = FakeUser(residents=2)
+    room = FakeRoom(area=50.0)
+    tariff = FakeTariff()  # heating=25.00, electricity_per_sqm=1.20
+
+    result = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=Decimal("3.0"),
+        volume_cold=Decimal("5.0"),
+        volume_sewage=Decimal("8.0"),
+        volume_electricity_share=Decimal("100.0"),
+        heating_season_active=False,
+    )
+    # cost_fixed_part = 50.00 × (0 + 1.20) = 60.00 (без heating)
+    assert result["cost_fixed_part"] == Decimal("60.00"), (
+        f"При выключенном отоплении ожидался только ОДН-электр.: 60.00, "
+        f"получили {result['cost_fixed_part']}"
+    )
+
+
+def test_seasonal_hot_water_heating_off_treats_hot_as_cold():
+    """hot_water_heating_active=False → ГВС считается только за water_supply,
+    как если бы вода была холодной. Полезно во время летней профилактики ТЭЦ."""
+    user = FakeUser(residents=2)
+    room = FakeRoom(area=50.0)
+    tariff = FakeTariff()  # water_supply=40, water_heating=150
+
+    result = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=Decimal("3.0"),
+        volume_cold=Decimal("5.0"),
+        volume_sewage=Decimal("8.0"),
+        volume_electricity_share=Decimal("100.0"),
+        hot_water_heating_active=False,
+    )
+    # 3.0 × (40 + 0) = 120.00 (без подогрева)
+    assert result["cost_hot_water"] == Decimal("120.00"), (
+        f"При выключенном подогреве ГВС: 3.0 × 40 = 120.00, "
+        f"получили {result['cost_hot_water']}"
+    )
+
+
+def test_seasonal_both_off_still_calculates_rest():
+    """Если оба флага off — остальные статьи (вода, электр., содержание)
+    считаются как обычно. FAIL-LOUD не срабатывает, потому что
+    остаются ненулевые ставки."""
+    user = FakeUser(residents=2)
+    room = FakeRoom(area=50.0)
+    tariff = FakeTariff()
+
+    result = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=Decimal("3.0"),
+        volume_cold=Decimal("5.0"),
+        volume_sewage=Decimal("8.0"),
+        volume_electricity_share=Decimal("100.0"),
+        heating_season_active=False,
+        hot_water_heating_active=False,
+    )
+    # ГВС без подогрева, отопление 0, остальное по-обычному
+    assert result["cost_hot_water"] == Decimal("120.00")
+    # fixed_part = только ОДН (1.20 × 50)
+    assert result["cost_fixed_part"] == Decimal("60.00")
+    # cost_electricity не затронут
+    assert result["cost_electricity"] == Decimal("550.00")  # 100 × 5.50
+
+
+def test_seasonal_off_does_not_raise_on_heating_only_tariff():
+    """Регрессионный тест: если в тарифе только heating ненулевой, и
+    админ выключает отопление — функция НЕ должна падать CalculationError.
+    Зануление сезонных применяется после FAIL-LOUD-проверки."""
+    user = FakeUser(residents=2)
+    room = FakeRoom(area=50.0)
+    # Все ставки 0, кроме heating
+    tariff = FakeTariff(
+        water_supply="0", water_heating="0", sewage="0",
+        electricity_rate="0", maintenance_repair="0",
+        social_rent="0", waste_disposal="0",
+        heating="25.00",  # единственная ненулевая
+        electricity_per_sqm="0",
+    )
+
+    # FAIL-LOUD прошёл (heating ненулевой) → дальше зануляем сезонно → всё 0
+    result = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=Decimal("0"), volume_cold=Decimal("0"),
+        volume_sewage=Decimal("0"), volume_electricity_share=Decimal("0"),
+        heating_season_active=False,
+    )
+    assert result["cost_fixed_part"] == Decimal("0.00")
+    assert result["total_cost"] == Decimal("0.00")
+
+
+def test_seasonal_defaults_preserve_legacy_behavior():
+    """Без указания флагов поведение калькулятора не меняется — флаги
+    дефолтятся в True. Гарантия обратной совместимости для тестов,
+    которые не передают новые параметры."""
+    user = FakeUser(residents=2)
+    room = FakeRoom(area=50.0)
+    tariff = FakeTariff()
+
+    result_default = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=Decimal("3.0"), volume_cold=Decimal("5.0"),
+        volume_sewage=Decimal("8.0"), volume_electricity_share=Decimal("100.0"),
+    )
+    result_explicit = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=Decimal("3.0"), volume_cold=Decimal("5.0"),
+        volume_sewage=Decimal("8.0"), volume_electricity_share=Decimal("100.0"),
+        heating_season_active=True, hot_water_heating_active=True,
+    )
+    assert result_default["total_cost"] == result_explicit["total_cost"]
+
+
+# ──────────────────────────────────────────────────────────────
 # ЗАПУСК ВСЕХ ТЕСТОВ
 # ──────────────────────────────────────────────────────────────
 

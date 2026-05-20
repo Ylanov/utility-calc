@@ -161,6 +161,12 @@ async def main() -> int:
             print("OK — нечего пересчитывать.")
             return 0
 
+        # Сезонные флаги читаем один раз — этот скрипт всегда работает с
+        # ТЕКУЩИМ состоянием переключателей (исторические значения мы не
+        # храним). См. _load_seasonal в settings.py.
+        from app.modules.utility.routers.settings import _load_seasonal
+        _seasonal = await _load_seasonal(db)
+
         recalc_results: list[tuple[MeterReading, Optional[dict], Optional[str]]] = []
         for r in targets:
             user = r.user
@@ -186,6 +192,8 @@ async def main() -> int:
                     current_cold=r.cold_water or 0,
                     current_elect=r.electricity or 0,
                     prev_reading=prev,
+                    heating_season_active=_seasonal.heating_season_active,
+                    hot_water_heating_active=_seasonal.hot_water_heating_active,
                 )
                 recalc_results.append((r, breakdown, None))
             except CalculationError as e:

@@ -625,7 +625,15 @@ async def replace_meter(room_id: int, data: ReplaceMeterSchema, db: AsyncSession
         total_res = Decimal(room.total_room_residents) if room.total_room_residents > 0 else Decimal(1)
         elect_share = (residents / total_res) * d_elect
 
-        costs = calculate_utilities(user, room, t, d_hot, d_cold, d_hot + d_cold, elect_share)
+        # Замена счётчика — это юридически разовое начисление, но
+        # сезонные правила те же что и для обычной подачи.
+        from app.modules.utility.routers.settings import _load_seasonal
+        _seasonal = await _load_seasonal(db)
+        costs = calculate_utilities(
+            user, room, t, d_hot, d_cold, d_hot + d_cold, elect_share,
+            heating_season_active=_seasonal.heating_season_active,
+            hot_water_heating_active=_seasonal.hot_water_heating_active,
+        )
 
         # Запись 1: Закрытие старого счетчика (с начислением суммы).
         #

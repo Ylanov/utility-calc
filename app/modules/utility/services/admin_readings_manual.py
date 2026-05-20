@@ -84,9 +84,16 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
             "total_cost": ZERO,
         }
     else:
+        # Сезонные флаги — глобальные SystemSetting'и (отопит. сезон / подогрев ГВС).
+        # Сюда попадаем когда админ вручную сохраняет черновик за жильца, поэтому
+        # уважаем те же переключатели что и /api/calculate.
+        from app.modules.utility.routers.settings import _load_seasonal
+        _seasonal = await _load_seasonal(db)
         costs = calculate_utilities(
             user=user, room=room, tariff=t, volume_hot=d_hot, volume_cold=d_cold,
-            volume_sewage=d_hot + d_cold, volume_electricity_share=user_share_elect
+            volume_sewage=d_hot + d_cold, volume_electricity_share=user_share_elect,
+            heating_season_active=_seasonal.heating_season_active,
+            hot_water_heating_active=_seasonal.hot_water_heating_active,
         )
 
     temp_reading = MeterReading(hot_water=data.hot_water, cold_water=data.cold_water, electricity=data.electricity)
@@ -194,9 +201,14 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
             "total_cost": ZERO,
         }
     else:
+        # См. комментарий в save_manual_entry — те же сезонные флаги.
+        from app.modules.utility.routers.settings import _load_seasonal
+        _seasonal = await _load_seasonal(db)
         costs = calculate_utilities(
             user=user, room=room, tariff=t, volume_hot=d_hot, volume_cold=d_cold,
-            volume_sewage=d_hot + d_cold, volume_electricity_share=user_share_elect, fraction=fraction
+            volume_sewage=d_hot + d_cold, volume_electricity_share=user_share_elect, fraction=fraction,
+            heating_season_active=_seasonal.heating_season_active,
+            hot_water_heating_active=_seasonal.hot_water_heating_active,
         )
 
     adj_map = {row[0]: (row[1] or ZERO) for row in

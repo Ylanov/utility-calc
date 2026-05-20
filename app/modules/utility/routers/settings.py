@@ -310,3 +310,113 @@ async def update_operator_info(
         raise HTTPException(500, "Не удалось сохранить реквизиты оператора")
 
     return {"status": "success", "message": "Реквизиты оператора обновлены"}
+
+
+# ======================================================================
+# СЕЗОННЫЕ ТАРИФЫ — переключатели «Отопление активно», «Подогрев ГВС активно».
+# Хранятся в system_settings (true/false как строки). При выключении
+# соответствующая статья не начисляется в calculate_utilities (cost=0).
+# Это альтернатива «удалять heating из тарифа летом и возвращать осенью»
+# — проще для админа, тариф остаётся неизменным, переключаем один флаг.
+# ======================================================================
+_SEASONAL_KEYS = (
+    ("heating_season_active",
+     "Отопительный сезон открыт (true/false). При false — cost_heating всегда 0.",
+     "true"),
+    ("hot_water_heating_active",
+     "Подогрев ГВС включён (true/false). При false — cost_hot_water считается "
+     "как если бы вода была холодной (только water_supply, без water_heating). "
+     "Полезно во время летней профилактики ТЭЦ.",
+     "true"),
+)
+
+
+class SeasonalSettingsSchema(BaseModel):
+    heating_season_active: bool = True
+    hot_water_heating_active: bool = True
+
+
+async def _load_seasonal(db: AsyncSession) -> SeasonalSettingsSchema:
+    """Достаёт сезонные флаги. true по умолчанию (всё включено)."""
+    rows = (await db.execute(
+        select(SystemSetting).where(
+            SystemSetting.key.in_([k for k, _d, _v in _SEASONAL_KEYS])
+        )
+    )).scalars().all()
+    by_key = {r.key: r.value for r in rows}
+    def _bool(key: str, default: str) -> bool:
+        return (by_key.get(key, default) or default).lower() == "true"
+    return SeasonalSettingsSchema(
+        heating_season_active=_bool("heating_season_active", "true"),
+        hot_water_heating_active=_bool("hot_water_heating_active", "true"),
+    )
+
+
+def load_seasonal_sync(db_session) -> SeasonalSettingsSchema:
+    """Sync-вариант _load_seasonal для Celery-воркеров, скриптов и
+    gsheets-promote — где нет async event loop. Сигнатура совпадает
+    с async-версией, контракт идентичен.
+
+    Используется в:
+      - reading_calculator.compute_reading_breakdown (через caller)
+      - gsheets_sync.promote_auto_approved_rows
+      - app.scripts.recalc_zero_gsheets_readings
+      - recalc_drift_analyzer и tasks.py recalc_period
+    """
+    rows = (
+        db_session.query(SystemSetting)
+        .filter(SystemSetting.key.in_([k for k, _d, _v in _SEASONAL_KEYS]))
+        .all()
+    )
+    by_key = {r.key: r.value for r in rows}
+
+    def _bool(key: str, default: str) -> bool:
+        return (by_key.get(key, default) or default).lower() == "true"
+
+    return SeasonalSettingsSchema(
+        heating_season_active=_bool("heating_season_active", "true"),
+        hot_water_heating_active=_bool("hot_water_heating_active", "true"),
+    )
+
+
+@router.get("/seasonal", response_model=SeasonalSettingsSchema)
+async def get_seasonal_settings(
+    current_user: User = Depends(allow_accountant_or_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Текущее состояние сезонных переключателей."""
+    return await _load_seasonal(db)
+
+
+@router.put("/seasonal", response_model=SeasonalSettingsSchema)
+async def update_seasonal_settings(
+    data: SeasonalSettingsSchema,
+    current_user: User = Depends(allow_accountant_or_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Переключить отопительный сезон / подогрев ГВС."""
+    try:
+        async def upsert(key: str, val: str, desc: str):
+            item = await db.get(SystemSetting, key)
+            if item:
+                item.value = val
+            else:
+                db.add(SystemSetting(key=key, value=val, description=desc))
+
+        await upsert(
+            "heating_season_active",
+            "true" if data.heating_season_active else "false",
+            _SEASONAL_KEYS[0][1],
+        )
+        await upsert(
+            "hot_water_heating_active",
+            "true" if data.hot_water_heating_active else "false",
+            _SEASONAL_KEYS[1][1],
+        )
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"seasonal update failed: {e}", exc_info=True)
+        raise HTTPException(500, "Не удалось сохранить сезонные настройки")
+
+    return await _load_seasonal(db)

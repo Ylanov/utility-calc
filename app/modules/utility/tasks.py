@@ -854,12 +854,16 @@ def sync_gsheets_task(sheet_id: str = "", gid: str = "", limit: int | None = Non
 # живой progress-bar через polling.
 # ==========================================================================
 
-def _recalc_compute_one(db_session, reading, user, room, prev_reading, tariffs_by_active):
+def _recalc_compute_one(db_session, reading, user, room, prev_reading, tariffs_by_active,
+                        heating_season_active: bool = True,
+                        hot_water_heating_active: bool = True):
     """Пересчитать одно approved-показание с актуальным тарифом.
 
     Возвращает (new_totals_dict, new_costs_dict). НЕ пишет в БД.
     prev_reading — последнее утверждённое показание по комнате СТРОГО ДО текущего
     (для вычисления дельт; None если эта запись — первая по комнате).
+    heating_season_active / hot_water_heating_active — сезонные флаги; передаются
+    из вызывающего batch (читаются один раз через load_seasonal_sync, см. recalc_period).
     """
     from decimal import Decimal
     from app.modules.utility.services.tariff_cache import tariff_cache
@@ -912,6 +916,8 @@ def _recalc_compute_one(db_session, reading, user, room, prev_reading, tariffs_b
         volume_hot=d_hot, volume_cold=d_cold,
         volume_sewage=max(ZERO, (d_hot + d_cold) - sewage_corr),
         volume_electricity_share=d_elect,
+        heating_season_active=heating_season_active,
+        hot_water_heating_active=hot_water_heating_active,
     )
 
     cost_205 = costs["cost_social_rent"]
@@ -999,6 +1005,13 @@ def _recalc_run(job_id: int, apply: bool):
                 db.commit()
                 return {"status": job.status, "total": 0}
 
+            # Сезонные флаги читаем ОДИН раз перед обходом всех reading'ов.
+            # При перерасчёте 5000 квитанций без этого было бы 5000 SELECT'ов
+            # за SystemSetting. compute использует тот же набор флагов что
+            # и /api/calculate, иначе recalc находил бы ложный «дрейф».
+            from app.modules.utility.routers.settings import load_seasonal_sync
+            _seasonal = load_seasonal_sync(db)
+
             unchanged = increased = decreased = 0
             sum_old = Decimal("0")
             sum_new = Decimal("0")
@@ -1065,7 +1078,11 @@ def _recalc_run(job_id: int, apply: bool):
                             prev = cand
                             break
 
-                    new_fields = _recalc_compute_one(db, r, user, room, prev, fallback_tariff)
+                    new_fields = _recalc_compute_one(
+                        db, r, user, room, prev, fallback_tariff,
+                        heating_season_active=_seasonal.heating_season_active,
+                        hot_water_heating_active=_seasonal.hot_water_heating_active,
+                    )
 
                     old_total = Decimal(str(r.total_cost or 0))
                     new_total = Decimal(str(new_fields["total_cost"] or 0))

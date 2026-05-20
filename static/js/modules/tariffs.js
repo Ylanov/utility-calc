@@ -49,6 +49,7 @@ export const TariffsModule = {
         this.load();
         this.loadSchedule();
         this.loadScheduledTariffs();
+        this.loadSeasonal();
     },
 
     cacheDOM() {
@@ -78,6 +79,27 @@ export const TariffsModule = {
             assignDormSelect: document.getElementById('assignDormSelect'),
             btnAssignDorm: document.getElementById('btnAssignDorm'),
             btnUnassignDorm: document.getElementById('btnUnassignDorm'),
+            // Сезонные переключатели (отопление / подогрев ГВС).
+            seasonalLoading: document.getElementById('seasonalLoading'),
+            seasonalBody: document.getElementById('seasonalBody'),
+            seasonalHeating: document.getElementById('seasonalHeating'),
+            seasonalHeatingLabel: document.getElementById('seasonalHeatingLabel'),
+            seasonalHotWaterHeating: document.getElementById('seasonalHotWaterHeating'),
+            seasonalHotWaterHeatingLabel: document.getElementById('seasonalHotWaterHeatingLabel'),
+            btnSeasonalSave: document.getElementById('btnSeasonalSave'),
+            btnSeasonalReload: document.getElementById('btnSeasonalReload'),
+            // Калькулятор Гкал → ₽/единицу.
+            gcalModal: document.getElementById('gcalCalcModal'),
+            gcalRubPerGcal: document.getElementById('gcalRubPerGcal'),
+            gcalNormGcal: document.getElementById('gcalNormGcal'),
+            gcalResult: document.getElementById('gcalResult'),
+            gcalUnitLabel: document.getElementById('gcalUnitLabel'),
+            gcalUnitTarget: document.getElementById('gcalUnitTarget'),
+            gcalNormUnit: document.getElementById('gcalNormUnit'),
+            gcalResultUnit: document.getElementById('gcalResultUnit'),
+            btnOpenGcalCalc: document.getElementById('btnOpenGcalCalc'),
+            btnOpenGcalCalcHeat: document.getElementById('btnOpenGcalCalcHeat'),
+            btnApplyGcal: document.getElementById('btnApplyGcal'),
         };
     },
 
@@ -131,6 +153,43 @@ export const TariffsModule = {
         // Массовая привязка к общежитию
         this.dom.btnAssignDorm?.addEventListener('click', () => this.assignToDormitory(false));
         this.dom.btnUnassignDorm?.addEventListener('click', () => this.assignToDormitory(true));
+
+        // Сезонные переключатели.
+        // Клик по slider или по самому label — переключает чекбокс. Это
+        // нативное поведение <label>, но slider стилизованный <span>,
+        // поэтому делегируем event и вручную toggle'аем.
+        document.querySelectorAll('.toggle-slider').forEach(slider => {
+            slider.addEventListener('click', (e) => {
+                e.preventDefault();
+                const targetId = slider.dataset.target;
+                const cb = document.getElementById(targetId);
+                if (cb) {
+                    cb.checked = !cb.checked;
+                    this._renderSeasonalToggles();
+                }
+            });
+        });
+        this.dom.seasonalHeating?.addEventListener('change', () => this._renderSeasonalToggles());
+        this.dom.seasonalHotWaterHeating?.addEventListener('change', () => this._renderSeasonalToggles());
+        this.dom.btnSeasonalSave?.addEventListener('click', () => this.saveSeasonal());
+        this.dom.btnSeasonalReload?.addEventListener('click', () => this.loadSeasonal());
+
+        // Калькулятор Гкал → ₽/единицу.
+        this.dom.btnOpenGcalCalc?.addEventListener('click', () => this.openGcalCalc('water_heating'));
+        this.dom.btnOpenGcalCalcHeat?.addEventListener('click', () => this.openGcalCalc('heating'));
+        this.dom.btnApplyGcal?.addEventListener('click', () => this.applyGcal());
+
+        document.querySelectorAll('[data-gcal-close]').forEach(btn => {
+            btn.addEventListener('click', () => this.closeGcalCalc());
+        });
+        // Клик по фону модалки тоже закрывает.
+        this.dom.gcalModal?.addEventListener('click', (e) => {
+            if (e.target === this.dom.gcalModal) this.closeGcalCalc();
+        });
+
+        const recalcGcal = () => this._recalcGcal();
+        this.dom.gcalRubPerGcal?.addEventListener('input', recalcGcal);
+        this.dom.gcalNormGcal?.addEventListener('input', recalcGcal);
     },
 
     _debounce(fn, ms = 250) {
@@ -618,5 +677,145 @@ export const TariffsModule = {
             this.dom.btnDelete.innerText = originalText;
             this.dom.btnDelete.disabled = false;
         }
-    }
+    },
+
+    // ====================================================================
+    // СЕЗОННЫЕ ПЕРЕКЛЮЧАТЕЛИ — отопление и подогрев ГВС
+    // ====================================================================
+    /** Загружает текущее состояние сезонных флагов из /settings/seasonal. */
+    async loadSeasonal() {
+        if (!this.dom.seasonalBody) return;
+        try {
+            const data = await api.get('/settings/seasonal');
+            if (this.dom.seasonalHeating) {
+                this.dom.seasonalHeating.checked = !!data.heating_season_active;
+            }
+            if (this.dom.seasonalHotWaterHeating) {
+                this.dom.seasonalHotWaterHeating.checked = !!data.hot_water_heating_active;
+            }
+            this._renderSeasonalToggles();
+            if (this.dom.seasonalLoading) this.dom.seasonalLoading.style.display = 'none';
+            this.dom.seasonalBody.style.display = '';
+        } catch (e) {
+            console.warn('Не удалось загрузить сезонные настройки:', e.message);
+            if (this.dom.seasonalLoading) {
+                this.dom.seasonalLoading.innerHTML =
+                    `<span style="color:var(--danger-color);">
+                        <i class="fa-solid fa-triangle-exclamation"></i> Ошибка загрузки: ${escapeHtml(e.message)}
+                    </span>`;
+            }
+        }
+    },
+
+    /** Перерисовывает визуал toggle-slider по текущему checked-состоянию.
+     *  CSS-стейт зашит инлайн в HTML, поэтому проще тут JS обновить. */
+    _renderSeasonalToggles() {
+        const apply = (cb, label, slider) => {
+            if (!cb || !label) return;
+            const on = cb.checked;
+            label.textContent = on ? 'Включено' : 'Выключено';
+            label.style.color = on ? '#059669' : '#dc2626';
+            if (slider) {
+                slider.style.background = on ? '#10b981' : '#cbd5e1';
+                const knob = slider.querySelector('span');
+                if (knob) {
+                    knob.style.transform = on ? 'translateX(24px)' : 'translateX(0)';
+                }
+            }
+        };
+        apply(
+            this.dom.seasonalHeating,
+            this.dom.seasonalHeatingLabel,
+            document.querySelector('.toggle-slider[data-target="seasonalHeating"]'),
+        );
+        apply(
+            this.dom.seasonalHotWaterHeating,
+            this.dom.seasonalHotWaterHeatingLabel,
+            document.querySelector('.toggle-slider[data-target="seasonalHotWaterHeating"]'),
+        );
+    },
+
+    /** Сохраняет состояние сезонных флагов через PUT /settings/seasonal. */
+    async saveSeasonal() {
+        const btn = this.dom.btnSeasonalSave;
+        if (!btn) return;
+        const payload = {
+            heating_season_active: !!this.dom.seasonalHeating?.checked,
+            hot_water_heating_active: !!this.dom.seasonalHotWaterHeating?.checked,
+        };
+        setLoading(btn, true, 'Сохранение…');
+        try {
+            await api.put('/settings/seasonal', payload);
+            toast('Сезонные настройки сохранены', 'success');
+            await this.loadSeasonal();
+        } catch (e) {
+            toast('Ошибка сохранения: ' + e.message, 'error');
+        } finally {
+            setLoading(btn, false, '<i class="fa-solid fa-floppy-disk"></i> Применить');
+        }
+    },
+
+    // ====================================================================
+    // КАЛЬКУЛЯТОР ГКАЛ → ₽/м² (или ₽/м³)
+    // ====================================================================
+    /**
+     * Открывает модалку калькулятора. target определяет какое поле тарифа
+     * получит результат и какие единицы использовать в подписях:
+     *   - 'heating'       → ₽/м² (отопление, площадь)
+     *   - 'water_heating' → ₽/м³ (подогрев ГВС, объём)
+     */
+    openGcalCalc(target) {
+        if (!this.dom.gcalModal) return;
+        this._gcalTarget = target;
+        const isHeat = target === 'heating';
+        const unit = isHeat ? 'м²' : 'м³';
+        if (this.dom.gcalUnitLabel) this.dom.gcalUnitLabel.textContent = '₽/' + unit;
+        if (this.dom.gcalUnitTarget) this.dom.gcalUnitTarget.textContent = unit;
+        if (this.dom.gcalNormUnit) this.dom.gcalNormUnit.textContent = unit;
+        if (this.dom.gcalResultUnit) this.dom.gcalResultUnit.textContent = unit;
+        // Типовой норматив по региону — подсказка не строгое значение.
+        if (this.dom.gcalNormGcal && !this.dom.gcalNormGcal.value) {
+            this.dom.gcalNormGcal.value = isHeat ? '0.0185' : '0.0628';
+        }
+        this._recalcGcal();
+        this.dom.gcalModal.classList.add('open');
+    },
+
+    closeGcalCalc() {
+        if (this.dom.gcalModal) this.dom.gcalModal.classList.remove('open');
+    },
+
+    /** Пересчитывает результат при изменении любого из двух полей. */
+    _recalcGcal() {
+        if (!this.dom.gcalResult) return;
+        const rub = parseFloat(this.dom.gcalRubPerGcal?.value) || 0;
+        const norm = parseFloat(this.dom.gcalNormGcal?.value) || 0;
+        const result = rub * norm;
+        this.dom.gcalResult.textContent =
+            result > 0
+                ? result.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 4 }) + ' ₽'
+                : '— ₽';
+    },
+
+    /** Применяет результат в нужное поле тарифа и закрывает модалку. */
+    applyGcal() {
+        const rub = parseFloat(this.dom.gcalRubPerGcal?.value) || 0;
+        const norm = parseFloat(this.dom.gcalNormGcal?.value) || 0;
+        if (rub <= 0 || norm <= 0) {
+            toast('Заполните оба поля — тариф ₽/Гкал и норматив Гкал/единицу', 'warning');
+            return;
+        }
+        const result = rub * norm;
+        const targetId = this._gcalTarget === 'heating' ? 't_heat' : 't_w_heat';
+        const targetInput = document.getElementById(targetId);
+        if (targetInput) {
+            // 4 знака после точки — иначе при норматив 0.0185 округление до
+            // 2 знаков может «съесть» половину копейки на квитанции.
+            targetInput.value = result.toFixed(4);
+            // Триггерим input — пересчитает превью тарифа.
+            targetInput.dispatchEvent(new Event('input', { bubbles: true }));
+            toast(`Применено: ${result.toFixed(2)} ₽`, 'success');
+        }
+        this.closeGcalCalc();
+    },
 };

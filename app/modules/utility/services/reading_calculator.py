@@ -47,6 +47,8 @@ def compute_reading_breakdown(
     current_cold: Decimal,
     current_elect: Decimal,
     prev_reading: Optional[MeterReading] = None,
+    heating_season_active: bool = True,
+    hot_water_heating_active: bool = True,
 ) -> dict:
     """Считает breakdown стоимости для reading и возвращает все поля,
     которые caller должен записать в MeterReading.
@@ -56,6 +58,10 @@ def compute_reading_breakdown(
       prev_reading           — предыдущая утверждённая подача жильца в этой
                                комнате; None означает baseline (первая подача,
                                расход не известен — возвращаем все нули).
+      heating_season_active, hot_water_heating_active — сезонные переключатели
+                               (см. SystemSetting). Caller обычно читает их через
+                               `_load_seasonal(db)` (async) или своим способом
+                               для sync-контекстов (gsheets promote, recalc-скрипт).
 
     Возвращает dict со ключами:
       cost_hot_water, cost_cold_water, cost_sewage, cost_electricity,
@@ -111,6 +117,8 @@ def compute_reading_breakdown(
         volume_hot=d_hot, volume_cold=d_cold,
         volume_sewage=d_hot + d_cold,
         volume_electricity_share=elect_share,
+        heating_season_active=heating_season_active,
+        hot_water_heating_active=hot_water_heating_active,
     )
 
     # Декомпозиция total → 209/205. Та же логика что в client_readings.py:

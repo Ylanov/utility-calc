@@ -112,6 +112,13 @@ async def detect_drift_in_period(
     max_abs = Decimal("0")
     checked = 0
 
+    # Сезонные флаги читаем ОДИН раз перед циклом — иначе
+    # +1 запрос на каждый reading. compute_reading_breakdown будет считать
+    # с тем же набором переключателей, что и реальный /api/calculate,
+    # иначе drift-анализатор будет находить ложные расхождения.
+    from app.modules.utility.routers.settings import _load_seasonal
+    _seasonal = await _load_seasonal(db)
+
     for r in readings:
         user = r.user
         room = user.room if user else None
@@ -160,6 +167,8 @@ async def detect_drift_in_period(
                 current_cold=r.cold_water or 0,
                 current_elect=r.electricity or 0,
                 prev_reading=prev,
+                heating_season_active=_seasonal.heating_season_active,
+                hot_water_heating_active=_seasonal.hot_water_heating_active,
             )
         except CalculationError as e:
             errors.append({

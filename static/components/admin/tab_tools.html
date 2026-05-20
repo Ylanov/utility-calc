@@ -130,6 +130,96 @@
         </section>
 
         <!-- ==========================================
+             СЕКЦИЯ 2.2: СЕЗОННЫЕ НАДБАВКИ
+             Управление сезонными статьями: отопление и
+             подогрев ГВС. Один глобальный переключатель
+             вместо «удалять heating из тарифа летом и
+             возвращать осенью». Состояние хранится в
+             system_settings, читается в calculate_utilities.
+             ========================================== -->
+        <section class="accordion-section" data-section="seasonal">
+            <button class="accordion-header" type="button" aria-expanded="false">
+                <span class="accordion-title">
+                    <span class="accordion-icon" style="background:rgba(239,68,68,0.10); color:#dc2626;">
+                        <i class="fa-solid fa-temperature-three-quarters"></i>
+                    </span>
+                    <span class="accordion-title-text">
+                        <strong>Сезонные надбавки</strong>
+                        <span class="subtitle">Включить/выключить отопление и подогрев ГВС — сразу для всех жильцов</span>
+                    </span>
+                </span>
+                <i class="fa-solid fa-chevron-down accordion-chevron"></i>
+            </button>
+            <div class="accordion-body">
+                <div class="accordion-content">
+                    <div class="inner">
+                        <div id="seasonalLoading" style="padding:14px; text-align:center; color:var(--text-secondary);">
+                            <i class="fa-solid fa-spinner fa-spin"></i> Загрузка состояния…
+                        </div>
+                        <div id="seasonalBody" style="display:none;">
+
+                            <!-- Карточка: Отопление -->
+                            <div class="seasonal-card" style="display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px 18px; border:1px solid var(--border-color); border-radius:12px; margin-bottom:12px; background:var(--bg-card);">
+                                <div style="flex:1; min-width:0;">
+                                    <div style="font-weight:600; font-size:15px; color:var(--text-main); display:flex; align-items:center; gap:8px;">
+                                        <i class="fa-solid fa-fire" style="color:#dc2626;"></i> Отопительный сезон
+                                    </div>
+                                    <p style="font-size:12.5px; color:var(--text-secondary); margin:6px 0 0;">
+                                        Когда выключен — статья «отопление» (₽/м²) не начисляется ни одному жильцу,
+                                        даже если в тарифе указана ненулевая ставка.<br>
+                                        Типовой период работы в Иркутской области: <b>15 октября — 15 апреля</b>.
+                                    </p>
+                                </div>
+                                <label class="toggle-switch" style="display:inline-flex; align-items:center; gap:10px; cursor:pointer; user-select:none;">
+                                    <input type="checkbox" id="seasonalHeating" style="position:absolute; opacity:0; width:0; height:0;">
+                                    <span class="toggle-slider" data-target="seasonalHeating" style="position:relative; display:inline-block; width:52px; height:28px; background:#cbd5e1; border-radius:14px; transition:.25s;">
+                                        <span style="position:absolute; left:3px; top:3px; width:22px; height:22px; background:#fff; border-radius:50%; transition:.25s; box-shadow:0 1px 3px rgba(0,0,0,.2);"></span>
+                                    </span>
+                                    <span id="seasonalHeatingLabel" style="font-weight:600; font-size:13px; color:var(--text-secondary); min-width:62px;">…</span>
+                                </label>
+                            </div>
+
+                            <!-- Карточка: Подогрев ГВС -->
+                            <div class="seasonal-card" style="display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px 18px; border:1px solid var(--border-color); border-radius:12px; margin-bottom:12px; background:var(--bg-card);">
+                                <div style="flex:1; min-width:0;">
+                                    <div style="font-weight:600; font-size:15px; color:var(--text-main); display:flex; align-items:center; gap:8px;">
+                                        <i class="fa-solid fa-droplet" style="color:#f59e0b;"></i> Подогрев ГВС
+                                    </div>
+                                    <p style="font-size:12.5px; color:var(--text-secondary); margin:6px 0 0;">
+                                        Когда выключен — ГВС считается только за подачу воды (без «подогрева»).
+                                        Используйте на время летней профилактики ТЭЦ, когда горячая вода фактически не подаётся.
+                                    </p>
+                                </div>
+                                <label class="toggle-switch" style="display:inline-flex; align-items:center; gap:10px; cursor:pointer; user-select:none;">
+                                    <input type="checkbox" id="seasonalHotWaterHeating" style="position:absolute; opacity:0; width:0; height:0;">
+                                    <span class="toggle-slider" data-target="seasonalHotWaterHeating" style="position:relative; display:inline-block; width:52px; height:28px; background:#cbd5e1; border-radius:14px; transition:.25s;">
+                                        <span style="position:absolute; left:3px; top:3px; width:22px; height:22px; background:#fff; border-radius:50%; transition:.25s; box-shadow:0 1px 3px rgba(0,0,0,.2);"></span>
+                                    </span>
+                                    <span id="seasonalHotWaterHeatingLabel" style="font-weight:600; font-size:13px; color:var(--text-secondary); min-width:62px;">…</span>
+                                </label>
+                            </div>
+
+                            <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:16px; flex-wrap:wrap;">
+                                <button type="button" id="btnSeasonalReload" class="action-btn secondary-btn" style="padding:9px 16px;">
+                                    <i class="fa-solid fa-rotate-right"></i> Перечитать
+                                </button>
+                                <button type="button" id="btnSeasonalSave" class="action-btn success-btn" style="padding:9px 18px;">
+                                    <i class="fa-solid fa-floppy-disk"></i> Применить
+                                </button>
+                            </div>
+
+                            <p class="hint-text" style="margin-top:14px; font-size:12px;">
+                                Изменения вступают в силу немедленно — со следующей подачи показаний или
+                                перерасчёта будут применены новые правила. Ранее утверждённые квитанции
+                                <b>не пересчитываются автоматически</b> — для них используйте «Перерасчёт периода».
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ==========================================
              СЕКЦИЯ 2.5: ПЕРЕРАСЧЁТ ПЕРИОДА
              ========================================== -->
         <section class="accordion-section" data-section="recalc">
@@ -249,50 +339,110 @@
 
                             <h4 style="margin-bottom: 16px; font-size: 15px; color: var(--text-main); border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">Стоимость ресурсов и услуг (₽)</h4>
 
-                            <div class="grid-auto-fit">
-                                <div class="form-group" style="margin: 0;">
-                                    <label>Содержание и ремонт (м²)</label>
-                                    <input type="number" step="0.01" id="t_main" required>
+                            <!-- ==============================================
+                                 ГРУППА 1: ВОДА (по счётчику, ₽/м³)
+                                 ============================================== -->
+                            <fieldset class="tariff-group" style="border:1px solid var(--border-color); border-radius:12px; padding:14px 16px 16px; margin-bottom:14px;">
+                                <legend style="padding:0 8px; font-size:12px; font-weight:700; color:var(--primary-color); text-transform:uppercase; letter-spacing:.5px;">
+                                    <i class="fa-solid fa-droplet"></i> Вода (по счётчику, ₽/м³)
+                                </legend>
+                                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px;">
+                                    <div class="form-group" style="margin: 0;">
+                                        <label style="color: var(--primary-color);"><i class="fa-solid fa-faucet"></i> Подача воды</label>
+                                        <input type="number" step="0.01" id="t_w_sup" required>
+                                        <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">Холодная вода: только подача. Горячая вода = подача + подогрев.</small>
+                                    </div>
+                                    <div class="form-group" style="margin: 0;">
+                                        <label style="color: var(--danger-color);"><i class="fa-solid fa-fire"></i> Подогрев ГВС</label>
+                                        <input type="number" step="0.01" id="t_w_heat" required>
+                                        <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">Доплата на м³ горячей. Можно посчитать из Гкал — кнопка ниже.</small>
+                                        <button type="button" id="btnOpenGcalCalc" class="action-btn secondary-btn" style="margin-top:8px; padding:5px 10px; font-size:11px;">
+                                            <i class="fa-solid fa-calculator"></i> Калькулятор Гкал → ₽/м³
+                                        </button>
+                                    </div>
+                                    <div class="form-group" style="margin: 0;">
+                                        <label style="color: var(--text-secondary);"><i class="fa-solid fa-sink"></i> Водоотведение</label>
+                                        <input type="number" step="0.01" id="t_sew" required>
+                                        <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">За (ГВС + ХВС) м³. Канализация — не считается отдельно.</small>
+                                    </div>
                                 </div>
-                                <div class="form-group" style="margin: 0;">
-                                    <label>Наем жилья (м²)</label>
-                                    <input type="number" step="0.01" id="t_rent" required>
+                            </fieldset>
+
+                            <!-- ==============================================
+                                 ГРУППА 2: ЭЛЕКТРИЧЕСТВО
+                                 ============================================== -->
+                            <fieldset class="tariff-group" style="border:1px solid var(--border-color); border-radius:12px; padding:14px 16px 16px; margin-bottom:14px;">
+                                <legend style="padding:0 8px; font-size:12px; font-weight:700; color:#d97706; text-transform:uppercase; letter-spacing:.5px;">
+                                    <i class="fa-solid fa-bolt"></i> Электричество
+                                </legend>
+                                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px;">
+                                    <div class="form-group" style="margin: 0;">
+                                        <label style="color: #d97706;"><i class="fa-solid fa-bolt"></i> ₽ за 1 кВт·ч</label>
+                                        <input type="number" step="0.01" id="t_el_rate" required>
+                                        <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">Основная ставка по счётчику. Доля жильца в комнатном расходе.</small>
+                                    </div>
+                                    <div class="form-group" style="margin: 0;">
+                                        <label style="color: #d97706;"><i class="fa-solid fa-house-flag"></i> ОДН, ₽/м²</label>
+                                        <input type="number" step="0.01" id="t_el_sqm" required>
+                                        <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">Общедомовые нужды — освещение коридоров, лифты. Считается за площадь.</small>
+                                    </div>
                                 </div>
-                                <div class="form-group" style="margin: 0;">
-                                    <label>ТКО / Мусор (чел)</label>
-                                    <input type="number" step="0.01" id="t_waste" required>
+                            </fieldset>
+
+                            <!-- ==============================================
+                                 ГРУППА 3: ФИКСИРОВАННЫЕ НА м² (площадь × ставка)
+                                 ============================================== -->
+                            <fieldset class="tariff-group" style="border:1px solid var(--border-color); border-radius:12px; padding:14px 16px 16px; margin-bottom:14px;">
+                                <legend style="padding:0 8px; font-size:12px; font-weight:700; color:#059669; text-transform:uppercase; letter-spacing:.5px;">
+                                    <i class="fa-solid fa-house"></i> Фиксированные начисления (₽/м²)
+                                </legend>
+                                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:12px;">
+                                    <div class="form-group" style="margin: 0;">
+                                        <label><i class="fa-solid fa-screwdriver-wrench"></i> Содержание и ремонт</label>
+                                        <input type="number" step="0.01" id="t_main" required>
+                                        <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">Содержание здания и текущий ремонт. На счёт 209.</small>
+                                    </div>
+                                    <div class="form-group" style="margin: 0;">
+                                        <label><i class="fa-solid fa-key"></i> Наём жилья</label>
+                                        <input type="number" step="0.01" id="t_rent" required>
+                                        <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">Социальный наём — единственная статья на счёт 205.</small>
+                                    </div>
+                                    <div class="form-group" style="margin: 0;">
+                                        <label><i class="fa-solid fa-trash"></i> ТКО / Мусор</label>
+                                        <input type="number" step="0.01" id="t_waste" required>
+                                        <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">Твёрдые коммунальные отходы (вывоз). Берём за м², несмотря на «чел» в старых счетах.</small>
+                                    </div>
+                                    <div class="form-group" style="margin: 0;">
+                                        <label style="color:#dc2626;"><i class="fa-solid fa-temperature-three-quarters"></i> Отопление</label>
+                                        <input type="number" step="0.01" id="t_heat" required>
+                                        <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">Сезонная статья — отключается переключателем «Сезонные надбавки».
+                                        Если поставщик присылает в Гкал, используйте калькулятор:</small>
+                                        <button type="button" id="btnOpenGcalCalcHeat" class="action-btn secondary-btn" style="margin-top:6px; padding:5px 10px; font-size:11px;">
+                                            <i class="fa-solid fa-calculator"></i> Калькулятор Гкал → ₽/м²
+                                        </button>
+                                    </div>
                                 </div>
-                                <div class="form-group" style="margin: 0;">
-                                    <label>Отопление (м²)</label>
-                                    <input type="number" step="0.01" id="t_heat" required>
+                            </fieldset>
+
+                            <!-- ==============================================
+                                 ГРУППА 4: КОЙКО-МЕСТО (только для одиночек)
+                                 ============================================== -->
+                            <fieldset class="tariff-group" style="border:1px solid var(--border-color); border-radius:12px; padding:14px 16px 16px; margin-bottom:14px; background:rgba(124,58,237,0.04);">
+                                <legend style="padding:0 8px; font-size:12px; font-weight:700; color:#7c3aed; text-transform:uppercase; letter-spacing:.5px;">
+                                    <i class="fa-solid fa-bed"></i> Койко-место (одиночки)
+                                </legend>
+                                <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:12px;">
+                                    <div class="form-group" style="margin: 0;">
+                                        <label style="color:#7c3aed;"><i class="fa-solid fa-bed"></i> Сумма за место, ₽/мес</label>
+                                        <input type="number" step="0.01" min="0" id="t_per_capita" value="0">
+                                        <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">
+                                            Фиксированная сумма для жильцов с типом «холостяк» (<code>billing_mode=per_capita</code>).
+                                            Они не подают показания счётчиков — платят эту сумму.
+                                            0 = тариф для одиночек не применяется.
+                                        </small>
+                                    </div>
                                 </div>
-                                <div class="form-group" style="margin: 0;">
-                                    <label style="color: var(--danger-color);"><i class="fa-solid fa-fire"></i> Подогрев ГВС (м³)</label>
-                                    <input type="number" step="0.01" id="t_w_heat" required>
-                                </div>
-                                <div class="form-group" style="margin: 0;">
-                                    <label style="color: var(--primary-color);"><i class="fa-solid fa-droplet"></i> Подача воды (м³)</label>
-                                    <input type="number" step="0.01" id="t_w_sup" required>
-                                </div>
-                                <div class="form-group" style="margin: 0;">
-                                    <label style="color: var(--text-secondary);"><i class="fa-solid fa-sink"></i> Водоотведение (м³)</label>
-                                    <input type="number" step="0.01" id="t_sew" required>
-                                </div>
-                                <div class="form-group" style="margin: 0;">
-                                    <label style="color: #d97706;"><i class="fa-solid fa-bolt"></i> Эл. Энергия (кВт)</label>
-                                    <input type="number" step="0.01" id="t_el_rate" required>
-                                </div>
-                                <div class="form-group" style="margin: 0;">
-                                    <label>Эл. энергия ОДН (м²)</label>
-                                    <input type="number" step="0.01" id="t_el_sqm" required>
-                                </div>
-                                <div class="form-group" style="margin: 0;">
-                                    <label style="color:#7c3aed;" title="Фиксированная сумма за место для холостяка. Используется только для жильцов с типом single / billing_mode=per_capita">
-                                        <i class="fa-solid fa-bed"></i> За койко-место, ₽/мес
-                                    </label>
-                                    <input type="number" step="0.01" min="0" id="t_per_capita" value="0">
-                                </div>
-                            </div>
+                            </fieldset>
 
                             <!-- ==============================================
                                  НОРМАТИВЫ для жильцов БЕЗ счётчиков
@@ -1096,5 +1246,58 @@
             </div>
         </section>
 
+    </div>
+
+    <!-- ==========================================
+         МОДАЛКА: КАЛЬКУЛЯТОР ГКАЛ → ₽/м² (или ₽/м³)
+         Поставщики тепла часто выставляют тариф в Гкал.
+         Считаем: руб/Гкал × норматив Гкал/единицу = ₽/единицу.
+         Один модал на обе кнопки (отопление + подогрев ГВС),
+         поле target подсказывает куда применить результат.
+         ========================================== -->
+    <div id="gcalCalcModal" class="modal-overlay">
+        <div class="modal-window" style="width: 560px;">
+            <div class="modal-header" style="background:rgba(220,38,38,0.08);">
+                <h3 style="color:#b91c1c;">
+                    <i class="fa-solid fa-calculator"></i>
+                    Калькулятор: Гкал → <span id="gcalUnitLabel">₽/м²</span>
+                </h3>
+                <button class="close-btn close-icon" data-gcal-close>&times;</button>
+            </div>
+            <div class="modal-form" style="padding:18px 22px; background:var(--bg-page);">
+                <p class="hint-text" style="margin:0 0 14px 0; font-size:12.5px;">
+                    Поставщик присылает тариф в <b>₽ за 1 Гкал</b>. Чтобы получить
+                    <b>₽ за 1 <span id="gcalUnitTarget">м²</span></b>, умножаем на норматив тепла —
+                    сколько Гкал нужно на этот «м²/м³» в месяц.
+                </p>
+                <div class="form-group" style="margin-bottom:12px;">
+                    <label><i class="fa-solid fa-ruble-sign"></i> Тариф поставщика, ₽ / Гкал</label>
+                    <input type="number" step="0.01" min="0" id="gcalRubPerGcal" placeholder="Например: 2150.00">
+                </div>
+                <div class="form-group" style="margin-bottom:12px;">
+                    <label><i class="fa-solid fa-fire-flame-curved"></i> Норматив тепла, Гкал на 1 <span id="gcalNormUnit">м²</span> в месяц</label>
+                    <input type="number" step="0.0001" min="0" id="gcalNormGcal" placeholder="Например: 0.0185">
+                    <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">
+                        Берётся из норматива региона (для Иркутской обл. ≈ 0.0185 Гкал/м² для отопления).
+                        Уточните в распоряжении / тарифной справке поставщика.
+                    </small>
+                </div>
+                <div style="background:var(--bg-card); border:1px dashed var(--border-color); border-radius:10px; padding:12px 14px; margin-top:14px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center;">
+                        <span style="font-size:13px; color:var(--text-secondary);">Результат:</span>
+                        <span id="gcalResult" style="font-size:22px; font-weight:700; color:#059669; font-family:monospace;">— ₽</span>
+                    </div>
+                    <div style="font-size:11px; color:var(--text-secondary); margin-top:4px;" id="gcalResultFormula">
+                        тариф_₽/Гкал × норматив_Гкал = ₽/<span id="gcalResultUnit">м²</span>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer" style="display:flex; gap:10px; justify-content:flex-end;">
+                <button class="action-btn secondary-btn" data-gcal-close>Отмена</button>
+                <button type="button" id="btnApplyGcal" class="action-btn success-btn">
+                    <i class="fa-solid fa-check"></i> Применить в тариф
+                </button>
+            </div>
+        </div>
     </div>
 </div>
