@@ -90,9 +90,6 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
     from app.modules.utility.services.reading_calculator import is_meaningful_prev
     prev_latest = next((r for r in history if is_meaningful_prev(r)), None)
     prev_any = history[0] if history else None  # для prev_is_synth-detection
-    prev_manual = next((r for r in history if r.anomaly_flags != "AUTO_GENERATED"), None)
-
-    p_hot_man, p_cold_man, p_elect_man = prev_manual.hot_water if prev_manual else ZERO, prev_manual.cold_water if prev_manual else ZERO, prev_manual.electricity if prev_manual else ZERO
 
     p_hot, p_cold, p_elect = prev_latest.hot_water if prev_latest else ZERO, prev_latest.cold_water if prev_latest else ZERO, prev_latest.electricity if prev_latest else ZERO
 
@@ -270,9 +267,6 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
     from app.modules.utility.services.reading_calculator import is_meaningful_prev
     prev_latest = next((r for r in history if is_meaningful_prev(r)), None)
     prev_any = history[0] if history else None
-    prev_manual = next((r for r in history if r.anomaly_flags != "AUTO_GENERATED"), None)
-
-    p_hot_man, p_cold_man, p_elect_man = prev_manual.hot_water if prev_manual else ZERO, prev_manual.cold_water if prev_manual else ZERO, prev_manual.electricity if prev_manual else ZERO
 
     p_hot, p_cold, p_elect = prev_latest.hot_water if prev_latest else ZERO, prev_latest.cold_water if prev_latest else ZERO, prev_latest.electricity if prev_latest else ZERO
 

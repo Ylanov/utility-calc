@@ -325,18 +325,8 @@ async def save_reading(
          if r.is_approved and r.period_id and r.period_id < period.id),
         None
     )
-    prev_manual = next(
-        (r for r in readings
-         if r.is_approved and r.period_id and r.period_id < period.id
-         and r.anomaly_flags != "AUTO_GENERATED"),
-        None
-    )
 
     zero = Decimal("0.000")
-
-    p_hot_man = prev_manual.hot_water if prev_manual and prev_manual.hot_water is not None else zero
-    p_cold_man = prev_manual.cold_water if prev_manual and prev_manual.cold_water is not None else zero
-    p_elect_man = prev_manual.electricity if prev_manual and prev_manual.electricity is not None else zero
 
     p_hot = prev_latest.hot_water if prev_latest else zero
     p_cold = prev_latest.cold_water if prev_latest else zero
