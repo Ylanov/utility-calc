@@ -586,25 +586,66 @@ def sync_import_debts_process(
             #
             # Now: explicit per-row update по id (SERIAL уникален без
             # created_at — partition pruning теряется, но импорт делается
-            # 1-2 раза в месяц, скорость не критична). +rowcount log.
+            # 1-2 раза в месяц, скорость не критична). Стратегия:
+            #   1) Snapshot final values из ORM объектов в dict (до
+            #      любого expunge — иначе lazy-load перезаписал бы их).
+            #   2) Expunge объекты из session — отвязываем от ORM, чтобы
+            #      session.commit() не пытался их сам flush'ить (на
+            #      партиционированной таблице ORM flush тоже тихо
+            #      проваливается и могло маскировать мой execute).
+            #   3) execute(update().where(id=).values()) — пишем в БД.
+            #   4) Логируем rowcount=affected; если requested!=affected —
+            #      WARNING (видно сразу в docker logs).
             from sqlalchemy import update as _sa_update
-            total_affected = 0
+
+            # 1) snapshot
+            final_values = []
             for r in updates_dict.values():
+                final_values.append({
+                    "id": r.id,
+                    "debt_209": r.debt_209,
+                    "overpayment_209": r.overpayment_209,
+                    "debt_205": r.debt_205,
+                    "overpayment_205": r.overpayment_205,
+                })
+
+            # 2) expunge — отвязываем от ORM-session (для безопасности
+            # на партиционированной MR — чтобы ORM flush не перезаписал
+            # наши explicit UPDATE'ы своим тихим no-op).
+            for r in list(updates_dict.values()):
+                try:
+                    db.expunge(r)
+                except Exception:
+                    pass  # объект уже мог быть detached
+
+            # 3) write
+            total_affected = 0
+            for upd in final_values:
                 res = db.execute(
                     _sa_update(MeterReading)
-                    .where(MeterReading.id == r.id)
+                    .where(MeterReading.id == upd["id"])
                     .values(
-                        debt_209=r.debt_209,
-                        overpayment_209=r.overpayment_209,
-                        debt_205=r.debt_205,
-                        overpayment_205=r.overpayment_205,
+                        debt_209=upd["debt_209"],
+                        overpayment_209=upd["overpayment_209"],
+                        debt_205=upd["debt_205"],
+                        overpayment_205=upd["overpayment_205"],
                     )
                 )
                 total_affected += res.rowcount or 0
-            logger.info(
-                "[DEBT-IMPORT] %s updated rows: requested=%d affected=%d (log_id=%d)",
-                account_type, len(updates_dict), total_affected, import_log.id,
-            )
+
+            # 4) lol/alert
+            if total_affected != len(final_values):
+                logger.warning(
+                    "[DEBT-IMPORT] %s requested=%d but ONLY affected=%d. "
+                    "Это значит UPDATE не записал часть строк — копать "
+                    "(партиционирование, триггеры, locks). log_id=%d",
+                    account_type, len(final_values), total_affected, import_log.id,
+                )
+            else:
+                logger.info(
+                    "[DEBT-IMPORT] %s updated rows OK: requested=%d affected=%d (log_id=%d)",
+                    account_type, len(final_values), total_affected, import_log.id,
+                )
 
         # 8. Финализируем DebtImportLog в той же транзакции.
         # Dedup по ФИО — set() на dict не работает, поэтому через {fio: dict}.
