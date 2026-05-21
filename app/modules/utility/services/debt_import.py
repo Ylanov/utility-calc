@@ -308,6 +308,65 @@ def sync_import_debts_process(
             section_markers, debit_cols, credit_cols,
         )
 
+        # ─── СТРАТЕГИЯ 0 (самая надёжная): итоговая строка счёта ────
+        # В ОСВ 1С первая строка после заголовков — итог по счёту:
+        # «209.34» (или «205.X»). У неё ВСЕ 6 колонок заполнены:
+        # [Сальдо нач Дт, Сальдо нач Кр, Обороты Дт, Обороты Кр,
+        #  Сальдо кон Дт, Сальдо кон Кр]
+        # По их позициям однозначно определяем индексы. Это работает даже
+        # если section-markers не нашлись (например другой шаблон 1С).
+        try:
+            for row in header_ws_ro.iter_rows(min_row=1, max_row=20, values_only=True):
+                if not row:
+                    continue
+                first_cell = row[0] if len(row) > 0 else None
+                if not isinstance(first_cell, str):
+                    continue
+                first_norm = first_cell.strip()
+                # Ищем строку начинающуюся с «209.» или «205.» (с любой цифрой
+                # после точки, например 209.34 / 205.10).
+                if not (first_norm.startswith("209.") or first_norm.startswith("205.")):
+                    continue
+                # Собираем колонки с числовыми значениями.
+                numeric_positions = []
+                for col_idx, cell in enumerate(row[1:], start=1):
+                    if cell is None or cell == "":
+                        continue
+                    try:
+                        d = clean_decimal(cell)
+                        if d != 0:
+                            numeric_positions.append(col_idx)
+                    except Exception:
+                        pass
+                logger.info(
+                    "[debt_import] account_total row found: '%s' at numeric_positions=%s",
+                    first_norm, numeric_positions,
+                )
+                # Ожидаем 6 ненулевых значений. Если меньше — у счёта нет
+                # оборотов по какой-то стороне, fallback на меньшее число.
+                if len(numeric_positions) >= 4:
+                    # Берём по порядку: 0=начДт, 1=начКр, 2=оборДт, 3=оборКр,
+                    # 4=концДт, 5=концКр. Если значений меньше 6 — берём
+                    # первый и последний как best guess для нач/конец.
+                    debt_col_first = numeric_positions[0]
+                    overpay_col_first = numeric_positions[1] if len(numeric_positions) > 1 else numeric_positions[0]
+                    if len(numeric_positions) >= 6:
+                        debt_col_last = numeric_positions[4]
+                        overpay_col_last = numeric_positions[5]
+                    elif len(numeric_positions) == 5:
+                        debt_col_last = numeric_positions[3]
+                        overpay_col_last = numeric_positions[4]
+                    elif len(numeric_positions) == 4:
+                        debt_col_last = numeric_positions[2]
+                        overpay_col_last = numeric_positions[3]
+                    logger.info(
+                        "[debt_import] STRATEGY 0 success: debt=%d/%d, overpay=%d/%d",
+                        debt_col_first, debt_col_last, overpay_col_first, overpay_col_last,
+                    )
+                    break
+        except Exception as exc:
+            logger.warning("[debt_import] strategy 0 failed: %s", exc)
+
         # Стратегия 1: все 3 секции + минимум 3 «Дебет»/«Кредит».
         if (
             "начало" in section_markers
