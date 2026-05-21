@@ -741,3 +741,162 @@ async def delete_reading(
 
     await db.commit()
     return {"status": "deleted"}
+
+
+async def convert_reading_to_baseline(
+    db: AsyncSession,
+    reading_id: int,
+    actor: Optional["User"] = None,
+) -> dict:
+    """Превратить аномальный reading в Начальный период (baseline).
+
+    Use case: жилец впервые подал реальные показания счётчика (например,
+    ГВС=2186, ХВС=4112 у Струковой — счётчик уже накручен за годы), но в
+    БД его «Начальный период» = AUTO_GENERATED 0/0/0. В результате дельта
+    от 0 до 2186 → счёт 12 653 ₽ на ровном месте. После этой операции:
+      - Значения reading'а перенесены в INITIAL_SETUP-запись (single
+        источник истины для baseline данной комнаты);
+      - Текущий аномальный reading удалён (вместе с его total_cost);
+      - Room.last_* обновлены — следующая подача от жильца будет иметь
+        корректную дельту относительно реального baseline.
+
+    Audit log: оба действия (создание/обновление initial + удаление reading)
+    логируются. Юридически важно — это деньги на квитанции.
+    """
+    from app.modules.utility.models import User, GSheetsImportRow
+    from sqlalchemy import update
+    from sqlalchemy.orm import selectinload
+    from app.modules.utility.routers.admin_dashboard import write_audit_log
+
+    res = await db.execute(
+        select(MeterReading)
+        .options(selectinload(MeterReading.user).selectinload(User.room))
+        .where(MeterReading.id == reading_id)
+    )
+    reading = res.scalars().first()
+    if not reading:
+        raise HTTPException(status_code=404, detail="Запись не найдена")
+
+    target_user = reading.user
+    room = target_user.room if target_user else None
+    if not room:
+        raise HTTPException(
+            status_code=400,
+            detail="У жильца reading'а нет привязанной комнаты — нельзя "
+                   "превратить в baseline без room_id.",
+        )
+
+    new_hot = reading.hot_water or Decimal("0")
+    new_cold = reading.cold_water or Decimal("0")
+    new_elect = reading.electricity or Decimal("0")
+
+    # Снапшот удаляемого reading'а для audit.
+    snapshot = {
+        "reading_id": reading_id,
+        "period_id": reading.period_id,
+        "is_approved": bool(reading.is_approved),
+        "hot_water": str(new_hot),
+        "cold_water": str(new_cold),
+        "electricity": str(new_elect),
+        "total_cost": str(reading.total_cost or 0),
+        "anomaly_flags": reading.anomaly_flags,
+        "target_user_id": target_user.id if target_user else None,
+        "target_username": target_user.username if target_user else None,
+        "target_full_name": target_user.full_name if target_user else None,
+        "dormitory": room.dormitory_name,
+        "room_number": room.room_number,
+    }
+
+    # Ищем существующий baseline-reading. Сначала INITIAL_SETUP (приоритет),
+    # потом AUTO_GENERATED (то что система генерит при онбординге).
+    initial_q = await db.execute(
+        select(MeterReading).where(
+            MeterReading.room_id == room.id,
+            MeterReading.anomaly_flags.in_([
+                "INITIAL_SETUP",
+                "INITIAL_FROM_FIRST_SUBMISSION",
+                "AUTO_GENERATED",
+            ]),
+        ).order_by(MeterReading.created_at.desc())
+    )
+    initial = initial_q.scalars().first()
+
+    if initial is not None:
+        # Обновляем существующий baseline.
+        initial.hot_water = new_hot
+        initial.cold_water = new_cold
+        initial.electricity = new_elect
+        initial.anomaly_flags = "INITIAL_FROM_FIRST_SUBMISSION"
+        initial.anomaly_score = 0
+        initial.is_approved = True
+        db.add(initial)
+        initial_id = initial.id
+        initial_action = "updated"
+    else:
+        # Создаём новый INITIAL_SETUP. period_id=NULL — baseline не привязан
+        # к конкретному периоду (см. set_initial_readings выше).
+        initial = MeterReading(
+            room_id=room.id,
+            user_id=target_user.id if target_user else None,
+            period_id=None,
+            hot_water=new_hot,
+            cold_water=new_cold,
+            electricity=new_elect,
+            is_approved=True,
+            anomaly_flags="INITIAL_FROM_FIRST_SUBMISSION",
+            anomaly_score=0,
+            total_209=Decimal("0"),
+            total_205=Decimal("0"),
+        )
+        db.add(initial)
+        await db.flush()
+        initial_id = initial.id
+        initial_action = "created"
+
+    # Обновляем кэш Room.last_* — это критично, потому что reading_calculator
+    # местами берёт значения именно из Room (быстрая ветка без SELECT по
+    # MeterReading). Без обновления первая же новая подача даст delta от 0.
+    room.last_hot_water = new_hot
+    room.last_cold_water = new_cold
+    room.last_electricity = new_elect
+    db.add(room)
+
+    # Отвязываем gsheets-строки от удаляемого reading'а — иначе orphan-ссылки
+    # запутают promote-задачу (см. delete_reading выше).
+    await db.execute(
+        update(GSheetsImportRow)
+        .where(GSheetsImportRow.reading_id == reading_id)
+        .values(reading_id=None, processed_at=None)
+    )
+
+    await db.delete(reading)
+
+    if actor is not None:
+        try:
+            await write_audit_log(
+                db, actor.id, actor.username,
+                action="convert_reading_to_baseline",
+                entity_type="meter_reading",
+                entity_id=reading_id,
+                details={
+                    **snapshot,
+                    "baseline_action": initial_action,
+                    "baseline_reading_id": initial_id,
+                },
+            )
+        except Exception as exc:
+            logger = logging.getLogger(__name__)
+            logger.warning("audit_log for convert_reading_to_baseline failed: %s", exc)
+
+    await db.commit()
+    return {
+        "status": "ok",
+        "baseline_action": initial_action,
+        "baseline_reading_id": initial_id,
+        "removed_reading_id": reading_id,
+        "values": {
+            "hot_water": str(new_hot),
+            "cold_water": str(new_cold),
+            "electricity": str(new_elect),
+        },
+    }

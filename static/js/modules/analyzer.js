@@ -207,6 +207,18 @@ export const AnalyzerModule = {
                 this.deleteHighDeltaReading(Number(delBtn.dataset.highdeltaDelete));
                 return;
             }
+            const baseBtn = e.target.closest('button[data-highdelta-baseline]');
+            if (baseBtn) {
+                e.preventDefault();
+                this.convertHighDeltaToBaseline(Number(baseBtn.dataset.highdeltaBaseline));
+                return;
+            }
+            const bulkBtn = e.target.closest('button[data-highdelta-bulk-baseline]');
+            if (bulkBtn) {
+                e.preventDefault();
+                this.bulkConvertSynthToBaseline();
+                return;
+            }
             const detailBtn = e.target.closest('button[data-highdelta-detail]');
             if (detailBtn) {
                 e.preventDefault();
@@ -1603,6 +1615,7 @@ export const AnalyzerModule = {
             const data = await api.get(
                 `/admin/analyzer/high-delta-readings?threshold=${threshold}&limit=300`
             );
+            this._lastHighDeltaData = data;  // для bulk-кнопки
             this._renderHighDelta(data);
         } catch (e) {
             this.dom.highDeltaContainer.innerHTML =
@@ -1661,6 +1674,11 @@ export const AnalyzerModule = {
                                 style="padding:5px 10px; font-size:12px;" title="Открыть «Проверка расчёта»">
                             <i class="fa-solid fa-magnifying-glass"></i>
                         </button>
+                        <button class="action-btn success-btn" data-highdelta-baseline="${it.reading_id}"
+                                style="padding:5px 10px; font-size:12px; background:#10b981; color:#fff; border:1px solid #10b981;"
+                                title="Сделать baseline: перенести значения в Начальный период жильца, удалить аномальный reading">
+                            <i class="fa-solid fa-anchor"></i>
+                        </button>
                         <button class="action-btn danger-btn" data-highdelta-delete="${it.reading_id}"
                                 style="padding:5px 10px; font-size:12px;" title="Удалить reading и пересчитать баланс">
                             <i class="fa-regular fa-trash-can"></i>
@@ -1669,9 +1687,19 @@ export const AnalyzerModule = {
                 </tr>`;
         }).join('');
 
+        // Подсчёт synth-prev для bulk-кнопки.
+        const synthCount = items.filter(it => it.prev_is_synth).length;
+        const bulkBtn = synthCount > 0 ? `
+            <button class="action-btn success-btn" data-highdelta-bulk-baseline="1"
+                    style="padding:8px 14px; font-size:13px; background:#10b981; color:#fff; border:1px solid #10b981; margin-bottom:12px;"
+                    title="Превратить все записи с synth-prev в baseline одним кликом">
+                <i class="fa-solid fa-anchor"></i> Превратить все ${synthCount} synth-prev в baseline
+            </button>` : '';
+
         this.dom.highDeltaContainer.innerHTML = `
+            ${bulkBtn}
             <div style="overflow-x:auto; border:1px solid var(--border-color); border-radius:8px;">
-                <table style="width:100%; min-width:880px;">
+                <table style="width:100%; min-width:920px;">
                     <thead>
                         <tr style="background:var(--bg-page);">
                             <th style="text-align:left; padding:10px 12px;">Жилец / адрес</th>
@@ -1689,7 +1717,12 @@ export const AnalyzerModule = {
                 Всего: <b>${items.length}</b> · порог <b>&gt; ${data.threshold} м³/период</b>.
                 Бейдж <b>synth prev</b> = предыдущий reading был AUTO_GENERATED / DATA_OVERFLOW_RESET
                 (т.е. дельта посчитана от фиктивного нуля — обычно ошибка отсутствия baseline).
-                После удаления запустите <b>Перерасчёт</b> по периоду, чтобы итог отразился на балансе.
+                <br>
+                <i class="fa-solid fa-anchor" style="color:#10b981;"></i> <b>Сделать baseline</b> — перенести значения в Начальный период комнаты + удалить аномальный reading (одним кликом чинит весь кейс).
+                <br>
+                <i class="fa-regular fa-trash-can"></i> <b>Удалить</b> — просто снести аномальный reading (если жилец переподаст).
+                <br>
+                После любой операции запустите <b>Перерасчёт</b> по периоду, чтобы итог отразился на балансе.
             </p>`;
     },
 
@@ -1707,6 +1740,68 @@ export const AnalyzerModule = {
             this.loadHighDelta();
         } catch (e) {
             toast('Ошибка: ' + e.message, 'error');
+        }
+    },
+
+    /** Превращает аномальный reading в Начальный период (baseline) комнаты:
+     *  значения переносятся в INITIAL_FROM_FIRST_SUBMISSION-запись, текущий
+     *  reading удаляется, Room.last_* обновляется. Следующая подача жильца
+     *  будет иметь корректную дельту от реального baseline. */
+    async convertHighDeltaToBaseline(readingId) {
+        if (!readingId) return;
+        if (!window.confirm(
+            'Превратить этот reading в Начальный период (baseline) комнаты?\n\n' +
+            'Что произойдёт:\n' +
+            '  • значения ГВС/ХВС/электр. переедут в Начальный период комнаты;\n' +
+            '  • текущий аномальный reading будет удалён;\n' +
+            '  • следующая подача жильца даст нормальную дельту от этих значений.\n\n' +
+            'Использовать когда первая реальная подача жильца стала аномальной из-за ' +
+            'AUTO_GENERATED 0/0/0 baseline (типичный кейс).'
+        )) return;
+        try {
+            const res = await api.post(`/admin/readings/${readingId}/convert-to-baseline`, {});
+            toast(`Baseline ${res.baseline_action === 'created' ? 'создан' : 'обновлён'}: ГВС=${res.values.hot_water}, ХВС=${res.values.cold_water}. Запустите «Перерасчёт периода».`, 'success');
+            this.loadHighDelta();
+        } catch (e) {
+            toast('Ошибка convert-to-baseline: ' + e.message, 'error');
+        }
+    },
+
+    /** Bulk: превратить все строки с prev_is_synth=true в baseline. Полезно
+     *  когда массово накопилось AUTO_GENERATED 0/0/0 baseline'ов и десятки
+     *  жильцов в списке аномальных дельт. */
+    async bulkConvertSynthToBaseline() {
+        // Берём данные из последнего отрендеренного списка.
+        const data = this._lastHighDeltaData;
+        if (!data || !data.items || data.items.length === 0) {
+            toast('Сначала «Найти» — загрузите список аномальных дельт.', 'warning');
+            return;
+        }
+        const synthItems = data.items.filter(it => it.prev_is_synth);
+        if (synthItems.length === 0) {
+            toast('Нет записей с synth prev в текущей выборке.', 'info');
+            return;
+        }
+        if (!window.confirm(
+            `Превратить ВСЕ ${synthItems.length} записей с synth-prev в baseline одним пакетом?\n\n` +
+            `Для каждой:\n` +
+            `  • значения reading'а → Начальный период комнаты\n` +
+            `  • текущий аномальный reading удаляется\n\n` +
+            `Используется когда после онбординга накопилось много AUTO_GENERATED 0/0/0.\n` +
+            `После завершения запустите «Перерасчёт» по затронутым периодам.`
+        )) return;
+        try {
+            const ids = synthItems.map(it => it.reading_id);
+            const res = await api.post('/admin/readings/convert-to-baseline-bulk', ids);
+            if (res.error_count > 0) {
+                toast(`Готово: ${res.ok_count} успешно, ${res.error_count} ошибок. Подробности в консоли.`, 'warning');
+                console.warn('[bulk convert-to-baseline] errors:', res.errors);
+            } else {
+                toast(`Готово: ${res.ok_count} baseline'ов создано/обновлено. Запустите «Перерасчёт» по затронутым периодам.`, 'success');
+            }
+            this.loadHighDelta();
+        } catch (e) {
+            toast('Ошибка bulk-операции: ' + e.message, 'error');
         }
     },
 };

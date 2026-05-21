@@ -91,6 +91,62 @@ async def delete_reading_record(
     return await admin_readings_manual.delete_reading(db, reading_id, actor=current_user)
 
 
+@router.post("/api/admin/readings/{reading_id}/convert-to-baseline")
+async def convert_reading_to_baseline_endpoint(
+        reading_id: int,
+        current_user: User = Depends(allow_readings_manage),
+        db: AsyncSession = Depends(get_db)
+):
+    """Превратить аномальный reading в Начальный период (baseline) комнаты.
+
+    Используется во вкладке «Аномальные дельты» Анализатора, когда жилец
+    впервые подал реальные накопленные показания (например, ГВС=2186) поверх
+    AUTO_GENERATED baseline 0/0/0. Endpoint:
+      1) переносит значения reading'а в INITIAL_SETUP-запись комнаты
+         (или создаёт её, если её не было);
+      2) удаляет текущий аномальный reading;
+      3) обновляет Room.last_* — следующая подача будет корректной.
+
+    После операции рекомендуется запустить «Перерасчёт периода» — старые
+    счета по этому жильцу пересчитаются с нуля.
+    """
+    return await admin_readings_manual.convert_reading_to_baseline(
+        db, reading_id, actor=current_user
+    )
+
+
+@router.post("/api/admin/readings/convert-to-baseline-bulk")
+async def bulk_convert_to_baseline_endpoint(
+        reading_ids: list[int],
+        current_user: User = Depends(allow_readings_manage),
+        db: AsyncSession = Depends(get_db)
+):
+    """Массовая операция convert-to-baseline для списка reading_ids.
+
+    Используется во вкладке «Аномальные дельты» кнопкой «Превратить все
+    с synth prev в baseline». Обрабатывает по очереди — если хоть одна
+    падает, остальные продолжают обрабатываться (errors собираются в
+    отдельный массив).
+    """
+    ok: list[dict] = []
+    errors: list[dict] = []
+    for rid in reading_ids:
+        try:
+            res = await admin_readings_manual.convert_reading_to_baseline(
+                db, rid, actor=current_user
+            )
+            ok.append({"reading_id": rid, **res})
+        except Exception as exc:
+            errors.append({"reading_id": rid, "error": str(exc)})
+    return {
+        "processed": len(reading_ids),
+        "ok_count": len(ok),
+        "error_count": len(errors),
+        "ok": ok,
+        "errors": errors,
+    }
+
+
 @router.post("/api/admin/readings/manual-receipt/{user_id}")
 async def create_manual_receipt_endpoint(
         user_id: int,
