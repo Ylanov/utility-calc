@@ -871,6 +871,9 @@
                             <button type="button" data-analyzer-tab="highdelta" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
                                 <i class="fa-solid fa-bolt-lightning"></i> Аномальные дельты
                             </button>
+                            <button type="button" data-analyzer-tab="reload" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px; color:#dc2626;">
+                                <i class="fa-solid fa-rotate"></i> Переподгрузка периода
+                            </button>
                             <button type="button" data-analyzer-tab="maintenance" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
                                 <i class="fa-solid fa-broom"></i> Обслуживание
                             </button>
@@ -1086,6 +1089,47 @@
                             </div>
                             <div id="highDeltaContainer">
                                 <p style="color:var(--text-secondary); font-size:13px;">Нажмите «Найти» — увидите утверждённые reading'и с дельтой выше порога относительно предыдущего.</p>
+                            </div>
+                        </div>
+
+                        <!-- ==================== ТАБ RELOAD: переподгрузка периода из GSheets ==================== -->
+                        <div data-analyzer-pane="reload" style="display:none;">
+                            <div style="background:#fef2f2; border:1px solid #fecaca; border-left:4px solid #dc2626; padding:12px 16px; border-radius:6px; margin-bottom:14px;">
+                                <div style="font-weight:700; color:#991b1b; font-size:14px;">
+                                    <i class="fa-solid fa-triangle-exclamation"></i> Опасная операция
+                                </div>
+                                <div style="font-size:12.5px; color:#7f1d1d; margin-top:6px;">
+                                    Удаляет <b>все</b> утверждённые показания за выбранный период и пересоздаёт их из строк Google-таблицы.
+                                    Использовать когда период был сломан (исторические подмены, race condition при импорте, ручные ошибки) и нужно «начать с чистого листа».
+                                    Применяется <b>только</b> к выбранному месяцу — остальные периоды не трогаются.
+                                </div>
+                            </div>
+
+                            <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap;">
+                                <label style="font-size:13px; color:var(--text-secondary);">Год:</label>
+                                <select id="reloadYear" style="width:100px;"></select>
+                                <label style="font-size:13px; color:var(--text-secondary);">Месяц:</label>
+                                <select id="reloadMonth" style="width:140px;">
+                                    <option value="1">Январь</option>
+                                    <option value="2">Февраль</option>
+                                    <option value="3">Март</option>
+                                    <option value="4">Апрель</option>
+                                    <option value="5">Май</option>
+                                    <option value="6">Июнь</option>
+                                    <option value="7">Июль</option>
+                                    <option value="8">Август</option>
+                                    <option value="9">Сентябрь</option>
+                                    <option value="10">Октябрь</option>
+                                    <option value="11">Ноябрь</option>
+                                    <option value="12">Декабрь</option>
+                                </select>
+                                <button id="btnReloadPreview" class="action-btn warning-btn" style="padding:6px 14px; font-size:13px;">
+                                    <i class="fa-solid fa-eye"></i> Предпросмотр
+                                </button>
+                            </div>
+
+                            <div id="reloadPreviewContainer">
+                                <p style="color:var(--text-secondary); font-size:13px;">Выберите период и нажмите «Предпросмотр» — увидите что в БД сейчас, что в GSheets, и что изменится после переподгрузки.</p>
                             </div>
                         </div>
 

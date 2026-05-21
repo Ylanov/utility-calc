@@ -115,6 +115,12 @@ export const AnalyzerModule = {
             btnLoadHighDelta: document.getElementById('btnLoadHighDelta'),
             highDeltaThreshold: document.getElementById('highDeltaThreshold'),
             highDeltaContainer: document.getElementById('highDeltaContainer'),
+
+            // Таб «Переподгрузка периода»
+            reloadYear: document.getElementById('reloadYear'),
+            reloadMonth: document.getElementById('reloadMonth'),
+            btnReloadPreview: document.getElementById('btnReloadPreview'),
+            reloadPreviewContainer: document.getElementById('reloadPreviewContainer'),
         };
     },
 
@@ -195,6 +201,17 @@ export const AnalyzerModule = {
                 } catch (err) {
                     toast('Не удалось открыть модал: ' + err.message, 'error');
                 }
+            }
+        });
+
+        // Таб «Переподгрузка периода» — годы в select + клик preview
+        this._initReloadYearSelect();
+        this.dom.btnReloadPreview?.addEventListener('click', () => this.loadReloadPreview());
+        this.dom.reloadPreviewContainer?.addEventListener('click', (e) => {
+            const applyBtn = e.target.closest('button[data-reload-apply]');
+            if (applyBtn) {
+                e.preventDefault();
+                this.applyReload();
             }
         });
 
@@ -1764,6 +1781,174 @@ export const AnalyzerModule = {
             this.loadHighDelta();
         } catch (e) {
             toast('Ошибка convert-to-baseline: ' + e.message, 'error');
+        }
+    },
+
+    // ============================================================
+    // ПЕРЕПОДГРУЗКА ПЕРИОДА ИЗ GSHEETS
+    // ============================================================
+    _initReloadYearSelect() {
+        const sel = this.dom.reloadYear;
+        if (!sel || sel.children.length > 0) return;
+        const now = new Date();
+        const currentYear = now.getFullYear();
+        for (let y = currentYear; y >= currentYear - 3; y--) {
+            const opt = document.createElement('option');
+            opt.value = y;
+            opt.textContent = y;
+            if (y === currentYear) opt.selected = true;
+            sel.appendChild(opt);
+        }
+        // Текущий месяц по умолчанию.
+        if (this.dom.reloadMonth) {
+            this.dom.reloadMonth.value = String(now.getMonth() + 1);
+        }
+    },
+
+    async loadReloadPreview() {
+        if (!this.dom.reloadPreviewContainer) return;
+        const year = Number(this.dom.reloadYear?.value);
+        const month = Number(this.dom.reloadMonth?.value);
+        if (!year || !month) {
+            toast('Выберите год и месяц', 'warning');
+            return;
+        }
+        this._reloadParams = { year, month };
+        this.dom.reloadPreviewContainer.innerHTML =
+            '<p style="color:var(--text-secondary); padding:20px;">Загружаем предпросмотр…</p>';
+        try {
+            const data = await api.get(
+                `/admin/gsheets/reload-period/preview?year=${year}&month=${month}`
+            );
+            this._renderReloadPreview(data);
+        } catch (e) {
+            this.dom.reloadPreviewContainer.innerHTML =
+                `<p style="color:var(--danger-color);">Ошибка: ${escapeHtml(e.message)}</p>`;
+        }
+    },
+
+    _renderReloadPreview(data) {
+        const fmt = (v) => Number(v).toFixed(2);
+        const renderTable = (title, color, items, extraCol) => {
+            if (!items || items.length === 0) {
+                return `<div style="margin-bottom:14px;">
+                    <div style="font-weight:700; color:${color}; margin-bottom:6px;">${title}: 0</div>
+                </div>`;
+            }
+            const rows = items.slice(0, 50).map(it => {
+                const addr = it.dormitory_name
+                    ? `${escapeHtml(it.dormitory_name)}/${escapeHtml(String(it.room_number || ''))}`
+                    : '—';
+                let extra = '';
+                if (extraCol === 'replace') {
+                    const hotMark = it.hot_water_changed ? '<b style="color:var(--danger-color);">→</b>' : '=';
+                    const coldMark = it.cold_water_changed ? '<b style="color:var(--danger-color);">→</b>' : '=';
+                    extra = `<td style="padding:6px 10px; font-family:monospace; font-size:11px;">
+                        ${fmt(it.hot_water)} ${hotMark} ${fmt(it.new_hot_water)}<br>
+                        ${fmt(it.cold_water)} ${coldMark} ${fmt(it.new_cold_water)}
+                    </td>`;
+                } else {
+                    extra = `<td style="padding:6px 10px; font-family:monospace; font-size:11px;">
+                        ГВС: ${fmt(it.hot_water)}<br>ХВС: ${fmt(it.cold_water)}
+                    </td>`;
+                }
+                return `<tr style="border-bottom:1px solid var(--border-color);">
+                    <td style="padding:6px 10px;">
+                        <div style="font-weight:600; font-size:12px;">${escapeHtml(it.full_name || it.username || '—')}</div>
+                        <div style="font-size:10px; color:var(--text-secondary);">${addr}</div>
+                    </td>
+                    ${extra}
+                </tr>`;
+            }).join('');
+            const more = items.length > 50
+                ? `<p style="font-size:11px; color:var(--text-tertiary); margin-top:6px;">…и ещё ${items.length - 50}</p>`
+                : '';
+            return `<div style="margin-bottom:14px;">
+                <div style="font-weight:700; color:${color}; margin-bottom:6px;">${title}: <b>${items.length}</b></div>
+                <div style="border:1px solid var(--border-color); border-radius:6px; overflow-x:auto;">
+                    <table style="width:100%; min-width:420px; font-size:12px;">
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+                ${more}
+            </div>`;
+        };
+
+        const periodHeader = `
+            <h3 style="margin:0 0 12px 0; font-size:16px;">
+                ${escapeHtml(data.period_name)}
+                ${!data.period_exists ? '<span style="font-size:12px; color:var(--text-tertiary);">(периода в БД нет — будет создан)</span>' : ''}
+            </h3>
+            <div style="display:flex; gap:18px; margin-bottom:14px; font-size:13px; flex-wrap:wrap;">
+                <div><b>В БД сейчас:</b> ${data.current_count} reading'ов</div>
+                <div><b>В GSheets за этот месяц:</b> ${data.gsheets_count} жильцов
+                    ${data.duplicate_rows_total > 0 ? `<span style="color:var(--text-tertiary);">(${data.duplicate_rows_total} дублей будут проигнорированы — берётся самая свежая)</span>` : ''}
+                </div>
+            </div>`;
+
+        const applyBtn = (data.diff.to_delete.length + data.diff.to_replace.length + data.diff.to_create.length) > 0
+            ? `<div style="margin-top:14px; padding:14px; background:#fef2f2; border:1px solid #fecaca; border-radius:8px;">
+                <div style="font-weight:700; color:#991b1b; margin-bottom:8px;">
+                    <i class="fa-solid fa-triangle-exclamation"></i> Подтверждение
+                </div>
+                <div style="font-size:13px; color:#7f1d1d; margin-bottom:10px;">
+                    Будет <b>удалено ${data.current_count}</b> существующих reading'ов за «${escapeHtml(data.period_name)}»
+                    и <b>создано ${data.gsheets_count}</b> новых из GSheets-таблицы.
+                </div>
+                <button class="action-btn danger-btn" data-reload-apply="1" style="padding:8px 16px; font-size:13px; background:#dc2626; color:#fff; border:1px solid #dc2626;">
+                    <i class="fa-solid fa-rotate"></i> Подтвердить переподгрузку
+                </button>
+            </div>`
+            : `<div style="padding:14px; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; color:#166534;">
+                <i class="fa-solid fa-check-circle"></i> Изменений нет — БД совпадает с GSheets за этот месяц.
+            </div>`;
+
+        this.dom.reloadPreviewContainer.innerHTML = `
+            ${periodHeader}
+            ${renderTable('Будет удалено (нет в GSheets за этот месяц)', '#dc2626', data.diff.to_delete, 'simple')}
+            ${renderTable('Будет заменено (значения отличаются)', '#f59e0b', data.diff.to_replace, 'replace')}
+            ${renderTable('Будет создано (новые из GSheets)', '#10b981', data.diff.to_create, 'simple')}
+            ${applyBtn}`;
+    },
+
+    async applyReload() {
+        const params = this._reloadParams;
+        if (!params) {
+            toast('Сначала «Предпросмотр»', 'warning');
+            return;
+        }
+        const periodLabel = `${this.dom.reloadMonth?.selectedOptions[0]?.text || params.month} ${params.year}`;
+        if (!window.confirm(
+            `Удалить все reading'и за «${periodLabel}» и пересоздать из GSheets?\n\n` +
+            'Это критичное действие — деньги на квитанциях изменятся. Audit log будет ' +
+            'записан. После завершения запустите «Перерасчёт периода».'
+        )) return;
+        // Двойное подтверждение для критической операции.
+        const typed = window.prompt(
+            `Для подтверждения введите название периода:\n"${periodLabel}"`
+        );
+        if (typed !== periodLabel) {
+            toast('Подтверждение не совпало — операция отменена', 'warning');
+            return;
+        }
+        this.dom.reloadPreviewContainer.innerHTML =
+            '<p style="color:var(--text-secondary); padding:20px;">Выполняем переподгрузку…</p>';
+        try {
+            const res = await api.post(
+                `/admin/gsheets/reload-period/apply?year=${params.year}&month=${params.month}&confirm=YES_DELETE_AND_RELOAD`,
+                {}
+            );
+            const msg = `Готово: удалено ${res.deleted_count}, создано ${res.created_count}`
+                + (res.errors_count > 0 ? `, ошибок ${res.errors_count}` : '');
+            toast(msg, res.errors_count > 0 ? 'warning' : 'success');
+            if (res.errors_count > 0) {
+                console.warn('[reload-period errors]', res.errors);
+            }
+            // Перезагружаем предпросмотр — должен быть пустой diff после.
+            await this.loadReloadPreview();
+        } catch (e) {
+            this.dom.reloadPreviewContainer.innerHTML =
+                `<p style="color:var(--danger-color);">Ошибка: ${escapeHtml(e.message)}</p>`;
         }
     },
 

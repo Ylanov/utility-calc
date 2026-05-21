@@ -17,7 +17,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func, or_, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -1905,4 +1905,317 @@ async def list_historical_mismatches(
         "threshold_months": months_threshold,
         "count": len(items),
         "items": items,
+    }
+
+
+# =========================================================================
+# RELOAD PERIOD FROM GSHEETS — полная переподгрузка периода из таблицы.
+#
+# Use case: апрель 2026 был сломан (исторические подмены, race condition,
+# pre-fix promote). В БД остался «грязный» снимок. Админ хочет: «удали
+# всё за апрель и подгрузи заново из Google-таблицы, по факту».
+#
+# Двухстадийный workflow: preview → admin визуально проверяет diff →
+# apply. Не один POST с моментальной заменой — потому что это деньги
+# на квитанциях, ошибка тут стоит дорого.
+# =========================================================================
+
+def _month_window(year: int, month: int) -> tuple[datetime, datetime]:
+    """[start, end) для месяца в локальной TZ. Используется для диапазонов
+    sheet_timestamp."""
+    start = datetime(year, month, 1)
+    if month == 12:
+        end = datetime(year + 1, 1, 1)
+    else:
+        end = datetime(year, month + 1, 1)
+    return start, end
+
+
+def _pick_primary_row(rows: list) -> Optional[object]:
+    """Самая свежая строка по sheet_timestamp (или created_at в fallback)."""
+    if not rows:
+        return None
+    return max(
+        rows,
+        key=lambda r: (r.sheet_timestamp or r.created_at or datetime.min),
+    )
+
+
+@router.get("/reload-period/preview")
+async def reload_period_preview(
+    year: int = Query(..., ge=2020, le=2100),
+    month: int = Query(..., ge=1, le=12),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    require_admin(current_user)
+    """Что произойдёт при reload-period: список текущих MR (будет удалено)
+    и список gsheets-строк за этот месяц (будет создано вместо них).
+
+    Дедупликация: для каждого user_id берём САМУЮ СВЕЖУЮ строку GSheets
+    внутри окна (по sheet_timestamp) — она победит, остальные не создают
+    отдельных reading'ов.
+
+    Сравнение по user_id, не по reading_id — потому что после reload
+    конкретные ID не сохраняются, важен только итоговый снимок.
+    """
+    if not (1 <= month <= 12):
+        raise HTTPException(400, "month должен быть 1..12")
+
+    period_name = f"{_MONTH_NAMES_RU[month]} {year}"
+    period = (await db.execute(
+        select(BillingPeriod).where(BillingPeriod.name == period_name)
+    )).scalars().first()
+
+    # Текущие reading'и за период.
+    current_readings = []
+    if period is not None:
+        from sqlalchemy.orm import selectinload as _sel
+        rs = (await db.execute(
+            select(MeterReading)
+            .options(_sel(MeterReading.user).selectinload(User.room))
+            .where(MeterReading.period_id == period.id)
+            .order_by(MeterReading.id.desc())
+        )).scalars().all()
+        for r in rs:
+            u = r.user
+            room = u.room if u else None
+            current_readings.append({
+                "reading_id": r.id,
+                "user_id": u.id if u else None,
+                "username": u.username if u else None,
+                "full_name": u.full_name if u else None,
+                "dormitory_name": room.dormitory_name if room else None,
+                "room_number": room.room_number if room else None,
+                "hot_water": float(r.hot_water or 0),
+                "cold_water": float(r.cold_water or 0),
+                "electricity": float(r.electricity or 0),
+                "total_cost": float(r.total_cost or 0),
+                "is_approved": bool(r.is_approved),
+                "anomaly_flags": r.anomaly_flags,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            })
+
+    # GSheets-строки в окне месяца. Берём ВСЕ status'ы кроме rejected,
+    # потому что после reload мы хотим переутвердить даже unmatched/conflict
+    # если они matched_user_id-укомплектованы (а unmatched исключаем, у них
+    # user_id=NULL — создать reading нельзя).
+    start, end = _month_window(year, month)
+    all_rows = (await db.execute(
+        select(GSheetsImportRow)
+        .where(
+            GSheetsImportRow.sheet_timestamp >= start,
+            GSheetsImportRow.sheet_timestamp < end,
+            GSheetsImportRow.matched_user_id.is_not(None),
+            GSheetsImportRow.status != "rejected",
+        )
+        .order_by(desc(GSheetsImportRow.sheet_timestamp))
+    )).scalars().all()
+
+    # Группируем по matched_user_id, для каждого user берём primary (самую
+    # свежую строку).
+    by_user: dict[int, list] = {}
+    for r in all_rows:
+        by_user.setdefault(r.matched_user_id, []).append(r)
+
+    gsheets_picked = []
+    for uid, rows in by_user.items():
+        primary = _pick_primary_row(rows)
+        if primary is None:
+            continue
+        # Подтянем user/room для отображения.
+        u = (await db.execute(
+            select(User).options(selectinload(User.room)).where(User.id == uid)
+        )).scalars().first()
+        room = u.room if u else None
+        gsheets_picked.append({
+            "row_id": primary.id,
+            "row_ids_all": [r.id for r in rows],
+            "user_id": uid,
+            "username": u.username if u else None,
+            "full_name": u.full_name if u else None,
+            "dormitory_name": room.dormitory_name if room else None,
+            "room_number": room.room_number if room else None,
+            "hot_water": float(primary.hot_water or 0),
+            "cold_water": float(primary.cold_water or 0),
+            "sheet_timestamp": primary.sheet_timestamp.isoformat() if primary.sheet_timestamp else None,
+            "match_score": int(primary.match_score or 0),
+            "status": primary.status,
+            "conflict_reason": primary.conflict_reason,
+            "duplicate_rows_in_month": len(rows),
+        })
+
+    # Diff по user_id.
+    current_by_user = {r["user_id"]: r for r in current_readings if r["user_id"]}
+    gsheets_by_user = {g["user_id"]: g for g in gsheets_picked}
+    will_delete = []   # есть в БД, нет в GSheets за этот месяц
+    will_replace = []  # есть в обоих — значения изменятся
+    will_create = []   # нет в БД, есть в GSheets
+    for uid, cur in current_by_user.items():
+        if uid in gsheets_by_user:
+            g = gsheets_by_user[uid]
+            diff = {
+                "hot_water_changed": abs(g["hot_water"] - cur["hot_water"]) > 0.001,
+                "cold_water_changed": abs(g["cold_water"] - cur["cold_water"]) > 0.001,
+            }
+            will_replace.append({**cur, "new_hot_water": g["hot_water"], "new_cold_water": g["cold_water"], **diff})
+        else:
+            will_delete.append(cur)
+    for uid, g in gsheets_by_user.items():
+        if uid not in current_by_user:
+            will_create.append(g)
+
+    return {
+        "period_name": period_name,
+        "period_exists": period is not None,
+        "period_id": period.id if period else None,
+        "current_count": len(current_readings),
+        "gsheets_count": len(gsheets_picked),
+        "duplicate_rows_total": len(all_rows) - len(gsheets_picked),
+        "diff": {
+            "to_delete": will_delete,
+            "to_replace": will_replace,
+            "to_create": will_create,
+        },
+    }
+
+
+@router.post("/reload-period/apply")
+async def reload_period_apply(
+    year: int = Query(..., ge=2020, le=2100),
+    month: int = Query(..., ge=1, le=12),
+    confirm: str = Query(..., description="Должно быть 'YES_DELETE_AND_RELOAD'"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    require_admin(current_user)
+    """Удаляет все MeterReading за период {Месяц} {Год} и создаёт новые из
+    GSheets-строк с sheet_timestamp в этом окне.
+
+    Защита: confirm-param должен быть строго 'YES_DELETE_AND_RELOAD' —
+    защита от случайного POST'а (например, из автотестов или curl).
+
+    Транзакция: одна — либо весь reload, либо ни одного изменения.
+    Audit log: одна запись reload_period с counts + список затронутых user_id.
+    """
+    if confirm != "YES_DELETE_AND_RELOAD":
+        raise HTTPException(
+            status_code=400,
+            detail="confirm-param должен быть 'YES_DELETE_AND_RELOAD'",
+        )
+    if not (1 <= month <= 12):
+        raise HTTPException(400, "month должен быть 1..12")
+
+    period_name = f"{_MONTH_NAMES_RU[month]} {year}"
+    period = (await db.execute(
+        select(BillingPeriod).where(BillingPeriod.name == period_name)
+    )).scalars().first()
+
+    deleted_user_ids: list[int] = []
+    deleted_count = 0
+
+    # 1. Удалить все MR за период.
+    if period is not None:
+        from app.modules.utility.models import GSheetsImportRow as _GR, MeterReading as _MR
+        from sqlalchemy import update as _upd, delete as _del
+
+        existing_readings = (await db.execute(
+            select(_MR.id, _MR.user_id).where(_MR.period_id == period.id)
+        )).all()
+        existing_ids = [row[0] for row in existing_readings]
+        deleted_user_ids = [row[1] for row in existing_readings if row[1]]
+        deleted_count = len(existing_ids)
+
+        if existing_ids:
+            # Отвязать gsheets-строки.
+            await db.execute(
+                _upd(_GR)
+                .where(_GR.reading_id.in_(existing_ids))
+                .values(reading_id=None, processed_at=None, status="auto_approved")
+            )
+            # Удалить reading'и.
+            await db.execute(_del(_MR).where(_MR.id.in_(existing_ids)))
+
+    # 2. Получить gsheets-строки за месяц, дедуплицировать.
+    start, end = _month_window(year, month)
+    all_rows = (await db.execute(
+        select(GSheetsImportRow)
+        .where(
+            GSheetsImportRow.sheet_timestamp >= start,
+            GSheetsImportRow.sheet_timestamp < end,
+            GSheetsImportRow.matched_user_id.is_not(None),
+            GSheetsImportRow.status != "rejected",
+        )
+        .order_by(desc(GSheetsImportRow.sheet_timestamp))
+    )).scalars().all()
+
+    by_user: dict[int, list] = {}
+    for r in all_rows:
+        by_user.setdefault(r.matched_user_id, []).append(r)
+
+    # 3. Для каждой primary-строки → _apply_approve (она сама создаст
+    # period или возьмёт существующий из sheet_timestamp).
+    created = 0
+    errors: list[dict] = []
+    for uid, rows in by_user.items():
+        primary = _pick_primary_row(rows)
+        if primary is None:
+            continue
+        # Сбрасываем reading_id перед approve.
+        primary.reading_id = None
+        primary.processed_at = None
+        primary.status = "auto_approved"
+        db.add(primary)
+        await db.flush()
+        try:
+            mr = await _apply_approve(db, primary, current_user)
+            primary.reading_id = mr.id
+            primary.processed_at = utcnow()
+            primary.status = "approved"
+            db.add(primary)
+            created += 1
+        except HTTPException as e:
+            errors.append({
+                "row_id": primary.id,
+                "user_id": uid,
+                "error": e.detail if hasattr(e, "detail") else str(e),
+            })
+        except Exception as e:
+            errors.append({
+                "row_id": primary.id,
+                "user_id": uid,
+                "error": str(e),
+            })
+
+    # 4. Audit log.
+    from app.modules.utility.routers.admin_dashboard import write_audit_log
+    try:
+        await write_audit_log(
+            db, current_user.id, current_user.username,
+            action="reload_period_from_gsheets",
+            entity_type="billing_period",
+            entity_id=period.id if period else 0,
+            details={
+                "period_name": period_name,
+                "year": year,
+                "month": month,
+                "deleted_count": deleted_count,
+                "created_count": created,
+                "errors_count": len(errors),
+                "deleted_user_ids_sample": deleted_user_ids[:50],
+            },
+        )
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning(
+            "audit_log for reload_period failed: %s", exc,
+        )
+
+    await db.commit()
+    return {
+        "period_name": period_name,
+        "deleted_count": deleted_count,
+        "created_count": created,
+        "errors_count": len(errors),
+        "errors": errors,
     }
