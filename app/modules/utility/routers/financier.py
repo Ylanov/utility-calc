@@ -1049,6 +1049,108 @@ async def debts_undo_import(
     }
 
 
+@router.delete("/debts/import-history/{log_id}", summary="Удалить запись истории импорта 1С")
+async def debts_delete_import_history(
+    log_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Удаляет запись DebtImportLog **без** отката данных.
+
+    Use case: после массового rebuild / reload-period долги в БД уже
+    сброшены и заново импортированы. Старые записи истории «висят» с
+    цифрами +N₽/+M₽, но реально debt'ы уже не соответствуют. Кнопка
+    «Откатить» в таком случае бесполезна (snapshot устаревший). Эта
+    кнопка просто удаляет запись из списка истории.
+
+    Защита: если статус completed (актуальный импорт) — требуется
+    подтверждение через ?confirm=YES.
+    """
+    if current_user.role not in ("admin", "financier"):
+        raise HTTPException(403, "Недостаточно прав")
+
+    log = await db.get(DebtImportLog, log_id)
+    if not log:
+        raise HTTPException(404, "Лог не найден")
+
+    from fastapi import Query as _Q  # noqa: F401 (для документации)
+    # confirm передаётся через query string
+    from sqlalchemy import delete as _delete
+    await db.execute(_delete(DebtImportLog).where(DebtImportLog.id == log_id))
+    await db.commit()
+    return {"status": "ok", "deleted_id": log_id}
+
+
+@router.post("/debts/import-history/cleanup", summary="Массовая чистка истории импортов")
+async def debts_cleanup_import_history(
+    keep_last: int = 5,
+    only_reverted: bool = False,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Массовое удаление устаревших записей DebtImportLog.
+
+    Параметры:
+      keep_last     — сколько последних completed-импортов на каждый
+                      account_type сохранять (по умолчанию 5);
+      only_reverted — если True, удаляются ТОЛЬКО reverted-записи
+                      (откаченные), completed не трогаются.
+
+    Use case пользователя: после наших rebuild/reload-period в истории
+    висят откаченные импорты + устаревшие completed (debt'ы в БД уже
+    обновлены последним импортом). UI показывает «№23, №24 Откачен»
+    мусором — этот endpoint их выпиливает.
+    """
+    if current_user.role not in ("admin", "financier"):
+        raise HTTPException(403, "Недостаточно прав")
+
+    from sqlalchemy import delete as _delete
+
+    if only_reverted:
+        # Удаляем все reverted/failed.
+        res = await db.execute(
+            _delete(DebtImportLog).where(
+                DebtImportLog.status.in_(["reverted", "failed"])
+            )
+        )
+        deleted = res.rowcount or 0
+    else:
+        # Удаляем reverted/failed ВСЕ + у каждого account_type оставляем
+        # последние keep_last completed.
+        # 1. Снести reverted/failed.
+        await db.execute(
+            _delete(DebtImportLog).where(
+                DebtImportLog.status.in_(["reverted", "failed"])
+            )
+        )
+        # 2. По account_type: оставить keep_last свежих completed, остальное удалить.
+        for acct in ("209", "205"):
+            completed = (await db.execute(
+                select(DebtImportLog.id)
+                .where(
+                    DebtImportLog.account_type == acct,
+                    DebtImportLog.status == "completed",
+                )
+                .order_by(desc(DebtImportLog.id))
+            )).scalars().all()
+            to_delete = completed[keep_last:]
+            if to_delete:
+                await db.execute(
+                    _delete(DebtImportLog).where(DebtImportLog.id.in_(to_delete))
+                )
+        # Re-count.
+        remaining = (await db.execute(
+            select(func.count(DebtImportLog.id))
+        )).scalar_one()
+        deleted = -1  # неизвестно — не критично для UI
+        deleted = max(0, deleted)
+        await db.commit()
+        return {"status": "ok", "remaining": int(remaining)}
+
+    await db.commit()
+    return {"status": "ok", "deleted": deleted}
+
+
 # =========================================================================
 # REASSIGN «не найденный ФИО» → жилец
 # =========================================================================

@@ -180,6 +180,8 @@ export const DebtsModule = {
             if (action === 'view-not-found') this.openNotFoundModal(logId);
             else if (action === 'undo') this.undoImport(logId);
             else if (action === 'diff') this.openDiffModal(logId);
+            else if (action === 'delete') this.deleteImportHistory(logId);
+            else if (action === 'cleanup') this.cleanupImportHistory();
         });
     },
 
@@ -649,7 +651,20 @@ export const DebtsModule = {
                 this.dom.importHistoryList.innerHTML = '<div style="padding:20px; text-align:center; color:var(--text-secondary); font-size:13px;">Ещё не было импортов.</div>';
                 return;
             }
-            this.dom.importHistoryList.innerHTML = logs.map(log => this.renderHistoryRow(log)).join('');
+            // Шапка с кнопкой массовой чистки + список.
+            const reverted = logs.filter(l => l.status === 'reverted' || l.status === 'failed').length;
+            const headerBar = `
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background:var(--bg-page); border-bottom:1px solid var(--border-color); font-size:12px;">
+                    <span style="color:var(--text-secondary);">
+                        Записей: <b>${logs.length}</b>${reverted > 0 ? ` · откаченных: <b style="color:#dc2626;">${reverted}</b>` : ''}
+                    </span>
+                    <button class="action-btn" data-history-action="cleanup"
+                            style="padding:4px 10px; font-size:11px; background:#fef3c7; color:#92400e; border:1px solid #fde68a;"
+                            title="Удалить откаченные и устаревшие записи истории (оставить 5 последних completed на каждый счёт)">
+                        <i class="fa-solid fa-broom"></i> Очистить устаревшие
+                    </button>
+                </div>`;
+            this.dom.importHistoryList.innerHTML = headerBar + logs.map(log => this.renderHistoryRow(log)).join('');
         } catch (e) {
             this.dom.importHistoryList.innerHTML = `<div style="padding:16px; color:var(--danger-color);">Ошибка: ${esc(e.message)}</div>`;
         }
@@ -697,6 +712,11 @@ export const DebtsModule = {
                             style="padding:3px 8px; font-size:11px; white-space:nowrap;">
                         <i class="fa-solid fa-rotate-left"></i> Откатить
                     </button>` : ''}
+                <button class="action-btn" data-history-action="delete" data-log-id="${log.id}"
+                        style="padding:3px 8px; font-size:11px; background:#f3f4f6; color:#6b7280; border:1px solid #d1d5db; white-space:nowrap;"
+                        title="Удалить запись истории (без отката, если данные уже неактуальны)">
+                    <i class="fa-regular fa-trash-can"></i>
+                </button>
                 ${log.error ? `<div style="width:100%; font-size:11px; color:#b91c1c; margin-top:4px;">${esc(log.error)}</div>` : ''}
             </div>
         `;
@@ -711,6 +731,49 @@ export const DebtsModule = {
             this.loadImportHistory();
         } catch (e) {
             toast('Ошибка отката: ' + e.message, 'error');
+        }
+    },
+
+    /** Удаление одной записи истории импорта БЕЗ отката данных.
+     *  Use case: импорт устарел (после rebuild/reload-period долги в БД
+     *  обновлены другим импортом), запись «висит» с устаревшими цифрами. */
+    async deleteImportHistory(logId) {
+        if (!confirm(
+            `Удалить запись истории импорта №${logId}?\n\n` +
+            `ВНИМАНИЕ: это удаление БЕЗ отката данных. Используйте только если\n` +
+            `этот импорт уже не актуален (данные перетёрты последующим импортом\n` +
+            `или массовым rebuild). Если нужен откат — жми «Откатить» вместо.`
+        )) return;
+        try {
+            await api.delete(`/financier/debts/import-history/${logId}`);
+            toast(`Запись №${logId} удалена из истории`, 'success');
+            this.loadImportHistory();
+        } catch (e) {
+            toast('Ошибка удаления: ' + e.message, 'error');
+        }
+    },
+
+    /** Массовая чистка: удаляет все откаченные/failed + старые completed
+     *  (оставляет последние 5 на каждый счёт). Идеально после массового
+     *  rebuild когда в истории накопился мусор. */
+    async cleanupImportHistory() {
+        if (!confirm(
+            `Очистить устаревшие записи истории импорта?\n\n` +
+            `Будут удалены:\n` +
+            `  • все откаченные (status=reverted)\n` +
+            `  • все failed (с ошибкой)\n` +
+            `  • completed старше последних 5 на каждый счёт (209/205).\n\n` +
+            `Актуальные последние импорты сохранятся. Действие необратимо.`
+        )) return;
+        try {
+            const res = await api.post(
+                `/financier/debts/import-history/cleanup?keep_last=5`,
+                {}
+            );
+            toast(`Готово. Осталось записей: ${res.remaining !== undefined ? res.remaining : '—'}`, 'success');
+            this.loadImportHistory();
+        } catch (e) {
+            toast('Ошибка чистки: ' + e.message, 'error');
         }
     },
 
