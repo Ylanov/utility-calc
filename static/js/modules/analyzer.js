@@ -100,6 +100,10 @@ export const AnalyzerModule = {
             // Таб «Сверка 1С»
             btnReconcileRun: document.getElementById('btnReconcileRun'),
             reconcileResults: document.getElementById('reconcileResults'),
+
+            // Таб «Заблокированные показания»
+            btnLoadStuck:    document.getElementById('btnLoadStuck'),
+            stuckContainer:  document.getElementById('stuckDraftsContainer'),
         };
     },
 
@@ -161,6 +165,28 @@ export const AnalyzerModule = {
 
         // Таб «Сверка 1С»
         this.dom.btnReconcileRun?.addEventListener('click', () => this.runReconcile());
+
+        // Таб «Заблокированные показания»
+        this.dom.btnLoadStuck?.addEventListener('click', () => this.loadStuckDrafts());
+        this.dom.stuckContainer?.addEventListener('click', (e) => {
+            const delBtn = e.target.closest('button[data-stuck-delete]');
+            if (delBtn) {
+                e.preventDefault();
+                this.deleteStuckReading(Number(delBtn.dataset.stuckDelete));
+                return;
+            }
+            const detailBtn = e.target.closest('button[data-stuck-detail]');
+            if (detailBtn) {
+                e.preventDefault();
+                // Открываем модал «Проверка расчёта» — там админ видит формулу
+                // и может или удалить, или утвердить с коррекцией (через approve_single).
+                const rid = Number(detailBtn.dataset.stuckDetail);
+                // Делегируем существующему модалу — там же есть кнопки удаления/утв.
+                window.dispatchEvent(new CustomEvent('admin:open-reading-check', {
+                    detail: { readingId: rid },
+                }));
+            }
+        });
     },
 
     _setTab(tabId) {
@@ -1253,6 +1279,108 @@ export const AnalyzerModule = {
             toast(`Ошибка: ${e.message}`, 'error');
             btn.disabled = false;
             btn.innerHTML = origHtml;
+        }
+    },
+
+    // ============================================================
+    // ЗАБЛОКИРОВАННЫЕ ПОКАЗАНИЯ (DATA_OVERFLOW_RESET)
+    // Endpoint: GET /admin/analyzer/stuck-drafts
+    // Действия: DELETE /admin/readings/{id} | модал «Проверка расчёта»
+    // ============================================================
+    async loadStuckDrafts() {
+        if (!this.dom.stuckContainer) return;
+        this.dom.stuckContainer.innerHTML =
+            '<p style="color:var(--text-secondary); padding:20px;">Загружаем…</p>';
+        try {
+            const data = await api.get('/admin/analyzer/stuck-drafts');
+            this._renderStuck(data);
+        } catch (e) {
+            this.dom.stuckContainer.innerHTML =
+                `<p style="color:var(--danger-color);">Ошибка: ${escapeHtml(e.message)}</p>`;
+        }
+    },
+
+    _renderStuck(data) {
+        const items = data.items || [];
+        if (items.length === 0) {
+            this.dom.stuckContainer.innerHTML = `
+                <div style="text-align:center; padding:30px; color:var(--success-color);">
+                    <i class="fa-solid fa-check-circle" style="font-size:24px;"></i>
+                    <div style="margin-top:8px; font-weight:600;">Заблокированных показаний нет</div>
+                    <div style="margin-top:4px; font-size:12px; color:var(--text-secondary);">
+                        Все нереалистичные подачи разобраны или их пока не было.
+                    </div>
+                </div>`;
+            return;
+        }
+        const rows = items.map(it => {
+            const addr = it.dormitory_name
+                ? `${escapeHtml(it.dormitory_name)}/${escapeHtml(String(it.room_number || ''))}`
+                : '—';
+            return `
+                <tr style="border-bottom:1px solid var(--border-color);">
+                    <td style="padding:10px 12px;">
+                        <div style="font-weight:600;">${escapeHtml(it.full_name || it.username || '—')}</div>
+                        <div style="font-size:11px; color:var(--text-secondary);">${escapeHtml(it.username || '')} · ${addr}</div>
+                    </td>
+                    <td style="padding:10px 12px; font-size:12px; color:var(--text-secondary);">${escapeHtml(it.period_name || '—')}</td>
+                    <td style="padding:10px 12px; text-align:right; font-family:monospace; font-size:12px;">
+                        <div>${Number(it.hot_water).toFixed(3)} / ${Number(it.cold_water).toFixed(3)}</div>
+                        <div style="color:var(--text-tertiary);">${Number(it.electricity).toFixed(3)}</div>
+                    </td>
+                    <td style="padding:10px 12px; text-align:right;">
+                        <span style="color:var(--danger-color); font-weight:700;">
+                            ${Number(it.total_cost_was).toLocaleString('ru-RU', {minimumFractionDigits:2, maximumFractionDigits:2})} ₽
+                        </span>
+                        <div style="font-size:11px; color:var(--text-tertiary);">(до сброса)</div>
+                    </td>
+                    <td style="padding:10px 12px; text-align:right; white-space:nowrap;">
+                        <button class="action-btn secondary-btn" data-stuck-detail="${it.reading_id}"
+                                style="padding:5px 10px; font-size:12px;" title="Открыть «Проверка расчёта»">
+                            <i class="fa-solid fa-magnifying-glass"></i>
+                        </button>
+                        <button class="action-btn danger-btn" data-stuck-delete="${it.reading_id}"
+                                style="padding:5px 10px; font-size:12px;" title="Удалить запись">
+                            <i class="fa-regular fa-trash-can"></i>
+                        </button>
+                    </td>
+                </tr>`;
+        }).join('');
+
+        this.dom.stuckContainer.innerHTML = `
+            <div style="overflow-x:auto; border:1px solid var(--border-color); border-radius:8px;">
+                <table style="width:100%; min-width:680px;">
+                    <thead>
+                        <tr style="background:var(--bg-page);">
+                            <th style="text-align:left; padding:10px 12px;">Жилец / адрес</th>
+                            <th style="text-align:left; padding:10px 12px;">Период</th>
+                            <th style="text-align:right; padding:10px 12px;">ГВС / ХВС<br><span style="font-weight:400; color:var(--text-tertiary); font-size:11px;">Электр.</span></th>
+                            <th style="text-align:right; padding:10px 12px;">Итог был</th>
+                            <th style="text-align:right; padding:10px 12px;">Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+            <p class="hint-text" style="margin-top:10px; font-size:12px;">
+                Всего: <b>${items.length}</b>. Лупа — открыть детали и принять с коррекцией;
+                корзина — удалить запись (жилец сможет переподать).
+            </p>`;
+    },
+
+    async deleteStuckReading(readingId) {
+        if (!readingId) return;
+        const confirmed = window.confirm(
+            'Удалить эту запись? Жилец/админ сможет затем переподать корректные показания. ' +
+            'Действие необратимо.'
+        );
+        if (!confirmed) return;
+        try {
+            await api.delete(`/admin/readings/${readingId}`);
+            toast('Запись удалена', 'success');
+            this.loadStuckDrafts();
+        } catch (e) {
+            toast('Ошибка удаления: ' + e.message, 'error');
         }
     },
 };

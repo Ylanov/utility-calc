@@ -863,6 +863,9 @@
                             <button type="button" data-analyzer-tab="reconcile" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
                                 <i class="fa-solid fa-scale-unbalanced"></i> Сверка 1С
                             </button>
+                            <button type="button" data-analyzer-tab="stuck" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
+                                <i class="fa-solid fa-bug"></i> Заблокированные
+                            </button>
                             <button type="button" data-analyzer-tab="maintenance" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
                                 <i class="fa-solid fa-broom"></i> Обслуживание
                             </button>
@@ -1004,6 +1007,23 @@
                             </div>
                             <div id="reconcileResults">
                                 <p style="color:var(--text-secondary); font-size:13px;">Нажмите «Запустить сверку» — увидите 3 списка: начислено без долга, долг без подтверждения, не найдены в 1С.</p>
+                            </div>
+                        </div>
+
+                        <!-- ==================== ТАБ STUCK: ЗАБЛОКИРОВАННЫЕ ПОКАЗАНИЯ ==================== -->
+                        <div data-analyzer-pane="stuck" style="display:none;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap;">
+                                <p class="hint-text" style="margin:0; font-size:13px;">
+                                    Showings auto-cleanup'ом сброшенные в DATA_OVERFLOW_RESET — нереалистичные значения
+                                    (вода &gt; 10 000 м³, электр &gt; 50 000 кВт·ч, итог &gt; 100 000 ₽).
+                                    Жилец/админ должен подать корректные значения, или удалить запись.
+                                </p>
+                                <button id="btnLoadStuck" class="action-btn warning-btn" style="padding:6px 14px; font-size:13px;">
+                                    <i class="fa-solid fa-bug"></i> Загрузить список
+                                </button>
+                            </div>
+                            <div id="stuckDraftsContainer">
+                                <p style="color:var(--text-secondary); font-size:13px;">Нажмите «Загрузить список» — увидите всех жильцов чьи показания заблокированы санитарной проверкой.</p>
                             </div>
                         </div>
 

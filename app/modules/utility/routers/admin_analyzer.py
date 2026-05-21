@@ -1393,3 +1393,63 @@ async def resolve_inbox_issue(
         raise HTTPException(400, f"Действие {data.action!r} не применимо к gsheets")
 
     raise HTTPException(400, f"Неизвестный kind: {kind!r}")
+
+
+# =========================================================================
+# STUCK DRAFTS — заблокированные показания, ждущие разбора админом
+# =========================================================================
+@router.get("/stuck-drafts")
+async def list_stuck_drafts(
+    limit: int = Query(100, ge=1, le=500),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Список черновиков с флагом DATA_OVERFLOW_RESET — выставлен автоматом
+    при auto-cleanup (cleanup_outlier_readings_task) или вручную через
+    app/scripts/cleanup_anomaly_readings.py. Это reading'и с нереалистичными
+    значениями счётчиков (вода > MAX_WATER_METER_VALUE, электр > MAX_…)
+    или итогом > MAX_TOTAL_COST_PER_READING — система их отказалась
+    утверждать, ждут решения админа.
+
+    Что админ может сделать (через отдельные endpoint'ы):
+      - DELETE /api/admin/readings/{id} — удалить (если жилец переподаст)
+      - POST /api/admin/readings/{id}/approve — принять с корректировкой
+    """
+    _require_admin(current_user)
+    stmt = (
+        select(MeterReading)
+        .options(
+            selectinload(MeterReading.user).selectinload(User.room),
+            selectinload(MeterReading.period),
+        )
+        .where(
+            MeterReading.is_approved.is_(False),
+            MeterReading.anomaly_flags.contains("DATA_OVERFLOW_RESET"),
+        )
+        .order_by(desc(MeterReading.created_at))
+        .limit(limit)
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+
+    items = []
+    for r in rows:
+        user = r.user
+        room = user.room if user else None
+        items.append({
+            "reading_id": r.id,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "period_id": r.period_id,
+            "period_name": r.period.name if r.period else None,
+            "user_id": user.id if user else None,
+            "username": user.username if user else None,
+            "full_name": user.full_name if user else None,
+            "dormitory_name": room.dormitory_name if room else None,
+            "room_number": room.room_number if room else None,
+            "hot_water": float(r.hot_water or 0),
+            "cold_water": float(r.cold_water or 0),
+            "electricity": float(r.electricity or 0),
+            "total_cost_was": float(r.total_cost or 0),
+            "anomaly_flags": r.anomaly_flags,
+        })
+
+    return {"count": len(items), "items": items}
