@@ -2691,25 +2691,29 @@ def _build_rebuild_plan(matched_rows: list) -> list[dict]:
 @router.get("/auto-rebuild/preview")
 async def auto_rebuild_preview(
     year: int = Query(..., ge=2020, le=2100),
+    user_id: Optional[int] = Query(None, description="Фильтр: пересборка только для одного жильца"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Показывает план авто-пересборки за год: для каждого жильца — какой
     месяц станет baseline, какие месяцы → reading'и, какие подачи
-    «проиграли» дедупликацию (более ранние в том же месяце)."""
+    «проиграли» дедупликацию (более ранние в том же месяце).
+
+    Если передан user_id — preview/apply только для этого жильца (точечная
+    пересборка из карточки в финотчётности)."""
     require_admin(current_user)
     start = datetime(year, 1, 1)
     end = datetime(year + 1, 1, 1)
 
-    rows = (await db.execute(
-        select(GSheetsImportRow)
-        .where(
-            GSheetsImportRow.sheet_timestamp >= start,
-            GSheetsImportRow.sheet_timestamp < end,
-            GSheetsImportRow.matched_user_id.is_not(None),
-            GSheetsImportRow.status != "rejected",
-        )
-    )).scalars().all()
+    q = select(GSheetsImportRow).where(
+        GSheetsImportRow.sheet_timestamp >= start,
+        GSheetsImportRow.sheet_timestamp < end,
+        GSheetsImportRow.matched_user_id.is_not(None),
+        GSheetsImportRow.status != "rejected",
+    )
+    if user_id is not None:
+        q = q.where(GSheetsImportRow.matched_user_id == user_id)
+    rows = (await db.execute(q)).scalars().all()
 
     plan = _build_rebuild_plan(rows)
 
@@ -2805,13 +2809,14 @@ async def auto_rebuild_preview(
 async def auto_rebuild_apply(
     year: int = Query(..., ge=2020, le=2100),
     confirm: str = Query(..., description="Должно быть 'YES_REBUILD_FROM_GSHEETS'"),
+    user_id: Optional[int] = Query(None, description="Только для одного жильца"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Apply: реализует план из preview.
 
     Транзакция: одна, либо весь rebuild, либо ничего. Audit log с
-    user_ids/counts.
+    user_ids/counts. Если user_id — пересборка только для одного жильца.
     """
     require_admin(current_user)
     if confirm != "YES_REBUILD_FROM_GSHEETS":
@@ -2819,15 +2824,15 @@ async def auto_rebuild_apply(
 
     start = datetime(year, 1, 1)
     end = datetime(year + 1, 1, 1)
-    rows = (await db.execute(
-        select(GSheetsImportRow)
-        .where(
-            GSheetsImportRow.sheet_timestamp >= start,
-            GSheetsImportRow.sheet_timestamp < end,
-            GSheetsImportRow.matched_user_id.is_not(None),
-            GSheetsImportRow.status != "rejected",
-        )
-    )).scalars().all()
+    q = select(GSheetsImportRow).where(
+        GSheetsImportRow.sheet_timestamp >= start,
+        GSheetsImportRow.sheet_timestamp < end,
+        GSheetsImportRow.matched_user_id.is_not(None),
+        GSheetsImportRow.status != "rejected",
+    )
+    if user_id is not None:
+        q = q.where(GSheetsImportRow.matched_user_id == user_id)
+    rows = (await db.execute(q)).scalars().all()
 
     plan = _build_rebuild_plan(rows)
 

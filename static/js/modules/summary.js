@@ -198,6 +198,17 @@ export const SummaryModule = {
                 return;
             }
 
+            // Кнопка «Пересобрать год из GSheets» в развороте жильца.
+            const rebuildBtn = e.target.closest('button[data-rebuild-uid]');
+            if (rebuildBtn) {
+                e.stopPropagation();  // не сворачивать карточку
+                this.rebuildResidentYear(
+                    Number(rebuildBtn.dataset.rebuildUid),
+                    Number(rebuildBtn.dataset.rebuildYear) || new Date().getFullYear(),
+                );
+                return;
+            }
+
             const resRow = e.target.closest('[data-toggle-resident]');
             if (resRow) {
                 const uid = Number(resRow.dataset.toggleResident);
@@ -533,17 +544,44 @@ export const SummaryModule = {
                 Ошибка загрузки: ${esc(data.__error)}
             </div>`;
         }
+        const uid = (data.user && data.user.id) || data.user_id || (data.contract && data.contract.user_id);
         return `
-            <div style="padding:16px 20px; display:grid; grid-template-columns: minmax(0,1.2fr) minmax(0,1fr); gap:20px;">
-                <div style="min-width:0;">
-                    ${this._renderBalanceBlock(data.balance)}
-                    ${this._renderMetersHistory(data)}
+            <div style="padding:16px 20px;">
+                ${uid ? this._renderResidentActions(uid) : ''}
+                <div style="display:grid; grid-template-columns: minmax(0,1.2fr) minmax(0,1fr); gap:20px;">
+                    <div style="min-width:0;">
+                        ${this._renderBalanceBlock(data.balance)}
+                        ${this._renderMetersHistory(data)}
+                    </div>
+                    <div style="min-width:0;">
+                        ${this._renderContractBlock(data.contract)}
+                        ${this._renderCurrentCostBreakdown(data.current)}
+                        ${this._renderAdjustmentsBlock(data.adjustments)}
+                    </div>
                 </div>
-                <div style="min-width:0;">
-                    ${this._renderContractBlock(data.contract)}
-                    ${this._renderCurrentCostBreakdown(data.current)}
-                    ${this._renderAdjustmentsBlock(data.adjustments)}
+            </div>`;
+    },
+
+    _renderResidentActions(userId) {
+        // Кнопка точечной auto-rebuild — берёт все подачи этого жильца за год
+        // из Google Sheets, применяет swap-детектор перепутанных столбцов,
+        // пересобирает baseline + reading'и. Полезно когда у одного конкретного
+        // жильца сломались данные (как у Покидина: Initial 646/423 ↔ должно
+        // быть 423/646). Запуск массового rebuild для одного жильца — точечно.
+        const year = new Date().getFullYear();
+        return `
+            <div style="margin-bottom:14px; padding:10px 14px; background:#faf5ff; border:1px solid #d8b4fe; border-radius:8px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                <div style="font-size:12px; color:#5b21b6;">
+                    <b>Действия с жильцом:</b>
                 </div>
+                <button class="action-btn" data-rebuild-uid="${userId}" data-rebuild-year="${year}"
+                        style="padding:6px 12px; font-size:12px; background:#7c3aed; color:#fff; border:1px solid #7c3aed;"
+                        title="Пересобрать показания этого жильца за ${year} год из Google Sheets с автодетектом перепутанных ГВС/ХВС">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> Пересобрать ${year} год из GSheets
+                </button>
+                <span style="font-size:11px; color:var(--text-tertiary);">
+                    (удалит мусорные reading'и за ${year}, пересоберёт из таблицы с swap если нужно)
+                </span>
             </div>`;
     },
 
@@ -1193,5 +1231,78 @@ export const SummaryModule = {
             </div>`;
 
         return headerHtml + tariffHtml + readingsHtml + componentsHtml + adjHtml + balancesHtml + totalsHtml;
+    },
+
+    /** Точечная авто-пересборка одного жильца. Использует общий backend
+     *  auto-rebuild с user_id-фильтром. Двухстадийно: preview модалка
+     *  показывает что произойдёт → пользователь подтверждает → apply. */
+    async rebuildResidentYear(userId, year) {
+        if (!userId || !year) return;
+        // Шаг 1 — preview.
+        let preview;
+        try {
+            preview = await api.get(`/admin/gsheets/auto-rebuild/preview?year=${year}&user_id=${userId}`);
+        } catch (e) {
+            toast('Не удалось загрузить план: ' + (e.message || e), 'error');
+            return;
+        }
+        const plan = (preview.plan || []).filter(p => p.user_id === userId);
+        if (plan.length === 0) {
+            toast(`У жильца нет подач в Google-таблице за ${year} год — нечего пересобирать.`, 'warning');
+            return;
+        }
+        const entry = plan[0];
+        const fio = entry.full_name || entry.username || `user_id=${userId}`;
+        const monthName = (m) => ['', 'Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'][m];
+
+        if (entry.is_ok === false) {
+            const reason = entry.skip_reason || 'unknown';
+            if (!window.confirm(
+                `У жильца «${fio}» обнаружена проблема:\n\n${reason}\n\n` +
+                `Авто-пересборка для этого жильца недоступна. Закрыть?`
+            )) return;
+            return;
+        }
+
+        // Краткое описание плана.
+        const blStr = `${monthName(entry.baseline.month)} ${entry.baseline.year}: ${Number(entry.baseline.hot_water).toFixed(2)} / ${Number(entry.baseline.cold_water).toFixed(2)}`;
+        const readingsStr = (entry.readings || []).map(r =>
+            `${monthName(r.month)}: ${Number(r.hot_water).toFixed(2)} / ${Number(r.cold_water).toFixed(2)}`
+        ).join('\n  ');
+        const swapNote = entry.swaps_detected
+            ? `\n🔁 Будет применён swap ГВС/ХВС в ${(entry.swaps_to_apply || []).length} строках (жилец перепутал столбцы).\n`
+            : '';
+
+        if (!window.confirm(
+            `Пересобрать данные жильца «${fio}» за ${year} год?\n\n` +
+            `Будет:\n` +
+            `  • Удалены существующие reading'и за затронутые периоды (только GSheets-источника, ручные правки сохранятся).\n` +
+            `  • Создан baseline: ${blStr}\n` +
+            (readingsStr ? `  • Созданы reading'и:\n  ${readingsStr}\n` : '') +
+            swapNote +
+            `\nПродолжить?`
+        )) return;
+
+        try {
+            const res = await api.post(
+                `/admin/gsheets/auto-rebuild/apply?year=${year}&user_id=${userId}&confirm=YES_REBUILD_FROM_GSHEETS`,
+                {}
+            );
+            if (res.errors_count > 0) {
+                toast(`Готово с ошибками: ${res.ok_count || res.baselines_created} ok, ${res.errors_count} ошибок. См. консоль.`, 'warning');
+                console.warn('[rebuild user errors]', res.errors);
+            } else {
+                toast(
+                    `Готово: baseline ${res.baselines_created}, reading'ов ${res.readings_created}, удалено ${res.readings_deleted}.`,
+                    'success',
+                );
+            }
+            // Сбрасываем кеш карточки и перерисовываем.
+            this.state.residentDetailCache.delete(userId);
+            await this.toggleResident(userId);  // свернуть
+            await this.toggleResident(userId);  // развернуть с новыми данными
+        } catch (e) {
+            toast('Ошибка пересборки: ' + (e.message || e), 'error');
+        }
     },
 };
