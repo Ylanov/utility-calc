@@ -1981,6 +1981,7 @@ export const AnalyzerModule = {
                 <div><b>Всего строк:</b> ${stats.total_rows_scanned}</div>
                 <div><b>Жильцов:</b> ${stats.total_users}</div>
                 <div style="color:#166534;"><b>К обработке:</b> ${stats.ok_users || 0}</div>
+                ${stats.swapped_users > 0 ? `<div style="color:#d97706;"><b>🔁 Swap ГВС/ХВС:</b> ${stats.swapped_users}</div>` : ''}
                 ${stats.skipped_users > 0 ? `<div style="color:#dc2626;"><b>Пропустится:</b> ${stats.skipped_users}</div>` : ''}
                 <div><b>Baseline'ов:</b> ${stats.total_baselines}</div>
                 <div><b>Reading'ов создастся:</b> ${stats.total_readings_to_create}</div>
@@ -2001,15 +2002,19 @@ export const AnalyzerModule = {
                 ? `${escapeHtml(p.dormitory_name)}/${escapeHtml(String(p.room_number || ''))}`
                 : '—';
             const isSkipped = p.is_ok === false;
+            const hasSwaps = p.swaps_detected === true;
             const rowStyle = isSkipped
                 ? 'border-bottom:1px solid var(--border-color); background:#fef2f2;'
-                : 'border-bottom:1px solid var(--border-color);';
+                : (hasSwaps ? 'border-bottom:1px solid var(--border-color); background:#fffbeb;' : 'border-bottom:1px solid var(--border-color);');
             const baselineColors = isSkipped
                 ? 'background:#fee2e2; color:#991b1b;'
-                : 'background:#dbeafe; color:#1e40af;';
+                : (hasSwaps ? 'background:#fef3c7; color:#92400e;' : 'background:#dbeafe; color:#1e40af;');
+            const swapBadge = hasSwaps
+                ? `<span style="background:#fbbf24; color:#78350f; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:600; margin-left:6px;" title="${(p.swaps_to_apply || []).length} строк автоматически переставлены (перепутаны ГВС/ХВС)">🔁 swap ${(p.swaps_to_apply || []).length}</span>`
+                : '';
             const baselineLabel = `<span style="${baselineColors} padding:2px 6px; border-radius:4px; font-size:11px; font-weight:600;">
                 ${isSkipped ? '⛔ ' : ''}Baseline: ${monthName(p.baseline.month)} ${p.baseline.year} → ${Number(p.baseline.hot_water).toFixed(2)} / ${Number(p.baseline.cold_water).toFixed(2)}
-            </span>`;
+            </span>${swapBadge}`;
             const readingTags = p.readings.map(r => {
                 const tagColors = isSkipped
                     ? 'background:#fed7aa; color:#9a3412;'

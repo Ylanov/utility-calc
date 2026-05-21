@@ -822,6 +822,70 @@ async def _apply_approve(
     return reading
 
 
+@router.post("/rows/{row_id}/swap-columns")
+async def swap_row_columns(
+    row_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Меняет местами ГВС и ХВС в одной GSheets-строке.
+
+    Use case: жилец в Google-таблице перепутал столбцы (Покидин Фев 2026:
+    646/423 вместо 423/646). После swap последовательность подач становится
+    монотонной → утверждение обычной кнопкой проходит без conflict.
+
+    Endpoint только меняет значения и сбрасывает conflict_reason. Сам
+    MeterReading не создаётся — админ потом жмёт «Утвердить» как обычно.
+    """
+    require_admin(current_user)
+    row = (await db.execute(
+        select(GSheetsImportRow)
+        .where(GSheetsImportRow.id == row_id)
+        .with_for_update()
+    )).scalars().first()
+    if not row:
+        raise HTTPException(404, "Строка не найдена")
+    if row.status == "approved" and row.reading_id:
+        raise HTTPException(409, "Строка уже утверждена — swap невозможен. Сначала удалите reading.")
+
+    old_hot = row.hot_water
+    old_cold = row.cold_water
+    row.hot_water = old_cold
+    row.cold_water = old_hot
+    # Sb conflict_reason если он был только про meter_decreased.
+    if row.conflict_reason and ("meter_decreased" in row.conflict_reason or "high_delta" in row.conflict_reason):
+        row.conflict_reason = None
+    # Возвращаем статус в pending — пусть админ заново оценит после swap.
+    if row.status == "conflict":
+        row.status = "pending"
+    db.add(row)
+
+    try:
+        await write_audit_log(
+            db, current_user.id, current_user.username,
+            action="gsheets_row_swap_columns",
+            entity_type="gsheets_import_row",
+            entity_id=row.id,
+            details={
+                "row_id": row.id,
+                "fio": row.raw_fio,
+                "before": {"hot": str(old_hot), "cold": str(old_cold)},
+                "after": {"hot": str(row.hot_water), "cold": str(row.cold_water)},
+            },
+        )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("audit_log for swap-columns failed")
+
+    await db.commit()
+    return {
+        "status": "ok",
+        "row_id": row.id,
+        "new_hot_water": str(row.hot_water),
+        "new_cold_water": str(row.cold_water),
+    }
+
+
 @router.post("/rows/{row_id}/make-baseline")
 async def make_row_baseline(
     row_id: int,
@@ -2410,6 +2474,54 @@ def _bucket_by_month(rows: list) -> dict[tuple[int, int], list]:
     return out
 
 
+def _detect_and_fix_swaps(entries: list[tuple]) -> tuple[Optional[list[tuple]], Optional[list[bool]]]:
+    """Детектор перепутанных столбцов ГВС/ХВС.
+
+    entries — список (hot, cold) в хронологическом порядке (baseline + reading'и).
+    Возвращает (fixed_entries, swap_mask) с минимальным числом swap'ов чтобы
+    последовательность стала монотонно неубывающей по обоим столбцам.
+    Если ни одна комбинация не даёт монотонности — возвращает (None, None).
+
+    Алгоритм: brute-force 2^n всех swap-комбинаций. Для n=2..5 это
+    4..32 итерации — мгновенно. Выбирается вариант с минимумом swap'ов.
+
+    Кейс Покидина: [(646,423),(428,654),(432,661)] →
+      mask=(True,False,False) → [(423,646),(428,654),(432,661)] →
+      ГВС 423<428<432 ✓, ХВС 646<654<661 ✓. Swap 1 строки → fix.
+    """
+    n = len(entries)
+    if n <= 1:
+        return list(entries), [False] * n
+
+    best_count = None
+    best_mask = None
+    best_fixed = None
+
+    from itertools import product
+    for mask in product([False, True], repeat=n):
+        fixed = []
+        for i, swap in enumerate(mask):
+            h, c = entries[i]
+            fixed.append((c, h) if swap else (h, c))
+        # Монотонность по обоим столбцам.
+        ok = True
+        for i in range(1, n):
+            if fixed[i][0] < fixed[i - 1][0] or fixed[i][1] < fixed[i - 1][1]:
+                ok = False
+                break
+        if not ok:
+            continue
+        swap_count = sum(mask)
+        if best_count is None or swap_count < best_count:
+            best_count = swap_count
+            best_mask = list(mask)
+            best_fixed = fixed
+
+    if best_mask is None:
+        return None, None
+    return best_fixed, best_mask
+
+
 def _validate_user_entry(entry: dict) -> tuple[bool, str]:
     """Sanity-check для одного user-плана. Возвращает (is_ok, skip_reason).
 
@@ -2508,9 +2620,38 @@ def _build_rebuild_plan(matched_rows: list) -> list[dict]:
             "readings": readings,
             "duplicates_rejected": duplicates,
         }
+
+        # Bug O: попытка авто-детекции перепутанных ГВС/ХВС.
+        # Если сейчас монотонность нарушена (meter_decreased), но swap N строк
+        # её восстанавливает — фиксируем план применения swap'ов.
         is_ok, skip_reason = _validate_user_entry(entry)
+        swaps_to_apply: list[int] = []  # row_ids которые нужно swap'нуть
+        if not is_ok and "meter_decreased" in (skip_reason or ""):
+            # Собираем хронологическую последовательность.
+            chrono = [(entry["baseline"]["hot_water"], entry["baseline"]["cold_water"])]
+            chrono += [(r["hot_water"], r["cold_water"]) for r in readings]
+            fixed, mask = _detect_and_fix_swaps(chrono)
+            if fixed is not None and any(mask):
+                # Применяем swap'ы — обновляем значения в entry для UI.
+                row_ids_in_order = [entry["baseline"]["row_id"]] + [r["row_id"] for r in readings]
+                for i, do_swap in enumerate(mask):
+                    if do_swap:
+                        swaps_to_apply.append(row_ids_in_order[i])
+                # Обновляем baseline и readings новыми значениями.
+                new_bh, new_bc = fixed[0]
+                entry["baseline"]["hot_water"] = float(new_bh)
+                entry["baseline"]["cold_water"] = float(new_bc)
+                for idx, r in enumerate(readings):
+                    nh, nc = fixed[idx + 1]
+                    r["hot_water"] = float(nh)
+                    r["cold_water"] = float(nc)
+                # Перевалидируем — теперь должно быть OK.
+                is_ok, skip_reason = _validate_user_entry(entry)
+                entry["swaps_detected"] = True
+
         entry["is_ok"] = is_ok
         entry["skip_reason"] = skip_reason
+        entry["swaps_to_apply"] = swaps_to_apply
         plan.append(entry)
     return plan
 
@@ -2560,6 +2701,7 @@ async def auto_rebuild_preview(
     # в GSheets перед apply).
     ok_plan = [p for p in plan if p.get("is_ok", True)]
     skipped_plan = [p for p in plan if not p.get("is_ok", True)]
+    swapped_plan = [p for p in ok_plan if p.get("swaps_detected")]
     total_rows = len(rows)
 
     return {
@@ -2569,6 +2711,7 @@ async def auto_rebuild_preview(
             "total_users": len(plan),
             "ok_users": len(ok_plan),
             "skipped_users": len(skipped_plan),
+            "swapped_users": len(swapped_plan),
             "total_baselines": len(ok_plan),
             "total_readings_to_create": sum(len(p["readings"]) for p in ok_plan),
             "total_duplicates_rejected": sum(len(p["duplicates_rejected"]) for p in ok_plan),
@@ -2634,12 +2777,25 @@ async def auto_rebuild_apply(
     errors: list[dict] = []
 
     skipped_users = 0
+    swapped_rows_total = 0
     for entry in plan:
         # Skip жильцов с baseline_too_large / meter_decreased — их данные
         # нужно сначала исправить в Google-таблице. См. _validate_user_entry.
         if not entry.get("is_ok", True):
             skipped_users += 1
             continue
+
+        # Bug O: применяем swap ГВС/ХВС в GSheets-строках, которые auto-detector
+        # пометил как «перепутаны столбцы». Меняем местами hot_water и cold_water
+        # в самой gsheets-строке — далее _apply_approve возьмёт корректные.
+        for swap_row_id in entry.get("swaps_to_apply", []):
+            swap_row = rows_by_id.get(swap_row_id) or await db.get(GSheetsImportRow, swap_row_id)
+            if swap_row:
+                old_hot = swap_row.hot_water
+                swap_row.hot_water = swap_row.cold_water
+                swap_row.cold_water = old_hot
+                db.add(swap_row)
+                swapped_rows_total += 1
         uid = entry["user_id"]
         user = (await db.execute(
             select(User).options(selectinload(User.room)).where(User.id == uid)
@@ -2813,6 +2969,7 @@ async def auto_rebuild_apply(
         "readings_deleted": readings_deleted,
         "duplicates_rejected": duplicates_rejected,
         "skipped_users": skipped_users,
+        "swapped_rows": swapped_rows_total,
         "errors_count": len(errors),
         "errors": errors[:50],  # обрезаем чтобы не разнести payload
     }

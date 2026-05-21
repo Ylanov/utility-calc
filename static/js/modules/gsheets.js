@@ -194,6 +194,7 @@ export const GSheetsModule = {
                 const action = btn.dataset.action;
                 if (action === 'approve') this.approveRow(rowId);
                 else if (action === 'make-baseline') this.makeRowBaseline(rowId);
+                else if (action === 'swap-columns') this.swapRowColumns(rowId);
                 else if (action === 'reject') this.rejectRow(rowId);
                 else if (action === 'reassign') this.reassignPrompt(rowId);
                 else if (action === 'delete') this.deleteRow(rowId);
@@ -233,6 +234,7 @@ export const GSheetsModule = {
                 const rowId = Number(el.dataset.rowId);
                 if (action === 'approve') this.approveRow(rowId);
                 else if (action === 'make-baseline') this.makeRowBaseline(rowId);
+                else if (action === 'swap-columns') this.swapRowColumns(rowId);
                 else if (action === 'reject') this.rejectRow(rowId);
                 else if (action === 'reassign') this.reassignPrompt(rowId);
                 else if (action === 'delete') this.deleteRow(rowId);
@@ -455,6 +457,11 @@ export const GSheetsModule = {
                 // Кнопка «Сделать baseline» — для conflict-строк где жилец впервые
                 // подал реальное накопленное показание поверх AUTO_GENERATED 0/0/0.
                 buttons.push(`<button class="action-btn" data-action="make-baseline" data-row-id="${row.id}" style="padding:3px 8px; font-size:11px; background:#10b981; color:#fff; border:1px solid #10b981;" title="Сделать Начальный период комнаты — снять блок «дельта>50», следующая подача жильца будет валидной"><i class="fa-solid fa-anchor"></i></button>`);
+                // Кнопка «Поменять ГВС/ХВС» — для случаев когда жилец перепутал
+                // столбцы (Покидин Фев 646/423 вместо 423/646).
+                if (row.status === 'conflict' && row.conflict_reason && /meter_decreased|high_delta/i.test(row.conflict_reason)) {
+                    buttons.push(`<button class="action-btn" data-action="swap-columns" data-row-id="${row.id}" style="padding:3px 8px; font-size:11px; background:#f59e0b; color:#fff; border:1px solid #f59e0b;" title="Поменять ГВС ↔ ХВС местами (жилец перепутал столбцы в Google-таблице)"><i class="fa-solid fa-right-left"></i></button>`);
+                }
             }
             buttons.push(`<button class="action-btn secondary-btn" data-action="reassign" data-row-id="${row.id}" style="padding:3px 8px; font-size:11px;" title="Переназначить жильца"><i class="fa-solid fa-user-pen"></i></button>`);
             buttons.push(`<button class="action-btn danger-btn" data-action="reject" data-row-id="${row.id}" style="padding:3px 8px; font-size:11px;" title="Отклонить"><i class="fa-solid fa-xmark"></i></button>`);
@@ -955,6 +962,33 @@ export const GSheetsModule = {
             }
             toast('Ошибка: ' + e.message, 'error');
             this.refresh();  // откатываемся на серверное состояние
+        }
+    },
+
+    /** Меняет местами ГВС и ХВС в одной GSheets-строке. Use case:
+     *  жилец в Google-таблице перепутал столбцы (Покидин Фев 646/423 vs
+     *  правильное 423/646). После swap последовательность подач становится
+     *  монотонной — следующее «Утвердить» проходит без conflict. */
+    async swapRowColumns(rowId) {
+        const row = this.state.rows.find(r => r.id === rowId);
+        if (!row) return;
+        const fio = row.matched_full_name || row.matched_username || row.raw_fio;
+        if (!confirm(
+            `Поменять местами ГВС и ХВС в подаче «${fio}»?\n\n` +
+            `Сейчас в строке: ГВС=${row.hot_water}, ХВС=${row.cold_water}.\n` +
+            `Станет:           ГВС=${row.cold_water}, ХВС=${row.hot_water}.\n\n` +
+            `Использовать когда жилец в Google-таблице ввёл значения в неправильные колонки. ` +
+            `После swap строка вернётся в pending — потом жмёшь «Утвердить» обычной кнопкой.`
+        )) return;
+        try {
+            const res = await api.post(`/admin/gsheets/rows/${rowId}/swap-columns`, {});
+            toast(
+                `Готово: ГВС=${res.new_hot_water}, ХВС=${res.new_cold_water}. Теперь можно «Утвердить».`,
+                'success',
+            );
+            this.refresh();
+        } catch (e) {
+            toast('Ошибка swap: ' + e.message, 'error');
         }
     },
 
