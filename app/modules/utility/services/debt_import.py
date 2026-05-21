@@ -316,20 +316,45 @@ def sync_import_debts_process(
         # По их позициям однозначно определяем индексы. Это работает даже
         # если section-markers не нашлись (например другой шаблон 1С).
         try:
+            account_total_row = None
+            account_total_label_col = None
             for row in header_ws_ro.iter_rows(min_row=1, max_row=20, values_only=True):
                 if not row:
                     continue
-                first_cell = row[0] if len(row) > 0 else None
-                if not isinstance(first_cell, str):
-                    continue
-                first_norm = first_cell.strip()
-                # Ищем строку начинающуюся с «209.» или «205.» (с любой цифрой
-                # после точки, например 209.34 / 205.10).
-                if not (first_norm.startswith("209.") or first_norm.startswith("205.")):
-                    continue
-                # Собираем колонки с числовыми значениями.
+                # Ищем «209.X» или «205.X» в ЛЮБОЙ из первых 3 колонок
+                # (в разных шаблонах ОСВ код счёта может быть в col 0, 1 или 2).
+                for col_label in range(min(3, len(row))):
+                    cell = row[col_label]
+                    if cell is None:
+                        continue
+                    # Преобразуем в строку любой тип (Excel может хранить
+                    # "209.34" как float).
+                    s = str(cell).strip()
+                    if (
+                        s.startswith("209.") or s.startswith("205.")
+                        or s == "209" or s == "205"
+                    ):
+                        account_total_row = row
+                        account_total_label_col = col_label
+                        break
+                if account_total_row is not None:
+                    break
+            if account_total_row is None:
+                logger.info("[debt_import] STRATEGY 0: account total row not found")
+                row = None  # запасной placeholder
+            else:
+                row = account_total_row
+                first_norm = str(row[account_total_label_col]).strip()
+                logger.info(
+                    "[debt_import] STRATEGY 0: account_total='%s' at col %d",
+                    first_norm, account_total_label_col,
+                )
+            if row is not None:
+                # Собираем колонки с числовыми значениями ПОСЛЕ label-колонки.
                 numeric_positions = []
-                for col_idx, cell in enumerate(row[1:], start=1):
+                start_search = account_total_label_col + 1
+                for col_idx in range(start_search, len(row)):
+                    cell = row[col_idx]
                     if cell is None or cell == "":
                         continue
                     try:
@@ -363,7 +388,6 @@ def sync_import_debts_process(
                         "[debt_import] STRATEGY 0 success: debt=%d/%d, overpay=%d/%d",
                         debt_col_first, debt_col_last, overpay_col_first, overpay_col_last,
                     )
-                    break
         except Exception as exc:
             logger.warning("[debt_import] strategy 0 failed: %s", exc)
 
