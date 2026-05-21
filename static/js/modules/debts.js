@@ -108,6 +108,13 @@ export const DebtsModule = {
         this.dom.btnRefresh?.addEventListener('click', () => this.reload());
         this.dom.btnExport?.addEventListener('click', () => this.exportExcel());
         this.dom.btnUpload?.addEventListener('click', () => this.handleUpload());
+
+        // Авто-предпросмотр при выборе файла (Bug T)
+        this.dom.inputUpload209?.addEventListener('change', () => this.previewFile('209'));
+        this.dom.inputUpload205?.addEventListener('change', () => this.previewFile('205'));
+        // Сохраним признак дубликата для блокировки upload.
+        this._lastPreview209 = null;
+        this._lastPreview205 = null;
         this.dom.btnPrev?.addEventListener('click', () => this.changePage(-1));
         this.dom.btnNext?.addEventListener('click', () => this.changePage(1));
 
@@ -269,6 +276,75 @@ export const DebtsModule = {
     // ==========================================================================
     // ИМПОРТ
     // ==========================================================================
+    /** Bug T: при выборе файла авто-парсит его и показывает сводку под
+     *  input'ом. Проверяет дубликат по SHA256 и предупреждает если файл
+     *  уже импортировали. */
+    async previewFile(accountType) {
+        const input = accountType === '209' ? this.dom.inputUpload209 : this.dom.inputUpload205;
+        const file = input?.files?.[0] || null;
+        // Контейнер для preview-сводки: создаём рядом с input если ещё нет.
+        const previewId = `debtPreview${accountType}`;
+        let preview = document.getElementById(previewId);
+        if (!preview && input) {
+            preview = document.createElement('div');
+            preview.id = previewId;
+            preview.style.cssText = 'margin-top:6px; padding:8px 10px; border-radius:4px; font-size:11px; line-height:1.5;';
+            input.parentElement?.appendChild(preview);
+        }
+        if (!file) {
+            if (preview) preview.innerHTML = '';
+            if (accountType === '209') this._lastPreview209 = null;
+            else this._lastPreview205 = null;
+            return;
+        }
+        if (preview) preview.innerHTML = '<span style="color:var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Анализируем файл…</span>';
+
+        const fd = new FormData();
+        fd.append('account_type', accountType);
+        fd.append('file', file);
+        try {
+            const res = await api.post('/financier/debts/preview-file', fd);
+            if (accountType === '209') this._lastPreview209 = res;
+            else this._lastPreview205 = res;
+
+            const sizeKb = (res.size_bytes / 1024).toFixed(1);
+            const sampleHtml = res.sample_fio?.length
+                ? `<div style="color:var(--text-secondary); margin-top:3px;">Примеры ФИО: ${res.sample_fio.slice(0, 3).map(s => esc(s)).join(', ')}${res.sample_fio.length > 3 ? '…' : ''}</div>`
+                : '<div style="color:#dc2626; margin-top:3px;">⚠ ФИО не найдены — возможно неверный формат файла.</div>';
+
+            let bg, color, statusLine;
+            if (res.duplicate_of) {
+                bg = '#fef3c7'; color = '#92400e';
+                const d = res.duplicate_of;
+                statusLine = `<b>⚠ Дубликат:</b> такой же файл уже импортирован как №${d.log_id} (${d.account_type}, ${d.started_at?.split('T')[0] || '—'}, ${d.status}). Загрузить повторно — обычно не нужно.`;
+            } else if (res.rows_with_fio === 0) {
+                bg = '#fee2e2'; color = '#991b1b';
+                statusLine = '<b>❌ ФИО не найдено</b> — файл, скорее всего, не ОСВ 1С. Проверьте что загружаете правильный файл.';
+            } else {
+                bg = '#dcfce7'; color = '#166534';
+                statusLine = `<b>✓ Файл выглядит корректно</b> — ${res.rows_with_fio} строк с ФИО (из ${res.rows_total} общих).`;
+            }
+
+            if (preview) {
+                preview.style.background = bg;
+                preview.style.color = color;
+                preview.innerHTML = `
+                    ${statusLine}
+                    <div style="color:var(--text-secondary); margin-top:3px;">
+                        <i class="fa-solid fa-file-excel"></i> ${esc(res.file_name)} · ${sizeKb} KB · hash ${res.file_hash.slice(0, 10)}…
+                    </div>
+                    ${sampleHtml}
+                `;
+            }
+        } catch (e) {
+            if (preview) {
+                preview.style.background = '#fee2e2';
+                preview.style.color = '#991b1b';
+                preview.innerHTML = `<b>Ошибка анализа:</b> ${esc(e.message)}`;
+            }
+        }
+    },
+
     async handleUpload() {
         if (this.state.isUploading) return toast('Импорт уже выполняется', 'info');
 
@@ -283,11 +359,26 @@ export const DebtsModule = {
             return toast('Выберите хотя бы один файл .xlsx', 'error');
         }
 
+        // Bug T: подсветить дубликаты в confirm-диалоге.
+        const dupNotes = [];
+        if (file209 && this._lastPreview209?.duplicate_of) {
+            const d = this._lastPreview209.duplicate_of;
+            dupNotes.push(`⚠ 209-файл уже импортирован: №${d.log_id} (${d.started_at?.split('T')[0] || '—'}, status=${d.status})`);
+        }
+        if (file205 && this._lastPreview205?.duplicate_of) {
+            const d = this._lastPreview205.duplicate_of;
+            dupNotes.push(`⚠ 205-файл уже импортирован: №${d.log_id} (${d.started_at?.split('T')[0] || '—'}, status=${d.status})`);
+        }
+
         const summary = [
-            file209 ? `209: ${file209.name}` : null,
-            file205 ? `205: ${file205.name}` : null,
+            file209 ? `209: ${file209.name}${this._lastPreview209 ? ` · ФИО найдено: ${this._lastPreview209.rows_with_fio}` : ''}` : null,
+            file205 ? `205: ${file205.name}${this._lastPreview205 ? ` · ФИО найдено: ${this._lastPreview205.rows_with_fio}` : ''}` : null,
+            ...dupNotes,
         ].filter(Boolean).join('\n');
-        if (!confirm(`Загрузить файлы?\n${summary}`)) return;
+        const confirmMsg = dupNotes.length
+            ? `Загрузить файлы?\n${summary}\n\nЭти файлы уже загружались. Точно повторить?`
+            : `Загрузить файлы?\n${summary}`;
+        if (!confirm(confirmMsg)) return;
 
         this.state.isUploading = true;
         if (this.dom.uploadResult) {
@@ -305,6 +396,11 @@ export const DebtsModule = {
             // Очищаем inputs чтобы случайно не нажать «загрузить» ещё раз.
             if (this.dom.inputUpload209) this.dom.inputUpload209.value = '';
             if (this.dom.inputUpload205) this.dom.inputUpload205.value = '';
+            // Чистим preview-блоки.
+            document.getElementById('debtPreview209')?.remove();
+            document.getElementById('debtPreview205')?.remove();
+            this._lastPreview209 = null;
+            this._lastPreview205 = null;
 
             toast(`Файлы приняты (${res.tasks?.length || 0}). Обработка…`, 'info');
             // Polling по последнему таску — обычно у нас 1-2 и они идут

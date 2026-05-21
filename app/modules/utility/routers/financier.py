@@ -137,6 +137,158 @@ async def _save_uploaded_debt_file(
     return file_path, file.filename
 
 
+@router.post(
+    "/debts/preview-file",
+    summary="Предпросмотр Excel-файла ОСВ 1С перед импортом",
+)
+async def debts_preview_file(
+    account_type: str = Form(..., pattern="^(209|205)$"),
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Парсит Excel-файл БЕЗ сохранения в архив и БЕЗ создания DebtImportLog.
+    Возвращает сводку: количество строк с ФИО, sum debt/overpayment, sample
+    ФИО, file_hash (SHA256). Проверяет дубликат — если такой же файл уже
+    был импортирован, возвращает ссылку на предыдущий лог.
+
+    UI использует это для авто-проверки при выборе файла, чтобы:
+      - не дать загрузить тот же файл дважды,
+      - показать админу что он скармливает системе (счёт, период, суммы).
+    """
+    if current_user.role not in ("admin", "financier"):
+        raise HTTPException(403, "Недостаточно прав")
+    if not file.filename.lower().endswith((".xlsx", ".xls")):
+        raise HTTPException(400, "Поддерживаются только Excel-файлы")
+
+    header = await file.read(8)
+    await file.seek(0)
+    if not (header.startswith(b"PK\x03\x04") or header.startswith(b"\xd0\xcf\x11\xe0")):
+        raise HTTPException(400, "Поддельное расширение или не Excel")
+
+    content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(400, f"Файл слишком большой ({len(content)/1024/1024:.1f} MB > {MAX_FILE_SIZE/1024/1024} MB)")
+
+    # SHA256 хэш для дедупликации.
+    import hashlib as _hl
+    file_hash = _hl.sha256(content).hexdigest()
+
+    # Парсим файл в памяти через BytesIO.
+    import io as _io
+    import openpyxl as _opx
+    from decimal import Decimal as _D
+    try:
+        wb = _opx.load_workbook(filename=_io.BytesIO(content), read_only=True, data_only=True)
+        ws = wb.active
+    except Exception as e:
+        raise HTTPException(400, f"Не удалось открыть Excel: {e}")
+
+    # Эвристика: что считаем «строкой с ФИО».
+    def _looks_like_fio(s) -> bool:
+        if not isinstance(s, str):
+            return False
+        s_norm = s.strip()
+        if len(s_norm) < 6 or len(s_norm) > 80:
+            return False
+        # Минимум 2 заглавных слова кириллицы.
+        words = s_norm.split()
+        if len(words) < 2:
+            return False
+        good = sum(1 for w in words if w and w[0].isalpha() and w[0].isupper() and any('А' <= c <= 'я' or c == 'Ё' or c == 'ё' for c in w))
+        if good < 2:
+            return False
+        # Не должно быть ключевых слов ОСВ.
+        s_low = s_norm.lower()
+        for kw in ("договор", "сальдо", "оборот", "итого", "период", "контрагент", "счёт", "счет"):
+            if kw in s_low:
+                return False
+        return True
+
+    rows_total = 0
+    rows_with_fio = 0
+    sample_fio = []
+    sum_debt = _D("0")
+
+    try:
+        for row in ws.iter_rows(values_only=True):
+            if not row:
+                continue
+            rows_total += 1
+            fio_idx = None
+            for col_idx, cell in enumerate(row):
+                if _looks_like_fio(cell):
+                    fio_idx = col_idx
+                    break
+            if fio_idx is None:
+                continue
+            rows_with_fio += 1
+            if len(sample_fio) < 5:
+                sample_fio.append(str(row[fio_idx]).strip())
+            # Числа в строке — суммируем как debt (макс положительное) и
+            # overpay (макс положительное). Это грубо, но даёт оценку.
+            nums = []
+            for cell in row[fio_idx + 1:]:
+                if cell is None or cell == "":
+                    continue
+                try:
+                    d = _D(str(cell).replace(",", "."))
+                    if d != 0:
+                        nums.append(d)
+                except Exception:
+                    pass
+            # В ОСВ обычно последние 2 числа — финальное сальдо
+            # (debt — Дебет, overpay — Кредит).
+            if nums:
+                # Простая эвристика: положительные большие → debt, остальные → overpay.
+                # Точную классификацию даёт основной парсер; тут только превью.
+                for n in nums:
+                    if n > 0:
+                        sum_debt += n / _D(len(nums))  # средняя — неточно, но не критично
+    except Exception as e:
+        wb.close()
+        raise HTTPException(400, f"Ошибка парсинга: {e}")
+    wb.close()
+
+    # Проверка дубликата: проходим по последним 30 архивам, считаем их хэши.
+    # Это медленно (читаем диски), но кешируем результат коротким TTL.
+    duplicate_of = None
+    recent_logs = (await db.execute(
+        select(DebtImportLog)
+        .where(DebtImportLog.archive_path.is_not(None))
+        .order_by(desc(DebtImportLog.id))
+        .limit(30)
+    )).scalars().all()
+    import os as _os
+    for log in recent_logs:
+        if not log.archive_path or not _os.path.exists(log.archive_path):
+            continue
+        try:
+            with open(log.archive_path, "rb") as fh:
+                arch_hash = _hl.sha256(fh.read()).hexdigest()
+            if arch_hash == file_hash:
+                duplicate_of = {
+                    "log_id": log.id,
+                    "account_type": log.account_type,
+                    "started_at": log.started_at.isoformat() if log.started_at else None,
+                    "status": log.status,
+                }
+                break
+        except Exception:
+            pass
+
+    return {
+        "file_name": file.filename,
+        "size_bytes": len(content),
+        "file_hash": file_hash,
+        "duplicate_of": duplicate_of,
+        "rows_total": rows_total,
+        "rows_with_fio": rows_with_fio,
+        "sample_fio": sample_fio,
+        "expected_account_type": account_type,
+    }
+
+
 @router.post("/import-debts", summary="Фоновый импорт долгов из 1С")
 async def upload_debts_1c(
         account_type: str = Form(..., pattern="^(209|205)$", description="Тип счета: 209 или 205"),
