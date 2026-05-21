@@ -1140,10 +1140,20 @@ export const SummaryModule = {
                 </table>
             </details>`;
 
-        // Итоги — главная сравниловка
-        const matchColor = totals.match ? '#059669' : '#dc2626';
-        const matchIcon = totals.match ? 'fa-circle-check' : 'fa-circle-xmark';
-        const matchText = totals.match ? 'РАСЧЁТ ВЕРНЫЙ' : 'РАСХОЖДЕНИЕ';
+        // Итоги — главная сравниловка. match сравнивает чистые начисления
+        // (cost_*) без долгов. Если match=true но total_cost ≠ calc — это
+        // просто перенос баланса с прошлого периода (debt/overpayment),
+        // НЕ баг расчёта. Показываем как «БД актуальна» с пояснением.
+        const isActual = !!totals.match;
+        const matchColor = isActual ? '#059669' : '#dc2626';
+        const matchIcon = isActual ? 'fa-circle-check' : 'fa-circle-xmark';
+        const matchText = isActual ? 'БД АКТУАЛЬНА' : 'РАСХОЖДЕНИЕ';
+        // Показываем чистый diff (формула vs cost в БД), а не diff vs total_cost
+        // (который мог содержать долги-переплаты и давал ложные тревоги).
+        const diffPure = totals.diff_calc_minus_pure_cost || totals.diff_calc_minus_stored;
+        const hasCarriedBalance = totals.carried_balance &&
+            parseFloat(String(totals.carried_balance).replace(',', '.')) !== 0;
+
         const totalsHtml = `
             <div style="background:#f9fafb; border:2px solid ${matchColor}; padding:14px 18px; border-radius:8px;">
                 <div style="display:flex; align-items:center; gap:10px; margin-bottom:10px;">
@@ -1152,27 +1162,32 @@ export const SummaryModule = {
                 </div>
                 <table style="width:100%; font-size:13px;">
                     <tr>
-                        <td style="padding:4px 10px; color:var(--text-secondary);">Пересчитано сейчас (на основе текущего тарифа и формул):</td>
+                        <td style="padding:4px 10px; color:var(--text-secondary);">Пересчитано сейчас (формула):</td>
                         <td style="text-align:right; font-family:monospace; font-weight:600;">${esc(totals.calculated_total_cost || '—')} ₽</td>
                     </tr>
                     <tr>
-                        <td style="padding:4px 10px; color:var(--text-secondary);">Хранится в БД (то что в квитанции):</td>
-                        <td style="text-align:right; font-family:monospace; font-weight:600;">${esc(totals.stored_total_cost)} ₽</td>
+                        <td style="padding:4px 10px; color:var(--text-secondary);">В БД: чистые начисления (без долга):</td>
+                        <td style="text-align:right; font-family:monospace; font-weight:600;">${esc(totals.stored_cost_pure || totals.stored_total_cost)} ₽</td>
                     </tr>
-                    ${totals.diff_calc_minus_stored ? `<tr>
-                        <td style="padding:4px 10px; color:var(--text-secondary);">Разница (пересчёт − БД):</td>
-                        <td style="text-align:right; font-family:monospace; color:${matchColor}; font-weight:600;">${esc(totals.diff_calc_minus_stored)} ₽</td>
+                    ${diffPure ? `<tr>
+                        <td style="padding:4px 10px; color:var(--text-secondary);">Разница (формула − чистые начисления):</td>
+                        <td style="text-align:right; font-family:monospace; color:${matchColor}; font-weight:600;">${esc(diffPure)} ₽</td>
                     </tr>` : ''}
-                    <tr>
-                        <td style="padding:4px 10px; color:var(--text-secondary);">из них КБК 209 (коммуналка):</td>
-                        <td style="text-align:right; font-family:monospace;">${esc(totals.stored_total_209)} ₽</td>
+                    ${hasCarriedBalance ? `<tr>
+                        <td style="padding:4px 10px; color:var(--text-secondary);">+ Перенос баланса (долг/переплата):</td>
+                        <td style="text-align:right; font-family:monospace;">${esc(totals.carried_balance)} ₽</td>
                     </tr>
-                    <tr>
-                        <td style="padding:4px 10px; color:var(--text-secondary);">из них КБК 205 (наём):</td>
-                        <td style="text-align:right; font-family:monospace;">${esc(totals.stored_total_205)} ₽</td>
-                    </tr>
+                    <tr style="border-top:1px solid var(--border-color);">
+                        <td style="padding:6px 10px; color:var(--text-secondary); font-weight:600;">= Итог в квитанции (total_cost):</td>
+                        <td style="text-align:right; font-family:monospace; font-weight:700;">${esc(totals.stored_total_cost)} ₽</td>
+                    </tr>` : ''}
                 </table>
-                ${!totals.match ? `<div style="margin-top:10px; padding:8px 12px; background:#fee2e2; color:#991b1b; border-radius:4px; font-size:12px;">
+                ${isActual && hasCarriedBalance ? `<div style="margin-top:10px; padding:8px 12px; background:#dcfce7; color:#166534; border-radius:4px; font-size:12px;">
+                    <i class="fa-solid fa-info-circle"></i>
+                    <strong>БД актуальна.</strong> Формула совпадает с чистыми начислениями.
+                    Разница с total_cost — это перенос баланса (долг/переплата с прошлого периода), не баг расчёта.
+                </div>` : ''}
+                ${!isActual ? `<div style="margin-top:10px; padding:8px 12px; background:#fee2e2; color:#991b1b; border-radius:4px; font-size:12px;">
                     <strong>Возможные причины:</strong> тариф изменён задним числом, ручная правка БД, либо изменена формула расчёта в коде.
                 </div>` : ''}
             </div>`;

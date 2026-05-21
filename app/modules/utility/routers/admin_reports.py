@@ -1368,15 +1368,43 @@ async def _build_explain_response(reading_id: int, db: AsyncSession) -> dict:
                 "result": f(calc_result["cost_fixed_part"]) + " ₽",
             })
 
-    # 8. Сравнение пересчитанного с тем что в БД
-    stored_total = Decimal(str(reading.total_cost or 0))
+    # 8. Сравнение пересчитанного с тем что в БД.
+    #
+    # ВАЖНО (инцидент may 2026 — «Капранов 818k → 0»):
+    # calc_total — это только НАЧИСЛЕНИЯ за период (cost_*).
+    # reading.total_cost — это total_209 + total_205, где total_209 =
+    # cost_209 + debt_209 - overpayment_209 + adjustments. То есть он
+    # ВКЛЮЧАЕТ долги перенесённые из прошлого периода.
+    #
+    # Раньше сравнивали calc_total с total_cost напрямую — у baseline
+    # с долгом 7 323 ₽ это давало «РАСХОЖДЕНИЕ -7 323». Ложная тревога.
+    # Теперь сравниваем calc_total с СУММОЙ cost_* полей (= чистые
+    # начисления без долгов). Если они равны → БД актуальна,
+    # даже если total_cost ≠ calc_total из-за переноса долга.
+    def _dec(x):
+        return Decimal(str(x or 0))
+    stored_total = _dec(reading.total_cost)
+    stored_cost_pure = (
+        _dec(reading.cost_hot_water)
+        + _dec(reading.cost_cold_water)
+        + _dec(reading.cost_sewage)
+        + _dec(reading.cost_electricity)
+        + _dec(reading.cost_maintenance)
+        + _dec(reading.cost_social_rent)
+        + _dec(reading.cost_waste)
+        + _dec(reading.cost_fixed_part)
+    )
     calc_total = (
         Decimal(str(calc_result["total_cost"])) if calc_result else None
     )
+    # match по чистым начислениям — это и есть «формула актуальна?»
     match = (
         calc_total is not None
-        and abs(calc_total - stored_total) < Decimal("0.02")
+        and abs(calc_total - stored_cost_pure) < Decimal("0.02")
     )
+    # Разница между total_cost и stored_cost_pure = долги/переплаты/коррекции,
+    # перенесённые из прошлых периодов. Не баг расчёта.
+    carried_balance = stored_total - stored_cost_pure
 
     return {
         "reading": {
@@ -1458,11 +1486,22 @@ async def _build_explain_response(reading_id: int, db: AsyncSession) -> dict:
         "totals": {
             "calculated_total_cost": f(calc_total) if calc_total is not None else None,
             "stored_total_cost": f(stored_total),
+            "stored_cost_pure": f(stored_cost_pure),
             "stored_total_209": f(reading.total_209 or 0),
             "stored_total_205": f(reading.total_205 or 0),
+            # match сравнивает calc с чистыми начислениями (без долгов).
+            # Если true — формула актуальна. Если false — реально надо пересчитать.
             "match": match,
+            # Разница между total_cost и чистыми cost — это переносы баланса
+            # (debt_209/205, переплаты, корректировки). НЕ баг расчёта.
+            "carried_balance": f(carried_balance),
+            # Старое поле для обратной совместимости фронта. Не использовать
+            # для match-логики — используйте diff_calc_minus_pure_cost.
             "diff_calc_minus_stored": (
                 f(calc_total - stored_total) if calc_total is not None else None
+            ),
+            "diff_calc_minus_pure_cost": (
+                f(calc_total - stored_cost_pure) if calc_total is not None else None
             ),
         },
         "sanity_warning": (
