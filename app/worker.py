@@ -108,6 +108,15 @@ celery.conf.beat_schedule = {
         "task": "cleanup_gsheets_old_rows_task",
         "schedule": crontab(minute=0, hour=3),
     },
+    # Авто-cleanup outlier readings (нереалистичные суммы > MAX_TOTAL_COST_PER_READING).
+    # Раз в сутки в 03:30 — после cleanup_gsheets, чтобы порядок чисток был
+    # последовательным. Сбрасывает их в DATA_OVERFLOW_RESET (is_approved=False,
+    # total=0) — админ потом разберёт через bell-notifications (категория
+    # data_overflow_resets). См. tasks._cleanup_outlier_readings_run.
+    "cleanup-outlier-readings-daily": {
+        "task": "cleanup_outlier_readings_task",
+        "schedule": crontab(minute=30, hour=3),
+    },
     # Очистка архива оригинальных xlsx из 1С (DebtImportLog.archive_path).
     # Запускается раз в неделю в воскресенье 03:15. Удаляет файлы старше
     # debt.archive_retention_days (default 730 дней) или log.retention_days

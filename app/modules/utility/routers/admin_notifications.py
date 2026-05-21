@@ -17,6 +17,7 @@ from datetime import timedelta
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
 from app.core.time_utils import utcnow
@@ -117,6 +118,28 @@ async def get_notifications(
         .limit(limit)
     )).scalars().all()
 
+    # 6) DATA_OVERFLOW_RESET readings — outliers сброшенные авто-cleanup'ом
+    #    (celery beat cleanup_outlier_readings_task) или старым скриптом
+    #    cleanup_anomaly_readings.py. Ждут разбора админа: удалить/принять
+    #    с коррекцией/попросить жильца переподать.
+    overflow_count = (await db.execute(
+        select(func.count(MeterReading.id))
+        .where(
+            MeterReading.anomaly_flags.contains("DATA_OVERFLOW_RESET"),
+            MeterReading.is_approved.is_(False),
+        )
+    )).scalar_one()
+    overflow_recent = (await db.execute(
+        select(MeterReading)
+        .options(selectinload(MeterReading.user))
+        .where(
+            MeterReading.anomaly_flags.contains("DATA_OVERFLOW_RESET"),
+            MeterReading.is_approved.is_(False),
+        )
+        .order_by(MeterReading.created_at.desc())
+        .limit(limit)
+    )).scalars().all()
+
     def _iso(dt):
         return dt.isoformat() if dt else None
 
@@ -124,7 +147,7 @@ async def get_notifications(
         "total": (
             gsheets_conflict_count + gsheets_unmatched_count
             + deletion_count + anomaly_count + tickets_open_count
-            + password_reset_count
+            + password_reset_count + overflow_count
         ),
         "categories": {
             "gsheets_conflicts": {
@@ -205,6 +228,28 @@ async def get_notifications(
                         "created_at": _iso(a.created_at),
                     }
                     for a in password_reset_recent
+                ],
+            },
+            "data_overflow_resets": {
+                "count": overflow_count,
+                "label": "Заблокированные показания (overflow)",
+                "link": "/admin.html#tools?section=analyzer",
+                "items": [
+                    {
+                        "id": r.id,
+                        "title": (
+                            f"{r.user.username if r.user else '—'} · "
+                            f"период #{r.period_id}"
+                        ),
+                        "subtitle": (
+                            f"hot={float(r.hot_water or 0):.3f} · "
+                            f"cold={float(r.cold_water or 0):.3f} · "
+                            f"elect={float(r.electricity or 0):.3f} — auto-cleanup "
+                            f"вернул в черновики, ждёт ручного разбора"
+                        )[:200],
+                        "created_at": _iso(r.created_at),
+                    }
+                    for r in overflow_recent
                 ],
             },
         },

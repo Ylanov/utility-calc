@@ -1302,3 +1302,97 @@ def cleanup_gsheets_old_rows_task(retention_days: int | None = None):
     """
     days = retention_days if retention_days is not None else settings.GSHEETS_CLEANUP_DAYS
     return _cleanup_gsheets_rows(days)
+
+
+# =====================================================================
+# OUTLIER READINGS AUTO-CLEANUP
+#
+# Sync-эквивалент app/scripts/cleanup_anomaly_readings.py (которые админ
+# запускал вручную) — теперь раз в сутки автоматически через celery beat.
+# Помечает readings с нереалистичными значениями как DATA_OVERFLOW_RESET
+# (is_approved=False, total=0, anomaly_score=100) — admin_notifications.py
+# их подсчитывает в категорию data_overflow_resets, админ видит в bell.
+# =====================================================================
+
+def _cleanup_outlier_readings_run() -> dict:
+    """Sync-версия для celery worker (без asyncio)."""
+    from decimal import Decimal as _D
+    from sqlalchemy import or_, update as _upd
+    from app.modules.utility.services.reading_validators import (
+        MAX_WATER_METER_VALUE,
+        MAX_ELECTRICITY_METER_VALUE,
+        MAX_TOTAL_COST_PER_READING,
+    )
+    from app.modules.utility.models import GSheetsImportRow as _GR
+
+    with sync_db_session() as db:
+        # Только approved (черновики и так требуют разбора админа).
+        # Раньше отчищенные DATA_OVERFLOW_RESET — уже не approved → не попадут.
+        outliers = db.query(MeterReading).filter(
+            MeterReading.is_approved.is_(True),
+            or_(
+                MeterReading.hot_water > MAX_WATER_METER_VALUE,
+                MeterReading.cold_water > MAX_WATER_METER_VALUE,
+                MeterReading.electricity > MAX_ELECTRICITY_METER_VALUE,
+                MeterReading.total_cost > MAX_TOTAL_COST_PER_READING,
+            ),
+        ).all()
+
+        if not outliers:
+            return {"status": "ok", "readings_reset": 0, "sheet_rows_reopened": 0}
+
+        ids = [r.id for r in outliers]
+        zero = _D("0.00")
+        for r in outliers:
+            r.total_cost = zero
+            r.total_209 = zero
+            r.total_205 = zero
+            r.is_approved = False
+            r.anomaly_flags = "DATA_OVERFLOW_RESET"
+            r.anomaly_score = 100
+            db.add(r)
+
+        # GSheets-строки, привязанные к этим readings — возвращаем в conflict.
+        sheet_res = db.execute(
+            _upd(_GR)
+            .where(_GR.reading_id.in_(ids))
+            .values(
+                reading_id=None,
+                status="conflict",
+                processed_at=None,
+                conflict_reason=(
+                    "auto_cleanup_data_overflow: показания или итог превысили "
+                    "санитарные пороги. Проверьте формат — возможно пропущена "
+                    "десятичная точка в показании счётчика."
+                ),
+            )
+        )
+        sheet_count = sheet_res.rowcount or 0
+        db.commit()
+
+        logger.warning(
+            "[CLEANUP-OUTLIER] reset=%d sheet_rows_reopened=%d readings_ids=%s",
+            len(outliers), sheet_count, ids[:20],
+        )
+        return {
+            "status": "ok",
+            "readings_reset": len(outliers),
+            "sheet_rows_reopened": sheet_count,
+            "reading_ids": ids[:50],
+        }
+
+
+@celery.task(name="cleanup_outlier_readings_task")
+def cleanup_outlier_readings_task():
+    """Ежедневная автозачистка outlier readings.
+
+    Запускается раз в сутки (см. worker.beat_schedule). Помечает readings с
+    нереалистичными значениями (вода >MAX_WATER_METER_VALUE, электричество >
+    MAX_ELECTRICITY_METER_VALUE, итог > MAX_TOTAL_COST_PER_READING) как
+    DATA_OVERFLOW_RESET — админ потом разберёт через bell-уведомления.
+
+    Связано с фиксом sanity-check в save-точках (admin_readings_*, gsheets_sync,
+    tasks._recalc_compute_one) — там новые подачи блокируются сразу, а эта
+    задача чистит уже сохранённые «исторические» outliers.
+    """
+    return _cleanup_outlier_readings_run()
