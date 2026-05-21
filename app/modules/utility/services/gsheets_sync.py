@@ -968,6 +968,30 @@ def promote_auto_approved_rows(db: Session) -> dict:
             _skip(uid, f"calculation_error: {e}", user_rows)
             continue
 
+        # Финальный sanity на total_cost — защита от того что delta огромная
+        # прошла valid + расчёт дал нереалистичный итог. Помечаем строки conflict
+        # с понятным reason — админ разберётся вручную (может опечатка в счётчике).
+        from app.modules.utility.services.reading_validators import validate_total_cost
+        _tc = validate_total_cost(breakdown.get("total_cost"))
+        if not _tc.ok:
+            from sqlalchemy import update as _sa_update_tc
+            from app.modules.utility.models import GSheetsImportRow as _GR_tc
+            _reason = (
+                f"total_cost_too_high: расчётный итог {breakdown.get('total_cost')} ₽ "
+                f"превышает санитарный потолок. {'; '.join(_tc.errors)}"
+            )
+            db.execute(
+                _sa_update_tc(_GR_tc)
+                .where(_GR_tc.id.in_([r.id for r in user_rows]))
+                .values(status="conflict", conflict_reason=_reason)
+            )
+            _skip(uid, _reason, user_rows)
+            logger.warning(
+                "[GSHEETS-PROMOTE] TOTAL_COST_TOO_HIGH user=%s total=%s",
+                uid, breakdown.get("total_cost"),
+            )
+            continue
+
         # «Счётчик упал»: новое значение < предыдущего. Физически невозможно.
         # Возможные причины: смена счётчика без оформления, ошибка ввода
         # жильцом (написал текущие 0183 вместо 1830), смена жильца в комнате

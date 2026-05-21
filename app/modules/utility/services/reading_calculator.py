@@ -215,8 +215,74 @@ def find_chronological_prev_reading_sync(db_session, *, user_id: int, room_id: i
     )
 
 
+# =====================================================================
+# Какие prev-readings НЕ должны участвовать в подсчёте дельты следующего
+# периода (инцидент may 2026): жилец имел AUTO_GENERATED (нулевые
+# значения) или DATA_OVERFLOW_RESET (обнулено после аномалии), потом
+# GSheets подал реальные 1 468 ГВС — дельта вычислилась как 1468-0 →
+# счёт за подогрев 456 562 ₽. Эти reading'и НЕ репрезентативны для
+# baseline: их hot/cold/elect не отражают физические показания счётчика.
+# =====================================================================
+PREV_SKIP_FLAGS = frozenset({
+    "AUTO_GENERATED",      # initial setup / fill, значения 0
+    "DATA_OVERFLOW_RESET", # обнулено cleanup_anomaly_readings
+    "AUTO_NO_HISTORY",     # фоновое начисление при пропуске, значения 0
+    "MANUAL_RECEIPT",      # квитанция без показаний (только сальдо)
+    "ONE_TIME_CHARGE_BASELINE",  # выселение с baseline-flag
+})
+
+
+def is_meaningful_prev(reading: Optional[MeterReading]) -> bool:
+    """True если reading годится как prev для расчёта delta.
+
+    Reading НЕ годится когда его флаги говорят что hot/cold/elect — синтетические
+    (заглушки, нули). Использование таких как baseline даёт фантастические
+    суммы при следующей реальной подаче.
+
+    BASELINE / GSHEETS_AUTO_BASELINE / INITIAL_SETUP оставлены как годные — у
+    них реальные первичные значения счётчика.
+    """
+    if reading is None:
+        return False
+    flags = (reading.anomaly_flags or "").upper()
+    for skip in PREV_SKIP_FLAGS:
+        if skip in flags:
+            return False
+    return True
+
+
+def find_meaningful_prev_reading_sync(
+    db_session, *, user_id: int, room_id: int, before_period_id: int
+) -> Optional[MeterReading]:
+    """Как find_chronological_prev_reading_sync, но пропускает reading'и с
+    PREV_SKIP_FLAGS (AUTO_GENERATED, DATA_OVERFLOW_RESET, и т.п.).
+
+    Если в истории есть только такие — возвращает None (caller трактует как
+    baseline, расход = 0).
+    """
+    rows = (
+        db_session.query(MeterReading)
+        .filter(
+            MeterReading.user_id == user_id,
+            MeterReading.room_id == room_id,
+            MeterReading.is_approved.is_(True),
+            MeterReading.period_id < before_period_id,
+        )
+        .order_by(MeterReading.period_id.desc())
+        .limit(20)  # лимит на случай длинной цепочки заглушек
+        .all()
+    )
+    for r in rows:
+        if is_meaningful_prev(r):
+            return r
+    return None
+
+
 __all__ = [
     "compute_reading_breakdown",
     "CalculationError",
     "find_chronological_prev_reading_sync",
+    "find_meaningful_prev_reading_sync",
+    "is_meaningful_prev",
+    "PREV_SKIP_FLAGS",
 ]

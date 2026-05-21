@@ -219,6 +219,19 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
             hot_water_heating_active=_hw,
         )
 
+        # Финальный sanity-check: если итог > MAX_TOTAL_COST_PER_READING — пропускаем
+        # этот reading в bulk-approve. Логируем (warning) и продолжаем обработку
+        # остальных. Reading остаётся в статусе черновик — админ разберётся вручную.
+        from app.modules.utility.services.reading_validators import validate_total_cost
+        _tc = validate_total_cost(costs['total_cost'])
+        if not _tc.ok:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "[bulk_approve] reading_id=%s skipped: %s",
+                reading.id, "; ".join(_tc.errors),
+            )
+            continue
+
         user_adjs = adj_map.get(user.id, {'209': ZERO, '205': ZERO})
         cost_rent_205 = costs['cost_social_rent']
         cost_utils_209 = costs['total_cost'] - cost_rent_205
@@ -364,6 +377,21 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
             heating_season_active=_heating,
             hot_water_heating_active=_hw,
         )
+
+        # Финальный sanity-check на итог. Защита от случая когда коррекции
+        # admin'а недостаточно чтобы сбить delta до разумной (например жилец
+        # подал реально 1 468 м³ ГВС — корректировка не помогает, надо отказывать).
+        from app.modules.utility.services.reading_validators import validate_total_cost
+        _tc = validate_total_cost(costs['total_cost'])
+        if not _tc.ok:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Итог расчёта нереалистичен: "
+                    + "; ".join(_tc.errors)
+                    + ". Проверьте показания (возможно опечатка в счётчике) или скорректируйте через поля correction."
+                ),
+            )
 
     adj_res = await db.execute(
         select(Adjustment.account_type, func.sum(Adjustment.amount))

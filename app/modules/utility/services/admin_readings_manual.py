@@ -80,7 +80,13 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
         .order_by(MeterReading.created_at.desc()).limit(6)
     )).scalars().all()
 
-    prev_latest = history[0] if history else None
+    # is_meaningful_prev: пропускаем AUTO_GENERATED / DATA_OVERFLOW_RESET /
+    # MANUAL_RECEIPT / AUTO_NO_HISTORY — их значения = 0, использовать как
+    # baseline для дельты → фантастические суммы при следующей реальной подаче
+    # (инцидент may 2026: жилец Капранов получил счёт ~825 000 ₽ потому что
+    # prev был AUTO_GENERATED с 0 ГВС → delta = 1 468 м³ × 311 ₽/м³).
+    from app.modules.utility.services.reading_calculator import is_meaningful_prev
+    prev_latest = next((r for r in history if is_meaningful_prev(r)), None)
     prev_manual = next((r for r in history if r.anomaly_flags != "AUTO_GENERATED"), None)
 
     p_hot_man, p_cold_man, p_elect_man = prev_manual.hot_water if prev_manual else ZERO, prev_manual.cold_water if prev_manual else ZERO, prev_manual.electricity if prev_manual else ZERO
@@ -141,6 +147,21 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
             heating_season_active=_heating,
             hot_water_heating_active=_hw,
         )
+
+        # Финальная sanity-проверка: total_cost не должен превышать MAX_TOTAL_COST_PER_READING
+        # (обычно 100k ₽/период). Защита от того что расчёт всё-таки прошёл валидацию
+        # дельт, но итог получился нереалистичный (большая площадь × большая дельта).
+        from app.modules.utility.services.reading_validators import validate_total_cost
+        _tc = validate_total_cost(costs["total_cost"])
+        if not _tc.ok:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Итог расчёта нереалистичен: "
+                    + "; ".join(_tc.errors)
+                    + ". Проверьте показания и тариф."
+                ),
+            )
 
     temp_reading = MeterReading(hot_water=hot_to_save, cold_water=cold_to_save, electricity=elect_to_save)
     flags, score = check_reading_for_anomalies_v2(temp_reading, history, user=user)
@@ -220,7 +241,13 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
         .order_by(MeterReading.created_at.desc()).limit(6)
     )).scalars().all()
 
-    prev_latest = history[0] if history else None
+    # is_meaningful_prev: пропускаем AUTO_GENERATED / DATA_OVERFLOW_RESET /
+    # MANUAL_RECEIPT / AUTO_NO_HISTORY — их значения = 0, использовать как
+    # baseline для дельты → фантастические суммы при следующей реальной подаче
+    # (инцидент may 2026: жилец Капранов получил счёт ~825 000 ₽ потому что
+    # prev был AUTO_GENERATED с 0 ГВС → delta = 1 468 м³ × 311 ₽/м³).
+    from app.modules.utility.services.reading_calculator import is_meaningful_prev
+    prev_latest = next((r for r in history if is_meaningful_prev(r)), None)
     prev_manual = next((r for r in history if r.anomaly_flags != "AUTO_GENERATED"), None)
 
     p_hot_man, p_cold_man, p_elect_man = prev_manual.hot_water if prev_manual else ZERO, prev_manual.cold_water if prev_manual else ZERO, prev_manual.electricity if prev_manual else ZERO

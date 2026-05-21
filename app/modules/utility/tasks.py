@@ -31,6 +31,7 @@ from app.modules.utility.services.pdf_generator import generate_receipt_pdf
 from app.modules.utility.services.debt_import import sync_import_debts_process
 from app.modules.utility.services.s3_client import s3_service
 from app.modules.utility.services.billing import close_current_period
+from app.modules.utility.services.reading_calculator import is_meaningful_prev
 
 logger = logging.getLogger(__name__)
 
@@ -85,15 +86,24 @@ def generate_receipt_task(reading_id: int) -> dict:
             if not tariff:
                 raise ValueError("No active tariffs found in the system for receipt generation.")
 
-            prev_reading = (
+            # Поиск prev по period_id (детерминированно) + пропуск reading'ов
+            # с обнулёнными значениями (AUTO_GENERATED / DATA_OVERFLOW_RESET /
+            # MANUAL_RECEIPT) — их hot/cold/elect = 0 даёт фантастическую дельту
+            # при следующей реальной подаче (см. is_meaningful_prev).
+            prev_candidates = (
                 db.query(MeterReading)
                 .filter(
                     MeterReading.room_id == room.id,
                     MeterReading.is_approved.is_(True),
-                    MeterReading.created_at < reading.created_at
+                    MeterReading.period_id < (reading.period_id or 0),
                 )
-                .order_by(MeterReading.created_at.desc())
-                .first()
+                .order_by(MeterReading.period_id.desc())
+                .limit(20)
+                .all()
+            )
+            prev_reading = next(
+                (c for c in prev_candidates if is_meaningful_prev(c)),
+                None,
             )
 
             adjustments = (
@@ -347,14 +357,22 @@ def start_bulk_receipt_generation(period_id: int):
                             adjustments_by_user.setdefault(adj.user_id, []).append(adj)
 
                     # Все approved readings для нужных комнат — в Python для каждого r
-                    # ищем последний reading с created_at < r.created_at. Список заранее
-                    # отсортирован по created_at ASC, поэтому идём с конца.
+                    # ищем последний по period_id (детерминированно). Сортировка
+                    # period_id, created_at, id гарантирует стабильный порядок при
+                    # повторных вызовах. Пропускаем reading'и с обнулёнными значениями
+                    # (AUTO_GENERATED, DATA_OVERFLOW_RESET, MANUAL_RECEIPT) — см.
+                    # is_meaningful_prev.
                     readings_by_room: dict[int, list] = {}
                     if chunk_room_ids:
                         for mr in db.query(MeterReading).filter(
                             MeterReading.room_id.in_(chunk_room_ids),
                             MeterReading.is_approved.is_(True),
-                        ).order_by(MeterReading.room_id, MeterReading.created_at).all():
+                        ).order_by(
+                            MeterReading.room_id,
+                            MeterReading.period_id,
+                            MeterReading.created_at,
+                            MeterReading.id,
+                        ).all():
                             readings_by_room.setdefault(mr.room_id, []).append(mr)
 
                     for r in readings:
@@ -362,12 +380,16 @@ def start_bulk_receipt_generation(period_id: int):
                             adjustments = adjustments_by_user.get(r.user_id, [])
 
                             # Предыдущее показание: последний approved в той же комнате
-                            # СТРОГО ДО r.created_at.
+                            # СТРОГО ДО r.period_id, с пропуском синтетических.
                             prev_reading = None
+                            r_pid = r.period_id or 0
                             for cand in reversed(readings_by_room.get(r.room_id, [])):
-                                if cand.created_at < r.created_at:
-                                    prev_reading = cand
-                                    break
+                                if (cand.period_id or 0) >= r_pid:
+                                    continue
+                                if not is_meaningful_prev(cand):
+                                    continue
+                                prev_reading = cand
+                                break
 
                             # Через единый кеш: Room.tariff_id → User.tariff_id → default
                             tariff = tariff_cache.get_effective_tariff(user=r.user, room=r.user.room) or default_tariff
@@ -910,6 +932,23 @@ def _recalc_compute_one(db_session, reading, user, room, prev_reading, tariffs_b
     cost_205 = costs["cost_social_rent"]
     cost_209 = costs["total_cost"] - cost_205
 
+    # Санитарный потолок: если пересчёт даёт нереалистичную сумму
+    # (> MAX_TOTAL_COST_PER_READING, обычно 100k ₽/период) — НЕ обновляем,
+    # возвращаем исходные значения и логируем. Это страховка от bug-инцидентов
+    # (см. валидатор reading_validators.py — там 1.48 млрд ₽-инцидент).
+    from app.modules.utility.services.reading_validators import validate_total_cost
+    _sanity = validate_total_cost(costs["total_cost"])
+    if not _sanity.ok:
+        logger.warning(
+            "[recalc] reading_id=%s skipped: %s (computed total=%s, kept old)",
+            reading.id, "; ".join(_sanity.errors), costs["total_cost"],
+        )
+        return {
+            "total_209": reading.total_209 or Decimal("0"),
+            "total_205": reading.total_205 or Decimal("0"),
+            "total_cost": reading.total_cost or Decimal("0"),
+        }
+
     # При пересчёте debt_209/205 и overpayment_209/205 НЕ трогаем —
     # они пришли из предыдущего периода и не зависят от текущего тарифа.
     # Adjustments тоже не учитываем в total — они применяются в момент
@@ -1028,9 +1067,13 @@ def _recalc_run(job_id: int, apply: bool):
                 # ОПТИМИЗАЦИЯ N+1 (apr 2026): раньше для каждой записи в chunk
                 # делался отдельный SELECT на prev MeterReading по паре
                 # (user_id, room_id). На 5000 readings = 5000 round-trip'ов до БД.
-                # Теперь один запрос за весь chunk, in-memory поиск prev для
-                # каждой записи. Список заранее отсортирован по created_at ASC,
-                # ищем с конца до первого с created_at < r.created_at.
+                # Теперь один запрос за весь chunk, in-memory поиск prev.
+                #
+                # ДЕТЕРМИНИЗМ (may 2026): сортировка ИСКЛЮЧИТЕЛЬНО по
+                # period_id + created_at + id (стабильный порядок). Раньше
+                # сортировка была только по created_at — при readings с
+                # одинаковым timestamp порядок плыл между вызовами,
+                # «Перерасчёт» давал разные суммы при одном и том же тарифе.
                 chunk_user_ids = list({r.user_id for r in chunk if r.user_id})
                 chunk_room_ids = list({r.room_id for r in chunk if r.room_id})
 
@@ -1041,7 +1084,11 @@ def _recalc_run(job_id: int, apply: bool):
                         MeterReading.room_id.in_(chunk_room_ids),
                         MeterReading.is_approved.is_(True),
                     ).order_by(
-                        MeterReading.user_id, MeterReading.room_id, MeterReading.created_at
+                        MeterReading.user_id,
+                        MeterReading.room_id,
+                        MeterReading.period_id,
+                        MeterReading.created_at,
+                        MeterReading.id,
                     ).all():
                         prev_by_pair.setdefault((mr.user_id, mr.room_id), []).append(mr)
 
@@ -1053,17 +1100,20 @@ def _recalc_run(job_id: int, apply: bool):
                         # ломаные данные — пропускаем
                         continue
 
-                    # prev ищется ПО ПАРЕ (user_id, room_id), а не только
-                    # по комнате. Иначе при смене жильца в комнате (или при
-                    # импорте GSHEETS_AUTO от другого жильца) дельта будет
-                    # посчитана относительно чужих цифр — получается
-                    # квитанция на сотни тысяч рублей. Каждый жилец имеет
-                    # свой baseline при первой подаче.
+                    # prev ищется ПО ПАРЕ (user_id, room_id), по period_id (а не
+                    # created_at — иначе recalc недетерминирован). Пропускаем
+                    # synth-reading'и (AUTO_GENERATED/DATA_OVERFLOW_RESET/MANUAL_RECEIPT)
+                    # — их обнулённые значения дают фантастическую дельту при
+                    # следующей реальной подаче. См. is_meaningful_prev.
                     prev = None
+                    r_pid = r.period_id or 0
                     for cand in reversed(prev_by_pair.get((r.user_id, r.room_id), [])):
-                        if cand.created_at < r.created_at:
-                            prev = cand
-                            break
+                        if (cand.period_id or 0) >= r_pid:
+                            continue
+                        if not is_meaningful_prev(cand):
+                            continue
+                        prev = cand
+                        break
 
                     # Per-tariff внутри _recalc_compute_one — там tariff
                     # выбирается через tariff_cache для каждой строки,
