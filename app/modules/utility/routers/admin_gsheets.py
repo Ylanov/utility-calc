@@ -730,6 +730,65 @@ async def _apply_approve(
     )).scalar_one_or_none()
     electricity_value = prev_electricity if prev_electricity is not None else Decimal("0")
 
+    # ИСПРАВЛЕНИЕ (may 2026 — «Резунов Р.С.»):
+    # Раньше тут создавался MeterReading с total_cost=0, total_209=0, total_205=0
+    # БЕЗ вычисления cost_* — то есть жилец подал реальные показания через
+    # GSheets, админ нажал «Утвердить» в матчере, reading создавался с
+    # правильными hot/cold, но СЧЁТ был нулевой. В финансовой отчётности —
+    # «нулевая квитанция», деньги физически не начислялись.
+    #
+    # Now: используем compute_reading_breakdown (как promote_auto_approved_rows)
+    # для расчёта cost_* / total_* через текущий тариф + meaningful prev.
+    # Снимаем «Нулевая квитанция»-флаг для approved через matcher.
+    from app.modules.utility.services.reading_calculator import (
+        compute_reading_breakdown, CalculationError, is_meaningful_prev,
+    )
+    from app.modules.utility.services.calculations import costs_for_model_fields
+    from app.modules.utility.services.tariff_cache import tariff_cache
+    from app.modules.utility.routers.settings import _load_seasonal
+    # Room уже импортирован в начале файла — повторный локальный импорт
+    # затеняет глобальный (F823 на await db.get(Room, ...) выше по функции).
+
+    # Тариф + комната
+    room_obj = (await db.execute(
+        select(Room).where(Room.id == user.room_id)
+    )).scalars().first() if user.room_id else None
+    eff_tariff = (
+        tariff_cache.get_effective_tariff(user=user, room=room_obj)
+        if room_obj else None
+    )
+
+    # prev_meaningful — с пропуском synth-флагов
+    prev_candidates = (await db.execute(
+        select(MeterReading)
+        .where(
+            MeterReading.user_id == user.id,
+            MeterReading.is_approved.is_(True),
+            MeterReading.period_id < (target_period.id if target_period else 0),
+        )
+        .order_by(MeterReading.period_id.desc())
+        .limit(20)
+    )).scalars().all()
+    prev_meaningful = next((c for c in prev_candidates if is_meaningful_prev(c)), None)
+
+    breakdown = None
+    if eff_tariff is not None:
+        try:
+            _seasonal = await _load_seasonal(db)
+            _heating = _seasonal.heating_season_active and eff_tariff.is_heating_active_now()
+            _hw = _seasonal.hot_water_heating_active and eff_tariff.is_hw_heating_active_now()
+            breakdown = compute_reading_breakdown(
+                user=user, room=room_obj, tariff=eff_tariff,
+                current_hot=row.hot_water or Decimal("0"),
+                current_cold=row.cold_water or Decimal("0"),
+                current_elect=electricity_value,
+                prev_reading=prev_meaningful,
+                heating_season_active=_heating,
+                hot_water_heating_active=_hw,
+            )
+        except CalculationError:
+            breakdown = None
+
     reading = MeterReading(
         user_id=user.id,
         room_id=user.room_id,
@@ -740,10 +799,13 @@ async def _apply_approve(
         is_approved=True,
         anomaly_flags="GSHEETS_IMPORT",
         anomaly_score=0,
-        total_cost=Decimal("0"),
-        total_209=Decimal("0"),
-        total_205=Decimal("0"),
+        total_cost=breakdown["total_cost"] if breakdown else Decimal("0"),
+        total_209=breakdown["total_209"] if breakdown else Decimal("0"),
+        total_205=breakdown["total_205"] if breakdown else Decimal("0"),
     )
+    if breakdown:
+        for k, v in costs_for_model_fields(breakdown).items():
+            setattr(reading, k, v)
     db.add(reading)
     await db.flush()
 
