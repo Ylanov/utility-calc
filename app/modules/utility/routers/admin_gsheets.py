@@ -2474,6 +2474,38 @@ def _bucket_by_month(rows: list) -> dict[tuple[int, int], list]:
     return out
 
 
+# Флаги указывающие что reading создан/правлен админом вручную или
+# legacy-патчем. Auto-rebuild такие НЕ должен затирать — это либо данные
+# от админа (manual receipt, разовое начисление), либо явно утверждённая
+# админом аномалия (ADMIN_APPROVED_OVERFLOW). Источник GSHEETS_*  — это
+# НЕ ручная правка, его можно перезаписывать.
+_PROTECTED_FLAG_TOKENS = frozenset({
+    "MANUAL_RECEIPT",
+    "ONE_TIME_CHARGE",
+    "ONE_TIME_CHARGE_BASELINE",
+    "ADMIN_APPROVED_OVERFLOW",
+    "INITIAL_SETUP",  # установлен админом через initial-readings endpoint
+    "INITIAL_FROM_FIRST_SUBMISSION",  # установлен админом через «Сделать baseline»
+})
+_PROTECTED_FLAG_PREFIXES = ("BASELINE_LEGACY",)
+
+
+def _is_protected_reading(mr) -> bool:
+    """True если reading создан админом и не должен быть перезаписан
+    auto-rebuild'ом. См. _PROTECTED_FLAG_TOKENS."""
+    flags = (mr.anomaly_flags or "").upper()
+    if not flags:
+        return False
+    tokens = [t.strip() for t in flags.replace("|", ",").split(",") if t.strip()]
+    for token in tokens:
+        if token in _PROTECTED_FLAG_TOKENS:
+            return True
+        for prefix in _PROTECTED_FLAG_PREFIXES:
+            if token.startswith(prefix):
+                return True
+    return False
+
+
 def _detect_and_fix_swaps(entries: list[tuple]) -> tuple[Optional[list[tuple]], Optional[list[bool]]]:
     """Детектор перепутанных столбцов ГВС/ХВС.
 
@@ -2681,8 +2713,55 @@ async def auto_rebuild_preview(
 
     plan = _build_rebuild_plan(rows)
 
-    # Подгрузим ФИО + адрес для каждого user_id.
+    # Bug P: для каждого жильца проверяем не лежит ли в БД утв. reading с
+    # протектед-флагом (MANUAL_RECEIPT и т.п.) за один из затронутых
+    # периодов. Если да — этого жильца НЕ обрабатываем (rebuild стёр бы
+    # админскую правку). Сохраняем skip_reason для UI.
     uids = [p["user_id"] for p in plan]
+    affected_periods_by_user: dict[int, list[str]] = {}
+    for entry in plan:
+        period_names = [f"{_MONTH_NAMES_RU[entry['baseline']['month']]} {entry['baseline']['year']}"]
+        period_names += [f"{_MONTH_NAMES_RU[r['month']]} {r['year']}" for r in entry["readings"]]
+        affected_periods_by_user[entry["user_id"]] = period_names
+
+    if uids:
+        all_period_names = {p for names in affected_periods_by_user.values() for p in names}
+        if all_period_names:
+            period_id_map = {}
+            for pname in all_period_names:
+                pid = (await db.execute(
+                    select(BillingPeriod.id).where(BillingPeriod.name == pname)
+                )).scalar_one_or_none()
+                if pid:
+                    period_id_map[pname] = pid
+
+            for entry in plan:
+                if not entry.get("is_ok", True):
+                    continue  # уже skipped
+                uid = entry["user_id"]
+                user_period_ids = [period_id_map.get(p) for p in affected_periods_by_user[uid]]
+                user_period_ids = [p for p in user_period_ids if p]
+                if not user_period_ids:
+                    continue
+                existing = (await db.execute(
+                    select(MeterReading).where(
+                        MeterReading.user_id == uid,
+                        MeterReading.is_approved.is_(True),
+                        MeterReading.period_id.in_(user_period_ids),
+                    )
+                )).scalars().all()
+                protected = [r for r in existing if _is_protected_reading(r)]
+                if protected:
+                    entry["is_ok"] = False
+                    entry["skip_reason"] = (
+                        f"protected_readings: в БД лежит {len(protected)} утв. "
+                        f"reading'ов с ручной правкой (флаги: "
+                        f"{', '.join(sorted({r.anomaly_flags or '' for r in protected}))}). "
+                        f"Rebuild затёр бы их — пропущено."
+                    )
+                    entry["has_protected"] = True
+
+    # Подгрузим ФИО + адрес для каждого user_id.
     users_q = (await db.execute(
         select(User).options(selectinload(User.room)).where(User.id.in_(uids))
     )).scalars().all() if uids else []
@@ -2702,6 +2781,7 @@ async def auto_rebuild_preview(
     ok_plan = [p for p in plan if p.get("is_ok", True)]
     skipped_plan = [p for p in plan if not p.get("is_ok", True)]
     swapped_plan = [p for p in ok_plan if p.get("swaps_detected")]
+    protected_plan = [p for p in skipped_plan if p.get("has_protected")]
     total_rows = len(rows)
 
     return {
@@ -2712,6 +2792,7 @@ async def auto_rebuild_preview(
             "ok_users": len(ok_plan),
             "skipped_users": len(skipped_plan),
             "swapped_users": len(swapped_plan),
+            "protected_users": len(protected_plan),
             "total_baselines": len(ok_plan),
             "total_readings_to_create": sum(len(p["readings"]) for p in ok_plan),
             "total_duplicates_rejected": sum(len(p["duplicates_rejected"]) for p in ok_plan),
@@ -2750,6 +2831,41 @@ async def auto_rebuild_apply(
 
     plan = _build_rebuild_plan(rows)
 
+    # Bug P: повторяем protected-проверку и в apply (preview мог быть давно).
+    affected_periods_by_user: dict[int, list[str]] = {}
+    for entry in plan:
+        names = [f"{_MONTH_NAMES_RU[entry['baseline']['month']]} {entry['baseline']['year']}"]
+        names += [f"{_MONTH_NAMES_RU[r['month']]} {r['year']}" for r in entry["readings"]]
+        affected_periods_by_user[entry["user_id"]] = names
+
+    all_period_names = {p for names in affected_periods_by_user.values() for p in names}
+    if all_period_names:
+        period_id_map = {}
+        for pname in all_period_names:
+            pid = (await db.execute(
+                select(BillingPeriod.id).where(BillingPeriod.name == pname)
+            )).scalar_one_or_none()
+            if pid:
+                period_id_map[pname] = pid
+        for entry in plan:
+            if not entry.get("is_ok", True):
+                continue
+            uid = entry["user_id"]
+            user_period_ids = [pid for pid in (period_id_map.get(p) for p in affected_periods_by_user[uid]) if pid]
+            if not user_period_ids:
+                continue
+            existing = (await db.execute(
+                select(MeterReading).where(
+                    MeterReading.user_id == uid,
+                    MeterReading.is_approved.is_(True),
+                    MeterReading.period_id.in_(user_period_ids),
+                )
+            )).scalars().all()
+            if any(_is_protected_reading(r) for r in existing):
+                entry["is_ok"] = False
+                entry["skip_reason"] = "protected_readings (apply-time)"
+                entry["has_protected"] = True
+
     # Кэш period.id по (year, month) — чтобы не создавать дубли.
     period_cache: dict[tuple[int, int], int] = {}
 
@@ -2777,12 +2893,15 @@ async def auto_rebuild_apply(
     errors: list[dict] = []
 
     skipped_users = 0
+    protected_users = 0
     swapped_rows_total = 0
     for entry in plan:
         # Skip жильцов с baseline_too_large / meter_decreased — их данные
         # нужно сначала исправить в Google-таблице. См. _validate_user_entry.
         if not entry.get("is_ok", True):
             skipped_users += 1
+            if entry.get("has_protected"):
+                protected_users += 1
             continue
 
         # Bug O: применяем swap ГВС/ХВС в GSheets-строках, которые auto-detector
@@ -2969,6 +3088,7 @@ async def auto_rebuild_apply(
         "readings_deleted": readings_deleted,
         "duplicates_rejected": duplicates_rejected,
         "skipped_users": skipped_users,
+        "protected_users": protected_users,
         "swapped_rows": swapped_rows_total,
         "errors_count": len(errors),
         "errors": errors[:50],  # обрезаем чтобы не разнести payload

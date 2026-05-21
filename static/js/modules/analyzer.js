@@ -1982,6 +1982,7 @@ export const AnalyzerModule = {
                 <div><b>Жильцов:</b> ${stats.total_users}</div>
                 <div style="color:#166534;"><b>К обработке:</b> ${stats.ok_users || 0}</div>
                 ${stats.swapped_users > 0 ? `<div style="color:#d97706;"><b>🔁 Swap ГВС/ХВС:</b> ${stats.swapped_users}</div>` : ''}
+                ${stats.protected_users > 0 ? `<div style="color:#7c3aed;"><b>🛡️ Защищено (ручн.):</b> ${stats.protected_users}</div>` : ''}
                 ${stats.skipped_users > 0 ? `<div style="color:#dc2626;"><b>Пропустится:</b> ${stats.skipped_users}</div>` : ''}
                 <div><b>Baseline'ов:</b> ${stats.total_baselines}</div>
                 <div><b>Reading'ов создастся:</b> ${stats.total_readings_to_create}</div>
@@ -2002,18 +2003,24 @@ export const AnalyzerModule = {
                 ? `${escapeHtml(p.dormitory_name)}/${escapeHtml(String(p.room_number || ''))}`
                 : '—';
             const isSkipped = p.is_ok === false;
+            const isProtected = p.has_protected === true;
             const hasSwaps = p.swaps_detected === true;
-            const rowStyle = isSkipped
-                ? 'border-bottom:1px solid var(--border-color); background:#fef2f2;'
-                : (hasSwaps ? 'border-bottom:1px solid var(--border-color); background:#fffbeb;' : 'border-bottom:1px solid var(--border-color);');
-            const baselineColors = isSkipped
-                ? 'background:#fee2e2; color:#991b1b;'
-                : (hasSwaps ? 'background:#fef3c7; color:#92400e;' : 'background:#dbeafe; color:#1e40af;');
+            const rowStyle = isProtected
+                ? 'border-bottom:1px solid var(--border-color); background:#faf5ff;'
+                : (isSkipped
+                    ? 'border-bottom:1px solid var(--border-color); background:#fef2f2;'
+                    : (hasSwaps ? 'border-bottom:1px solid var(--border-color); background:#fffbeb;' : 'border-bottom:1px solid var(--border-color);'));
+            const baselineColors = isProtected
+                ? 'background:#ede9fe; color:#5b21b6;'
+                : (isSkipped
+                    ? 'background:#fee2e2; color:#991b1b;'
+                    : (hasSwaps ? 'background:#fef3c7; color:#92400e;' : 'background:#dbeafe; color:#1e40af;'));
             const swapBadge = hasSwaps
                 ? `<span style="background:#fbbf24; color:#78350f; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:600; margin-left:6px;" title="${(p.swaps_to_apply || []).length} строк автоматически переставлены (перепутаны ГВС/ХВС)">🔁 swap ${(p.swaps_to_apply || []).length}</span>`
                 : '';
+            const skipIcon = isProtected ? '🛡️ ' : (isSkipped ? '⛔ ' : '');
             const baselineLabel = `<span style="${baselineColors} padding:2px 6px; border-radius:4px; font-size:11px; font-weight:600;">
-                ${isSkipped ? '⛔ ' : ''}Baseline: ${monthName(p.baseline.month)} ${p.baseline.year} → ${Number(p.baseline.hot_water).toFixed(2)} / ${Number(p.baseline.cold_water).toFixed(2)}
+                ${skipIcon}Baseline: ${monthName(p.baseline.month)} ${p.baseline.year} → ${Number(p.baseline.hot_water).toFixed(2)} / ${Number(p.baseline.cold_water).toFixed(2)}
             </span>${swapBadge}`;
             const readingTags = p.readings.map(r => {
                 const tagColors = isSkipped
@@ -2066,6 +2073,7 @@ export const AnalyzerModule = {
                     <b>Удалит:</b> существующие MeterReading'и за затронутые периоды у обрабатываемых жильцов.<br>
                     <b>Создаст:</b> ${stats.total_baselines} baseline'ов + ${stats.total_readings_to_create} reading'ов из GSheets.<br>
                     <b>Отклонит:</b> ${stats.total_duplicates_rejected} дублирующих строк.
+                    ${stats.protected_users > 0 ? `<br><b style="color:#7c3aed;">🛡️ Не тронет:</b> ${stats.protected_users} жильцов с ручными правками в БД (см. фиолетовые строки).` : ''}
                     ${stats.skipped_users > 0 ? `<br><b style="color:#f59e0b;">Пропустит:</b> ${stats.skipped_users} жильцов с ошибочными данными (см. красные строки).` : ''}
                 </div>
                 <button class="action-btn danger-btn" data-rebuild-apply="1" style="padding:8px 16px; font-size:13px; background:#7c3aed; color:#fff; border:1px solid #7c3aed;">
