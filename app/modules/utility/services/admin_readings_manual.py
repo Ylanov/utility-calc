@@ -89,6 +89,7 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
     # prev был AUTO_GENERATED с 0 ГВС → delta = 1 468 м³ × 311 ₽/м³).
     from app.modules.utility.services.reading_calculator import is_meaningful_prev
     prev_latest = next((r for r in history if is_meaningful_prev(r)), None)
+    prev_any = history[0] if history else None  # для prev_is_synth-detection
     prev_manual = next((r for r in history if r.anomaly_flags != "AUTO_GENERATED"), None)
 
     p_hot_man, p_cold_man, p_elect_man = prev_manual.hot_water if prev_manual else ZERO, prev_manual.cold_water if prev_manual else ZERO, prev_manual.electricity if prev_manual else ZERO
@@ -102,14 +103,32 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
     cold_to_save = data.cold_water if cold_provided else p_cold
     elect_to_save = data.electricity if elect_provided else p_elect
 
+    # synth-baseline detection: meaningful prev отсутствует, но какой-то
+    # AUTO_GENERATED/DATA_OVERFLOW_RESET в истории есть. Тогда delta надо
+    # проверять строже (см. validate_meter_reading.prev_is_synth). Кейс
+    # Пегарькова — без этой проверки он подаёт 161/340 поверх AUTO_GENERATED
+    # 0/0/0 и получает счёт 81 485 ₽.
+    _prev_is_synth = (prev_latest is None) and (prev_any is not None)
+    # prev_for_validator: при synth — это значения synth-записи (обычно 0),
+    # при нормальном prev — реальные предыдущие. При полном отсутствии — None.
+    if _prev_is_synth:
+        _val_prev_hot, _val_prev_cold, _val_prev_elect = (
+            prev_any.hot_water, prev_any.cold_water, prev_any.electricity,
+        )
+    elif prev_latest is not None:
+        _val_prev_hot, _val_prev_cold, _val_prev_elect = p_hot, p_cold, p_elect
+    else:
+        _val_prev_hot = _val_prev_cold = _val_prev_elect = None
+
     # Единая sanity-валидация (см. reading_validators.py): абсолютные пороги,
     # неотрицательность, монотонность, разумные дельты. Защита от случая
     # когда админ вводил гигантские значения (тестирование, пропущенная точка).
     from app.modules.utility.services.reading_validators import validate_meter_reading
     _vresult = validate_meter_reading(
         hot=hot_to_save, cold=cold_to_save, elect=elect_to_save,
-        prev_hot=p_hot_man, prev_cold=p_cold_man, prev_elect=p_elect_man,
-        is_baseline=(prev_latest is None),
+        prev_hot=_val_prev_hot, prev_cold=_val_prev_cold, prev_elect=_val_prev_elect,
+        is_baseline=(prev_latest is None and not _prev_is_synth),
+        prev_is_synth=_prev_is_synth,
     )
     if not _vresult.ok:
         raise HTTPException(400, "; ".join(_vresult.errors))
@@ -250,6 +269,7 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
     # prev был AUTO_GENERATED с 0 ГВС → delta = 1 468 м³ × 311 ₽/м³).
     from app.modules.utility.services.reading_calculator import is_meaningful_prev
     prev_latest = next((r for r in history if is_meaningful_prev(r)), None)
+    prev_any = history[0] if history else None
     prev_manual = next((r for r in history if r.anomaly_flags != "AUTO_GENERATED"), None)
 
     p_hot_man, p_cold_man, p_elect_man = prev_manual.hot_water if prev_manual else ZERO, prev_manual.cold_water if prev_manual else ZERO, prev_manual.electricity if prev_manual else ZERO
@@ -263,14 +283,26 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
     cold_to_save = data.cold_water if cold_provided else p_cold
     elect_to_save = data.electricity if elect_provided else p_elect
 
+    # synth-baseline detection — см. save_manual_entry выше.
+    _prev_is_synth = (prev_latest is None) and (prev_any is not None)
+    if _prev_is_synth:
+        _val_prev_hot, _val_prev_cold, _val_prev_elect = (
+            prev_any.hot_water, prev_any.cold_water, prev_any.electricity,
+        )
+    elif prev_latest is not None:
+        _val_prev_hot, _val_prev_cold, _val_prev_elect = p_hot, p_cold, p_elect
+    else:
+        _val_prev_hot = _val_prev_cold = _val_prev_elect = None
+
     # Единая sanity-валидация (см. reading_validators.py): абсолютные пороги,
     # неотрицательность, монотонность, разумные дельты. Защита от случая
     # когда админ вводил гигантские значения (тестирование, пропущенная точка).
     from app.modules.utility.services.reading_validators import validate_meter_reading
     _vresult = validate_meter_reading(
         hot=hot_to_save, cold=cold_to_save, elect=elect_to_save,
-        prev_hot=p_hot_man, prev_cold=p_cold_man, prev_elect=p_elect_man,
-        is_baseline=(prev_latest is None),
+        prev_hot=_val_prev_hot, prev_cold=_val_prev_cold, prev_elect=_val_prev_elect,
+        is_baseline=(prev_latest is None and not _prev_is_synth),
+        prev_is_synth=_prev_is_synth,
     )
     if not _vresult.ok:
         raise HTTPException(400, "; ".join(_vresult.errors))

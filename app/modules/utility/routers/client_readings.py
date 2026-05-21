@@ -313,7 +313,14 @@ async def save_reading(
     # 4. Предыдущие реальные показания. period_id < period.id — строго
     # хронологически предыдущий период. readings уже отсортированы
     # period_id.desc(), так что first match — самый свежий из прошлых.
+    from app.modules.utility.services.reading_calculator import is_meaningful_prev
     prev_latest = next(
+        (r for r in readings
+         if r.is_approved and r.period_id and r.period_id < period.id
+         and is_meaningful_prev(r)),
+        None
+    )
+    prev_any = next(
         (r for r in readings
          if r.is_approved and r.period_id and r.period_id < period.id),
         None
@@ -335,17 +342,31 @@ async def save_reading(
     p_cold = prev_latest.cold_water if prev_latest else zero
     p_elect = prev_latest.electricity if prev_latest else zero
 
+    # synth-baseline: meaningful prev отсутствует, но какая-то AUTO_GENERATED
+    # запись была. Тогда дельту от 0 проверяем строже, чтобы не пропустить
+    # кейс Пегарькова (значения 161/340 поверх AUTO_GENERATED 0/0/0).
+    _prev_is_synth = (prev_latest is None) and (prev_any is not None)
+    if _prev_is_synth:
+        _val_prev_hot, _val_prev_cold, _val_prev_elect = (
+            prev_any.hot_water or zero, prev_any.cold_water or zero, prev_any.electricity or zero,
+        )
+    elif prev_latest is not None:
+        _val_prev_hot, _val_prev_cold, _val_prev_elect = p_hot, p_cold, p_elect
+    else:
+        _val_prev_hot = _val_prev_cold = _val_prev_elect = None
+
     # Единая валидация (см. reading_validators.py). Раньше тут была только
     # проверка монотонности — этого недостаточно: жилец мог ввести 99 999
     # м³ воды и оно проходило, calculate_utilities дисциплинированно
     # умножал на тариф и получал миллионы. Теперь валидатор ловит overflow,
     # отрицательные значения, и аномально большие месячные дельты.
     from app.modules.utility.services.reading_validators import validate_meter_reading
-    is_baseline = prev_latest is None
+    is_baseline = prev_latest is None and not _prev_is_synth
     vresult = validate_meter_reading(
         hot=hot, cold=cold, elect=elect,
-        prev_hot=p_hot_man, prev_cold=p_cold_man, prev_elect=p_elect_man,
+        prev_hot=_val_prev_hot, prev_cold=_val_prev_cold, prev_elect=_val_prev_elect,
         is_baseline=is_baseline,
+        prev_is_synth=_prev_is_synth,
     )
     if not vresult.ok:
         raise HTTPException(400, "; ".join(vresult.errors))

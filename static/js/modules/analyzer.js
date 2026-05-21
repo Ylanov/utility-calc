@@ -110,6 +110,11 @@ export const AnalyzerModule = {
             btnLoadMismatches: document.getElementById('btnLoadMismatches'),
             mismatchThreshold: document.getElementById('mismatchThreshold'),
             mismatchesContainer: document.getElementById('mismatchesContainer'),
+
+            // Таб «Аномальные дельты» (high-delta readings)
+            btnLoadHighDelta: document.getElementById('btnLoadHighDelta'),
+            highDeltaThreshold: document.getElementById('highDeltaThreshold'),
+            highDeltaContainer: document.getElementById('highDeltaContainer'),
         };
     },
 
@@ -185,6 +190,27 @@ export const AnalyzerModule = {
             if (detailBtn) {
                 e.preventDefault();
                 const rid = Number(detailBtn.dataset.mismatchDetail);
+                try {
+                    SummaryModule.openExplainModal(rid);
+                } catch (err) {
+                    toast('Не удалось открыть модал: ' + err.message, 'error');
+                }
+            }
+        });
+
+        // Таб «Аномальные дельты»
+        this.dom.btnLoadHighDelta?.addEventListener('click', () => this.loadHighDelta());
+        this.dom.highDeltaContainer?.addEventListener('click', (e) => {
+            const delBtn = e.target.closest('button[data-highdelta-delete]');
+            if (delBtn) {
+                e.preventDefault();
+                this.deleteHighDeltaReading(Number(delBtn.dataset.highdeltaDelete));
+                return;
+            }
+            const detailBtn = e.target.closest('button[data-highdelta-detail]');
+            if (detailBtn) {
+                e.preventDefault();
+                const rid = Number(detailBtn.dataset.highdeltaDetail);
                 try {
                     SummaryModule.openExplainModal(rid);
                 } catch (err) {
@@ -1562,6 +1588,125 @@ export const AnalyzerModule = {
             // Sanity check может отказать если итог > 100k — в этом случае
             // approve_single бросает 400 с понятным сообщением.
             toast('Не удалось утвердить: ' + e.message, 'error');
+        }
+    },
+
+    // ============================================================
+    // АНОМАЛЬНЫЕ ДЕЛЬТЫ (high-delta readings vs prev/synth-baseline)
+    // ============================================================
+    async loadHighDelta() {
+        if (!this.dom.highDeltaContainer) return;
+        const threshold = Number(this.dom.highDeltaThreshold?.value || 50);
+        this.dom.highDeltaContainer.innerHTML =
+            '<p style="color:var(--text-secondary); padding:20px;">Загружаем…</p>';
+        try {
+            const data = await api.get(
+                `/admin/analyzer/high-delta-readings?threshold=${threshold}&limit=300`
+            );
+            this._renderHighDelta(data);
+        } catch (e) {
+            this.dom.highDeltaContainer.innerHTML =
+                `<p style="color:var(--danger-color);">Ошибка: ${escapeHtml(e.message)}</p>`;
+        }
+    },
+
+    _renderHighDelta(data) {
+        const items = data.items || [];
+        if (items.length === 0) {
+            this.dom.highDeltaContainer.innerHTML = `
+                <div style="text-align:center; padding:30px; color:var(--success-color);">
+                    <i class="fa-solid fa-check-circle" style="font-size:24px;"></i>
+                    <div style="margin-top:8px; font-weight:600;">Аномальных дельт не найдено</div>
+                    <div style="margin-top:4px; font-size:12px; color:var(--text-secondary);">
+                        Все утверждённые reading'и имеют дельту ≤ ${data.threshold} м³ от предыдущего.
+                    </div>
+                </div>`;
+            return;
+        }
+        const fmt = (v) => Number(v).toFixed(2);
+        const rows = items.map(it => {
+            const addr = it.dormitory_name
+                ? `${escapeHtml(it.dormitory_name)}/${escapeHtml(String(it.room_number || ''))}`
+                : '—';
+            const synthBadge = it.prev_is_synth
+                ? '<span style="background:#fee2e2; color:#991b1b; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:600;">synth prev</span>'
+                : '';
+            return `
+                <tr style="border-bottom:1px solid var(--border-color);">
+                    <td style="padding:10px 12px;">
+                        <div style="font-weight:600;">${escapeHtml(it.full_name || it.username || '—')}</div>
+                        <div style="font-size:11px; color:var(--text-secondary);">${escapeHtml(it.username || '')} · ${addr}</div>
+                    </td>
+                    <td style="padding:10px 12px; font-size:12px;">
+                        <div><b>${escapeHtml(it.period_name || '—')}</b></div>
+                        <div style="color:var(--text-secondary);">prev: ${escapeHtml(it.prev_period_name || '—')} ${synthBadge}</div>
+                    </td>
+                    <td style="padding:10px 12px; text-align:right; font-family:monospace; font-size:12px;">
+                        <div>ГВС: ${fmt(it.hot_water)} <span style="color:var(--text-tertiary);">(было ${fmt(it.prev_hot_water)})</span></div>
+                        <div>ХВС: ${fmt(it.cold_water)} <span style="color:var(--text-tertiary);">(было ${fmt(it.prev_cold_water)})</span></div>
+                    </td>
+                    <td style="padding:10px 12px; text-align:center;">
+                        <div style="font-weight:700; color:var(--danger-color); font-size:14px;">
+                            +${fmt(it.delta_max)}
+                        </div>
+                        <div style="font-size:10px; color:var(--text-tertiary);">
+                            ГВС +${fmt(it.delta_hot)} · ХВС +${fmt(it.delta_cold)}
+                        </div>
+                    </td>
+                    <td style="padding:10px 12px; text-align:right; font-family:monospace; font-size:12px;">
+                        ${Number(it.total_cost).toLocaleString('ru-RU', {minimumFractionDigits:2, maximumFractionDigits:2})} ₽
+                    </td>
+                    <td style="padding:10px 12px; text-align:right; white-space:nowrap;">
+                        <button class="action-btn secondary-btn" data-highdelta-detail="${it.reading_id}"
+                                style="padding:5px 10px; font-size:12px;" title="Открыть «Проверка расчёта»">
+                            <i class="fa-solid fa-magnifying-glass"></i>
+                        </button>
+                        <button class="action-btn danger-btn" data-highdelta-delete="${it.reading_id}"
+                                style="padding:5px 10px; font-size:12px;" title="Удалить reading и пересчитать баланс">
+                            <i class="fa-regular fa-trash-can"></i>
+                        </button>
+                    </td>
+                </tr>`;
+        }).join('');
+
+        this.dom.highDeltaContainer.innerHTML = `
+            <div style="overflow-x:auto; border:1px solid var(--border-color); border-radius:8px;">
+                <table style="width:100%; min-width:880px;">
+                    <thead>
+                        <tr style="background:var(--bg-page);">
+                            <th style="text-align:left; padding:10px 12px;">Жилец / адрес</th>
+                            <th style="text-align:left; padding:10px 12px;">Период</th>
+                            <th style="text-align:right; padding:10px 12px;">Показания</th>
+                            <th style="text-align:center; padding:10px 12px;">Δ макс.</th>
+                            <th style="text-align:right; padding:10px 12px;">Итог</th>
+                            <th style="text-align:right; padding:10px 12px;">Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+            <p class="hint-text" style="margin-top:10px; font-size:12px;">
+                Всего: <b>${items.length}</b> · порог <b>&gt; ${data.threshold} м³/период</b>.
+                Бейдж <b>synth prev</b> = предыдущий reading был AUTO_GENERATED / DATA_OVERFLOW_RESET
+                (т.е. дельта посчитана от фиктивного нуля — обычно ошибка отсутствия baseline).
+                После удаления запустите <b>Перерасчёт</b> по периоду, чтобы итог отразился на балансе.
+            </p>`;
+    },
+
+    async deleteHighDeltaReading(readingId) {
+        if (!readingId) return;
+        if (!window.confirm(
+            'Удалить этот reading и пересчитать баланс? Жилец сможет подать корректные ' +
+            'показания заново. Если корень в неправильном «Начальном периоде» — ' +
+            'сначала зайдите в Ручной ввод и поставьте реальные начальные показания, ' +
+            'потом удаляйте эту запись.'
+        )) return;
+        try {
+            await api.delete(`/admin/readings/${readingId}`);
+            toast('Reading удалён. Запустите «Перерасчёт периода», чтобы баланс пересчитался.', 'success');
+            this.loadHighDelta();
+        } catch (e) {
+            toast('Ошибка: ' + e.message, 'error');
         }
     },
 };

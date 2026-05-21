@@ -984,6 +984,55 @@ def promote_auto_approved_rows(db: Session) -> dict:
         # total_cost=0 → жилец видел нулевую квитанцию при реальной
         # подаче, деньги физически не начислялись. См. инцидент may 2026.
         prev_reading = prev_by_user.get(uid)
+
+        # Bug G: проверка delta ДО расчёта стоимости. prev_by_user уже
+        # отфильтрован через is_meaningful_prev (см. вычисление выше),
+        # т.е. если AUTO_GENERATED 0/0/0 — он сюда не попадёт. Нам нужен
+        # сырой «есть ли что-то в истории» — берём из existing_by_user.
+        _hist = existing_by_user.get(uid, [])
+        _approved_hist = [r for r in _hist if r.is_approved]
+        _approved_hist.sort(key=lambda r: r.created_at, reverse=True)
+        _prev_any = _approved_hist[0] if _approved_hist else None
+        _prev_is_synth = (prev_reading is None) and (_prev_any is not None)
+        if _prev_is_synth:
+            _val_prev_hot = _prev_any.hot_water or _Dec("0")
+            _val_prev_cold = _prev_any.cold_water or _Dec("0")
+            _val_prev_elect = _prev_any.electricity or _Dec("0")
+        elif prev_reading is not None:
+            _val_prev_hot = prev_reading.hot_water or _Dec("0")
+            _val_prev_cold = prev_reading.cold_water or _Dec("0")
+            _val_prev_elect = prev_reading.electricity or _Dec("0")
+        else:
+            _val_prev_hot = _val_prev_cold = _val_prev_elect = None
+
+        from app.modules.utility.services.reading_validators import (
+            validate_meter_reading as _validate_mr,
+        )
+        _vmr = _validate_mr(
+            hot=primary.hot_water,
+            cold=primary.cold_water,
+            elect=electricity_value,
+            prev_hot=_val_prev_hot,
+            prev_cold=_val_prev_cold,
+            prev_elect=_val_prev_elect,
+            is_baseline=(prev_reading is None and not _prev_is_synth),
+            prev_is_synth=_prev_is_synth,
+        )
+        if not _vmr.ok:
+            from sqlalchemy import update as _sa_update_vmr
+            from app.modules.utility.models import GSheetsImportRow as _GR_vmr
+            _reason = "high_delta_or_baseline_overflow: " + "; ".join(_vmr.errors)
+            db.execute(
+                _sa_update_vmr(_GR_vmr)
+                .where(_GR_vmr.id.in_([r.id for r in user_rows]))
+                .values(status="conflict", conflict_reason=_reason)
+            )
+            _skip(uid, _reason, user_rows)
+            logger.warning(
+                "[GSHEETS-PROMOTE] HIGH_DELTA_OR_BASELINE user=%s prev_synth=%s errors=%s",
+                uid, _prev_is_synth, _vmr.errors,
+            )
+            continue
         room_obj = db.query(Room).filter(Room.id == user.room_id).first()
         tariff = (
             tariff_cache.get_effective_tariff(user=user, room=room_obj)

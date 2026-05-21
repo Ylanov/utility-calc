@@ -44,9 +44,20 @@ from typing import Optional
 MAX_WATER_METER_VALUE = Decimal("10000")
 MAX_ELECTRICITY_METER_VALUE = Decimal("50000")
 
-# Разумный месячный расход на жилую квартиру.
-MAX_WATER_DELTA_PER_MONTH = Decimal("200")
-MAX_ELECTRICITY_DELTA_PER_MONTH = Decimal("5000")
+# Разумный месячный расход. 50 м³ — щедрый потолок для общежития (4 чел ×
+# 4 м³/мес × 3х запас). Был 200 — это «жилая квартира с гостями круглый
+# год», для нашего фонда нереалистично. Дельта > порога — ERROR, не warning:
+# инцидент с Пегарьковым (май 2026) — +236 м³ ХВС/мес прошло как warning,
+# счёт составил 81 485 ₽. Теперь такое блокируется на входе.
+MAX_WATER_DELTA_PER_MONTH = Decimal("50")
+MAX_ELECTRICITY_DELTA_PER_MONTH = Decimal("2000")
+
+# Потолок для ПЕРВОЙ подачи (is_baseline=True). Если счётчик НОВЫЙ — у него
+# должно быть ~0. Если счётчик старый и в нём накручено — админ обязан
+# сначала зайти в «Начальный период» и проставить реальные показания, иначе
+# delta от 0 в следующем месяце сразу даст overflow. Порог 50 = одна
+# месячная норма; всё что выше — требует ручной установки baseline.
+MAX_FIRST_SUBMISSION_VALUE = Decimal("50")
 
 # Финальная sanity на total_cost.
 MAX_TOTAL_COST_PER_READING = Decimal("100000")
@@ -136,6 +147,7 @@ def validate_meter_reading(
     prev_cold: Optional[Decimal] = None,
     prev_elect: Optional[Decimal] = None,
     is_baseline: bool = False,
+    prev_is_synth: bool = False,
 ) -> ValidationResult:
     """Проверяет ОДНУ подачу показаний счётчика.
 
@@ -147,7 +159,19 @@ def validate_meter_reading(
                              не проверяем (см. is_baseline).
       is_baseline          — первая подача счётчика. Дельта от 0 не
                              проверяется (там может быть «накрученное»
-                             значение от прежних жильцов).
+                             значение от прежних жильцов). Но новое значение
+                             ограничено MAX_FIRST_SUBMISSION_VALUE (50 м³) —
+                             иначе админ должен сначала заполнить «Начальный
+                             период» через ручной ввод.
+      prev_is_synth        — есть предыдущий reading, но он SYNTH (AUTO_GENERATED
+                             0/0/0 или DATA_OVERFLOW_RESET). В этом случае
+                             prev_hot/prev_cold подаются как РЕАЛЬНЫЕ значения
+                             синта (т.е. 0), но мы НЕ доверяем дельте от него
+                             как «нормальной», и проверка delta включается с
+                             более строгим порогом MAX_FIRST_SUBMISSION_VALUE.
+                             Это покрывает случай Пегарькова — есть baseline
+                             0/0/0, новое значение 161/340, дельта 161/340 >>
+                             порога → ERROR с инструкцией поправить baseline.
 
     Возвращает ValidationResult. Не raise'ит — caller сам решает что
     делать с errors (HTTPException, mark conflict, skip, ...).
@@ -159,6 +183,7 @@ def validate_meter_reading(
     max_elect = _threshold("validator.max_electricity_meter", MAX_ELECTRICITY_METER_VALUE)
     max_water_delta = _threshold("validator.max_water_delta_per_month", MAX_WATER_DELTA_PER_MONTH)
     max_elect_delta = _threshold("validator.max_electricity_delta_per_month", MAX_ELECTRICITY_DELTA_PER_MONTH)
+    max_first_submission = _threshold("validator.max_first_submission_value", MAX_FIRST_SUBMISSION_VALUE)
 
     # 1. Не-null для воды (gsheets иногда не передаёт electricity — ОК).
     if hot is None:
@@ -203,24 +228,67 @@ def validate_meter_reading(
                     f"(возможно, его меняли — нужна процедура «Замена счётчика»)."
                 )
 
-    # 5. Дельта за месяц. Только если есть prev и не baseline.
-    if not is_baseline:
+    # 5. Дельта за месяц. Проверяется когда:
+    #    - есть реальный prev (не baseline) → обычный порог;
+    #    - prev_is_synth=True → дельта проверяется СТРОЖЕ (от 0 или DATA_OVERFLOW_RESET),
+    #      потому что «реальная» история отсутствует и любое большое
+    #      значение тут — индикатор криво поставленного baseline.
+    delta_check_active = (not is_baseline) or prev_is_synth
+    if delta_check_active:
+        # При synth-baseline режем по жёсткому порогу первой подачи —
+        # это спасает от Пегарькова (+236 м³ ХВС с AUTO_GENERATED prev=0).
+        effective_water_delta = max_first_submission if prev_is_synth else max_water_delta
+        effective_elect_delta = max_elect_delta if not prev_is_synth else max_first_submission * Decimal("100")  # электричество всё-таки не вода
+
         for name, value, prev, max_delta in [
-            ("hot_water", hot, prev_hot, max_water_delta),
-            ("cold_water", cold, prev_cold, max_water_delta),
-            ("electricity", elect, prev_elect, max_elect_delta),
+            ("hot_water", hot, prev_hot, effective_water_delta),
+            ("cold_water", cold, prev_cold, effective_water_delta),
+            ("electricity", elect, prev_elect, effective_elect_delta),
         ]:
             if value is None or prev is None:
                 continue
             delta = value - prev
             if delta > max_delta:
-                # Это warning, не error — теоретически возможны редкие
-                # кейсы (долгое отсутствие, потом массовая подача за 6 мес).
-                # Caller (например, mobile UI) может попросить подтверждение.
-                result.warnings.append(
-                    f"{name}: расход {delta} за период превышает обычный "
-                    f"месячный максимум {max_delta}. Проверьте показание."
+                # ERROR (раньше warning): пропустить такую дельту = инцидент
+                # с Пегарьковым / Капрановым (счёт 81k-825k ₽). Если кейс
+                # реально валидный (долгое отсутствие, массовая подача за
+                # 6 мес), админ внесёт показание через «Начальный период» /
+                # «Замена счётчика» — там корректный путь.
+                if prev_is_synth:
+                    result.errors.append(
+                        f"{name}: дельта {delta} от synth-baseline превышает "
+                        f"порог {max_delta}. Установите корректное «Начальное "
+                        f"показание» в Ручном вводе (это значение, которое "
+                        f"было на счётчике в момент привязки жильца), затем "
+                        f"переподайте показания."
+                    )
+                else:
+                    result.errors.append(
+                        f"{name}: расход {delta} за период превышает "
+                        f"месячный максимум {max_delta}. Если это валидная "
+                        f"подача за несколько месяцев — оформите через "
+                        f"«Замену счётчика» или установите промежуточные "
+                        f"показания."
+                    )
+
+    # 6. Защита от is_baseline-абюза: если жилец/админ подаёт «первую»
+    # подачу с гигантским значением (накопленное показание счётчика без
+    # установки baseline), блокируем. См. MAX_FIRST_SUBMISSION_VALUE.
+    if is_baseline and not prev_is_synth:
+        for name, value in [("hot_water", hot), ("cold_water", cold)]:
+            if value is not None and value > max_first_submission:
+                result.errors.append(
+                    f"{name}={value} слишком велико для первой подачи "
+                    f"(порог {max_first_submission}). Скорее всего у счётчика "
+                    f"уже накручено показание из истории — установите его "
+                    f"через «Начальный период» в Ручном вводе, и только "
+                    f"после этого подавайте текущие значения."
                 )
+        if elect is not None and elect > max_elect_delta:
+            result.errors.append(
+                f"electricity={elect} слишком велико для первой подачи. "
+                f"Установите начальное показание через «Начальный период»."
+            )
 
     return result
 

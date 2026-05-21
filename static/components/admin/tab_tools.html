@@ -868,6 +868,9 @@
                             <button type="button" data-analyzer-tab="mismatches" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
                                 <i class="fa-solid fa-clock-rotate-left"></i> Подмены GSheets
                             </button>
+                            <button type="button" data-analyzer-tab="highdelta" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
+                                <i class="fa-solid fa-bolt-lightning"></i> Аномальные дельты
+                            </button>
                             <button type="button" data-analyzer-tab="maintenance" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
                                 <i class="fa-solid fa-broom"></i> Обслуживание
                             </button>
@@ -1056,6 +1059,33 @@
                             </div>
                             <div id="mismatchesContainer">
                                 <p style="color:var(--text-secondary); font-size:13px;">Нажмите «Найти» — увидите reading'и с несоответствием sheet-timestamp и периода.</p>
+                            </div>
+                        </div>
+
+                        <!-- ==================== ТАБ HIGHDELTA: аномальные дельты от prev / synth-baseline ==================== -->
+                        <div data-analyzer-pane="highdelta" style="display:none;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap;">
+                                <p class="hint-text" style="margin:0; font-size:13px;">
+                                    Уже-утверждённые показания с подозрительно большой дельтой (расходом за период) — например, кейс Пегарькова: 161 ГВС / 340 ХВС поверх AUTO_GENERATED 0/0/0 → счёт 81 485 ₽.
+                                    Раньше такая дельта пропускалась как warning. Теперь любая запись с дельтой выше порога — здесь, кнопкой «Откатить» reading удаляется, баланс пересчитается.
+                                </p>
+                                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                                    <label style="font-size:12px; color:var(--text-secondary);">
+                                        Порог (м³):
+                                        <select id="highDeltaThreshold" style="padding:4px 8px; font-size:12px;">
+                                            <option value="30">&ge; 30</option>
+                                            <option value="50" selected>&ge; 50</option>
+                                            <option value="100">&ge; 100</option>
+                                            <option value="200">&ge; 200</option>
+                                        </select>
+                                    </label>
+                                    <button id="btnLoadHighDelta" class="action-btn warning-btn" style="padding:6px 14px; font-size:13px;">
+                                        <i class="fa-solid fa-bolt-lightning"></i> Найти
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="highDeltaContainer">
+                                <p style="color:var(--text-secondary); font-size:13px;">Нажмите «Найти» — увидите утверждённые reading'и с дельтой выше порога относительно предыдущего.</p>
                             </div>
                         </div>
 

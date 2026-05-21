@@ -1453,3 +1453,110 @@ async def list_stuck_drafts(
         })
 
     return {"count": len(items), "items": items}
+
+
+# =========================================================================
+# HIGH-DELTA READINGS — уже-утверждённые с подозрительной дельтой от prev
+# =========================================================================
+@router.get("/high-delta-readings")
+async def list_high_delta_readings(
+    threshold: float = Query(50.0, ge=1.0, le=500.0,
+                              description="Порог дельты в м³ за период"),
+    limit: int = Query(200, ge=1, le=1000),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Уже-утверждённые reading'и где дельта от предыдущего (или от
+    AUTO_GENERATED 0/0/0 baseline) превышает порог — выявляет ситуации
+    типа Пегарькова (май 2026: +236 м³ ХВС поверх AUTO_GENERATED → счёт
+    81 485 ₽). Раньше дельта > порога была warning и пропускалась.
+
+    Реализация: для каждого MeterReading с period_id находим prev approved
+    reading того же user+room с меньшим period_id, считаем delta_hot/cold.
+    Если хоть одна > threshold — в выдачу.
+
+    Что админ дальше делает:
+      - DELETE /api/admin/readings/{id} — снести аномальный reading;
+      - POST /api/admin/readings/manual-entry — поставить корректный baseline.
+    """
+    _require_admin(current_user)
+    from decimal import Decimal as _D
+
+    th = _D(str(threshold))
+
+    # Загружаем последние 500 утверждённых reading'ов с period_id, чтобы
+    # можно было соединить с предыдущим по (user_id, room_id).
+    stmt = (
+        select(MeterReading)
+        .options(
+            selectinload(MeterReading.user).selectinload(User.room),
+            selectinload(MeterReading.period),
+        )
+        .where(
+            MeterReading.is_approved.is_(True),
+            MeterReading.period_id.isnot(None),
+        )
+        .order_by(desc(MeterReading.created_at))
+        .limit(2000)
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+
+    # Группируем по (user_id, room_id) → список reading'ов отсортирован
+    # по period_id descending. Для каждого считаем дельту от следующего
+    # (хронологически предыдущего) reading'а.
+    by_key: dict[tuple, list] = {}
+    for r in rows:
+        key = (r.user_id, r.room_id)
+        by_key.setdefault(key, []).append(r)
+    for key in by_key:
+        by_key[key].sort(key=lambda r: r.period_id or 0, reverse=True)
+
+    items = []
+    for key, lst in by_key.items():
+        for i, r in enumerate(lst):
+            prev = lst[i + 1] if i + 1 < len(lst) else None
+            prev_hot = (prev.hot_water if prev else _D("0")) or _D("0")
+            prev_cold = (prev.cold_water if prev else _D("0")) or _D("0")
+            cur_hot = r.hot_water or _D("0")
+            cur_cold = r.cold_water or _D("0")
+            d_hot = cur_hot - prev_hot
+            d_cold = cur_cold - prev_cold
+            max_d = max(d_hot, d_cold)
+            if max_d <= th:
+                continue
+            user = r.user
+            room = user.room if user else None
+            items.append({
+                "reading_id": r.id,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "period_id": r.period_id,
+                "period_name": r.period.name if r.period else None,
+                "user_id": user.id if user else None,
+                "username": user.username if user else None,
+                "full_name": user.full_name if user else None,
+                "dormitory_name": room.dormitory_name if room else None,
+                "room_number": room.room_number if room else None,
+                "hot_water": float(cur_hot),
+                "cold_water": float(cur_cold),
+                "prev_hot_water": float(prev_hot),
+                "prev_cold_water": float(prev_cold),
+                "delta_hot": float(d_hot),
+                "delta_cold": float(d_cold),
+                "delta_max": float(max_d),
+                "prev_period_name": prev.period.name if prev and prev.period else None,
+                "prev_is_synth": bool(
+                    prev and prev.anomaly_flags and (
+                        "AUTO_GENERATED" in prev.anomaly_flags
+                        or "DATA_OVERFLOW_RESET" in prev.anomaly_flags
+                        or "AUTO_NO_HISTORY" in prev.anomaly_flags
+                    )
+                ),
+                "total_cost": float(r.total_cost or 0),
+                "anomaly_flags": r.anomaly_flags,
+            })
+
+    # Сортируем по убыванию дельты, режем по лимиту.
+    items.sort(key=lambda it: it["delta_max"], reverse=True)
+    items = items[:limit]
+
+    return {"count": len(items), "threshold": float(th), "items": items}
