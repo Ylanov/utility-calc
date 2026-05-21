@@ -822,6 +822,161 @@ async def _apply_approve(
     return reading
 
 
+@router.post("/rows/{row_id}/make-baseline")
+async def make_row_baseline(
+    row_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Превратить GSheets-строку в Начальный период комнаты (baseline).
+
+    Use case: жилец впервые подал реальное накопленное показание счётчика
+    (например, Колемагин ГВС 289.565 / ХВС 280.216 — счётчик копит уже
+    несколько лет). Валидатор Bug F+G блокирует такую запись как
+    high_delta_or_baseline_overflow. Эта кнопка:
+      1) ставит значения строки в INITIAL_FROM_GSHEETS-запись комнаты
+         (обновляет существующую AUTO_GENERATED 0/0/0 или создаёт новую);
+      2) обновляет Room.last_* → следующая подача жильца имеет корректный
+         prev и проходит валидацию без conflict;
+      3) помечает GSheets-строку approved (но reading_id ссылается на
+         initial-reading, чтобы аудит был полный).
+
+    После операции рекомендуется: следующую подачу того же жильца утвердить
+    обычной зелёной кнопкой — дельта будет нормальной.
+    """
+    require_admin(current_user)
+    row = (await db.execute(
+        select(GSheetsImportRow)
+        .where(GSheetsImportRow.id == row_id)
+        .with_for_update()
+    )).scalars().first()
+    if not row:
+        raise HTTPException(404, "Строка не найдена")
+
+    if row.status in ("approved", "auto_approved") and row.reading_id:
+        raise HTTPException(409, "Эта строка уже утверждена ранее")
+
+    if row.matched_user_id is None:
+        raise HTTPException(
+            400,
+            "Строка не сопоставлена с жильцом — сначала используйте «Назначить жильцу»",
+        )
+
+    if row.hot_water is None or row.cold_water is None:
+        raise HTTPException(400, "В строке не разобраны показания ГВС/ХВС")
+
+    from app.modules.utility.services.reading_validators import MAX_WATER_METER_VALUE
+    if row.hot_water > MAX_WATER_METER_VALUE or row.cold_water > MAX_WATER_METER_VALUE:
+        raise HTTPException(
+            400,
+            f"Показания > {MAX_WATER_METER_VALUE} — вероятно пропущена точка. "
+            f"Используйте диалог исправления fix_hot/fix_cold через approve.",
+        )
+
+    user = await db.get(User, row.matched_user_id)
+    if not user or user.is_deleted:
+        raise HTTPException(400, "Жилец не найден или удалён")
+    if not user.room_id:
+        raise HTTPException(400, "Жилец не привязан к помещению")
+
+    room = await db.get(Room, user.room_id)
+    if not room:
+        raise HTTPException(400, "Комната жильца не найдена")
+
+    new_hot = row.hot_water
+    new_cold = row.cold_water
+
+    # Ищем существующий baseline (INITIAL_SETUP / INITIAL_FROM_FIRST_SUBMISSION /
+    # AUTO_GENERATED) — обновляем его значения. Если ничего нет — создаём.
+    initial = (await db.execute(
+        select(MeterReading).where(
+            MeterReading.room_id == room.id,
+            MeterReading.anomaly_flags.in_([
+                "INITIAL_SETUP",
+                "INITIAL_FROM_FIRST_SUBMISSION",
+                "INITIAL_FROM_GSHEETS",
+                "AUTO_GENERATED",
+            ]),
+        ).order_by(MeterReading.created_at.desc())
+    )).scalars().first()
+
+    if initial is not None:
+        initial.hot_water = new_hot
+        initial.cold_water = new_cold
+        initial.electricity = initial.electricity or Decimal("0")
+        initial.anomaly_flags = "INITIAL_FROM_GSHEETS"
+        initial.anomaly_score = 0
+        initial.is_approved = True
+        db.add(initial)
+        await db.flush()
+        initial_id = initial.id
+        initial_action = "updated"
+    else:
+        initial = MeterReading(
+            room_id=room.id,
+            user_id=user.id,
+            period_id=None,
+            hot_water=new_hot,
+            cold_water=new_cold,
+            electricity=Decimal("0"),
+            is_approved=True,
+            anomaly_flags="INITIAL_FROM_GSHEETS",
+            anomaly_score=0,
+            total_209=Decimal("0"),
+            total_205=Decimal("0"),
+        )
+        db.add(initial)
+        await db.flush()
+        initial_id = initial.id
+        initial_action = "created"
+
+    # Обновляем кэш Room — критично для корректной первой дельты.
+    room.last_hot_water = new_hot
+    room.last_cold_water = new_cold
+    db.add(room)
+
+    # Помечаем GSheets-строку approved, привязываем к initial reading.
+    row.status = "approved"
+    row.reading_id = initial_id
+    row.processed_at = utcnow()
+    row.processed_by_id = current_user.id
+    row.conflict_reason = None
+    db.add(row)
+
+    # Audit log.
+    try:
+        await write_audit_log(
+            db, current_user.id, current_user.username,
+            action="gsheets_row_make_baseline",
+            entity_type="gsheets_import_row",
+            entity_id=row.id,
+            details={
+                "row_id": row.id,
+                "fio": row.raw_fio,
+                "hot_water": str(new_hot),
+                "cold_water": str(new_cold),
+                "baseline_reading_id": initial_id,
+                "baseline_action": initial_action,
+            },
+        )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning(
+            "audit_log for make-baseline failed for row %s", row.id,
+        )
+
+    await db.commit()
+    return {
+        "status": "ok",
+        "baseline_reading_id": initial_id,
+        "baseline_action": initial_action,
+        "values": {
+            "hot_water": str(new_hot),
+            "cold_water": str(new_cold),
+        },
+    }
+
+
 @router.post("/rows/{row_id}/approve")
 async def approve_row(
     row_id: int,

@@ -193,6 +193,7 @@ export const GSheetsModule = {
                 const rowId = Number(btn.dataset.rowId);
                 const action = btn.dataset.action;
                 if (action === 'approve') this.approveRow(rowId);
+                else if (action === 'make-baseline') this.makeRowBaseline(rowId);
                 else if (action === 'reject') this.rejectRow(rowId);
                 else if (action === 'reassign') this.reassignPrompt(rowId);
                 else if (action === 'delete') this.deleteRow(rowId);
@@ -231,6 +232,7 @@ export const GSheetsModule = {
                 }
                 const rowId = Number(el.dataset.rowId);
                 if (action === 'approve') this.approveRow(rowId);
+                else if (action === 'make-baseline') this.makeRowBaseline(rowId);
                 else if (action === 'reject') this.rejectRow(rowId);
                 else if (action === 'reassign') this.reassignPrompt(rowId);
                 else if (action === 'delete') this.deleteRow(rowId);
@@ -449,7 +451,10 @@ export const GSheetsModule = {
 
         if (!disabledApproved && row.status !== 'rejected') {
             if (row.matched_user_id) {
-                buttons.push(`<button class="action-btn success-btn" data-action="approve" data-row-id="${row.id}" style="padding:3px 8px; font-size:11px;" title="Утвердить"><i class="fa-solid fa-check"></i></button>`);
+                buttons.push(`<button class="action-btn success-btn" data-action="approve" data-row-id="${row.id}" style="padding:3px 8px; font-size:11px;" title="Утвердить (создать MeterReading)"><i class="fa-solid fa-check"></i></button>`);
+                // Кнопка «Сделать baseline» — для conflict-строк где жилец впервые
+                // подал реальное накопленное показание поверх AUTO_GENERATED 0/0/0.
+                buttons.push(`<button class="action-btn" data-action="make-baseline" data-row-id="${row.id}" style="padding:3px 8px; font-size:11px; background:#10b981; color:#fff; border:1px solid #10b981;" title="Сделать Начальный период комнаты — снять блок «дельта>50», следующая подача жильца будет валидной"><i class="fa-solid fa-anchor"></i></button>`);
             }
             buttons.push(`<button class="action-btn secondary-btn" data-action="reassign" data-row-id="${row.id}" style="padding:3px 8px; font-size:11px;" title="Переназначить жильца"><i class="fa-solid fa-user-pen"></i></button>`);
             buttons.push(`<button class="action-btn danger-btn" data-action="reject" data-row-id="${row.id}" style="padding:3px 8px; font-size:11px;" title="Отклонить"><i class="fa-solid fa-xmark"></i></button>`);
@@ -950,6 +955,46 @@ export const GSheetsModule = {
             }
             toast('Ошибка: ' + e.message, 'error');
             this.refresh();  // откатываемся на серверное состояние
+        }
+    },
+
+    /** Превращает GSheets-строку в Начальный период комнаты — для conflict-
+     *  строк где жилец впервые подал реальное накопленное показание
+     *  (типичный кейс: ГВС 289 / ХВС 280 поверх AUTO_GENERATED 0/0/0).
+     *  Values уходят в INITIAL_FROM_GSHEETS reading комнаты, Room.last_*
+     *  обновляется. Следующая подача того же жильца имеет корректный prev и
+     *  проходит валидатор без conflict. */
+    async makeRowBaseline(rowId) {
+        const row = this.state.rows.find(r => r.id === rowId);
+        if (!row) return;
+        if (!row.matched_user_id) {
+            toast('Сначала «Назначить жильцу»', 'warning');
+            return;
+        }
+        const fio = row.matched_full_name || row.matched_username || row.raw_fio;
+        if (!confirm(
+            `Сделать показания жильца «${fio}» Начальным периодом комнаты?\n\n` +
+            `ГВС=${row.hot_water}, ХВС=${row.cold_water} попадут в Initial Setup ` +
+            `(или обновят существующий AUTO_GENERATED baseline). Текущая строка ` +
+            `пометится как approved. После этого СЛЕДУЮЩАЯ подача жильца получит ` +
+            `корректный prev — валидатор Bug F+G её пропустит.\n\n` +
+            `Используйте когда конфликт «high_delta_or_baseline_overflow» возник ` +
+            `на ПЕРВОЙ реальной подаче (накопленное показание счётчика).`
+        )) return;
+
+        this._removeRowLocally(rowId, 'approved');
+        try {
+            const res = await api.post(`/admin/gsheets/rows/${rowId}/make-baseline`, {});
+            toast(
+                `Baseline ${res.baseline_action === 'created' ? 'создан' : 'обновлён'}: `
+                + `ГВС=${res.values.hot_water}, ХВС=${res.values.cold_water}. `
+                + `Следующая подача этого жильца утвердится без conflict.`,
+                'success',
+            );
+            this.loadStats();
+        } catch (e) {
+            toast('Ошибка make-baseline: ' + e.message, 'error');
+            this.refresh();
         }
     },
 
