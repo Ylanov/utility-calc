@@ -191,23 +191,66 @@ async def upload_debts_pair_1c(
     batch_id = str(uuid.uuid4())
     tasks_out = []
 
+    # СЕРИАЛИЗАЦИЯ через celery chain (may 2026):
+    # Раньше тут было `import_debts_task.delay(...)` для каждого файла в цикле —
+    # ДВА task'а запускались параллельно. При concurrency > 1 worker'ы
+    # одновременно SELECT'или readings, видели «у жильца нет reading в active
+    # period», оба шли в inserts_dict через db.add_all. Затем при commit:
+    #   - либо unique-violation на (user_id, room_id, period_id) → второй task
+    #     падал с rollback, debt_205 терялся ✗
+    #   - либо без unique → два дубля reading; UI выбирал первый ✗
+    #
+    # Симптом: Лучка А.П. — debt_209=21889 виден (первый task), debt_205=0
+    # (второй task упал/конфликтнул, но статус completed).
+    #
+    # Теперь — chain через .si() (immutable signature, не передаёт return
+    # первого как arg второго). 205 task стартует ТОЛЬКО когда 209 task
+    # успешно завершён и commit'нул. Никаких race condition'ов.
+    from celery import chain
+    signatures = []
+    task_meta = []  # сохраняем file_path/account для построения сигнатур
+
     for f, account in [(file_209, "209"), (file_205, "205")]:
         if f is None:
             continue
         file_path, original_name = await _save_uploaded_debt_file(f, account, batch_id)
-        task = import_debts_task.delay(
+        sig = import_debts_task.si(
             file_path, account,
             started_by_id=current_user.id,
             started_by_username=current_user.username,
             batch_id=batch_id,
             original_file_name=original_name,
         )
+        signatures.append(sig)
+        task_meta.append({"account": account, "file_name": original_name})
+
+    if not signatures:
+        return {"status": "noop", "batch_id": batch_id, "tasks": []}
+
+    # Запускаем последовательно. apply_async() возвращает AsyncResult последнего
+    # task'а в цепочке — фронт поллит его, и когда он SUCCESS → значит вся
+    # цепочка отработала.
+    chain_result = chain(*signatures).apply_async()
+
+    # Собираем id всех task'ов в цепочке (для UI). Первый task — chain_result.parent...
+    # цикл наверх. В celery chain цепочка прицеплена через .parent.
+    task_ids = []
+    cur = chain_result
+    while cur is not None:
+        task_ids.append(cur.id)
+        cur = cur.parent
+    task_ids.reverse()  # порядок исполнения
+
+    for meta, tid in zip(task_meta, task_ids):
         tasks_out.append({
-            "account_type": account,
-            "task_id": task.id,
-            "file_name": original_name,
+            "account_type": meta["account"],
+            "task_id": tid,
+            "file_name": meta["file_name"],
         })
-        logger.info(f"[IMPORT-PAIR] Started task={task.id} for account={account} batch={batch_id}")
+        logger.info(
+            f"[IMPORT-PAIR] Queued task={tid} for account={meta['account']} "
+            f"batch={batch_id} (sequential chain)"
+        )
 
     return {
         "status": "processing",
