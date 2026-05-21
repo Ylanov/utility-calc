@@ -1158,9 +1158,38 @@ def _recalc_run(job_id: int, apply: bool):
                         updates.append({"id": r.id, "created_at": r.created_at, **{k: v for k, v in new_fields.items()}})
 
                 if apply and updates:
-                    # Составной PK (id, created_at) требует передавать оба поля
-                    # в bulk_update_mappings. SQLAlchemy сам сопоставит записи.
-                    db.bulk_update_mappings(MeterReading, updates)
+                    # ИСПРАВЛЕНИЕ (may 2026): раньше использовался
+                    # db.bulk_update_mappings(MeterReading, updates) с
+                    # передачей составного PK (id, created_at). Но
+                    # MeterReading партиционирована по created_at, и
+                    # bulk_update тихо возвращал rowcount=0 — admin
+                    # жал «Перерасчёт» 5 раз и каждый раз видел те же
+                    # 29 изменений (apply не писал, повторный preview
+                    # снова обнаруживал расхождение).
+                    #
+                    # Now: explicit per-row UPDATE по id (SERIAL уникален
+                    # сам по себе, без created_at). Чуть медленнее (500
+                    # round-trips на chunk), но apply делается раз в
+                    # сутки админом — нагрузка приемлема. И главное —
+                    # ТОЧНО пишет, плюс логируем rowcount для отладки.
+                    from sqlalchemy import update as _sa_update
+                    total_affected = 0
+                    for upd in updates:
+                        rid = upd["id"]
+                        values = {
+                            k: v for k, v in upd.items()
+                            if k not in ("id", "created_at")
+                        }
+                        res = db.execute(
+                            _sa_update(MeterReading)
+                            .where(MeterReading.id == rid)
+                            .values(**values)
+                        )
+                        total_affected += res.rowcount or 0
+                    logger.info(
+                        "[RECALC] apply chunk: requested=%d affected=%d job=%d",
+                        len(updates), total_affected, job_id,
+                    )
 
                 offset += CHUNK
                 job.processed = min(offset, total)
