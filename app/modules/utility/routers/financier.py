@@ -1336,6 +1336,184 @@ async def debts_check_resident_coverage(
     }
 
 
+@router.get(
+    "/debts/import-history/{log_id}/parser-diagnose",
+    summary="Диагностика парсера: какие колонки нашёл, что извлёк",
+)
+async def debts_parser_diagnose(
+    log_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Прогоняет логику парсера заголовков на архивном файле этого импорта
+    и возвращает: какие колонки нашёл (debt_first/last, overpay_first/last),
+    где была account-total row (209.34 / 205.X), какие numeric_positions
+    в ней, sample 3 строк жильцов с распарсенными debt/over.
+
+    Этот endpoint **не** делает импорт — только показывает что парсер
+    видит. Помогает диагностировать «почему у Бендаса всё ещё 2385.07».
+    """
+    if current_user.role not in ("admin", "financier"):
+        raise HTTPException(403, "Недостаточно прав")
+
+    log = await db.get(DebtImportLog, log_id)
+    if not log:
+        raise HTTPException(404, "Лог не найден")
+    if not log.archive_path:
+        raise HTTPException(400, "У этого импорта нет архива (старый импорт без archive_path)")
+
+    import os as _os
+    if not _os.path.exists(log.archive_path):
+        raise HTTPException(404, f"Архив не найден на диске: {log.archive_path}")
+
+    # Используем тот же парсер что и в основном импорте — копируем сюда
+    # ключевые шаги.
+    import openpyxl as _opx
+    from app.modules.utility.services.debt_import import clean_decimal, pick_saldo_pair
+    try:
+        ws = _opx.load_workbook(filename=log.archive_path, read_only=True, data_only=True).active
+    except Exception as e:
+        raise HTTPException(400, f"openpyxl не открыл файл: {e}")
+
+    section_markers: dict = {}
+    debit_cols: list = []
+    credit_cols: list = []
+    account_total = None  # {row_idx, label_col, label, numeric_positions, all_values}
+
+    for row_idx, row in enumerate(ws.iter_rows(min_row=1, max_row=20, values_only=True), start=1):
+        if not row:
+            continue
+        # Section markers + debit/credit positions
+        for col_idx, cell in enumerate(row):
+            if cell is None or not isinstance(cell, str):
+                continue
+            cell_norm = cell.strip().lower()
+            if not cell_norm:
+                continue
+            if "сальдо" in cell_norm and "начал" in cell_norm and "начало" not in section_markers:
+                section_markers["начало"] = col_idx
+            elif "оборот" in cell_norm and ("период" in cell_norm or len(cell_norm) < 30) and "обороты" not in section_markers:
+                section_markers["обороты"] = col_idx
+            elif "сальдо" in cell_norm and "конец" in cell_norm and "конец" not in section_markers:
+                section_markers["конец"] = col_idx
+            elif cell_norm == "дебет":
+                debit_cols.append(col_idx)
+            elif cell_norm == "кредит":
+                credit_cols.append(col_idx)
+        # Account total row
+        if account_total is None:
+            for col_label in range(min(3, len(row))):
+                cell = row[col_label]
+                if cell is None:
+                    continue
+                s = str(cell).strip()
+                if s.startswith("209.") or s.startswith("205.") or s == "209" or s == "205":
+                    numeric_positions = []
+                    all_values = {}
+                    for col_idx in range(col_label + 1, len(row)):
+                        c = row[col_idx]
+                        if c is None or c == "":
+                            continue
+                        try:
+                            d = clean_decimal(c)
+                            if d != 0:
+                                numeric_positions.append(col_idx)
+                                all_values[col_idx] = float(d)
+                        except Exception:
+                            pass
+                    account_total = {
+                        "row_idx": row_idx,
+                        "label_col": col_label,
+                        "label": s,
+                        "numeric_positions": numeric_positions,
+                        "all_values": all_values,
+                    }
+                    break
+
+    debit_cols = sorted(set(debit_cols))
+    credit_cols = sorted(set(credit_cols))
+
+    # Какие колонки выберет парсер
+    chosen = {
+        "debt_col_first": None,
+        "debt_col_last": None,
+        "overpay_col_first": None,
+        "overpay_col_last": None,
+        "strategy": None,
+    }
+    if account_total and len(account_total["numeric_positions"]) >= 4:
+        np_list = account_total["numeric_positions"]
+        chosen["debt_col_first"] = np_list[0]
+        chosen["overpay_col_first"] = np_list[1] if len(np_list) > 1 else np_list[0]
+        if len(np_list) >= 6:
+            chosen["debt_col_last"] = np_list[4]
+            chosen["overpay_col_last"] = np_list[5]
+        elif len(np_list) == 5:
+            chosen["debt_col_last"] = np_list[3]
+            chosen["overpay_col_last"] = np_list[4]
+        elif len(np_list) == 4:
+            chosen["debt_col_last"] = np_list[2]
+            chosen["overpay_col_last"] = np_list[3]
+        chosen["strategy"] = "0_account_total_row"
+
+    # Sample 3 жильцов: для каждого извлекаем debt/over через pick_saldo_pair.
+    samples = []
+    if chosen["debt_col_last"] is not None and chosen["overpay_col_last"] is not None:
+        count = 0
+        for row in ws.iter_rows(min_row=10, max_row=200, values_only=True):
+            if count >= 3 or not row:
+                continue
+            # Ищем ФИО в первых 5 колонках
+            fio = None
+            for col_idx in range(min(5, len(row))):
+                cell = row[col_idx]
+                if not isinstance(cell, str):
+                    continue
+                s = str(cell).strip()
+                if " " in s and len(s.split()) >= 2 and any('А' <= c <= 'я' for c in s):
+                    # Sanity: не "Договор", не "Сальдо", не "Контрагенты"
+                    s_low = s.lower()
+                    if any(kw in s_low for kw in ["договор", "сальдо", "оборот", "итого", "контрагент", "счёт", "счет", "помещен", "период"]):
+                        continue
+                    fio = s
+                    break
+            if not fio:
+                continue
+            try:
+                debt, over = pick_saldo_pair(
+                    row,
+                    end_debit_col=chosen["debt_col_last"],
+                    end_credit_col=chosen["overpay_col_last"],
+                    start_debit_col=chosen["debt_col_first"],
+                    start_credit_col=chosen["overpay_col_first"],
+                )
+            except Exception:
+                debt, over = 0, 0
+            samples.append({
+                "fio": fio,
+                "debt": float(debt),
+                "overpayment": float(over),
+                "raw_row_values_after_label": [
+                    {"col": c, "value": float(row[c]) if isinstance(row[c], (int, float)) else str(row[c])}
+                    for c in chosen["numeric_positions"] if "numeric_positions" in chosen
+                ] if False else None,
+            })
+            count += 1
+
+    ws.parent.close()
+
+    return {
+        "log_id": log_id,
+        "archive_path": log.archive_path,
+        "section_markers": section_markers,
+        "debit_cols_in_header": debit_cols,
+        "credit_cols_in_header": credit_cols,
+        "account_total": account_total,
+        "chosen": chosen,
+        "samples": samples,
+    }
+
+
 @router.delete("/debts/import-history/{log_id}", summary="Удалить запись истории импорта 1С")
 async def debts_delete_import_history(
     log_id: int,

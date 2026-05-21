@@ -187,6 +187,7 @@ export const DebtsModule = {
             if (action === 'view-not-found') this.openNotFoundModal(logId);
             else if (action === 'undo') this.undoImport(logId);
             else if (action === 'diff') this.openDiffModal(logId);
+            else if (action === 'diagnose') this.openDiagnoseModal(logId);
             else if (action === 'delete') this.deleteImportHistory(logId);
             else if (action === 'cleanup') this.cleanupImportHistory();
         });
@@ -810,6 +811,11 @@ export const DebtsModule = {
                             title="Сравнить с предыдущим импортом того же счёта"
                             style="padding:3px 8px; font-size:11px; white-space:nowrap; background:#eef2ff; color:#4338ca; border-color:#c7d2fe;">
                         <i class="fa-solid fa-code-compare"></i> Diff
+                    </button>
+                    <button class="action-btn secondary-btn" data-history-action="diagnose" data-log-id="${log.id}"
+                            title="Диагностика парсера: какие колонки нашёл, какие значения извлёк (для отладки «почему долг неправильный»)"
+                            style="padding:3px 8px; font-size:11px; white-space:nowrap; background:#fffbeb; color:#92400e; border-color:#fde68a;">
+                        <i class="fa-solid fa-microscope"></i>
                     </button>` : ''}
                 ${canUndo ? `
                     <button class="action-btn danger-btn" data-history-action="undo" data-log-id="${log.id}"
@@ -841,6 +847,96 @@ export const DebtsModule = {
     /** Удаление одной записи истории импорта БЕЗ отката данных.
      *  Use case: импорт устарел (после rebuild/reload-period долги в БД
      *  обновлены другим импортом), запись «висит» с устаревшими цифрами. */
+    /** Диагностика парсера: какие колонки нашёл, какие значения извлёк
+     *  для sample-жильцов. Помогает понять «почему у Бендаса всё ещё
+     *  2385.07» без захода на сервер за логами. */
+    async openDiagnoseModal(logId) {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
+        overlay.innerHTML = `
+            <div style="background:#fff; border-radius:8px; width:min(820px, 100%); max-height:90vh; display:flex; flex-direction:column;">
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:14px 18px; border-bottom:1px solid var(--border-color);">
+                    <h3 style="margin:0; font-size:15px;">
+                        🔬 Диагностика парсера №${logId}
+                    </h3>
+                    <button data-close-diagnose style="background:none; border:none; font-size:20px; color:#6b7280; cursor:pointer;">×</button>
+                </div>
+                <div style="padding:16px 18px; overflow-y:auto; flex:1;" id="diagnoseContent">
+                    <p style="color:var(--text-secondary); font-size:13px;">
+                        <i class="fa-solid fa-spinner fa-spin"></i> Парсим архив… (5-15 сек)
+                    </p>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+        const close = () => overlay.remove();
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay || e.target.closest('[data-close-diagnose]')) close();
+        });
+
+        try {
+            const data = await api.get(`/financier/debts/import-history/${logId}/parser-diagnose`);
+            const cont = overlay.querySelector('#diagnoseContent');
+            if (!cont) return;
+
+            const sectionsHtml = Object.keys(data.section_markers || {}).length
+                ? Object.entries(data.section_markers).map(([k, v]) => `<span style="background:#dbeafe; color:#1e40af; padding:2px 7px; border-radius:4px; font-size:11px;">${esc(k)}: col ${v}</span>`).join(' ')
+                : '<span style="color:#dc2626;">не найдены</span>';
+
+            const accountHtml = data.account_total
+                ? `<div style="background:#dcfce7; padding:8px 10px; border-radius:6px; font-size:12px;">
+                       <b>Итоговая строка счёта найдена:</b><br>
+                       row ${data.account_total.row_idx}, label_col ${data.account_total.label_col}, label «${esc(data.account_total.label)}»<br>
+                       <b>Числовые позиции:</b> ${(data.account_total.numeric_positions || []).join(', ')}<br>
+                       <b>Значения:</b> ${Object.entries(data.account_total.all_values || {}).map(([c, v]) => `col${c}=${Number(v).toLocaleString('ru-RU')}`).join(' · ')}
+                   </div>`
+                : `<div style="background:#fee2e2; color:#991b1b; padding:8px 10px; border-radius:6px; font-size:12px;">
+                       ❌ Итоговая строка счёта (209.X / 205.X) НЕ найдена в первых 20 строках. Парсер пойдёт fallback'ом.
+                   </div>`;
+
+            const chosen = data.chosen || {};
+            const chosenHtml = chosen.debt_col_last !== null
+                ? `<div style="background:#fff; border:1px solid var(--border-color); padding:8px 10px; border-radius:6px; font-size:12px;">
+                       <b>Парсер выбрал колонки:</b><br>
+                       <b>Дебет:</b> начало <span style="color:#dc2626;">col ${chosen.debt_col_first}</span> · конец <span style="color:#059669;">col ${chosen.debt_col_last}</span><br>
+                       <b>Кредит:</b> начало <span style="color:#dc2626;">col ${chosen.overpay_col_first}</span> · конец <span style="color:#059669;">col ${chosen.overpay_col_last}</span><br>
+                       <b>Стратегия:</b> ${esc(chosen.strategy || '—')}
+                       ${chosen.debt_col_first === chosen.debt_col_last ? '<br><b style="color:#dc2626;">⚠ debt_first == debt_last — парсер сводит «начало» и «конец» к одной колонке (НЕПРАВИЛЬНО!)</b>' : ''}
+                   </div>`
+                : '<div style="color:#dc2626;">⚠ Парсер не определил колонки!</div>';
+
+            const samplesHtml = (data.samples || []).length
+                ? `<div style="margin-top:14px;">
+                       <h4 style="margin:0 0 6px 0; font-size:13px;">Sample 3 жильцов:</h4>
+                       ${(data.samples || []).map(s => `
+                           <div style="padding:6px 8px; background:#f9fafb; border-radius:4px; margin-bottom:4px; font-size:12px;">
+                               <b>${esc(s.fio)}</b><br>
+                               <span style="color:#dc2626;">debt = ${s.debt}</span> · <span style="color:#7c3aed;">overpayment = ${s.overpayment}</span>
+                           </div>
+                       `).join('')}
+                   </div>`
+                : '';
+
+            cont.innerHTML = `
+                <div style="display:grid; gap:12px;">
+                    <div>
+                        <div style="font-size:11px; color:var(--text-secondary); margin-bottom:4px;">SECTION MARKERS:</div>
+                        ${sectionsHtml}
+                    </div>
+                    <div>
+                        <div style="font-size:11px; color:var(--text-secondary); margin-bottom:4px;">«Дебет» / «Кредит» позиции (header):</div>
+                        Дебет: ${(data.debit_cols_in_header || []).join(', ') || '—'} · Кредит: ${(data.credit_cols_in_header || []).join(', ') || '—'}
+                    </div>
+                    ${accountHtml}
+                    ${chosenHtml}
+                    ${samplesHtml}
+                </div>
+            `;
+        } catch (e) {
+            const cont = overlay.querySelector('#diagnoseContent');
+            if (cont) cont.innerHTML = `<p style="color:var(--danger-color);">Ошибка: ${esc(e.message)}</p>`;
+        }
+    },
+
     async deleteImportHistory(logId) {
         if (!confirm(
             `Удалить запись истории импорта №${logId}?\n\n` +
