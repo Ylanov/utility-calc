@@ -256,51 +256,101 @@ def sync_import_debts_process(
     overpay_col_first: Optional[int] = None
     overpay_col_last: Optional[int] = None
     try:
-        # ВАЖНО (Bug U): загружаем заголовки БЕЗ read_only, чтобы развернуть
-        # merged cells. В ОСВ 1С шапка «Дебет»/«Кредит» обычно объединена
-        # через 3 колонки (под секциями «Сальдо нач | Обороты | Сальдо кон»).
-        # При read_only=True видна только верхняя-левая ячейка merged-региона,
-        # остальные None — парсер находил только 1 «Дебет» вместо 3-х, что
-        # приводило к тому что debt_col_last = debt_col_first = «Сальдо нач».
-        # Для Бендаса это давало 2385.07 (начало) вместо 3843.93 (конец).
-        header_workbook = openpyxl.load_workbook(filename=file_path, data_only=True)
-        header_ws = header_workbook.active
+        # ВАЖНО (Bug U-fix2): новый робустный парсер заголовков через
+        # section markers. Работает БЕЗ unmerge (предыдущий подход не
+        # сработал у Бендаса — в БД всё ещё лежит «Сальдо начало»).
+        #
+        # Логика: в openpyxl при read_only=True для merged-региона значение
+        # возвращается ТОЛЬКО в верхней-левой ячейке. То есть для ОСВ 1С с
+        # шапкой:
+        #   row 8: [col 8: «Сальдо на начало периода»] [col 14: «Обороты»]
+        #          [col 20: «Сальдо на конец периода»]   ← merged-headers
+        #   row 9: [col 7: «Дебет»] [col 10: «Кредит»] [col 14: «Дебет»]
+        #          [col 17: «Кредит»] [col 20: «Дебет»] [col 23: «Кредит»]
+        # Мы можем привязать «Дебет»/«Кредит» к секциям по их col_idx.
+        section_markers = {}  # 'начало'|'обороты'|'конец' -> col_idx
+        debit_cols = []  # все col где найдено «Дебет»
+        credit_cols = []
 
-        # Развернём merged cells в первых 12 строках: для каждой merged-области
-        # копируем top-left значение во все ячейки региона. Это даёт корректные
-        # значения при iter_rows ниже.
-        for merged_range in list(header_ws.merged_cells.ranges):
-            if merged_range.min_row > 12:
+        header_ws_ro = openpyxl.load_workbook(
+            filename=file_path, read_only=True, data_only=True,
+        ).active
+        for row in header_ws_ro.iter_rows(min_row=1, max_row=15, values_only=True):
+            if not row:
                 continue
-            top_left = header_ws.cell(row=merged_range.min_row, column=merged_range.min_col).value
-            header_ws.unmerge_cells(str(merged_range))
-            for r in range(merged_range.min_row, merged_range.max_row + 1):
-                for c in range(merged_range.min_col, merged_range.max_col + 1):
-                    header_ws.cell(row=r, column=c).value = top_left
-
-        for header_row in header_ws.iter_rows(min_row=1, max_row=12, values_only=True):
-            if not header_row:
-                continue
-            for col_idx, cell_val in enumerate(header_row):
-                if cell_val is None:
+            for col_idx, cell in enumerate(row):
+                if cell is None or not isinstance(cell, str):
                     continue
-                token = str(cell_val).strip().lower()
-                if token == "дебет":
-                    if debt_col_first is None:
-                        debt_col_first = col_idx
-                    debt_col_last = col_idx
-                elif token == "кредит":
-                    if overpay_col_first is None:
-                        overpay_col_first = col_idx
-                    overpay_col_last = col_idx
-            # Прерываем когда нашли ВСЕ четыре индекса (три «Дебет» и три
-            # «Кредит» — обычно одна итерация хватает после unmerge).
-            if (debt_col_first is not None and debt_col_last is not None
-                    and overpay_col_first is not None and overpay_col_last is not None
-                    and debt_col_first != debt_col_last
-                    and overpay_col_first != overpay_col_last):
-                break
-        header_workbook.close()
+                cell_norm = cell.strip().lower()
+                if not cell_norm:
+                    continue
+                if "сальдо" in cell_norm and ("начал" in cell_norm):
+                    if "начало" not in section_markers:
+                        section_markers["начало"] = col_idx
+                elif "оборот" in cell_norm and ("период" in cell_norm or len(cell_norm) < 30):
+                    if "обороты" not in section_markers:
+                        section_markers["обороты"] = col_idx
+                elif "сальдо" in cell_norm and "конец" in cell_norm:
+                    if "конец" not in section_markers:
+                        section_markers["конец"] = col_idx
+                elif cell_norm == "дебет":
+                    debit_cols.append(col_idx)
+                elif cell_norm == "кредит":
+                    credit_cols.append(col_idx)
+
+        # Дедуплицируем (в иных шаблонах одна и та же колонка может
+        # появиться в двух строках).
+        debit_cols = sorted(set(debit_cols))
+        credit_cols = sorted(set(credit_cols))
+
+        logger.info(
+            "[debt_import] header scan: sections=%s, debit_cols=%s, credit_cols=%s",
+            section_markers, debit_cols, credit_cols,
+        )
+
+        # Стратегия 1: все 3 секции + минимум 3 «Дебет»/«Кредит».
+        if (
+            "начало" in section_markers
+            and "обороты" in section_markers
+            and "конец" in section_markers
+            and len(debit_cols) >= 2
+            and len(credit_cols) >= 2
+        ):
+            sn = section_markers["начало"]
+            so = section_markers["обороты"]
+            sc = section_markers["конец"]
+            # Дебет «начало» — самый ранний «Дебет» ≥ sn и < so.
+            cand_d_first = [c for c in debit_cols if sn <= c < so]
+            cand_d_last = [c for c in debit_cols if c >= sc]
+            cand_c_first = [c for c in credit_cols if sn <= c < so]
+            cand_c_last = [c for c in credit_cols if c >= sc]
+            if cand_d_first and cand_d_last and cand_c_first and cand_c_last:
+                debt_col_first = cand_d_first[0]
+                debt_col_last = cand_d_last[0]
+                overpay_col_first = cand_c_first[0]
+                overpay_col_last = cand_c_last[0]
+
+        # Стратегия 2: если секции не нашли, но есть 3+ «Дебет» — first/last.
+        if debt_col_last is None and len(debit_cols) >= 3:
+            debt_col_first = debit_cols[0]
+            debt_col_last = debit_cols[-1]
+        if overpay_col_last is None and len(credit_cols) >= 3:
+            overpay_col_first = credit_cols[0]
+            overpay_col_last = credit_cols[-1]
+
+        # Стратегия 3: всего 2 «Дебет» — берём first/last из них.
+        if debt_col_last is None and len(debit_cols) == 2:
+            debt_col_first = debit_cols[0]
+            debt_col_last = debit_cols[1]
+        if overpay_col_last is None and len(credit_cols) == 2:
+            overpay_col_first = credit_cols[0]
+            overpay_col_last = credit_cols[1]
+
+        # Стратегия 4: всего 1 «Дебет» (упрощённый отчёт) — обе равны.
+        if debt_col_last is None and len(debit_cols) == 1:
+            debt_col_first = debt_col_last = debit_cols[0]
+        if overpay_col_last is None and len(credit_cols) == 1:
+            overpay_col_first = overpay_col_last = credit_cols[0]
     except Exception as e:
         logger.warning(f"Header parse failed, fallback to legacy indices: {e}")
 

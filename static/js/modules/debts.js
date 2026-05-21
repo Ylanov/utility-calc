@@ -288,8 +288,11 @@ export const DebtsModule = {
         if (!preview && input) {
             preview = document.createElement('div');
             preview.id = previewId;
-            preview.style.cssText = 'margin-top:6px; padding:8px 10px; border-radius:4px; font-size:11px; line-height:1.5;';
-            input.parentElement?.appendChild(preview);
+            preview.style.cssText = 'margin-top:6px; padding:6px 9px; border-radius:4px; font-size:10.5px; line-height:1.35; max-height:80px; overflow:hidden;';
+            // Вставляем плашку ПОСЛЕ контейнера input'а, не внутрь — иначе
+            // она «наезжает» на input при длинном hash/sample_fio.
+            const wrapper = input.closest('.upload-row') || input.parentElement;
+            wrapper?.parentElement?.insertBefore(preview, wrapper.nextSibling) || wrapper?.appendChild(preview);
         }
         if (!file) {
             if (preview) preview.innerHTML = '';
@@ -308,32 +311,29 @@ export const DebtsModule = {
             else this._lastPreview205 = res;
 
             const sizeKb = (res.size_bytes / 1024).toFixed(1);
-            const sampleHtml = res.sample_fio?.length
-                ? `<div style="color:var(--text-secondary); margin-top:3px;">Примеры ФИО: ${res.sample_fio.slice(0, 3).map(s => esc(s)).join(', ')}${res.sample_fio.length > 3 ? '…' : ''}</div>`
-                : '<div style="color:#dc2626; margin-top:3px;">⚠ ФИО не найдены — возможно неверный формат файла.</div>';
-
             let bg, color, statusLine;
             if (res.duplicate_of) {
                 bg = '#fef3c7'; color = '#92400e';
                 const d = res.duplicate_of;
-                statusLine = `<b>⚠ Дубликат:</b> такой же файл уже импортирован как №${d.log_id} (${d.account_type}, ${d.started_at?.split('T')[0] || '—'}, ${d.status}). Загрузить повторно — обычно не нужно.`;
+                const date = d.started_at?.split('T')[0] || '—';
+                statusLine = `⚠ <b>Дубликат</b> №${d.log_id} (${date}, ${d.status})`;
             } else if (res.rows_with_fio === 0) {
                 bg = '#fee2e2'; color = '#991b1b';
-                statusLine = '<b>❌ ФИО не найдено</b> — файл, скорее всего, не ОСВ 1С. Проверьте что загружаете правильный файл.';
+                statusLine = '❌ <b>ФИО не найдено</b> — не ОСВ 1С?';
             } else {
                 bg = '#dcfce7'; color = '#166534';
-                statusLine = `<b>✓ Файл выглядит корректно</b> — ${res.rows_with_fio} строк с ФИО (из ${res.rows_total} общих).`;
+                statusLine = `✓ <b>${res.rows_with_fio}</b> строк с ФИО`;
             }
+            const sampleText = res.sample_fio?.length
+                ? ` · ${res.sample_fio.slice(0, 2).map(s => esc(s.length > 24 ? s.slice(0, 22) + '…' : s)).join(', ')}`
+                : '';
 
             if (preview) {
                 preview.style.background = bg;
                 preview.style.color = color;
                 preview.innerHTML = `
                     ${statusLine}
-                    <div style="color:var(--text-secondary); margin-top:3px;">
-                        <i class="fa-solid fa-file-excel"></i> ${esc(res.file_name)} · ${sizeKb} KB · hash ${res.file_hash.slice(0, 10)}…
-                    </div>
-                    ${sampleHtml}
+                    <span style="color:var(--text-secondary); margin-left:6px;">${esc(res.file_name.length > 28 ? res.file_name.slice(0, 26) + '…' : res.file_name)} · ${sizeKb}KB${sampleText}</span>
                 `;
             }
         } catch (e) {
