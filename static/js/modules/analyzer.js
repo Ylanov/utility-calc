@@ -5,6 +5,7 @@
 
 import { api } from '../core/api.js';
 import { toast } from '../core/dom.js';
+import { SummaryModule } from './summary.js';
 
 const CATEGORY_META = {
     gsheets:  { label: 'Google Sheets матчер',     color: '#16a34a' },
@@ -178,13 +179,16 @@ export const AnalyzerModule = {
             const detailBtn = e.target.closest('button[data-stuck-detail]');
             if (detailBtn) {
                 e.preventDefault();
-                // Открываем модал «Проверка расчёта» — там админ видит формулу
-                // и может или удалить, или утвердить с коррекцией (через approve_single).
+                // Открываем существующий модал «Проверка расчёта» (см. admin.html
+                // #explainModal + summary.js:openExplainModal). Там админ видит
+                // breakdown тарифа и формулу — можно понять что не так и решить
+                // через action-кнопки в модале.
                 const rid = Number(detailBtn.dataset.stuckDetail);
-                // Делегируем существующему модалу — там же есть кнопки удаления/утв.
-                window.dispatchEvent(new CustomEvent('admin:open-reading-check', {
-                    detail: { readingId: rid },
-                }));
+                try {
+                    SummaryModule.openExplainModal(rid);
+                } catch (err) {
+                    toast('Не удалось открыть модал: ' + err.message, 'error');
+                }
             }
         });
     },
