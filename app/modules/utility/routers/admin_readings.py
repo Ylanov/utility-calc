@@ -88,7 +88,7 @@ async def delete_reading_record(
         current_user: User = Depends(allow_readings_manage),
         db: AsyncSession = Depends(get_db)
 ):
-    return await admin_readings_manual.delete_reading(db, reading_id)
+    return await admin_readings_manual.delete_reading(db, reading_id, actor=current_user)
 
 
 @router.post("/api/admin/readings/manual-receipt/{user_id}")

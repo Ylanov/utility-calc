@@ -1,5 +1,7 @@
 # app/modules/utility/services/admin_readings_manual.py
+import logging
 from decimal import Decimal
+from typing import Optional
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -622,7 +624,11 @@ async def bulk_create_manual_receipts(
     }
 
 
-async def delete_reading(db: AsyncSession, reading_id: int):
+async def delete_reading(
+    db: AsyncSession,
+    reading_id: int,
+    actor: Optional["User"] = None,
+):
     """Удаление утверждённого/чернового MeterReading.
 
     ИСПРАВЛЕНИЕ 500-ОШИБКИ (apr 2026):
@@ -642,16 +648,45 @@ async def delete_reading(db: AsyncSession, reading_id: int):
          status='auto_approved' сохраняем — следующий
          promote_auto_approved_rows() подхватит строки и создаст
          для них новый MeterReading автоматически.
+
+    AUDIT LOG (may 2026): добавлена запись в audit_log при удалении —
+    раньше при разборе stuck-drafts админ удалял reading и след пропадал.
+    Юридически это важно: квитанции — это деньги, изменения нужно
+    отслеживать. Сохраняем username/full_name/period_id/значения чтобы
+    можно было восстановить картину «что было до удаления».
     """
-    from app.modules.utility.models import GSheetsImportRow
+    from app.modules.utility.models import GSheetsImportRow, User
     from sqlalchemy import update
+    from sqlalchemy.orm import selectinload
+    from app.modules.utility.routers.admin_dashboard import write_audit_log
 
     res = await db.execute(
-        select(MeterReading).where(MeterReading.id == reading_id)
+        select(MeterReading)
+        .options(selectinload(MeterReading.user).selectinload(User.room))
+        .where(MeterReading.id == reading_id)
     )
     reading = res.scalars().first()
     if not reading:
         raise HTTPException(status_code=404, detail="Запись не найдена")
+
+    # Снапшот для audit_log (после delete доступ к полям недостоверен).
+    target_user = reading.user
+    room = target_user.room if target_user else None
+    snapshot = {
+        "reading_id": reading_id,
+        "period_id": reading.period_id,
+        "is_approved": bool(reading.is_approved),
+        "hot_water": str(reading.hot_water or 0),
+        "cold_water": str(reading.cold_water or 0),
+        "electricity": str(reading.electricity or 0),
+        "total_cost": str(reading.total_cost or 0),
+        "anomaly_flags": reading.anomaly_flags,
+        "target_user_id": target_user.id if target_user else None,
+        "target_username": target_user.username if target_user else None,
+        "target_full_name": target_user.full_name if target_user else None,
+        "dormitory": room.dormitory_name if room else None,
+        "room_number": room.room_number if room else None,
+    }
 
     # Отвязываем gsheets-строки, которые ссылались на это reading.
     # Без этого orphan-ссылки запутают админский UI и promote-задачу.
@@ -662,5 +697,21 @@ async def delete_reading(db: AsyncSession, reading_id: int):
     )
 
     await db.delete(reading)
+
+    # Audit. Если actor не передан (legacy caller) — лог пропускаем, но
+    # удаление всё равно проходит — backward-compat.
+    if actor is not None:
+        try:
+            await write_audit_log(
+                db, actor.id, actor.username,
+                action="delete_reading",
+                entity_type="meter_reading",
+                entity_id=reading_id,
+                details=snapshot,
+            )
+        except Exception as exc:
+            logger = logging.getLogger(__name__)
+            logger.warning("audit_log for delete_reading failed: %s", exc)
+
     await db.commit()
     return {"status": "deleted"}
