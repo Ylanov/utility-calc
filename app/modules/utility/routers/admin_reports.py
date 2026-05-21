@@ -1149,14 +1149,16 @@ async def _build_explain_response(reading_id: int, db: AsyncSession) -> dict:
     if not tariff:
         raise HTTPException(400, "Активный тариф не найден")
 
-    # 3. Предыдущее утверждённое показание этого жильца в этой комнате —
-    # для вычисления дельт. Берём то же что использовал боевой расчёт:
-    # последнее approved до текущего period_id, той же комнаты.
-    # ВАЖНО: ищем по period_id (а не created_at) — см. инцидент may 2026
-    # с подачами заднего числа через гугл-таблицу. selectinload(period) —
-    # eager-load чтобы prev.period.name не дёргал lazy-load в async-сессии
-    # (это даёт MissingGreenlet error).
-    prev = (await db.execute(
+    # 3. Предыдущее utverждённое показание для дельт. Ищем по period_id
+    # (не created_at — инцидент may 2026 с подачами заднего числа через
+    # гугл-таблицу). И ПРОПУСКАЕМ synth-prev (AUTO_GENERATED, DATA_OVERFLOW_RESET,
+    # MANUAL_RECEIPT, AUTO_NO_HISTORY) — их значения = 0, использование как
+    # baseline даёт фантастическую дельту в следующем периоде.
+    # См. инцидент Капранов 2026-05-21: prev=AUTO_GENERATED с 0/0/0, текущее
+    # 1468 ГВС → формула выдавала 818 049 ₽ как «правильный пересчёт».
+    # selectinload(period) — чтобы prev.period.name не дёргал lazy-load в async.
+    from app.modules.utility.services.reading_calculator import is_meaningful_prev
+    prev_candidates = (await db.execute(
         select(MeterReading)
         .options(selectinload(MeterReading.period))
         .where(
@@ -1166,8 +1168,9 @@ async def _build_explain_response(reading_id: int, db: AsyncSession) -> dict:
             MeterReading.period_id < reading.period_id,
         )
         .order_by(MeterReading.period_id.desc())
-        .limit(1)
-    )).scalars().first()
+        .limit(20)
+    )).scalars().all()
+    prev = next((c for c in prev_candidates if is_meaningful_prev(c)), None)
 
     # 4. Корректировки за период reading'а
     adj_rows = (await db.execute(
@@ -1340,19 +1343,30 @@ async def _build_explain_response(reading_id: int, db: AsyncSession) -> dict:
             "calculation": f"{f(area)} × {f(t_waste)}",
             "result": f(calc_result["cost_waste"]) + " ₽",
         })
-        # Фиксированная часть (отопление + ОДН по электричеству)
+        # Фиксированная часть. ОДН (electricity_per_sqm) убран из UI с мая 2026.
+        # Для новых тарифов label = «Отопление», формула = area × heating.
+        # Для исторических тарифов (где el_sqm > 0) сохраняем расширенный label.
         t_h = _dec_or_zero(tariff.heating)
         t_e_sqm = _dec_or_zero(tariff.electricity_per_sqm)
-        components.append({
-            "label": "Отопление + ОДН электро",
-            "kbk": "205",
-            "formula": "area × (heating + electricity_per_sqm)",
-            "calculation": (
-                f"{f(area)} × ({f(t_h)} + {f(t_e_sqm)}) = "
-                f"{f(area)} × {f(t_h + t_e_sqm)}"
-            ),
-            "result": f(calc_result["cost_fixed_part"]) + " ₽",
-        })
+        if t_e_sqm > 0:
+            components.append({
+                "label": "Отопление + ОДН электро",
+                "kbk": "205",
+                "formula": "area × (heating + electricity_per_sqm)",
+                "calculation": (
+                    f"{f(area)} × ({f(t_h)} + {f(t_e_sqm)}) = "
+                    f"{f(area)} × {f(t_h + t_e_sqm)}"
+                ),
+                "result": f(calc_result["cost_fixed_part"]) + " ₽",
+            })
+        else:
+            components.append({
+                "label": "Отопление",
+                "kbk": "205",
+                "formula": "area × heating",
+                "calculation": f"{f(area)} × {f(t_h)}",
+                "result": f(calc_result["cost_fixed_part"]) + " ₽",
+            })
 
     # 8. Сравнение пересчитанного с тем что в БД
     stored_total = Decimal(str(reading.total_cost or 0))
