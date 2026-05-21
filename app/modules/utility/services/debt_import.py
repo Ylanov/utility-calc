@@ -256,8 +256,28 @@ def sync_import_debts_process(
     overpay_col_first: Optional[int] = None
     overpay_col_last: Optional[int] = None
     try:
-        header_workbook = openpyxl.load_workbook(filename=file_path, read_only=True, data_only=True)
+        # ВАЖНО (Bug U): загружаем заголовки БЕЗ read_only, чтобы развернуть
+        # merged cells. В ОСВ 1С шапка «Дебет»/«Кредит» обычно объединена
+        # через 3 колонки (под секциями «Сальдо нач | Обороты | Сальдо кон»).
+        # При read_only=True видна только верхняя-левая ячейка merged-региона,
+        # остальные None — парсер находил только 1 «Дебет» вместо 3-х, что
+        # приводило к тому что debt_col_last = debt_col_first = «Сальдо нач».
+        # Для Бендаса это давало 2385.07 (начало) вместо 3843.93 (конец).
+        header_workbook = openpyxl.load_workbook(filename=file_path, data_only=True)
         header_ws = header_workbook.active
+
+        # Развернём merged cells в первых 12 строках: для каждой merged-области
+        # копируем top-left значение во все ячейки региона. Это даёт корректные
+        # значения при iter_rows ниже.
+        for merged_range in list(header_ws.merged_cells.ranges):
+            if merged_range.min_row > 12:
+                continue
+            top_left = header_ws.cell(row=merged_range.min_row, column=merged_range.min_col).value
+            header_ws.unmerge_cells(str(merged_range))
+            for r in range(merged_range.min_row, merged_range.max_row + 1):
+                for c in range(merged_range.min_col, merged_range.max_col + 1):
+                    header_ws.cell(row=r, column=c).value = top_left
+
         for header_row in header_ws.iter_rows(min_row=1, max_row=12, values_only=True):
             if not header_row:
                 continue
@@ -274,8 +294,7 @@ def sync_import_debts_process(
                         overpay_col_first = col_idx
                     overpay_col_last = col_idx
             # Прерываем когда нашли ВСЕ четыре индекса (три «Дебет» и три
-            # «Кредит» лежат в одной строке row 9 — обычно одной итерации
-            # хватает; этот break — защита от иногда merged-headers).
+            # «Кредит» — обычно одна итерация хватает после unmerge).
             if (debt_col_first is not None and debt_col_last is not None
                     and overpay_col_first is not None and overpay_col_last is not None
                     and debt_col_first != debt_col_last
