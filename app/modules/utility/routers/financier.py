@@ -1440,6 +1440,8 @@ async def debts_parser_diagnose(
         "debt_col_last": None,
         "overpay_col_first": None,
         "overpay_col_last": None,
+        "obor_debit_col": None,
+        "obor_credit_col": None,
         "strategy": None,
     }
     if account_total and len(account_total["numeric_positions"]) >= 4:
@@ -1447,9 +1449,12 @@ async def debts_parser_diagnose(
         chosen["debt_col_first"] = np_list[0]
         chosen["overpay_col_first"] = np_list[1] if len(np_list) > 1 else np_list[0]
         if len(np_list) >= 6:
+            chosen["obor_debit_col"] = np_list[2]
+            chosen["obor_credit_col"] = np_list[3]
             chosen["debt_col_last"] = np_list[4]
             chosen["overpay_col_last"] = np_list[5]
         elif len(np_list) == 5:
+            chosen["obor_debit_col"] = np_list[2]
             chosen["debt_col_last"] = np_list[3]
             chosen["overpay_col_last"] = np_list[4]
         elif len(np_list) == 4:
@@ -1496,6 +1501,8 @@ async def debts_parser_diagnose(
                     end_credit_col=chosen["overpay_col_last"],
                     start_debit_col=chosen["debt_col_first"],
                     start_credit_col=chosen["overpay_col_first"],
+                    obor_debit_col=chosen["obor_debit_col"],
+                    obor_credit_col=chosen["obor_credit_col"],
                 )
             except Exception:
                 debt, over = 0, 0
@@ -1522,6 +1529,8 @@ async def debts_parser_diagnose(
                 "raw_values": {
                     f"col{chosen['debt_col_first']}_start_debit": _raw(chosen["debt_col_first"]),
                     f"col{chosen['overpay_col_first']}_start_credit": _raw(chosen["overpay_col_first"]),
+                    **({f"col{chosen['obor_debit_col']}_obor_debit": _raw(chosen["obor_debit_col"])} if chosen.get("obor_debit_col") is not None else {}),
+                    **({f"col{chosen['obor_credit_col']}_obor_credit": _raw(chosen["obor_credit_col"])} if chosen.get("obor_credit_col") is not None else {}),
                     f"col{chosen['debt_col_last']}_end_debit": _raw(chosen["debt_col_last"]),
                     f"col{chosen['overpay_col_last']}_end_credit": _raw(chosen["overpay_col_last"]),
                 },

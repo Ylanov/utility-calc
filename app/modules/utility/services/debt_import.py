@@ -32,27 +32,37 @@ def pick_saldo_pair(
     end_credit_col: int,
     start_debit_col: int,
     start_credit_col: int,
+    obor_debit_col: Optional[int] = None,
+    obor_credit_col: Optional[int] = None,
 ) -> tuple[Decimal, Decimal]:
     """Возвращает (debt, overpayment) — актуальные сальдо из строки ОСВ.
 
-    Корректная семантика 1С (раньше parser работал поколоночно — debt и
-    overpay независимо — и ломался на жильцах с оборотами):
+    Корректная семантика 1С с тремя уровнями приоритета:
 
-    1) Если в строке указано «Сальдо на КОНЕЦ периода» (Дебет ИЛИ Кредит,
-       хотя бы один из них не None) — значит у жильца БЫЛИ обороты.
-       Берём end-значения как пару: пустая ячейка = 0 для этой стороны.
+    1) Если в строке заполнено «Сальдо на КОНЕЦ периода» (хотя бы одна
+       из колонок Дт/Кр) — берём end-значения. Пустая ячейка = 0.
+       Кейс Глобы: оборот Кр=18000, конец Кр=7091 — мы видим 7091.
 
-       Пример: Глоба — Сальдо начало Дебет=10908, оборот Кредит=18000
-       (заплатил), Сальдо конец Дебет=пусто, Сальдо конец Кредит=7091.
-       Раньше брали debt = fallback на 10908 ❌. Теперь:
-       has_end_data=True → debt=0 (end_d None), over=7091 ✓.
+    2) Если obor_debit_col/obor_credit_col заданы И в них есть значения
+       (т.е. у жильца БЫЛИ обороты), а end-колонки пусты — это значит
+       «Сальдо конец = 0» (в ОСВ 1С нули не показываются). Вычисляем
+       математически: end_d = start_d - start_c + obor_d - obor_c.
 
-    2) Если ОБА «Сальдо конец» пустые — у жильца не было оборотов,
-       состояние = «Сальдо начало». Берём start как пару.
+       Кейс Бендаса (Bug U-fix6):
+         start_d=2385.07, obor_d=1458.86 (доначислили), obor_c=3843.93 (заплатил)
+         end_d=null, end_c=null
+         Старая логика: fallback на start → debt=2385.07 ❌
+         Новая: 2385.07 + 1458.86 − 3843.93 = 0 → debt=0 ✓
 
-    3) Если обе пары пустые — возвращаем (0, 0).
+    3) Если obor-колонки не заданы ИЛИ в них нет значений И end пусты —
+       у жильца совсем не было движений в периоде, состояние = начало.
+       Берём start как пару.
+
+    4) Если всё пусто — возвращаем (0, 0).
     """
-    def _read(col: int):
+    def _read(col):
+        if col is None:
+            return None
         if 0 <= col < len(row):
             return row[col]
         return None
@@ -66,7 +76,28 @@ def pick_saldo_pair(
         over = clean_decimal(end_c) if end_c is not None else Decimal("0")
         return debt, over
 
-    # Fallback: end не показан → состояние = начало (без оборотов)
+    # Bug U-fix6: проверяем, были ли обороты. Если да — вычисляем сальдо
+    # математически (end = start + obor_d - obor_c).
+    obor_d_val = _read(obor_debit_col)
+    obor_c_val = _read(obor_credit_col)
+    has_obor_data = (obor_d_val is not None) or (obor_c_val is not None)
+
+    if has_obor_data:
+        start_d_d = clean_decimal(_read(start_debit_col)) if _read(start_debit_col) is not None else Decimal("0")
+        start_c_d = clean_decimal(_read(start_credit_col)) if _read(start_credit_col) is not None else Decimal("0")
+        obor_d_d = clean_decimal(obor_d_val) if obor_d_val is not None else Decimal("0")
+        obor_c_d = clean_decimal(obor_c_val) if obor_c_val is not None else Decimal("0")
+        # Активный счёт 209/205: положительный остаток в Дт — долг,
+        # отрицательный (Кр > Дт) — переплата.
+        net = start_d_d - start_c_d + obor_d_d - obor_c_d
+        if net > 0:
+            return net, Decimal("0")
+        elif net < 0:
+            return Decimal("0"), -net
+        else:
+            return Decimal("0"), Decimal("0")
+
+    # Fallback: end не показан, оборотов тоже нет → состояние = начало.
     start_d = _read(start_debit_col)
     start_c = _read(start_credit_col)
     debt = clean_decimal(start_d) if start_d is not None else Decimal("0")
@@ -255,6 +286,10 @@ def sync_import_debts_process(
     debt_col_last: Optional[int] = None
     overpay_col_first: Optional[int] = None
     overpay_col_last: Optional[int] = None
+    # Bug U-fix6: колонки оборотов (Дт обороты, Кр обороты) для
+    # математического вычисления сальдо, когда end-колонки пусты.
+    obor_debit_col: Optional[int] = None
+    obor_credit_col: Optional[int] = None
     try:
         # ВАЖНО (Bug U-fix2): новый робустный парсер заголовков через
         # section markers. Работает БЕЗ unmerge (предыдущий подход не
@@ -376,17 +411,21 @@ def sync_import_debts_process(
                     debt_col_first = numeric_positions[0]
                     overpay_col_first = numeric_positions[1] if len(numeric_positions) > 1 else numeric_positions[0]
                     if len(numeric_positions) >= 6:
+                        obor_debit_col = numeric_positions[2]
+                        obor_credit_col = numeric_positions[3]
                         debt_col_last = numeric_positions[4]
                         overpay_col_last = numeric_positions[5]
                     elif len(numeric_positions) == 5:
+                        obor_debit_col = numeric_positions[2]
                         debt_col_last = numeric_positions[3]
                         overpay_col_last = numeric_positions[4]
                     elif len(numeric_positions) == 4:
                         debt_col_last = numeric_positions[2]
                         overpay_col_last = numeric_positions[3]
                     logger.info(
-                        "[debt_import] STRATEGY 0 success: debt=%d/%d, overpay=%d/%d",
+                        "[debt_import] STRATEGY 0 success: debt=%d/%d, overpay=%d/%d, obor=%s/%s",
                         debt_col_first, debt_col_last, overpay_col_first, overpay_col_last,
+                        obor_debit_col, obor_credit_col,
                     )
         except Exception as exc:
             logger.warning("[debt_import] strategy 0 failed: %s", exc)
@@ -624,6 +663,8 @@ def sync_import_debts_process(
                 end_credit_col=overpay_col_last,
                 start_debit_col=debt_col_first,
                 start_credit_col=overpay_col_first,
+                obor_debit_col=obor_debit_col,
+                obor_credit_col=obor_credit_col,
             )
 
             user_data = get_user_data_optimized(fio_raw)
