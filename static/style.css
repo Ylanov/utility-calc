@@ -1418,6 +1418,58 @@ textarea { resize: vertical; min-height: 80px; }
 }
 
 /* =========================================
+   21C. РУЧНОЙ ВВОД — ГРУППЫ С ТОГЛАМИ (раздельная подача).
+   «Вода (ГВС+ХВС)» и «Электричество» — каждая группа имеет чекбокс
+   «Подать показания …». Если выключен — поля группы блёкнут и не
+   отправляются. Поведение: вода парой, электричество независимо.
+   ========================================= */
+.manual-group {
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin-bottom: 14px;
+    background: var(--bg-card);
+    transition: var(--transition);
+}
+.manual-group.is-off {
+    opacity: 0.55;
+    background: var(--bg-page);
+}
+.manual-group-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--border-color);
+}
+.manual-group-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text-main);
+    user-select: none;
+}
+.manual-group-toggle input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    margin: 0;
+    cursor: pointer;
+    accent-color: var(--primary-color);
+}
+.manual-group.is-off .manual-group-toggle { color: var(--text-secondary); }
+.manual-group-hint {
+    font-size: 11px;
+    color: var(--text-secondary);
+    font-weight: 400;
+}
+.manual-group.is-off .manual-group-body input { pointer-events: none; }
+
+/* =========================================
    21B. РУЧНОЙ ВВОД ПОКАЗАНИЙ — autocomplete-поиск.
    Заменяет старый двухколоночный layout (постоянный список + форма).
    Сверху — большой поиск с dropdown появляющимся только при вводе.

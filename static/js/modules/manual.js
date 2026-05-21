@@ -58,10 +58,38 @@ export const ManualModule = {
             lblPrevCold: document.getElementById('manPrevCold'),
             lblPrevElect: document.getElementById('manPrevElect'),
 
+            // Раздельная подача: тоглы и контейнеры групп.
+            // См. /api/admin/readings/manual — поля hot/cold/elect стали nullable.
+            groupWater: document.getElementById('manGroupWater'),
+            groupElect: document.getElementById('manGroupElect'),
+            toggleWater: document.getElementById('manToggleWater'),
+            toggleElect: document.getElementById('manToggleElect'),
+
             periodSelect: document.getElementById('manualPeriodSelect'),
             periodWarn: document.getElementById('manualPeriodWarn'),
             btnSubmit: document.getElementById('btnSaveManual')
         };
+    },
+
+    // Применяет состояние тогла к группе: визуальный is-off + поля disabled
+    // и required=false (чтобы браузер не валидировал пустые при submit).
+    _applyGroupState(group) {
+        const cfg = {
+            water: { toggle: this.dom.toggleWater, container: this.dom.groupWater, inputs: [this.dom.inHot, this.dom.inCold] },
+            electricity: { toggle: this.dom.toggleElect, container: this.dom.groupElect, inputs: [this.dom.inElect] },
+        }[group];
+        if (!cfg || !cfg.toggle || !cfg.container) return;
+        const on = !!cfg.toggle.checked;
+        cfg.container.classList.toggle('is-off', !on);
+        cfg.inputs.forEach(inp => {
+            if (!inp) return;
+            inp.disabled = !on;
+            if (on) {
+                inp.setAttribute('required', '');
+            } else {
+                inp.removeAttribute('required');
+            }
+        });
     },
 
     bindEvents() {
@@ -144,6 +172,13 @@ export const ManualModule = {
             this.dom.periodSelect.addEventListener('change', () => this._updatePeriodWarn());
             this._loadPeriods();
         }
+
+        // Тоглы раздельной подачи. По умолчанию обе группы включены —
+        // привычное поведение. Пользователь сам решает что подавать.
+        this.dom.toggleWater?.addEventListener('change', () => this._applyGroupState('water'));
+        this.dom.toggleElect?.addEventListener('change', () => this._applyGroupState('electricity'));
+        this._applyGroupState('water');
+        this._applyGroupState('electricity');
     },
 
     // -------- ПОИСК ---------------------------------------------------------
@@ -379,6 +414,12 @@ export const ManualModule = {
         this.dom.formCard.style.pointerEvents = 'none';
         this.dom.alertDraft.style.display = 'none';
         this.dom.form.reset();
+        // Form.reset() сбросит чекбоксы к defaultChecked=true — но это не
+        // триггерит change, поэтому пересчитываем визуальное состояние.
+        if (this.dom.toggleWater) this.dom.toggleWater.checked = true;
+        if (this.dom.toggleElect) this.dom.toggleElect.checked = true;
+        this._applyGroupState('water');
+        this._applyGroupState('electricity');
     },
 
     // -------- ПЕРИОД --------------------------------------------------------
@@ -419,13 +460,37 @@ export const ManualModule = {
     // -------- SUBMIT --------------------------------------------------------
 
     validate() {
-        const h = parseFloat(this.dom.inHot.value);
-        const c = parseFloat(this.dom.inCold.value);
-        const e = parseFloat(this.dom.inElect.value);
+        // Раздельная подача: проверяем только включённые группы.
+        const waterOn = !!this.dom.toggleWater?.checked;
+        const electOn = !!this.dom.toggleElect?.checked;
 
-        if (h < this.state.prevReadings.hot || c < this.state.prevReadings.cold || e < this.state.prevReadings.elect) {
-            toast('Новые показания не могут быть меньше предыдущих!', 'error');
+        if (!waterOn && !electOn) {
+            toast('Включите хотя бы одну группу (вода или электричество)', 'error');
             return false;
+        }
+
+        if (waterOn) {
+            const h = parseFloat(this.dom.inHot.value);
+            const c = parseFloat(this.dom.inCold.value);
+            if (isNaN(h) || isNaN(c)) {
+                toast('Заполните оба значения воды (ГВС и ХВС)', 'error');
+                return false;
+            }
+            if (h < this.state.prevReadings.hot || c < this.state.prevReadings.cold) {
+                toast('Новые показания воды не могут быть меньше предыдущих', 'error');
+                return false;
+            }
+        }
+        if (electOn) {
+            const e = parseFloat(this.dom.inElect.value);
+            if (isNaN(e)) {
+                toast('Заполните показания электричества', 'error');
+                return false;
+            }
+            if (e < this.state.prevReadings.elect) {
+                toast('Показания электричества не могут быть меньше предыдущих', 'error');
+                return false;
+            }
         }
         return true;
     },
@@ -437,12 +502,21 @@ export const ManualModule = {
 
         setLoading(this.dom.btnSubmit, true, 'Сохранение...');
 
+        // Раздельная подача — отправляем только включённые поля.
+        // Сервер (admin_readings_manual.py) принимает hot/cold/elect как
+        // Optional и проверяет пару «вода-вместе» + «хоть что-то».
+        const waterOn = !!this.dom.toggleWater?.checked;
+        const electOn = !!this.dom.toggleElect?.checked;
         const payload = {
             user_id: parseInt(this.state.selectedUserId),
-            hot_water: parseFloat(this.dom.inHot.value),
-            cold_water: parseFloat(this.dom.inCold.value),
-            electricity: parseFloat(this.dom.inElect.value),
         };
+        if (waterOn) {
+            payload.hot_water = parseFloat(this.dom.inHot.value);
+            payload.cold_water = parseFloat(this.dom.inCold.value);
+        }
+        if (electOn) {
+            payload.electricity = parseFloat(this.dom.inElect.value);
+        }
         const pid = this.dom.periodSelect?.value;
         if (pid) payload.period_id = parseInt(pid);
 

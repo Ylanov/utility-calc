@@ -19,9 +19,33 @@ ZERO = Decimal("0.00")
 async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
     """Сохранение черновика бухгалтером вручную.
 
+    Раздельная подача (май 2026): админ может прислать только воду
+    (ГВС+ХВС), только электричество или всё сразу. Правила:
+      - ГВС и ХВС подаются ПАРОЙ — оба или ни одного.
+      - Электричество — независимо.
+      - Хотя бы один из счётчиков должен быть подан.
+      - «Не подавал» = None → в БД пишется prev (счётчик не двигается,
+        дельта 0, расход не начисляется по этому ресурсу).
+
     Если data.period_id задан — используем его (для ввода за прошлый
     месяц). Если None — берём текущий active_period (back-compat).
     """
+    # Раздельная подача — проверки целостности.
+    hot_provided = data.hot_water is not None
+    cold_provided = data.cold_water is not None
+    elect_provided = data.electricity is not None
+
+    if hot_provided != cold_provided:
+        raise HTTPException(
+            status_code=400,
+            detail="Горячая и холодная вода подаются вместе — оба значения или ни одного.",
+        )
+    if not (hot_provided or elect_provided):
+        raise HTTPException(
+            status_code=400,
+            detail="Передайте хотя бы один ресурс — вода (ГВС+ХВС) или электричество.",
+        )
+
     if data.period_id is not None:
         # Админ ввёл за конкретный период. Проверяем что такой существует.
         active_period = await db.get(BillingPeriod, data.period_id)
@@ -61,20 +85,30 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
 
     p_hot_man, p_cold_man, p_elect_man = prev_manual.hot_water if prev_manual else ZERO, prev_manual.cold_water if prev_manual else ZERO, prev_manual.electricity if prev_manual else ZERO
 
+    p_hot, p_cold, p_elect = prev_latest.hot_water if prev_latest else ZERO, prev_latest.cold_water if prev_latest else ZERO, prev_latest.electricity if prev_latest else ZERO
+
+    # Раздельная подача (только для save_manual_entry; в create_one_time_charge
+    # _provided всегда True — поведение прежнее): для НЕпереданных ресурсов
+    # используем prev → счётчик «не двигается», дельта 0, расход не начисляется.
+    hot_to_save = data.hot_water if hot_provided else p_hot
+    cold_to_save = data.cold_water if cold_provided else p_cold
+    elect_to_save = data.electricity if elect_provided else p_elect
+
     # Единая sanity-валидация (см. reading_validators.py): абсолютные пороги,
     # неотрицательность, монотонность, разумные дельты. Защита от случая
     # когда админ вводил гигантские значения (тестирование, пропущенная точка).
     from app.modules.utility.services.reading_validators import validate_meter_reading
     _vresult = validate_meter_reading(
-        hot=data.hot_water, cold=data.cold_water, elect=data.electricity,
+        hot=hot_to_save, cold=cold_to_save, elect=elect_to_save,
         prev_hot=p_hot_man, prev_cold=p_cold_man, prev_elect=p_elect_man,
         is_baseline=(prev_latest is None),
     )
     if not _vresult.ok:
         raise HTTPException(400, "; ".join(_vresult.errors))
 
-    p_hot, p_cold, p_elect = prev_latest.hot_water if prev_latest else ZERO, prev_latest.cold_water if prev_latest else ZERO, prev_latest.electricity if prev_latest else ZERO
-    d_hot, d_cold, d_elect = data.hot_water - p_hot, data.cold_water - p_cold, data.electricity - p_elect
+    d_hot = (hot_to_save - p_hot) if hot_provided else ZERO
+    d_cold = (cold_to_save - p_cold) if cold_provided else ZERO
+    d_elect = (elect_to_save - p_elect) if elect_provided else ZERO
 
     residents_count = user.residents_count if user.residents_count is not None else 1
     total_room = room.total_room_residents if room.total_room_residents > 0 else 1
@@ -108,7 +142,7 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
             hot_water_heating_active=_hw,
         )
 
-    temp_reading = MeterReading(hot_water=data.hot_water, cold_water=data.cold_water, electricity=data.electricity)
+    temp_reading = MeterReading(hot_water=hot_to_save, cold_water=cold_to_save, electricity=elect_to_save)
     flags, score = check_reading_for_anomalies_v2(temp_reading, history, user=user)
     if is_baseline:
         flags, score = "BASELINE", 0
@@ -125,7 +159,7 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
     total_205 = costs['cost_social_rent'] + (draft.debt_205 or ZERO if draft else ZERO) - (draft.overpayment_205 or ZERO if draft else ZERO) + adj_map.get('205', ZERO)
 
     if draft:
-        draft.hot_water, draft.cold_water, draft.electricity = data.hot_water, data.cold_water, data.electricity
+        draft.hot_water, draft.cold_water, draft.electricity = hot_to_save, cold_to_save, elect_to_save
         draft.anomaly_flags, draft.anomaly_score = flags, score
         for k, v in costs_for_model_fields(costs).items():
             setattr(draft, k, v)
@@ -133,7 +167,7 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
     else:
         db.add(MeterReading(
             user_id=user.id, room_id=room.id, period_id=active_period.id,
-            hot_water=data.hot_water, cold_water=data.cold_water, electricity=data.electricity,
+            hot_water=hot_to_save, cold_water=cold_to_save, electricity=elect_to_save,
             debt_209=ZERO, overpayment_209=ZERO, debt_205=ZERO, overpayment_205=ZERO,
             total_209=total_209, total_205=total_205, total_cost=total_209 + total_205,
             is_approved=False, anomaly_flags=flags, anomaly_score=score,
@@ -145,7 +179,18 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
 
 
 async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
-    """Разовое (пропорциональное) начисление при выселении или переезде."""
+    """Разовое (пропорциональное) начисление при выселении или переезде.
+
+    NB: OneTimeChargeSchema требует все 3 значения (раздельная подача только
+    в save_manual_entry). Заглушки _provided=True сохраняют поведение в общем
+    блоке валидации, который шарится между save_manual_entry и этой функцией.
+    """
+    # Совместимость с общим блоком валидации (см. save_manual_entry):
+    # в charge все три значения всегда заданы по схеме — never partial.
+    hot_provided = True
+    cold_provided = True
+    elect_provided = True
+
     active_period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))).scalars().first()
     if not active_period: raise HTTPException(status_code=400, detail="Нет активного периода")
 
@@ -180,20 +225,30 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
 
     p_hot_man, p_cold_man, p_elect_man = prev_manual.hot_water if prev_manual else ZERO, prev_manual.cold_water if prev_manual else ZERO, prev_manual.electricity if prev_manual else ZERO
 
+    p_hot, p_cold, p_elect = prev_latest.hot_water if prev_latest else ZERO, prev_latest.cold_water if prev_latest else ZERO, prev_latest.electricity if prev_latest else ZERO
+
+    # Раздельная подача (только для save_manual_entry; в create_one_time_charge
+    # _provided всегда True — поведение прежнее): для НЕпереданных ресурсов
+    # используем prev → счётчик «не двигается», дельта 0, расход не начисляется.
+    hot_to_save = data.hot_water if hot_provided else p_hot
+    cold_to_save = data.cold_water if cold_provided else p_cold
+    elect_to_save = data.electricity if elect_provided else p_elect
+
     # Единая sanity-валидация (см. reading_validators.py): абсолютные пороги,
     # неотрицательность, монотонность, разумные дельты. Защита от случая
     # когда админ вводил гигантские значения (тестирование, пропущенная точка).
     from app.modules.utility.services.reading_validators import validate_meter_reading
     _vresult = validate_meter_reading(
-        hot=data.hot_water, cold=data.cold_water, elect=data.electricity,
+        hot=hot_to_save, cold=cold_to_save, elect=elect_to_save,
         prev_hot=p_hot_man, prev_cold=p_cold_man, prev_elect=p_elect_man,
         is_baseline=(prev_latest is None),
     )
     if not _vresult.ok:
         raise HTTPException(400, "; ".join(_vresult.errors))
 
-    p_hot, p_cold, p_elect = prev_latest.hot_water if prev_latest else ZERO, prev_latest.cold_water if prev_latest else ZERO, prev_latest.electricity if prev_latest else ZERO
-    d_hot, d_cold, d_elect = data.hot_water - p_hot, data.cold_water - p_cold, data.electricity - p_elect
+    d_hot = (hot_to_save - p_hot) if hot_provided else ZERO
+    d_cold = (cold_to_save - p_cold) if cold_provided else ZERO
+    d_elect = (elect_to_save - p_elect) if elect_provided else ZERO
 
     residents_count = user.residents_count if user.residents_count is not None else 1
     total_room = room.total_room_residents if room.total_room_residents > 0 else 1
@@ -238,7 +293,7 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
 
     charge_flag = "ONE_TIME_CHARGE_BASELINE" if is_baseline else "ONE_TIME_CHARGE"
     if draft:
-        draft.hot_water, draft.cold_water, draft.electricity = data.hot_water, data.cold_water, data.electricity
+        draft.hot_water, draft.cold_water, draft.electricity = hot_to_save, cold_to_save, elect_to_save
         draft.anomaly_flags, draft.anomaly_score = charge_flag, 0
         for k, v in costs_for_model_fields(costs).items():
             setattr(draft, k, v)
@@ -246,14 +301,14 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
     else:
         db.add(MeterReading(
             user_id=user.id, room_id=room.id, period_id=active_period.id,
-            hot_water=data.hot_water, cold_water=data.cold_water, electricity=data.electricity,
+            hot_water=hot_to_save, cold_water=cold_to_save, electricity=elect_to_save,
             debt_209=ZERO, overpayment_209=ZERO, debt_205=ZERO, overpayment_205=ZERO,
             total_209=total_209, total_205=total_205, total_cost=total_209 + total_205,
             is_approved=True, anomaly_flags=charge_flag, anomaly_score=0,
             **costs_for_model_fields(costs)
         ))
 
-    room.last_hot_water, room.last_cold_water, room.last_electricity = data.hot_water, data.cold_water, data.electricity
+    room.last_hot_water, room.last_cold_water, room.last_electricity = hot_to_save, cold_to_save, elect_to_save
     db.add(room)
 
     if data.is_moving_out:

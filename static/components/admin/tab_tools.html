@@ -109,40 +109,65 @@
                                         </small>
                                     </div>
 
-                                    <div class="form-group mb-4">
-                                        <label style="display:flex; justify-content:space-between; font-size:14px;">
-                                            <span><span style="color:#dc2626;">🔥</span> Горячая вода (м³)</span>
-                                            <span style="color:var(--text-secondary);">Пред: <b id="manPrevHot">0.000</b></span>
-                                        </label>
-                                        <input type="text" inputmode="decimal" pattern="\d{1,5}\.\d{3}"
-                                               id="manHot" required placeholder="00000.000"
-                                               data-strict-format="5_3"
-                                               style="font-size: 18px; font-weight: bold; font-family: monospace; text-align: center; letter-spacing: 2px; color: var(--primary-color);">
+                                    <!-- Раздельная подача (см. admin_readings_manual.py).
+                                         Вода (ГВС+ХВС) — парой, электричество — независимо.
+                                         Выключенная группа: поля disabled, не отправляются. -->
+
+                                    <div class="manual-group" id="manGroupWater" data-group="water">
+                                        <div class="manual-group-head">
+                                            <label class="manual-group-toggle">
+                                                <input type="checkbox" id="manToggleWater" data-manual-toggle="water" checked>
+                                                <span><i class="fa-solid fa-droplet" style="color:#2563eb;"></i> Вода (ГВС + ХВС)</span>
+                                            </label>
+                                            <span class="manual-group-hint">подаются вместе</span>
+                                        </div>
+                                        <div class="manual-group-body">
+                                            <div class="form-group mb-3">
+                                                <label style="display:flex; justify-content:space-between; font-size:14px;">
+                                                    <span><span style="color:#dc2626;">🔥</span> Горячая вода (м³)</span>
+                                                    <span style="color:var(--text-secondary);">Пред: <b id="manPrevHot">0.000</b></span>
+                                                </label>
+                                                <input type="text" inputmode="decimal" pattern="\d{1,5}\.\d{3}"
+                                                       id="manHot" required placeholder="00000.000"
+                                                       data-strict-format="5_3"
+                                                       style="font-size: 18px; font-weight: bold; font-family: monospace; text-align: center; letter-spacing: 2px; color: var(--primary-color);">
+                                            </div>
+                                            <div class="form-group">
+                                                <label style="display:flex; justify-content:space-between; font-size:14px;">
+                                                    <span><span style="color:#2563eb;">💧</span> Холодная вода (м³)</span>
+                                                    <span style="color:var(--text-secondary);">Пред: <b id="manPrevCold">0.000</b></span>
+                                                </label>
+                                                <input type="text" inputmode="decimal" pattern="\d{1,5}\.\d{3}"
+                                                       id="manCold" required placeholder="00000.000"
+                                                       data-strict-format="5_3"
+                                                       style="font-size: 18px; font-weight: bold; font-family: monospace; text-align: center; letter-spacing: 2px; color: var(--primary-color);">
+                                            </div>
+                                        </div>
                                     </div>
 
-                                    <div class="form-group mb-4">
-                                        <label style="display:flex; justify-content:space-between; font-size:14px;">
-                                            <span><span style="color:#2563eb;">💧</span> Холодная вода (м³)</span>
-                                            <span style="color:var(--text-secondary);">Пред: <b id="manPrevCold">0.000</b></span>
-                                        </label>
-                                        <input type="text" inputmode="decimal" pattern="\d{1,5}\.\d{3}"
-                                               id="manCold" required placeholder="00000.000"
-                                               data-strict-format="5_3"
-                                               style="font-size: 18px; font-weight: bold; font-family: monospace; text-align: center; letter-spacing: 2px; color: var(--primary-color);">
+                                    <div class="manual-group" id="manGroupElect" data-group="electricity">
+                                        <div class="manual-group-head">
+                                            <label class="manual-group-toggle">
+                                                <input type="checkbox" id="manToggleElect" data-manual-toggle="electricity" checked>
+                                                <span><i class="fa-solid fa-bolt" style="color:#d97706;"></i> Электричество</span>
+                                            </label>
+                                            <span class="manual-group-hint">отдельно, по ситуации</span>
+                                        </div>
+                                        <div class="manual-group-body">
+                                            <div class="form-group">
+                                                <label style="display:flex; justify-content:space-between; font-size:14px;">
+                                                    <span><span style="color:#d97706;">⚡</span> Электричество (кВт⋅ч)</span>
+                                                    <span style="color:var(--text-secondary);">Пред: <b id="manPrevElect">0.000</b></span>
+                                                </label>
+                                                <input type="text" inputmode="decimal" pattern="\d{1,5}\.\d{3}"
+                                                       id="manElect" required placeholder="00000.000"
+                                                       data-strict-format="5_3"
+                                                       style="font-size: 18px; font-weight: bold; font-family: monospace; text-align: center; letter-spacing: 2px; color: var(--primary-color);">
+                                            </div>
+                                        </div>
                                     </div>
 
-                                    <div class="form-group mb-4">
-                                        <label style="display:flex; justify-content:space-between; font-size:14px;">
-                                            <span><span style="color:#d97706;">⚡</span> Электричество (кВт⋅ч)</span>
-                                            <span style="color:var(--text-secondary);">Пред: <b id="manPrevElect">0.000</b></span>
-                                        </label>
-                                        <input type="text" inputmode="decimal" pattern="\d{1,5}\.\d{3}"
-                                               id="manElect" required placeholder="00000.000"
-                                               data-strict-format="5_3"
-                                               style="font-size: 18px; font-weight: bold; font-family: monospace; text-align: center; letter-spacing: 2px; color: var(--primary-color);">
-                                    </div>
-
-                                    <button type="submit" class="action-btn success-btn full-width" id="btnSaveManual" style="padding: 12px; font-size: 15px;"><i class="fa-solid fa-floppy-disk"></i> Сохранить показания (Черновик)</button>
+                                    <button type="submit" class="action-btn success-btn full-width" id="btnSaveManual" style="padding: 12px; font-size: 15px; margin-top: 8px;"><i class="fa-solid fa-floppy-disk"></i> Сохранить показания (Черновик)</button>
                                 </form>
                             </div>
                         </div>

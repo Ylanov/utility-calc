@@ -327,9 +327,16 @@ class ApproveRequest(BaseModel):
 
 class AdminManualReadingSchema(BaseModel):
     user_id: int
-    hot_water: Decimal = Field(..., ge=0, le=99999, decimal_places=3)
-    cold_water: Decimal = Field(..., ge=0, le=99999, decimal_places=3)
-    electricity: Decimal = Field(..., ge=0, le=999999, decimal_places=3)
+    # Раздельная подача (запрос мая 2026): админ может прислать только воду,
+    # только электричество или всё вместе. Правило: ГВС+ХВС — оба или ни
+    # одного (вода подаётся парой). Электричество — независимо.
+    # Поля без значения трактуются как «не подавал» — в БД пишется
+    # предыдущее значение, дельта = 0, расход не начисляется.
+    # Валидация пары «вода-вместе» и «хоть что-то подано» — на сервере
+    # в save_manual_entry.
+    hot_water: Optional[Decimal] = Field(None, ge=0, le=99999, decimal_places=3)
+    cold_water: Optional[Decimal] = Field(None, ge=0, le=99999, decimal_places=3)
+    electricity: Optional[Decimal] = Field(None, ge=0, le=999999, decimal_places=3)
     is_moving_out: bool = False
     total_days_in_month: int = Field(30, ge=1, le=31)
     days_lived: int = Field(30, ge=0, le=31)
