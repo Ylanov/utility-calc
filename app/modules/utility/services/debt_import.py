@@ -569,20 +569,42 @@ def sync_import_debts_process(
             inserts_reading_ids = [r.id for r in inserts_dict.values()]
 
         if updates_dict:
-            updates_list = []
+            # ИСПРАВЛЕНИЕ (may 2026): раньше использовался
+            # db.bulk_update_mappings(MeterReading, updates_list). Но
+            # MeterReading партиционирована по created_at, и bulk_update
+            # тихо возвращает rowcount=0 даже при правильно переданном
+            # составном PK (id, created_at). Импорт писал «completed»,
+            # applied_state в логе показывал debt_205=10200, но в БД
+            # ничего не менялось.
+            #
+            # Сценарий бага (Лучка А.П., прод 2026-05-21):
+            #   1) 209 импорт → reading у Лучки не было → insert через
+            #      db.add_all → debt_209=21889 сохранилось ✓
+            #   2) 205 импорт → reading уже есть (создан в шаге 1) →
+            #      updates_dict → bulk_update_mappings → молча rowcount=0
+            #      → debt_205 в БД остался 0 ✗
+            #
+            # Now: explicit per-row update по id (SERIAL уникален без
+            # created_at — partition pruning теряется, но импорт делается
+            # 1-2 раза в месяц, скорость не критична). +rowcount log.
+            from sqlalchemy import update as _sa_update
+            total_affected = 0
             for r in updates_dict.values():
-                updates_list.append({
-                    # MeterReading PK составной (id + created_at) — оба обязательны
-                    # в bulk_update_mappings (legacy 1.x style тихо не обновляет
-                    # без полного PK, 2.0 style рейзит ошибку). См. models.py:289-290.
-                    "id": r.id,
-                    "created_at": r.created_at,
-                    "debt_209": r.debt_209,
-                    "overpayment_209": r.overpayment_209,
-                    "debt_205": r.debt_205,
-                    "overpayment_205": r.overpayment_205
-                })
-            db.bulk_update_mappings(MeterReading, updates_list)
+                res = db.execute(
+                    _sa_update(MeterReading)
+                    .where(MeterReading.id == r.id)
+                    .values(
+                        debt_209=r.debt_209,
+                        overpayment_209=r.overpayment_209,
+                        debt_205=r.debt_205,
+                        overpayment_205=r.overpayment_205,
+                    )
+                )
+                total_affected += res.rowcount or 0
+            logger.info(
+                "[DEBT-IMPORT] %s updated rows: requested=%d affected=%d (log_id=%d)",
+                account_type, len(updates_dict), total_affected, import_log.id,
+            )
 
         # 8. Финализируем DebtImportLog в той же транзакции.
         # Dedup по ФИО — set() на dict не работает, поэтому через {fio: dict}.
