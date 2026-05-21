@@ -1120,25 +1120,41 @@ async def debts_check_resident_coverage(
                 continue
             wb = _opx.load_workbook(filename=log.archive_path, read_only=True, data_only=True)
             ws = wb.active
-            # ФИО обычно в столбце B (col_idx=1). Сальдо в нескольких столбцах.
-            # Просто ищем строки где есть ФИО содержащее фамилию.
+            # ФИО в ОСВ 1С может быть в любой строковой колонке (зависит
+            # от шаблона выгрузки). Ищем substring фамилии во ВСЕХ
+            # колонках строки.
             for row_idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
-                if not row or len(row) < 2:
+                if not row:
                     continue
-                fio_cell = row[1] if len(row) > 1 else None
+                # Ищем колонку с ФИО (substring "фамилия" в строковом значении).
+                fio_cell = None
+                fio_col_idx = None
+                for col_idx, cell_val in enumerate(row):
+                    if cell_val is None or not isinstance(cell_val, str):
+                        continue
+                    cell_norm = _norm(cell_val)
+                    if not cell_norm or not surname:
+                        continue
+                    if surname not in cell_norm:
+                        continue
+                    # Sanity: ячейка должна выглядеть как ФИО (несколько слов
+                    # с заглавных букв), а не как «Договор...» или «Сальдо...».
+                    # Фильтруем явные ключевые слова ОСВ.
+                    if any(kw in cell_norm for kw in [
+                        "договор", "сальдо", "оборот", "итого", "период",
+                        "квартир", "общежит", "счёт", "счет", "помещен",
+                    ]):
+                        continue
+                    fio_cell = cell_val
+                    fio_col_idx = col_idx
+                    break
                 if fio_cell is None:
                     continue
                 fio_cell_norm = _norm(str(fio_cell))
-                if not fio_cell_norm or not surname:
-                    continue
-                # Substring-матч по фамилии. Дополнительный sanity: если в
-                # ФИО из БД есть имя/отчество — должно совпадать хотя бы
-                # одно слово после фамилии.
-                if surname not in fio_cell_norm:
-                    continue
-                # Собираем числовые значения по всей строке для preview.
+                # Собираем числовые значения из строки (после колонки ФИО),
+                # чтобы показать сальдо.
                 numeric_cols = []
-                for col_val in row[2:]:
+                for col_val in row[fio_col_idx + 1:]:
                     if col_val is None or col_val == "":
                         continue
                     try:
@@ -1150,6 +1166,7 @@ async def debts_check_resident_coverage(
                 exact = fio_cell_norm == fio_db_norm
                 item["matches"].append({
                     "row_excel": row_idx,
+                    "col_excel": fio_col_idx + 1,  # 1-based для удобства админа
                     "fio_in_excel": str(fio_cell).strip(),
                     "exact_match": exact,
                     "numeric_values": numeric_cols[:6],
