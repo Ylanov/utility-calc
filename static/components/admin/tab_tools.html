@@ -865,6 +865,9 @@
                             <button type="button" data-analyzer-tab="stuck" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
                                 <i class="fa-solid fa-bug"></i> Заблокированные
                             </button>
+                            <button type="button" data-analyzer-tab="mismatches" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
+                                <i class="fa-solid fa-clock-rotate-left"></i> Подмены GSheets
+                            </button>
                             <button type="button" data-analyzer-tab="maintenance" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
                                 <i class="fa-solid fa-broom"></i> Обслуживание
                             </button>
@@ -1023,6 +1026,36 @@
                             </div>
                             <div id="stuckDraftsContainer">
                                 <p style="color:var(--text-secondary); font-size:13px;">Нажмите «Загрузить список» — увидите всех жильцов чьи показания заблокированы санитарной проверкой.</p>
+                            </div>
+                        </div>
+
+                        <!-- ==================== ТАБ MISMATCHES: подмены GSheets ==================== -->
+                        <div data-analyzer-pane="mismatches" style="display:none;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap;">
+                                <p class="hint-text" style="margin:0; font-size:13px;">
+                                    Находит reading'и созданные импортом из Google Sheets где timestamp строки
+                                    (когда жилец подал) <b>далеко</b> от периода reading'а. Симптом: «строка 2023 года»
+                                    залетела как «апрель 2026» из-за того что promote промахнулся со старыми
+                                    необработанными записями. Удалив reading жилец сможет переподать в правильном периоде.
+                                </p>
+                                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                                    <label style="font-size:12px; color:var(--text-secondary);">
+                                        Порог (мес.):
+                                        <select id="mismatchThreshold" style="padding:4px 8px; font-size:12px;">
+                                            <option value="1">≥ 1</option>
+                                            <option value="2" selected>≥ 2</option>
+                                            <option value="3">≥ 3</option>
+                                            <option value="6">≥ 6</option>
+                                            <option value="12">≥ 12</option>
+                                        </select>
+                                    </label>
+                                    <button id="btnLoadMismatches" class="action-btn warning-btn" style="padding:6px 14px; font-size:13px;">
+                                        <i class="fa-solid fa-magnifying-glass-chart"></i> Найти
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="mismatchesContainer">
+                                <p style="color:var(--text-secondary); font-size:13px;">Нажмите «Найти» — увидите reading'и с несоответствием sheet-timestamp и периода.</p>
                             </div>
                         </div>
 

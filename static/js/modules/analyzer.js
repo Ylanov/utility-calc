@@ -105,6 +105,11 @@ export const AnalyzerModule = {
             // Таб «Заблокированные показания»
             btnLoadStuck:    document.getElementById('btnLoadStuck'),
             stuckContainer:  document.getElementById('stuckDraftsContainer'),
+
+            // Таб «Подмены GSheets» (historical mismatches)
+            btnLoadMismatches: document.getElementById('btnLoadMismatches'),
+            mismatchThreshold: document.getElementById('mismatchThreshold'),
+            mismatchesContainer: document.getElementById('mismatchesContainer'),
         };
     },
 
@@ -166,6 +171,27 @@ export const AnalyzerModule = {
 
         // Таб «Сверка 1С»
         this.dom.btnReconcileRun?.addEventListener('click', () => this.runReconcile());
+
+        // Таб «Подмены GSheets»
+        this.dom.btnLoadMismatches?.addEventListener('click', () => this.loadMismatches());
+        this.dom.mismatchesContainer?.addEventListener('click', (e) => {
+            const delBtn = e.target.closest('button[data-mismatch-delete]');
+            if (delBtn) {
+                e.preventDefault();
+                this.deleteMismatchReading(Number(delBtn.dataset.mismatchDelete));
+                return;
+            }
+            const detailBtn = e.target.closest('button[data-mismatch-detail]');
+            if (detailBtn) {
+                e.preventDefault();
+                const rid = Number(detailBtn.dataset.mismatchDetail);
+                try {
+                    SummaryModule.openExplainModal(rid);
+                } catch (err) {
+                    toast('Не удалось открыть модал: ' + err.message, 'error');
+                }
+            }
+        });
 
         // Таб «Заблокированные показания»
         this.dom.btnLoadStuck?.addEventListener('click', () => this.loadStuckDrafts());
@@ -1395,6 +1421,113 @@ export const AnalyzerModule = {
             this.loadStuckDrafts();
         } catch (e) {
             toast('Ошибка удаления: ' + e.message, 'error');
+        }
+    },
+
+    // ============================================================
+    // ПОДМЕНЫ GSHEETS (sheet_timestamp вдалеке от reading.period)
+    // ============================================================
+    async loadMismatches() {
+        if (!this.dom.mismatchesContainer) return;
+        const threshold = Number(this.dom.mismatchThreshold?.value || 2);
+        this.dom.mismatchesContainer.innerHTML =
+            '<p style="color:var(--text-secondary); padding:20px;">Загружаем…</p>';
+        try {
+            const data = await api.get(
+                `/admin/gsheets/historical-mismatches?months_threshold=${threshold}&limit=300`
+            );
+            this._renderMismatches(data);
+        } catch (e) {
+            this.dom.mismatchesContainer.innerHTML =
+                `<p style="color:var(--danger-color);">Ошибка: ${escapeHtml(e.message)}</p>`;
+        }
+    },
+
+    _renderMismatches(data) {
+        const items = data.items || [];
+        if (items.length === 0) {
+            this.dom.mismatchesContainer.innerHTML = `
+                <div style="text-align:center; padding:30px; color:var(--success-color);">
+                    <i class="fa-solid fa-check-circle" style="font-size:24px;"></i>
+                    <div style="margin-top:8px; font-weight:600;">Подмен не найдено</div>
+                    <div style="margin-top:4px; font-size:12px; color:var(--text-secondary);">
+                        Все reading'и из GSheets имеют timestamp в пределах ${data.threshold_months} мес. от своего периода.
+                    </div>
+                </div>`;
+            return;
+        }
+        const rows = items.map(it => {
+            const addr = it.dormitory_name
+                ? `${escapeHtml(it.dormitory_name)}/${escapeHtml(String(it.room_number || ''))}`
+                : '—';
+            const ts = new Date(it.sheet_timestamp).toLocaleDateString('ru-RU', {
+                day: '2-digit', month: '2-digit', year: 'numeric',
+            });
+            return `
+                <tr style="border-bottom:1px solid var(--border-color);">
+                    <td style="padding:10px 12px;">
+                        <div style="font-weight:600;">${escapeHtml(it.full_name || it.username || '—')}</div>
+                        <div style="font-size:11px; color:var(--text-secondary);">${escapeHtml(it.username || '')} · ${addr}</div>
+                    </td>
+                    <td style="padding:10px 12px; font-size:12px;">
+                        <div style="color:var(--danger-color);"><b>GSheets:</b> ${escapeHtml(ts)}</div>
+                        <div style="color:var(--text-secondary);"><b>В БД:</b> ${escapeHtml(it.reading_period_name || '—')}</div>
+                    </td>
+                    <td style="padding:10px 12px; text-align:center;">
+                        <span style="font-weight:700; color:var(--danger-color);">~${it.delta_months_approx}</span>
+                        <div style="font-size:11px; color:var(--text-tertiary);">мес. разница</div>
+                    </td>
+                    <td style="padding:10px 12px; text-align:right; font-family:monospace; font-size:12px;">
+                        <div>${Number(it.hot_water).toFixed(2)} / ${Number(it.cold_water).toFixed(2)}</div>
+                        <div style="color:var(--text-tertiary);">${Number(it.reading_total_cost).toLocaleString('ru-RU', {minimumFractionDigits:2, maximumFractionDigits:2})} ₽</div>
+                    </td>
+                    <td style="padding:10px 12px; text-align:right; white-space:nowrap;">
+                        <button class="action-btn secondary-btn" data-mismatch-detail="${it.reading_id}"
+                                style="padding:5px 10px; font-size:12px;" title="Открыть «Проверка расчёта»">
+                            <i class="fa-solid fa-magnifying-glass"></i>
+                        </button>
+                        <button class="action-btn danger-btn" data-mismatch-delete="${it.reading_id}"
+                                style="padding:5px 10px; font-size:12px;" title="Удалить reading">
+                            <i class="fa-regular fa-trash-can"></i>
+                        </button>
+                    </td>
+                </tr>`;
+        }).join('');
+
+        this.dom.mismatchesContainer.innerHTML = `
+            <div style="overflow-x:auto; border:1px solid var(--border-color); border-radius:8px;">
+                <table style="width:100%; min-width:720px;">
+                    <thead>
+                        <tr style="background:var(--bg-page);">
+                            <th style="text-align:left; padding:10px 12px;">Жилец / адрес</th>
+                            <th style="text-align:left; padding:10px 12px;">Даты</th>
+                            <th style="text-align:center; padding:10px 12px;">Δ</th>
+                            <th style="text-align:right; padding:10px 12px;">ГВС/ХВС<br><span style="font-weight:400; color:var(--text-tertiary); font-size:11px;">Итог</span></th>
+                            <th style="text-align:right; padding:10px 12px;">Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+            <p class="hint-text" style="margin-top:10px; font-size:12px;">
+                Всего: <b>${items.length}</b> · порог <b>≥ ${data.threshold_months} мес.</b>
+                Корзина — удалить reading (жилец сможет переподать в правильном периоде).
+            </p>`;
+    },
+
+    async deleteMismatchReading(readingId) {
+        if (!readingId) return;
+        if (!window.confirm(
+            'Удалить этот reading? Связанная gsheets-строка снова станет необработанной — ' +
+            'если у неё свежий timestamp, она автоматически попадёт в правильный период при ' +
+            'следующем sync. Если старая — отклоните вручную через раздел GSheets.'
+        )) return;
+        try {
+            await api.delete(`/admin/readings/${readingId}`);
+            toast('Reading удалён', 'success');
+            this.loadMismatches();
+        } catch (e) {
+            toast('Ошибка: ' + e.message, 'error');
         }
     },
 

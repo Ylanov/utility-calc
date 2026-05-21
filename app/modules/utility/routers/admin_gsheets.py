@@ -1730,3 +1730,117 @@ async def delete_row(
     await db.delete(row)
     await db.commit()
     return {"status": "ok"}
+
+
+# =========================================================================
+# HISTORICAL MISMATCHES — диагностика «исторические подмены»
+#
+# Симптом (инцидент may 2026 «Пегарьков А.В.»): в Google Sheets есть
+# строка от 22.03.2023 с показаниями 50/104. В админке у Пегарькова
+# апрель 2026 = 50/104 (GSHEETS_AUTO). Reading создан из 2023-строки,
+# но в активном периоде 2026 → дельта мая считается от 50 → +111 кубов
+# → счёт 73 699 ₽.
+#
+# Причина: promote_auto_approved_rows раньше не фильтровал sheet_timestamp,
+# подхватывал старые «застрявшие» строки. Фикс в gsheets_sync.py делает
+# это для НОВЫХ promote, но УЖЕ СОЗДАННЫЕ кривые reading'и админ должен
+# разобрать через эту страницу.
+# =========================================================================
+@router.get("/historical-mismatches")
+async def list_historical_mismatches(
+    months_threshold: int = Query(2, ge=1, le=24,
+        description="Разница в МЕСЯЦАХ между sheet_timestamp и началом периода reading'а"),
+    limit: int = Query(200, ge=1, le=1000),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Список reading'ов где связанная gsheets-row имеет sheet_timestamp
+    далеко (>=months_threshold месяцев) от начала периода reading'а.
+
+    Это надёжный признак «строку 2023 года импортнули как апрель 2026».
+    Сравнение по period.name (формат «Январь 2026»), а не по period.id —
+    надёжнее при переименованиях.
+    """
+    require_admin(current_user)
+
+    # Подгружаем строки GSheets со связанным reading и его period.
+    # Фильтруем только processed/auto_approved/approved — pending/conflict
+    # ещё не создали reading.
+    stmt = (
+        select(GSheetsImportRow, MeterReading, BillingPeriod)
+        .join(MeterReading, GSheetsImportRow.reading_id == MeterReading.id)
+        .join(BillingPeriod, MeterReading.period_id == BillingPeriod.id)
+        .options(
+            selectinload(GSheetsImportRow.matched_user).selectinload(User.room),
+        )
+        .where(
+            GSheetsImportRow.reading_id.is_not(None),
+            GSheetsImportRow.sheet_timestamp.is_not(None),
+            GSheetsImportRow.status.in_(["approved", "auto_approved"]),
+        )
+        .limit(2000)  # читаем с запасом, фильтруем в Python
+    )
+    rows = (await db.execute(stmt)).all()
+
+    # Период парсим из period.name «Январь 2026» → (year=2026, month=1).
+    # Чтобы получить «начало периода». Это даёт стабильное сравнение даже
+    # если у периода нет start_date/end_date столбцов.
+    _months_ru = {
+        "январь": 1, "февраль": 2, "март": 3, "апрель": 4, "май": 5, "июнь": 6,
+        "июль": 7, "август": 8, "сентябрь": 9, "октябрь": 10, "ноябрь": 11, "декабрь": 12,
+    }
+    def _period_start(name: str):
+        if not name:
+            return None
+        parts = name.strip().lower().split()
+        if len(parts) != 2:
+            return None
+        mname, year_s = parts
+        m = _months_ru.get(mname)
+        if not m:
+            return None
+        try:
+            return datetime(int(year_s), m, 1)
+        except (ValueError, TypeError):
+            return None
+
+    items = []
+    for sheet_row, reading, period in rows:
+        period_start = _period_start(period.name)
+        if not period_start:
+            continue
+        # Разница в месяцах (приблизительно — 30 дней/мес).
+        delta_days = abs((sheet_row.sheet_timestamp - period_start).days)
+        delta_months = delta_days // 30
+        if delta_months < months_threshold:
+            continue
+
+        user = sheet_row.matched_user
+        room = user.room if user else None
+        items.append({
+            "row_id": sheet_row.id,
+            "reading_id": reading.id,
+            "user_id": user.id if user else None,
+            "username": user.username if user else sheet_row.raw_fio,
+            "full_name": getattr(user, "full_name", None) if user else None,
+            "dormitory_name": room.dormitory_name if room else sheet_row.raw_dormitory,
+            "room_number": room.room_number if room else sheet_row.raw_room_number,
+            "sheet_timestamp": sheet_row.sheet_timestamp.isoformat(),
+            "reading_period_name": period.name,
+            "reading_period_id": period.id,
+            "delta_months_approx": delta_months,
+            "hot_water": float(sheet_row.hot_water or 0),
+            "cold_water": float(sheet_row.cold_water or 0),
+            "reading_is_approved": bool(reading.is_approved),
+            "reading_total_cost": float(reading.total_cost or 0),
+        })
+
+    # Сортируем: сначала с самой большой дельтой (самые «старые подделки»).
+    items.sort(key=lambda x: -x["delta_months_approx"])
+    items = items[:limit]
+
+    return {
+        "threshold_months": months_threshold,
+        "count": len(items),
+        "items": items,
+    }

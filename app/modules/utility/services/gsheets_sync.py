@@ -770,13 +770,55 @@ def promote_auto_approved_rows(db: Session) -> dict:
 
     active_period = _ensure_active_period(db)
 
+    # КРИТИЧНО (фикс инцидента may 2026 — «Пегарьков А.В.»):
+    # Promote НЕ фильтровал по sheet_timestamp. Строки от 2023 года, давно
+    # лежавшие в gsheets_import_rows как auto_approved + reading_id=NULL
+    # (так бывает после рестартов, миграций, отключенного бота), при
+    # очередном запуске promote создавали MeterReading в АКТИВНОМ периоде
+    # с values из 2023. Затем следующий месяц считал дельту от этих
+    # значений → счёт +73 699 ₽ за «выросший на 111 кубов» расход.
+    #
+    # Now: пропускаем строки старше gsheets.max_age_days (дефолт 90).
+    # Это тот же порог что используется в sync для новых строк. Старые
+    # «застрявшие» строки помечаем как rejected отдельным механизмом —
+    # здесь только filter, чтобы они не превращались в фейковые reading'и.
+    from datetime import timedelta as _td2
+    from sqlalchemy import or_ as _or
+    cutoff = utcnow() - _td2(days=_max_age_days())
+
     rows = db.query(GSheetsImportRow).filter(
         GSheetsImportRow.status == "auto_approved",
         GSheetsImportRow.reading_id.is_(None),
         GSheetsImportRow.matched_user_id.is_not(None),
         GSheetsImportRow.hot_water.is_not(None),
         GSheetsImportRow.cold_water.is_not(None),
+        # Только относительно свежие подачи. NULL-timestamp допускаем
+        # (legacy-данные до введения parse_timestamp), но логируем —
+        # сейчас будет видно сколько таких в WARNING'е ниже.
+        _or(
+            GSheetsImportRow.sheet_timestamp.is_(None),
+            GSheetsImportRow.sheet_timestamp >= cutoff,
+        ),
     ).all()
+
+    # Disgnостика: сколько promote'нутых строк имели NULL timestamp и
+    # сколько было «слишком старых» — для отслеживания на проде.
+    stale_count = db.query(GSheetsImportRow).filter(
+        GSheetsImportRow.status == "auto_approved",
+        GSheetsImportRow.reading_id.is_(None),
+        GSheetsImportRow.matched_user_id.is_not(None),
+        GSheetsImportRow.hot_water.is_not(None),
+        GSheetsImportRow.cold_water.is_not(None),
+        GSheetsImportRow.sheet_timestamp.is_not(None),
+        GSheetsImportRow.sheet_timestamp < cutoff,
+    ).count()
+    if stale_count > 0:
+        logger.warning(
+            "[GSHEETS-PROMOTE] %d auto_approved rows SKIPPED as too old "
+            "(sheet_timestamp < cutoff=%s). Admin should review and reject "
+            "them — иначе они навсегда останутся в auto_approved без reading.",
+            stale_count, cutoff.isoformat(),
+        )
 
     if not rows:
         # Раньше тут не было period_name в payload — caller-скрипты ловили
