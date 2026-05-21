@@ -176,6 +176,12 @@ export const AnalyzerModule = {
                 this.deleteStuckReading(Number(delBtn.dataset.stuckDelete));
                 return;
             }
+            const apprBtn = e.target.closest('button[data-stuck-approve]');
+            if (apprBtn) {
+                e.preventDefault();
+                this.approveStuckReading(Number(apprBtn.dataset.stuckApprove));
+                return;
+            }
             const detailBtn = e.target.closest('button[data-stuck-detail]');
             if (detailBtn) {
                 e.preventDefault();
@@ -1343,6 +1349,10 @@ export const AnalyzerModule = {
                                 style="padding:5px 10px; font-size:12px;" title="Открыть «Проверка расчёта»">
                             <i class="fa-solid fa-magnifying-glass"></i>
                         </button>
+                        <button class="action-btn success-btn" data-stuck-approve="${it.reading_id}"
+                                style="padding:5px 10px; font-size:12px;" title="Утвердить — пересчитать с актуальной формулой и принять">
+                            <i class="fa-solid fa-check"></i>
+                        </button>
                         <button class="action-btn danger-btn" data-stuck-delete="${it.reading_id}"
                                 style="padding:5px 10px; font-size:12px;" title="Удалить запись">
                             <i class="fa-regular fa-trash-can"></i>
@@ -1385,6 +1395,40 @@ export const AnalyzerModule = {
             this.loadStuckDrafts();
         } catch (e) {
             toast('Ошибка удаления: ' + e.message, 'error');
+        }
+    },
+
+    /** Утвердить заблокированный черновик — approve_single пересчитает
+     *  cost_* через текущую формулу (с фильтрацией synth-prev — см.
+     *  is_meaningful_prev), снимет DATA_OVERFLOW_RESET флаг, поставит
+     *  is_approved=True. После этого reading становится «реальным
+     *  предыдущим» для следующего периода — баг с delta +1468 кубов
+     *  исчезает (см. Капранов май 2026). */
+    async approveStuckReading(readingId) {
+        if (!readingId) return;
+        const confirmed = window.confirm(
+            'Утвердить эту запись? Система пересчитает стоимость по текущей формуле ' +
+            'с актуальным тарифом и текущим «предыдущим» (с пропуском AUTO_GENERATED / ' +
+            'DATA_OVERFLOW_RESET). Если итог получится разумным (≤ 100 000 ₽) — запись ' +
+            'станет утверждённой и появится в истории жильца как «реальное предыдущее» ' +
+            'для следующего периода.'
+        );
+        if (!confirmed) return;
+        try {
+            // approve_single требует correction_data (ApproveRequest) — передаём нули.
+            // Все коррекции = 0 → используется raw delta.
+            await api.post(`/admin/approve/${readingId}`, {
+                hot_correction: 0,
+                cold_correction: 0,
+                electricity_correction: 0,
+                sewage_correction: 0,
+            });
+            toast('Запись утверждена. Рекомендую запустить «Перерасчёт периода» для следующего месяца — там delta станет нормальной.', 'success');
+            this.loadStuckDrafts();
+        } catch (e) {
+            // Sanity check может отказать если итог > 100k — в этом случае
+            // approve_single бросает 400 с понятным сообщением.
+            toast('Не удалось утвердить: ' + e.message, 'error');
         }
     },
 };

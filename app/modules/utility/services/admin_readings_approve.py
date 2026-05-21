@@ -426,6 +426,13 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
     if is_baseline:
         reading.anomaly_flags = "BASELINE"
         reading.anomaly_score = 0
+    elif reading.anomaly_flags and "DATA_OVERFLOW_RESET" in reading.anomaly_flags:
+        # Админ утверждает ранее заблокированный черновик (через UI «Заблокированные
+        # показания»). Снимаем DATA_OVERFLOW_RESET и ставим маркер что админ
+        # одобрил вручную — следующая bell-сводка не увидит этот reading как
+        # требующий внимания. anomaly_score обнуляем — это уже не аномалия.
+        reading.anomaly_flags = "ADMIN_APPROVED_OVERFLOW"
+        reading.anomaly_score = 0
 
     room.last_hot_water = reading.hot_water
     room.last_cold_water = reading.cold_water

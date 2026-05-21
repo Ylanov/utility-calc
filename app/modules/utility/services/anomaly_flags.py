@@ -35,6 +35,7 @@ SOURCE_MARKERS: frozenset[str] = frozenset({
     "AUTO_GENERATED",
     "INITIAL_SETUP",
     "DATA_OVERFLOW_RESET",
+    "ADMIN_APPROVED_OVERFLOW",  # админ утвердил ранее заблокированный
     "ONE_TIME_CHARGE",
     "ONE_TIME_CHARGE_BASELINE",
     "PENDING",
