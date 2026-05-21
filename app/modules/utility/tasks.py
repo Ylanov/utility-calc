@@ -957,13 +957,23 @@ def _recalc_compute_one(db_session, reading, user, room, prev_reading, tariffs_b
     total_209 = cost_209 + (reading.debt_209 or Decimal("0")) - (reading.overpayment_209 or Decimal("0"))
     total_205 = cost_205 + (reading.debt_205 or Decimal("0")) - (reading.overpayment_205 or Decimal("0"))
 
+    # Whitelist полей которые реально есть в MeterReading. calculate_utilities
+    # возвращает helper-поля типа sanity_warning (для UI), которые нельзя
+    # передавать в update().values() — SQLAlchemy ругается Unconsumed column.
+    # Раньше bulk_update_mappings молча игнорировал лишние ключи — после
+    # перехода на explicit update() пришлось делать whitelist явно.
+    _COST_KEYS = (
+        "cost_hot_water", "cost_cold_water", "cost_sewage", "cost_electricity",
+        "cost_maintenance", "cost_social_rent", "cost_waste", "cost_fixed_part",
+    )
     new_fields = {
         "total_209": total_209,
         "total_205": total_205,
         "total_cost": total_209 + total_205,
     }
-    for k, v in costs.items():
-        new_fields[k] = v
+    for k in _COST_KEYS:
+        if k in costs:
+            new_fields[k] = costs[k]
     return new_fields
 
 
