@@ -92,7 +92,11 @@ td { text-align: right; }
     <td class="col-left">Электроэнергия</td><td>кВт⋅ч</td><td>{{ vol_elect|round(2) }}</td><td>{{ tariff.electricity_rate }}</td><td>{{ reading.cost_electricity|round(2) }}</td>
 </tr>
 <tr>
+    {% if tariff.electricity_per_sqm and tariff.electricity_per_sqm > 0 %}
     <td class="col-left">Отопление + ОДН</td><td>м²</td><td>{{ room.apartment_area }}</td><td>{{ (tariff.heating + tariff.electricity_per_sqm)|round(4) }}</td><td>{{ (reading.cost_fixed_part or 0)|round(2) }}</td>
+    {% else %}
+    <td class="col-left">Отопление</td><td>м²</td><td>{{ room.apartment_area }}</td><td>{{ tariff.heating|round(4) }}</td><td>{{ (reading.cost_fixed_part or 0)|round(2) }}</td>
+    {% endif %}
 </tr>
 <tr>
     <td class="col-left">Вывоз ТКО</td><td>м²</td><td>{{ room.apartment_area }}</td><td>{{ tariff.waste_disposal }}</td><td>{{ reading.cost_waste|round(2) }}</td>

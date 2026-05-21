@@ -16,7 +16,8 @@ export const TariffsModule = {
         water_supply: 't_w_sup',
         sewage: 't_sew',
         electricity_rate: 't_el_rate',
-        electricity_per_sqm: 't_el_sqm',
+        // electricity_per_sqm (ОДН) убран из формулы в мае 2026.
+        // Поле в БД оставлено nullable; в форме его больше нет.
         // Сумма за «койко-место» (для холостяков, billing_mode='per_capita').
         // 0 = тариф для одиночек не применяется.
         per_capita_amount: 't_per_capita',
