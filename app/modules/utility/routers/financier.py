@@ -1342,6 +1342,7 @@ async def debts_check_resident_coverage(
 )
 async def debts_parser_diagnose(
     log_id: int,
+    fio_search: Optional[str] = None,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -1456,15 +1457,20 @@ async def debts_parser_diagnose(
             chosen["overpay_col_last"] = np_list[3]
         chosen["strategy"] = "0_account_total_row"
 
-    # Sample 3 жильцов: для каждого извлекаем debt/over через pick_saldo_pair.
+    # Sample жильцов: для каждого извлекаем debt/over через pick_saldo_pair.
+    # Если fio_search задан — ищем только этого жильца (substring match).
+    # Иначе — первые 3 жильца как preview.
     samples = []
+    search_norm = (fio_search or "").strip().lower()
     if chosen["debt_col_last"] is not None and chosen["overpay_col_last"] is not None:
         count = 0
-        for row in ws.iter_rows(min_row=10, max_row=200, values_only=True):
-            if count >= 3 or not row:
+        max_count = 50 if search_norm else 3
+        for row in ws.iter_rows(min_row=10, max_row=2000, values_only=True):
+            if count >= max_count or not row:
                 continue
             # Ищем ФИО в первых 5 колонках
             fio = None
+            fio_col = None
             for col_idx in range(min(5, len(row))):
                 cell = row[col_idx]
                 if not isinstance(cell, str):
@@ -1476,8 +1482,12 @@ async def debts_parser_diagnose(
                     if any(kw in s_low for kw in ["договор", "сальдо", "оборот", "итого", "контрагент", "счёт", "счет", "помещен", "период"]):
                         continue
                     fio = s
+                    fio_col = col_idx
                     break
             if not fio:
+                continue
+            # Если задан поиск — фильтруем по substring.
+            if search_norm and search_norm not in fio.lower():
                 continue
             try:
                 debt, over = pick_saldo_pair(
@@ -1489,15 +1499,99 @@ async def debts_parser_diagnose(
                 )
             except Exception:
                 debt, over = 0, 0
-            samples.append({
+
+            # Raw values в каждой ключевой колонке — для понимания структуры.
+            def _raw(col):
+                if col is None or col >= len(row):
+                    return None
+                v = row[col]
+                if v is None or v == "":
+                    return None
+                if isinstance(v, (int, float)):
+                    return float(v)
+                try:
+                    return float(clean_decimal(v))
+                except Exception:
+                    return str(v)
+
+            sample = {
                 "fio": fio,
-                "debt": float(debt),
-                "overpayment": float(over),
-                "raw_row_values_after_label": [
-                    {"col": c, "value": float(row[c]) if isinstance(row[c], (int, float)) else str(row[c])}
-                    for c in chosen["numeric_positions"] if "numeric_positions" in chosen
-                ] if False else None,
-            })
+                "fio_col": fio_col,
+                "debt_extracted": float(debt),
+                "overpayment_extracted": float(over),
+                "raw_values": {
+                    f"col{chosen['debt_col_first']}_start_debit": _raw(chosen["debt_col_first"]),
+                    f"col{chosen['overpay_col_first']}_start_credit": _raw(chosen["overpay_col_first"]),
+                    f"col{chosen['debt_col_last']}_end_debit": _raw(chosen["debt_col_last"]),
+                    f"col{chosen['overpay_col_last']}_end_credit": _raw(chosen["overpay_col_last"]),
+                },
+            }
+
+            # Если поиск конкретного жильца — добавляем сравнение с БД.
+            if search_norm:
+                # Ищем жильца в БД через нормализацию.
+                from app.modules.utility.services.debt_import import normalize_name
+                from rapidfuzz import process, fuzz
+                norm = normalize_name(fio)
+                # Загружаем кэш жильцов.
+                users_all = (await db.execute(
+                    select(User).where(User.is_deleted.is_(False))
+                )).scalars().all()
+                user_map = {normalize_name(u.username): u for u in users_all}
+                matched_user = user_map.get(norm)
+                fuzzy_match_info = None
+                if not matched_user:
+                    # Fuzzy
+                    match = process.extractOne(
+                        norm, list(user_map.keys()),
+                        scorer=fuzz.token_sort_ratio,
+                    )
+                    if match:
+                        best_key, score, _ = match
+                        if score >= 80:
+                            matched_user = user_map[best_key]
+                            fuzzy_match_info = {"key": best_key, "score": score}
+                        else:
+                            fuzzy_match_info = {"key": best_key, "score": score, "too_low": True}
+
+                sample["db_lookup"] = None
+                if matched_user:
+                    # Загружаем текущие debt/over из активного period.
+                    active_period = (await db.execute(
+                        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
+                    )).scalars().first()
+                    db_reading = None
+                    if active_period:
+                        db_reading = (await db.execute(
+                            select(MeterReading).where(
+                                MeterReading.user_id == matched_user.id,
+                                MeterReading.period_id == active_period.id,
+                            ).limit(1)
+                        )).scalars().first()
+                    is_account_209 = log.account_type == "209"
+                    sample["db_lookup"] = {
+                        "matched_user_id": matched_user.id,
+                        "matched_username": matched_user.username,
+                        "matched_full_name": matched_user.full_name,
+                        "fuzzy": fuzzy_match_info,
+                        "db_debt": float(db_reading.debt_209 if is_account_209 else db_reading.debt_205) if db_reading else None,
+                        "db_overpayment": float(db_reading.overpayment_209 if is_account_209 else db_reading.overpayment_205) if db_reading else None,
+                        "expected_debt": float(debt),
+                        "expected_overpayment": float(over),
+                        "mismatch": (db_reading is None) or (
+                            abs(float(debt) - float(db_reading.debt_209 if is_account_209 else db_reading.debt_205 or 0)) > 0.01
+                        ),
+                    }
+                else:
+                    sample["db_lookup"] = {
+                        "matched_user_id": None,
+                        "fuzzy": fuzzy_match_info,
+                        "expected_debt": float(debt),
+                        "expected_overpayment": float(over),
+                        "mismatch": True,
+                        "reason": "user_not_found_in_db",
+                    }
+            samples.append(sample)
             count += 1
 
     ws.parent.close()

@@ -854,12 +854,21 @@ export const DebtsModule = {
         const overlay = document.createElement('div');
         overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
         overlay.innerHTML = `
-            <div style="background:#fff; border-radius:8px; width:min(820px, 100%); max-height:90vh; display:flex; flex-direction:column;">
+            <div style="background:#fff; border-radius:8px; width:min(900px, 100%); max-height:90vh; display:flex; flex-direction:column;">
                 <div style="display:flex; justify-content:space-between; align-items:center; padding:14px 18px; border-bottom:1px solid var(--border-color);">
                     <h3 style="margin:0; font-size:15px;">
                         🔬 Диагностика парсера №${logId}
                     </h3>
                     <button data-close-diagnose style="background:none; border:none; font-size:20px; color:#6b7280; cursor:pointer;">×</button>
+                </div>
+                <div style="padding:10px 18px; border-bottom:1px solid var(--border-color); display:flex; gap:8px; align-items:center;">
+                    <label style="font-size:12px; color:var(--text-secondary);">Поиск жильца:</label>
+                    <input type="text" id="diagnoseFioSearch"
+                           placeholder="Бендас / Миронов / любая часть ФИО"
+                           style="flex:1; padding:5px 8px; font-size:12px; border:1px solid var(--border-color); border-radius:4px;">
+                    <button id="diagnoseSearchBtn" class="action-btn primary-btn" style="padding:5px 10px; font-size:12px;">
+                        <i class="fa-solid fa-search"></i> Найти
+                    </button>
                 </div>
                 <div style="padding:16px 18px; overflow-y:auto; flex:1;" id="diagnoseContent">
                     <p style="color:var(--text-secondary); font-size:13px;">
@@ -873,11 +882,41 @@ export const DebtsModule = {
             if (e.target === overlay || e.target.closest('[data-close-diagnose]')) close();
         });
 
+        // Кнопка поиска ФИО + Enter
+        const searchInput = overlay.querySelector('#diagnoseFioSearch');
+        const searchBtn = overlay.querySelector('#diagnoseSearchBtn');
+        const reloadWithSearch = async () => {
+            const fio = searchInput?.value?.trim() || '';
+            const cont = overlay.querySelector('#diagnoseContent');
+            if (cont) cont.innerHTML = `<p style="color:var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Ищем «${esc(fio)}»…</p>`;
+            try {
+                const url = fio
+                    ? `/financier/debts/import-history/${logId}/parser-diagnose?fio_search=${encodeURIComponent(fio)}`
+                    : `/financier/debts/import-history/${logId}/parser-diagnose`;
+                const data = await api.get(url);
+                this._renderDiagnoseContent(overlay, data, fio);
+            } catch (e) {
+                if (cont) cont.innerHTML = `<p style="color:var(--danger-color);">Ошибка: ${esc(e.message)}</p>`;
+            }
+        };
+        searchBtn?.addEventListener('click', reloadWithSearch);
+        searchInput?.addEventListener('keydown', (e) => { if (e.key === 'Enter') reloadWithSearch(); });
+
         try {
             const data = await api.get(`/financier/debts/import-history/${logId}/parser-diagnose`);
+            this._renderDiagnoseContent(overlay, data, '');
+            return;
+        } catch (e) {
             const cont = overlay.querySelector('#diagnoseContent');
-            if (!cont) return;
+            if (cont) cont.innerHTML = `<p style="color:var(--danger-color);">Ошибка: ${esc(e.message)}</p>`;
+            return;
+        }
+    },
 
+    _renderDiagnoseContent(overlay, data, searchQuery) {
+        const cont = overlay.querySelector('#diagnoseContent');
+        if (!cont) return;
+        try {
             const sectionsHtml = Object.keys(data.section_markers || {}).length
                 ? Object.entries(data.section_markers).map(([k, v]) => `<span style="background:#dbeafe; color:#1e40af; padding:2px 7px; border-radius:4px; font-size:11px;">${esc(k)}: col ${v}</span>`).join(' ')
                 : '<span style="color:#dc2626;">не найдены</span>';
@@ -904,17 +943,50 @@ export const DebtsModule = {
                    </div>`
                 : '<div style="color:#dc2626;">⚠ Парсер не определил колонки!</div>';
 
+            const renderSample = (s) => {
+                // Сравнение с БД (если есть db_lookup из fio_search режима).
+                const db = s.db_lookup;
+                let dbBlock = '';
+                if (db) {
+                    if (db.matched_user_id) {
+                        const mismatchColor = db.mismatch ? '#dc2626' : '#059669';
+                        const mismatchIcon = db.mismatch ? '⚠' : '✓';
+                        const dbDebt = db.db_debt !== null ? Number(db.db_debt).toFixed(2) : 'NULL (нет reading)';
+                        dbBlock = `
+                            <div style="margin-top:6px; padding:6px 8px; background:${db.mismatch ? '#fef2f2' : '#dcfce7'}; border-left:3px solid ${mismatchColor}; border-radius:4px; font-size:11px;">
+                                <b>В БД</b> (user_id=${db.matched_user_id}, username=${esc(db.matched_username || '')}):
+                                ${mismatchIcon} debt = ${dbDebt} (ожидается ${db.expected_debt})
+                                ${db.fuzzy && db.fuzzy.score ? `<br><i>fuzzy: matched «${esc(db.fuzzy.key || '')}» score ${db.fuzzy.score}${db.fuzzy.too_low ? ' ⚠ TOO LOW' : ''}</i>` : ''}
+                                ${db.mismatch ? '<br><b style="color:#991b1b;">⚠ Значения не совпадают — переимпорт нужен или wrong-user fuzzy.</b>' : ''}
+                            </div>`;
+                    } else {
+                        dbBlock = `
+                            <div style="margin-top:6px; padding:6px 8px; background:#fef2f2; border-left:3px solid #dc2626; border-radius:4px; font-size:11px;">
+                                <b>⚠ Жилец НЕ найден в БД</b>
+                                ${db.fuzzy ? `<br>лучший fuzzy: «${esc(db.fuzzy.key || '')}» score ${db.fuzzy.score} (порог 80)` : ''}
+                                <br>Эти деньги (${db.expected_debt} / ${db.expected_overpayment}) попадут в not_found.
+                            </div>`;
+                    }
+                }
+                // Raw values по колонкам
+                const rawHtml = s.raw_values ? `
+                    <div style="font-size:10.5px; color:var(--text-secondary); margin-top:2px;">
+                        ${Object.entries(s.raw_values).map(([k, v]) => `${esc(k)}=${v === null ? '<i>null</i>' : v}`).join(' · ')}
+                    </div>` : '';
+                return `
+                    <div style="padding:6px 8px; background:#f9fafb; border-radius:4px; margin-bottom:4px; font-size:12px;">
+                        <b>${esc(s.fio)}</b> (col ${s.fio_col})<br>
+                        <span style="color:#dc2626;">debt = ${s.debt_extracted}</span> · <span style="color:#7c3aed;">overpayment = ${s.overpayment_extracted}</span>
+                        ${rawHtml}
+                        ${dbBlock}
+                    </div>`;
+            };
             const samplesHtml = (data.samples || []).length
                 ? `<div style="margin-top:14px;">
-                       <h4 style="margin:0 0 6px 0; font-size:13px;">Sample 3 жильцов:</h4>
-                       ${(data.samples || []).map(s => `
-                           <div style="padding:6px 8px; background:#f9fafb; border-radius:4px; margin-bottom:4px; font-size:12px;">
-                               <b>${esc(s.fio)}</b><br>
-                               <span style="color:#dc2626;">debt = ${s.debt}</span> · <span style="color:#7c3aed;">overpayment = ${s.overpayment}</span>
-                           </div>
-                       `).join('')}
+                       <h4 style="margin:0 0 6px 0; font-size:13px;">${searchQuery ? `Найдено по «${esc(searchQuery)}»: ${data.samples.length}` : 'Sample 3 жильцов:'}</h4>
+                       ${(data.samples || []).map(renderSample).join('')}
                    </div>`
-                : '';
+                : (searchQuery ? `<div style="margin-top:14px; padding:10px; background:#fee2e2; color:#991b1b; border-radius:4px;">По запросу «${esc(searchQuery)}» в файле никого не найдено.</div>` : '');
 
             cont.innerHTML = `
                 <div style="display:grid; gap:12px;">
