@@ -129,10 +129,13 @@ export const DashboardModule = {
         this.dom.btnGsheetsWidgetOpen?.addEventListener('click', () => {
             // «Операции» — там секция gsheets. Роутер переключает таб по hash.
             window.location.hash = 'tools';
-            // После переключения таба — чуть позже проскроллим до аккордеона gsheets.
+            // После переключения таба ToolsModule сам выберет нужный ops-tab,
+            // откроет аккордеон и проскроллит. CustomEvent — мост чтобы не
+            // импортить tools.js сюда и не плодить связи.
             setTimeout(() => {
-                document.querySelector('[data-section="gsheets"]')
-                    ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                window.dispatchEvent(new CustomEvent('tools:open-section', {
+                    detail: { section: 'gsheets' },
+                }));
             }, 400);
         });
 

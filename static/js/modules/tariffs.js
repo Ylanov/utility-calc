@@ -1,6 +1,6 @@
 // static/js/modules/tariffs.js
 import { api } from '../core/api.js';
-import { setLoading, toast, escapeHtml } from '../core/dom.js';
+import { setLoading, toast, escapeHtml, showPrompt } from '../core/dom.js';
 
 export const TariffsModule = {
     isInitialized: false,
@@ -59,6 +59,7 @@ export const TariffsModule = {
             form: document.getElementById('tariffsForm'),
             selector: document.getElementById('tariffSelector'),
             btnCreate: document.getElementById('btnCreateNewTariff'),
+            btnDuplicate: document.getElementById('btnDuplicateTariff'),
             btnDelete: document.getElementById('btnDeleteTariff'),
             inputId: document.getElementById('t_id'),
             inputName: document.getElementById('t_name'),
@@ -122,6 +123,28 @@ export const TariffsModule = {
             this.dom.btnDelete.addEventListener('click', (e) => {
                 e.preventDefault();
                 this.handleDelete();
+            });
+        }
+        if (this.dom.btnDuplicate) {
+            this.dom.btnDuplicate.addEventListener('click', (e) => {
+                e.preventDefault();
+                this.handleDuplicate();
+            });
+        }
+
+        // Ctrl/Cmd + S → отправка формы. Перехватываем дефолт «сохранить страницу».
+        // Слушаем на самой форме чтобы не конфликтовать с другими секциями.
+        if (this.dom.form) {
+            this.dom.form.addEventListener('keydown', (e) => {
+                const isSaveCombo = (e.key === 's' || e.key === 'S') && (e.ctrlKey || e.metaKey);
+                if (isSaveCombo) {
+                    e.preventDefault();
+                    if (typeof this.dom.form.requestSubmit === 'function') {
+                        this.dom.form.requestSubmit();
+                    } else {
+                        this.dom.form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+                    }
+                }
             });
         }
         if (this.dom.btnRefreshScheduled) {
@@ -281,25 +304,32 @@ export const TariffsModule = {
         if (!this.dom.selector) return;
         this.dom.selector.innerHTML = '';
 
+        const now = new Date();
         this.tariffsList.forEach(t => {
             const opt = document.createElement('option');
             opt.value = t.id;
 
-            // Префикс для singles-тарифов (легко отличить визуально).
+            // Префикс по типу: singles vs family.
             const isSingles = (t.tariff_type === 'singles');
-            const prefix = isSingles ? '👤 ' : '🏠 ';
+            // Префикс по времени: запланированный (⏳) vs активный.
+            const isScheduled = !!(t.effective_from && new Date(t.effective_from) > now);
+            const typeIcon = isSingles ? '👤' : '🏠';
+            const statusIcon = isScheduled ? ' ⏳' : '';
+            const prefix = `${typeIcon}${statusIcon} `;
 
             // Показываем количество жильцов на тарифе.
+            let countSuffix = '';
             if (t.user_count !== undefined && t.user_count > 0) {
-                opt.textContent = `${prefix}${t.name} (${t.user_count} чел.)`;
+                countSuffix = ` (${t.user_count} чел.)`;
             } else if (t.user_count !== undefined) {
-                opt.textContent = `${prefix}${t.name} (нет жильцов)`;
-            } else {
-                opt.textContent = `${prefix}${t.name}`;
+                countSuffix = ' (нет жильцов)';
             }
-            // Также подкрашиваем option (работает только в Firefox, в Chrome игнор —
-            // но префикс-эмодзи всё равно отличает).
-            if (isSingles) opt.style.color = '#7c3aed';
+            opt.textContent = `${prefix}${t.name}${countSuffix}`;
+
+            // Подкраска option (Firefox-only — в Chrome визуально игнорится,
+            // но эмодзи всё равно отличает).
+            if (isScheduled) opt.style.color = '#b45309';
+            else if (isSingles) opt.style.color = '#7c3aed';
 
             this.dom.selector.appendChild(opt);
         });
@@ -758,6 +788,68 @@ export const TariffsModule = {
         } finally {
             this.dom.btnDelete.innerText = originalText;
             this.dom.btnDelete.disabled = false;
+        }
+    },
+
+    // Дублирует выбранный тариф: дёргает /tariffs POST с полным набором
+    // полей исходного тарифа (без id и effective_from), новое имя
+    // запрашивает у админа. Удобно для соседнего общежития с похожими
+    // ставками — копируешь и правишь 2-3 поля.
+    async handleDuplicate() {
+        const srcId = parseInt(this.dom.inputId?.value);
+        if (!srcId || isNaN(srcId)) {
+            toast('Сначала выберите тариф для копирования', 'warning');
+            return;
+        }
+        const src = this.tariffsList.find(t => t.id === srcId);
+        if (!src) {
+            toast('Не нашёл исходный тариф', 'error');
+            return;
+        }
+
+        const defaultName = `${src.name} (копия)`;
+        const newName = await showPrompt(
+            'Дублирование тарифа',
+            `Создаём копию тарифа «${src.name}». Введите имя нового профиля:`,
+            defaultName,
+            'Например: ЦСООР Лидер — 2-й корпус'
+        );
+        if (newName === null) return;
+        const trimmed = newName.trim();
+        if (!trimmed) {
+            toast('Имя не может быть пустым', 'error');
+            return;
+        }
+
+        // Клон. id убираем чтобы это был POST-создание. effective_from
+        // обнуляем — копия становится активной немедленно.
+        // user_count / created_at / updated_at пришли из /with-stats —
+        // сервер их игнорирует, но удалим для чистоты.
+        const payload = { ...src };
+        delete payload.id;
+        delete payload.created_at;
+        delete payload.updated_at;
+        delete payload.user_count;
+        payload.effective_from = null;
+        payload.name = trimmed;
+
+        const btn = this.dom.btnDuplicate;
+        const originalHTML = btn.innerHTML;
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Копирование...';
+
+        try {
+            const saved = await api.post('/tariffs', payload);
+            api.invalidateCache('/tariffs');
+            sessionStorage.removeItem('tariffs_cache');
+            toast(`Тариф «${saved.name}» создан как копия`, 'success');
+            await this.load(saved.id);
+            await this.loadScheduledTariffs();
+        } catch (e) {
+            toast('Ошибка копирования: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
         }
     },
 

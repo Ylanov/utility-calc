@@ -3,74 +3,44 @@
      Раскрытие/сворачивание — по клику на заголовок секции (см. ToolsModule).
 
      ID всех input/button/form сохранены из tab_manual.html и tab_tariffs.html,
-     поэтому ManualModule и TariffsModule работают без правок. -->
+     поэтому ManualModule и TariffsModule работают без правок.
 
-<!--
-  Стили формы тарифа: цветные «карточки» с border-left + чёткие шапки.
-  Цвет задаётся через --t-accent, чтобы один CSS отрабатывал все секции
-  (вода/электр./фикс/койка/сезон). Раньше все fieldset'ы имели одинаковый
-  серый border — админ не мог быстро отличить «вода» от «электричества».
--->
-<style>
-  .tcard {
-    --t-accent: #64748b;
-    --t-accent-bg: rgba(100, 116, 139, 0.06);
-    border: 1px solid var(--border-color);
-    border-left: 4px solid var(--t-accent);
-    border-radius: 10px;
-    padding: 0;
-    margin: 0 0 14px 0;
-    background: var(--bg-card);
-    overflow: hidden;
-  }
-  .tcard-head {
-    display: flex; align-items: center; gap: 12px;
-    padding: 12px 16px;
-    background: var(--t-accent-bg);
-    border-bottom: 1px solid var(--border-color);
-  }
-  .tcard-head .tcard-icon {
-    width: 34px; height: 34px; border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    background: var(--t-accent); color: #fff;
-    flex-shrink: 0; font-size: 13px;
-  }
-  .tcard-head .tcard-title {
-    font-weight: 700; font-size: 14px; color: var(--text-main);
-    line-height: 1.2;
-  }
-  .tcard-head .tcard-subtitle {
-    font-size: 11.5px; color: var(--text-secondary);
-    line-height: 1.3; margin-top: 2px;
-  }
-  .tcard-body { padding: 14px 16px 16px 16px; }
-  /* Палитра — единый набор. Меняем --t-accent в inline-style каждой секции. */
-  .tcard.t-water    { --t-accent: #2563eb; --t-accent-bg: rgba(37,99,235,.07); }
-  .tcard.t-electric { --t-accent: #d97706; --t-accent-bg: rgba(217,119,6,.08); }
-  .tcard.t-fixed    { --t-accent: #059669; --t-accent-bg: rgba(5,150,105,.07); }
-  .tcard.t-bed      { --t-accent: #7c3aed; --t-accent-bg: rgba(124,58,237,.08); }
-  .tcard.t-season   { --t-accent: #dc2626; --t-accent-bg: rgba(220,38,38,.06); }
-  .tcard.t-norms    { --t-accent: #8b5cf6; --t-accent-bg: rgba(139,92,246,.07); }
-  /* Sticky save bar — кнопка «Сохранить» прилипает к низу экрана. */
-  .tariff-save-bar {
-    position: sticky; bottom: 0;
-    background: var(--bg-card);
-    border-top: 1px solid var(--border-color);
-    padding: 12px 16px;
-    margin: 16px -16px -16px -16px;
-    display: flex; justify-content: flex-end; gap: 10px;
-    z-index: 5;
-    box-shadow: 0 -4px 8px rgba(0,0,0,.04);
-  }
-</style>
+     Стили .tcard / .tariff-save-bar / .ops-tabs / .tariff-type-row
+     живут в static/style.css (раздел 21/21A). -->
 <div id="tools" class="tab-content">
+
+    <!-- ВЕРХНИЕ ТАБЫ ОПЕРАЦИЙ.
+         9 аккордеонных секций группируются в 5 разделов чтобы глаза не разбегались.
+         Логика переключения + сохранение в localStorage — ToolsModule._bindOpsTabs(). -->
+    <nav class="ops-tabs" id="opsTabs" role="tablist" aria-label="Группы операций">
+        <button type="button" class="ops-tab" data-ops-tab="readings" role="tab">
+            <i class="fa-solid fa-gauge-high"></i>
+            <span class="ops-tab-label">Показания</span>
+        </button>
+        <button type="button" class="ops-tab" data-ops-tab="tariffs" role="tab">
+            <i class="fa-solid fa-sliders"></i>
+            <span class="ops-tab-label">Тарифы</span>
+        </button>
+        <button type="button" class="ops-tab" data-ops-tab="finance" role="tab">
+            <i class="fa-solid fa-file-invoice-dollar"></i>
+            <span class="ops-tab-label">Финансы</span>
+        </button>
+        <button type="button" class="ops-tab" data-ops-tab="analytics" role="tab">
+            <i class="fa-solid fa-brain"></i>
+            <span class="ops-tab-label">Аналитика</span>
+        </button>
+        <button type="button" class="ops-tab" data-ops-tab="system" role="tab">
+            <i class="fa-solid fa-server"></i>
+            <span class="ops-tab-label">Система</span>
+        </button>
+    </nav>
 
     <div class="accordion-group" id="toolsAccordion">
 
         <!-- ==========================================
              СЕКЦИЯ 1: РУЧНОЙ ВВОД ПОКАЗАНИЙ
              ========================================== -->
-        <section class="accordion-section open" data-section="manual">
+        <section class="accordion-section open" data-section="manual" data-ops-tab="readings">
             <button class="accordion-header" type="button" aria-expanded="true">
                 <span class="accordion-title">
                     <span class="accordion-icon"><i class="fa-solid fa-pen-to-square"></i></span>
@@ -84,30 +54,35 @@
             <div class="accordion-body">
                 <div class="accordion-content">
                     <div class="inner">
-                        <div class="grid-2-col">
-                            <!-- 1. Поиск жильца -->
-                            <div class="card" style="display: flex; flex-direction: column; height: 100%; margin-bottom: 0;">
-                                <div class="card-header">
-                                    <h3>1. Выбор жильца</h3>
-                                </div>
-                                <div class="form-group" style="margin-bottom: 12px;">
-                                    <label style="display:flex; align-items:center; gap:6px;">
-                                        <i class="fa-solid fa-magnifying-glass" style="color:var(--text-secondary);"></i> Поиск жильца
-                                    </label>
-                                    <input type="text" id="manualSearchInput" placeholder="Логин, ФИО или номер комнаты...">
-                                </div>
-                                <div style="flex: 1; border: 1px solid var(--border-color); border-radius: 8px; overflow-y: auto; max-height: 400px; background: var(--bg-page);">
-                                    <ul id="manualUserList" style="list-style: none; padding: 0; margin: 0;">
-                                        <li style="padding: 20px; text-align: center; color: var(--text-secondary);">Введите ФИО или комнату для поиска</li>
-                                    </ul>
-                                </div>
+                        <!-- Autocomplete-поиск + форма (см. .manual-* в style.css раздел 21B).
+                             Раньше слева висел постоянный 400px-список жильцов — он съедал
+                             полэкрана и пугал. Теперь dropdown появляется только при вводе. -->
+                        <div class="manual-layout">
+
+                            <!-- Поиск с dropdown результатов -->
+                            <div class="manual-search">
+                                <i class="fa-solid fa-magnifying-glass manual-search-icon"></i>
+                                <input type="text" id="manualSearchInput"
+                                       class="manual-search-input"
+                                       placeholder="Найди жильца — логин, ФИО или номер комнаты"
+                                       autocomplete="off"
+                                       aria-label="Поиск жильца"
+                                       aria-controls="manualUserList"
+                                       aria-haspopup="listbox">
+                                <button type="button" id="manualSearchClear"
+                                        class="manual-search-clear" title="Очистить" hidden>
+                                    <i class="fa-solid fa-xmark"></i>
+                                </button>
+                                <ul id="manualUserList" class="manual-search-dropdown" role="listbox" hidden></ul>
                             </div>
 
-                            <!-- 2. Форма ввода -->
+                            <!-- Карточка формы (disabled пока не выбран жилец) -->
                             <div class="card" id="manualFormCard" style="opacity: 0.5; pointer-events: none; transition: all 0.3s; margin-bottom: 0;">
                                 <div class="card-header">
-                                    <h3>2. Ввод показаний</h3>
-                                    <span id="manualSelectedUser" style="font-size: 13px; font-weight: 600; color: var(--primary-color); background: var(--primary-bg); padding: 4px 8px; border-radius: 4px;">Не выбран</span>
+                                    <h3>Показания</h3>
+                                    <span id="manualSelectedUser" class="manual-selected-chip">
+                                        <i class="fa-regular fa-user"></i> Жилец не выбран
+                                    </span>
                                 </div>
 
                                 <div id="manualDraftAlert" style="display:none; padding:12px 15px; background:#fef3c7; color:#92400e; border-radius:6px; margin-bottom:20px; font-size:13px; border: 1px solid #fde68a;">
@@ -179,7 +154,7 @@
         <!-- ==========================================
              СЕКЦИЯ 2: ГРАФИК ПОДАЧИ ПОКАЗАНИЙ
              ========================================== -->
-        <section class="accordion-section" data-section="schedule">
+        <section class="accordion-section" data-section="schedule" data-ops-tab="readings">
             <button class="accordion-header" type="button" aria-expanded="false">
                 <span class="accordion-title">
                     <span class="accordion-icon" style="background:var(--primary-bg); color:var(--primary-color);">
@@ -222,7 +197,7 @@
              возвращать осенью». Состояние хранится в
              system_settings, читается в calculate_utilities.
              ========================================== -->
-        <section class="accordion-section" data-section="seasonal">
+        <section class="accordion-section" data-section="seasonal" data-ops-tab="tariffs">
             <button class="accordion-header" type="button" aria-expanded="false">
                 <span class="accordion-title">
                     <span class="accordion-icon" style="background:rgba(239,68,68,0.10); color:#dc2626;">
@@ -314,7 +289,7 @@
         <!-- ==========================================
              СЕКЦИЯ 2.5: ПЕРЕРАСЧЁТ ПЕРИОДА
              ========================================== -->
-        <section class="accordion-section" data-section="recalc">
+        <section class="accordion-section" data-section="recalc" data-ops-tab="tariffs">
             <button class="accordion-header" type="button" aria-expanded="false">
                 <span class="accordion-title">
                     <span class="accordion-icon" style="background:rgba(245,158,11,0.1); color:#d97706;">
@@ -379,7 +354,7 @@
         <!-- ==========================================
              СЕКЦИЯ 3: ПРОФИЛИ ТАРИФИКАЦИИ
              ========================================== -->
-        <section class="accordion-section" data-section="tariffs">
+        <section class="accordion-section" data-section="tariffs" data-ops-tab="tariffs">
             <button class="accordion-header" type="button" aria-expanded="false">
                 <span class="accordion-title">
                     <span class="accordion-icon" style="background:rgba(139,92,246,0.1); color:#7c3aed;">
@@ -404,6 +379,9 @@
                             <div class="toolbar-controls" style="background: var(--primary-bg); padding: 12px 16px; border-radius: var(--radius-sm); width: 100%; margin-bottom: 0;">
                                 <label style="font-weight: 500; color: var(--primary-hover); margin-right: 8px;">Редактировать тариф:</label>
                                 <select id="tariffSelector" style="width: 300px;"></select>
+                                <button id="btnDuplicateTariff" class="action-btn secondary-btn" title="Создать копию этого тарифа с новым именем — удобно для соседнего общежития с похожими ставками">
+                                    <i class="fa-regular fa-copy"></i> Дублировать
+                                </button>
                                 <button id="btnDeleteTariff" class="action-btn danger-btn" style="display: none;"><i class="fa-regular fa-trash-can"></i> Удалить профиль</button>
                             </div>
                         </div>
@@ -435,22 +413,20 @@
                                  коммунальные квартиры где живут 2-3 холостяка.
                                  У них отдельные тарифы (per_capita-mode).
                                  См. миграцию tariffs_type_001_family_singles.
+                                 Стили — .tariff-type-row в style.css (активный
+                                 chip подсвечивается через :has(input:checked)).
                                  ============================================= -->
-                            <div style="display:flex; gap:10px; margin-bottom:18px; padding:10px 14px; border:1px solid var(--border-color); border-radius:10px; background:var(--bg-page);">
-                                <span style="font-weight:600; font-size:13px; color:var(--text-secondary); align-self:center;">
-                                    <i class="fa-solid fa-tag"></i> Назначение тарифа:
-                                </span>
-                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer; padding:6px 12px; border:1px solid var(--border-color); border-radius:8px; background:var(--bg-card);">
-                                    <input type="radio" name="t_type" id="t_type_family" value="family" checked
-                                           style="accent-color:#059669;">
-                                    <i class="fa-solid fa-people-roof" style="color:#059669;"></i>
-                                    <span style="font-size:13px; font-weight:500;">Семейный (по счётчикам)</span>
+                            <div class="tariff-type-row">
+                                <span class="label"><i class="fa-solid fa-tag"></i> Назначение тарифа:</span>
+                                <label class="chip t-family">
+                                    <input type="radio" name="t_type" id="t_type_family" value="family" checked>
+                                    <i class="fa-solid fa-people-roof"></i>
+                                    <span>Семейный (по счётчикам)</span>
                                 </label>
-                                <label style="display:flex; align-items:center; gap:6px; cursor:pointer; padding:6px 12px; border:1px solid var(--border-color); border-radius:8px; background:var(--bg-card);">
-                                    <input type="radio" name="t_type" id="t_type_singles" value="singles"
-                                           style="accent-color:#7c3aed;">
-                                    <i class="fa-solid fa-user-tie" style="color:#7c3aed;"></i>
-                                    <span style="font-size:13px; font-weight:500;">Для холостяков (койко-место)</span>
+                                <label class="chip t-singles">
+                                    <input type="radio" name="t_type" id="t_type_singles" value="singles">
+                                    <i class="fa-solid fa-user-tie"></i>
+                                    <span>Для холостяков (койко-место)</span>
                                 </label>
                             </div>
 
@@ -832,7 +808,7 @@
         <!-- ==========================================
              СЕКЦИЯ: ЦЕНТР АНАЛИЗА (анализаторы и пороги)
              ========================================== -->
-        <section class="accordion-section" data-section="analyzer">
+        <section class="accordion-section" data-section="analyzer" data-ops-tab="analytics">
             <button class="accordion-header" type="button" aria-expanded="false">
                 <span class="accordion-title">
                     <span class="accordion-icon" style="background:rgba(124,58,237,0.12); color:#7c3aed;">
@@ -1053,7 +1029,7 @@
         <!-- ==========================================
              СЕКЦИЯ: ИМПОРТ ИЗ GOOGLE SHEETS
              ========================================== -->
-        <section class="accordion-section" data-section="gsheets">
+        <section class="accordion-section" data-section="gsheets" data-ops-tab="readings">
             <button class="accordion-header" type="button" aria-expanded="false">
                 <span class="accordion-title">
                     <span class="accordion-icon" style="background:rgba(34,197,94,0.12); color:#16a34a;">
@@ -1184,7 +1160,7 @@
              с раскрытием, sparkline, финансовые анализаторы (DEBT_GROWING,
              BILL_SPIKE и т.д.), быстрая загрузка квитанций PDF.
              ========================================== -->
-        <section class="accordion-section" data-section="summary">
+        <section class="accordion-section" data-section="summary" data-ops-tab="finance">
             <button class="accordion-header" type="button" aria-expanded="false">
                 <span class="accordion-title">
                     <span class="accordion-icon" style="background:rgba(16,185,129,0.12); color:#059669;">
@@ -1263,7 +1239,7 @@
         <!-- ==========================================
              СЕКЦИЯ: МОБИЛЬНОЕ ПРИЛОЖЕНИЕ (APK)
              ========================================== -->
-        <section class="accordion-section" data-section="app-releases">
+        <section class="accordion-section" data-section="app-releases" data-ops-tab="system">
             <button class="accordion-header" type="button" aria-expanded="false">
                 <span class="accordion-title">
                     <span class="accordion-icon" style="background:rgba(99,102,241,0.12); color:#6366f1;">
@@ -1362,7 +1338,7 @@
         <!-- ==========================================
              СЕКЦИЯ: ЗАПЛАНИРОВАННЫЕ ТАРИФЫ
              ========================================== -->
-        <section class="accordion-section" data-section="scheduled" id="scheduledTariffsCard" style="display: none;">
+        <section class="accordion-section" data-section="scheduled" data-ops-tab="tariffs" id="scheduledTariffsCard" style="display: none;">
             <button class="accordion-header" type="button" aria-expanded="false">
                 <span class="accordion-title">
                     <span class="accordion-icon" style="background:rgba(245,158,11,0.12); color:#f59e0b;">
@@ -1401,7 +1377,7 @@
             Хранятся в system_settings (key-value), API: /api/settings/operator-info.
             =====================================================================
         -->
-        <section class="accordion-section" data-section="operator-info">
+        <section class="accordion-section" data-section="operator-info" data-ops-tab="system">
             <button class="accordion-header" type="button" aria-expanded="false">
                 <span class="accordion-title">
                     <span class="accordion-icon" style="background:rgba(124,58,237,0.12); color:#7c3aed;">

@@ -1418,6 +1418,393 @@ textarea { resize: vertical; min-height: 80px; }
 }
 
 /* =========================================
+   21B. РУЧНОЙ ВВОД ПОКАЗАНИЙ — autocomplete-поиск.
+   Заменяет старый двухколоночный layout (постоянный список + форма).
+   Сверху — большой поиск с dropdown появляющимся только при вводе.
+   Снизу — компактная форма ввода (центрирована, заметная).
+   ========================================= */
+.manual-layout {
+    max-width: 720px;
+    margin: 0 auto;
+}
+
+.manual-search {
+    position: relative;
+    margin-bottom: 22px;
+}
+.manual-search-input {
+    padding: 14px 44px 14px 44px;
+    font-size: 15px;
+    width: 100%;
+    background: var(--bg-card);
+    border: 1.5px solid var(--border-color);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-sm);
+    transition: var(--transition);
+}
+.manual-search-input:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 3px var(--primary-bg), var(--shadow-sm);
+}
+.manual-search-icon {
+    position: absolute;
+    left: 16px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-secondary);
+    pointer-events: none;
+}
+.manual-search-clear {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 6px 8px;
+    border-radius: 50%;
+    color: var(--text-secondary);
+    line-height: 1;
+}
+.manual-search-clear:hover {
+    background: rgba(60,64,67,0.08);
+    color: var(--text-main);
+}
+
+.manual-search-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    list-style: none;
+    padding: 4px;
+    margin: 0;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-md);
+    max-height: 320px;
+    overflow-y: auto;
+    z-index: 50;
+}
+.manual-search-dropdown[hidden] { display: none; }
+.manual-search-dropdown li {
+    padding: 10px 14px;
+    cursor: pointer;
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    transition: background 0.12s;
+}
+.manual-search-dropdown li:hover,
+.manual-search-dropdown li.is-active {
+    background: var(--primary-bg);
+}
+.manual-search-dropdown li.is-empty,
+.manual-search-dropdown li.is-loading {
+    cursor: default;
+    text-align: center;
+    color: var(--text-secondary);
+    padding: 16px;
+    font-size: 13px;
+}
+.manual-search-dropdown li.is-empty:hover,
+.manual-search-dropdown li.is-loading:hover { background: transparent; }
+.manual-search-dropdown li strong {
+    font-size: 14px;
+    color: var(--text-main);
+    font-weight: 600;
+}
+.manual-search-dropdown li span.addr {
+    font-size: 12px;
+    color: var(--text-secondary);
+}
+.manual-search-dropdown li mark {
+    background: #fef08a;
+    color: inherit;
+    padding: 0 2px;
+    border-radius: 2px;
+    font-weight: 700;
+}
+
+.manual-selected-chip {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    background: var(--bg-page);
+    border: 1px solid var(--border-color);
+    padding: 6px 12px;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+.manual-selected-chip.has-user {
+    color: var(--success-color);
+    background: var(--success-bg);
+    border-color: rgba(30,142,62,0.30);
+}
+.manual-selected-chip .change-btn {
+    background: none;
+    border: none;
+    color: inherit;
+    cursor: pointer;
+    padding: 0 4px;
+    font-size: 11px;
+    opacity: 0.7;
+    text-decoration: underline;
+}
+.manual-selected-chip .change-btn:hover { opacity: 1; }
+
+/* =========================================
+   21A. ВЕРХНИЕ ТАБЫ ВКЛАДКИ «ОПЕРАЦИИ» (.ops-tabs)
+   Группируют 9 аккордеон-секций в 5 разделов: Показания / Тарифы /
+   Финансы / Аналитика / Система. Активная вкладка сохраняется в
+   localStorage('ops:tab') и восстанавливается при следующем визите.
+   ========================================= */
+.ops-tabs {
+    display: flex;
+    gap: 4px;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 6px;
+    margin-bottom: 18px;
+    box-shadow: var(--shadow-sm);
+    overflow-x: auto;
+    scrollbar-width: thin;
+}
+.ops-tab {
+    flex: 1 1 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 10px 14px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary);
+    font-family: inherit;
+    font-size: 13.5px;
+    font-weight: 600;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    transition: var(--transition);
+    white-space: nowrap;
+    position: relative;
+}
+.ops-tab i { font-size: 14px; opacity: 0.85; }
+.ops-tab:hover {
+    background: rgba(60,64,67,0.05);
+    color: var(--text-main);
+}
+.ops-tab.active {
+    background: var(--primary-bg);
+    color: var(--primary-hover);
+    box-shadow: inset 0 0 0 1px rgba(26,115,232,0.20);
+}
+.ops-tab.active i { opacity: 1; color: var(--primary-color); }
+.ops-tab .ops-tab-badge {
+    margin-left: 4px;
+    background: var(--danger-color);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 8px;
+    min-width: 18px;
+    text-align: center;
+}
+
+/* Секции аккордеона, скрытые НЕАКТИВНЫМ табом */
+.accordion-section.is-hidden-by-tab { display: none !important; }
+
+@media (max-width: 768px) {
+    .ops-tab span.ops-tab-label { display: none; }
+    .ops-tab { padding: 10px 12px; flex: 0 0 auto; }
+}
+
+/* =========================================
+   21. КАРТОЧКИ ТАРИФА (.tcard)
+   Используется на «Операции → Профили тарификации».
+   Секции «Вода / Электричество / Фиксированные / Койко-место / Сезонность /
+   Нормативы». Цвет акцента — через CSS-переменную --t-accent (модификаторы
+   t-water / t-electric / t-fixed / t-bed / t-season / t-norms).
+   ========================================= */
+.tcard {
+    --t-accent: #64748b;
+    --t-accent-bg: rgba(100, 116, 139, 0.06);
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-left: 4px solid var(--t-accent);
+    border-radius: 10px;
+    margin: 0 0 14px 0;
+    box-shadow: var(--shadow-sm);
+    transition: var(--transition);
+    overflow: hidden;
+}
+.tcard:hover { box-shadow: var(--shadow-md); }
+
+.tcard-head {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: var(--t-accent-bg);
+    border-bottom: 1px solid var(--border-color);
+}
+.tcard-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--t-accent);
+    color: #fff;
+    flex-shrink: 0;
+    font-size: 13px;
+}
+.tcard-title {
+    font-weight: 700;
+    font-size: 14px;
+    color: var(--text-main);
+    line-height: 1.2;
+}
+.tcard-subtitle {
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    line-height: 1.3;
+    margin-top: 2px;
+}
+.tcard-body { padding: 14px 16px 16px 16px; }
+
+/* Палитра — единый набор, согласован с дизайн-токенами */
+.tcard.t-water    { --t-accent: #2563eb; --t-accent-bg: rgba(37,99,235,.07); }
+.tcard.t-electric { --t-accent: #d97706; --t-accent-bg: rgba(217,119,6,.08); }
+.tcard.t-fixed    { --t-accent: #059669; --t-accent-bg: rgba(5,150,105,.07); }
+.tcard.t-bed      { --t-accent: #7c3aed; --t-accent-bg: rgba(124,58,237,.08); }
+.tcard.t-season   { --t-accent: #dc2626; --t-accent-bg: rgba(220,38,38,.06); }
+.tcard.t-norms    { --t-accent: #8b5cf6; --t-accent-bg: rgba(139,92,246,.07); }
+
+/* Поля внутри tcard — деньги и числа справа, табличный шрифт.
+   form-group по умолчанию имеет margin-bottom 16px — внутри tcard убираем,
+   так как сетка grid сама задаёт промежутки. */
+.tcard-body .form-group { margin: 0; }
+.tcard-body .form-group label {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text-main);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+.tcard-body .form-group input[type="number"] {
+    padding: 9px 12px;
+    font-size: 15px;
+    font-weight: 600;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.tcard-body .form-group input[type="date"] {
+    padding: 9px 12px;
+    font-size: 13.5px;
+}
+/* Фокус — окрашиваем рамку и halo в цвет акцента карточки */
+.tcard-body .form-group input:focus,
+.tcard-body .form-group select:focus {
+    border-color: var(--t-accent);
+    box-shadow: 0 0 0 3px var(--t-accent-bg);
+}
+/* Малые кнопки-калькуляторы внутри карточек — компактнее */
+.tcard-body .action-btn.secondary-btn {
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+/* =========================================
+   STICKY SAVE BAR — низ формы тарифа.
+   Прилипает к низу viewport. accordion-content имеет overflow:hidden,
+   но это не scroll-context — sticky пройдёт сквозь и зацепится за окно.
+   ========================================= */
+.tariff-save-bar {
+    position: sticky;
+    bottom: 0;
+    z-index: 5;
+    margin: 16px -16px -16px -16px;
+    padding: 12px 16px;
+    background: rgba(255,255,255,0.94);
+    backdrop-filter: saturate(180%) blur(8px);
+    -webkit-backdrop-filter: saturate(180%) blur(8px);
+    border-top: 1px solid var(--border-color);
+    box-shadow: 0 -4px 8px rgba(0,0,0,.04);
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+/* =========================================
+   «НАЗНАЧЕНИЕ ТАРИФА» — radio-чипы.
+   Активный вариант получает цветную рамку, фон и halo. Используем :has()
+   чтобы не плодить JS для toggle-класса. Цвет акцента chip'а — через
+   CSS-переменную --chip-accent / --chip-accent-bg, переопределяемую
+   модификатором t-family / t-singles.
+   ========================================= */
+.tariff-type-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 18px;
+    padding: 10px 14px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--bg-page);
+    align-items: center;
+    flex-wrap: wrap;
+}
+.tariff-type-row > .label {
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text-secondary);
+    align-self: center;
+    margin-right: 4px;
+}
+.tariff-type-row .chip {
+    --chip-accent: var(--text-secondary);
+    --chip-accent-bg: rgba(60,64,67,0.06);
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    padding: 8px 14px;
+    border: 1.5px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--bg-card);
+    transition: var(--transition);
+    user-select: none;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-main);
+}
+.tariff-type-row .chip i { color: var(--chip-accent); transition: var(--transition); }
+.tariff-type-row .chip input[type="radio"] {
+    accent-color: var(--chip-accent);
+    width: 16px;
+    height: 16px;
+    margin: 0;
+}
+.tariff-type-row .chip:hover { border-color: var(--text-secondary); }
+.tariff-type-row .chip:has(input:checked) {
+    border-color: var(--chip-accent);
+    background: var(--chip-accent-bg);
+    box-shadow: 0 0 0 3px var(--chip-accent-bg);
+}
+.tariff-type-row .chip.t-family  { --chip-accent: #1e8e3e; --chip-accent-bg: rgba(30,142,62,0.10); }
+.tariff-type-row .chip.t-singles { --chip-accent: #7c3aed; --chip-accent-bg: rgba(124,58,237,0.10); }
+
+/* =========================================
    20. ПЕЧАТЬ
    ========================================= */
 @media print {

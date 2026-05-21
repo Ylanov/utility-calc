@@ -1,13 +1,31 @@
 // static/js/modules/manual.js
+//
+// Ручной ввод показаний за жильца. UI — autocomplete-поиск:
+// dropdown появляется ТОЛЬКО при вводе текста (раньше слева висел
+// постоянный список 400px который ничего не давал пока пусто).
+//
+// Клавиатура: ↑↓ — навигация, Enter — выбрать, Esc — закрыть dropdown.
 import { api } from '../core/api.js';
-import { el, toast, setLoading } from '../core/dom.js';
+import { el, toast, setLoading, escapeHtml } from '../core/dom.js';
+
+const DROPDOWN_LIMIT = 12;
+const MIN_QUERY_LEN = 1;
+const SEARCH_DEBOUNCE_MS = 220;
 
 export const ManualModule = {
     isInitialized: false,
     state: {
         searchTimer: null,
         selectedUserId: null,
-        prevReadings: { hot: 0, cold: 0, elect: 0 }
+        prevReadings: { hot: 0, cold: 0, elect: 0 },
+        // Текущие результаты dropdown и индекс активной строки (для клавиатуры).
+        results: [],
+        activeIdx: -1,
+        // Чтобы не показывать устаревшие результаты, если ответ пришёл после нового запроса.
+        searchToken: 0,
+        // Гасим blur-handler сразу после клика по dropdown
+        // (иначе click не успеет отработать — фокус уйдёт раньше).
+        suppressBlur: false,
     },
 
     init() {
@@ -16,13 +34,15 @@ export const ManualModule = {
             this.bindEvents();
             this.isInitialized = true;
         }
-        // При открытии вкладки загружаем первых 20 пользователей
-        this.searchUsers('');
+        // Без автозагрузки. Dropdown пуст и скрыт, пока админ не наберёт текст.
+        this._hideDropdown();
+        this._renderSelectedChip(null);
     },
 
     cacheDOM() {
         this.dom = {
             searchInput: document.getElementById('manualSearchInput'),
+            searchClear: document.getElementById('manualSearchClear'),
             userList: document.getElementById('manualUserList'),
             formCard: document.getElementById('manualFormCard'),
             form: document.getElementById('manualReadingForm'),
@@ -45,12 +65,51 @@ export const ManualModule = {
     },
 
     bindEvents() {
-        if (this.dom.searchInput) {
-            this.dom.searchInput.addEventListener('input', (e) => {
-                clearTimeout(this.state.searchTimer);
-                this.state.searchTimer = setTimeout(() => {
-                    this.searchUsers(e.target.value.trim());
-                }, 400);
+        const input = this.dom.searchInput;
+        if (input) {
+            input.addEventListener('input', (e) => this._onSearchInput(e.target.value));
+            input.addEventListener('focus', () => {
+                // Если в поле есть текст и есть результаты — показываем dropdown снова.
+                if (input.value.trim().length >= MIN_QUERY_LEN && this.state.results.length) {
+                    this._showDropdown();
+                }
+            });
+            input.addEventListener('blur', () => {
+                // Даём шанс клику по li (mousedown ставит suppressBlur).
+                setTimeout(() => {
+                    if (this.state.suppressBlur) {
+                        this.state.suppressBlur = false;
+                        return;
+                    }
+                    this._hideDropdown();
+                }, 120);
+            });
+            input.addEventListener('keydown', (e) => this._onSearchKey(e));
+        }
+
+        if (this.dom.searchClear) {
+            this.dom.searchClear.addEventListener('click', () => this._clearSearch());
+        }
+
+        // Клик ВНЕ поиска и dropdown — скрывает dropdown.
+        document.addEventListener('click', (e) => {
+            const dd = this.dom.userList;
+            const inp = this.dom.searchInput;
+            if (!dd || !inp) return;
+            if (dd.hidden) return;
+            if (dd.contains(e.target) || inp.contains(e.target)) return;
+            this._hideDropdown();
+        });
+
+        // Клик по li — выбор. Используем mousedown чтобы успеть до blur input'а.
+        if (this.dom.userList) {
+            this.dom.userList.addEventListener('mousedown', (e) => {
+                const li = e.target.closest('li[data-user-id]');
+                if (!li) return;
+                this.state.suppressBlur = true;
+                const id = parseInt(li.dataset.userId);
+                const user = this.state.results.find(u => u.id === id);
+                if (user) this.selectUser(user);
             });
         }
 
@@ -58,10 +117,8 @@ export const ManualModule = {
             this.dom.form.addEventListener('submit', (e) => this.handleSubmit(e));
         }
 
-        // Авто-замена запятой, auto-format 5+3 на blur.
-        // Без визуальной имитации счётчика — для админ-ввода она
-        // избыточна: админ вводит цифры из тетради и читает обычный input.
-        // Только серверная валидация форматирует к canonical.
+        // Авто-замена запятой, auto-format 5+3 на blur. Без визуальной имитации
+        // счётчика (для админ-ввода она избыточна — админ вводит цифры из тетради).
         ['inHot', 'inCold', 'inElect'].forEach(key => {
             const inp = this.dom[key];
             if (!inp) return;
@@ -83,114 +140,184 @@ export const ManualModule = {
             });
         });
 
-        // Period dropdown — загружаем при первом открытии секции.
         if (this.dom.periodSelect) {
             this.dom.periodSelect.addEventListener('change', () => this._updatePeriodWarn());
             this._loadPeriods();
         }
     },
 
-    async _loadPeriods() {
-        if (!this.dom.periodSelect) return;
-        try {
-            const periods = await api.get('/admin/periods/history');
-            // Сортируем: сначала активный, потом по created_at desc.
-            const items = Array.isArray(periods) ? periods : (periods.items || []);
-            items.sort((a, b) => {
-                if (a.is_active && !b.is_active) return -1;
-                if (!a.is_active && b.is_active) return 1;
-                return (b.id || 0) - (a.id || 0);
-            });
-            // Сохраняем дефолт-option «текущий».
-            const cur = this.dom.periodSelect.querySelector('option[value=""]');
-            this.dom.periodSelect.innerHTML = '';
-            if (cur) this.dom.periodSelect.appendChild(cur);
-            items.forEach(p => {
-                const opt = document.createElement('option');
-                opt.value = String(p.id);
-                opt.textContent = p.name + (p.is_active ? ' (активный)' : ' (закрытый)');
-                this.dom.periodSelect.appendChild(opt);
-            });
-            this._updatePeriodWarn();
-        } catch (e) {
-            console.warn('manual: не удалось загрузить периоды:', e.message);
+    // -------- ПОИСК ---------------------------------------------------------
+
+    _onSearchInput(value) {
+        const q = value.trim();
+        // Кнопка-крестик показывается только когда есть текст.
+        if (this.dom.searchClear) this.dom.searchClear.hidden = (q.length === 0);
+
+        clearTimeout(this.state.searchTimer);
+        if (q.length < MIN_QUERY_LEN) {
+            this._hideDropdown();
+            return;
+        }
+        this.state.searchTimer = setTimeout(() => this.searchUsers(q), SEARCH_DEBOUNCE_MS);
+        // Сразу показываем «загрузка», чтобы пользователь видел что мы работаем.
+        this._renderDropdownLoading(q);
+    },
+
+    _onSearchKey(e) {
+        if (e.key === 'Escape') {
+            if (!this.dom.userList.hidden) {
+                this._hideDropdown();
+                e.preventDefault();
+            }
+            return;
+        }
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            if (this.dom.userList.hidden || !this.state.results.length) return;
+            e.preventDefault();
+            const max = this.state.results.length - 1;
+            const cur = this.state.activeIdx;
+            const next = e.key === 'ArrowDown'
+                ? (cur < max ? cur + 1 : 0)
+                : (cur > 0 ? cur - 1 : max);
+            this._setActiveIdx(next);
+            return;
+        }
+        if (e.key === 'Enter') {
+            if (this.dom.userList.hidden) return;
+            const idx = this.state.activeIdx >= 0 ? this.state.activeIdx : 0;
+            const user = this.state.results[idx];
+            if (user) {
+                e.preventDefault();
+                this.selectUser(user);
+            }
         }
     },
 
-    _updatePeriodWarn() {
-        if (!this.dom.periodWarn || !this.dom.periodSelect) return;
-        const v = this.dom.periodSelect.value;
-        // Если выбран НЕ active (т.е. явно прошлый период) — показываем warning.
-        const opt = this.dom.periodSelect.options[this.dom.periodSelect.selectedIndex];
-        const isPast = v && opt && !opt.textContent.includes('(активный)');
-        this.dom.periodWarn.style.display = isPast ? 'block' : 'none';
+    _clearSearch() {
+        this.dom.searchInput.value = '';
+        if (this.dom.searchClear) this.dom.searchClear.hidden = true;
+        this._hideDropdown();
+        this.dom.searchInput.focus();
     },
 
     async searchUsers(query) {
-        this.dom.userList.innerHTML = '<li style="padding:15px; text-align:center; color:#888;">Загрузка...</li>';
+        const myToken = ++this.state.searchToken;
         try {
-            // Используем уже существующий API пользователей (берем только роль user)
-            const res = await api.get(`/users?search=${encodeURIComponent(query)}&limit=20`);
-
-            this.dom.userList.innerHTML = '';
-            if (res.items.length === 0) {
-                this.dom.userList.innerHTML = '<li style="padding:15px; text-align:center; color:#888;">Ничего не найдено</li>';
-                return;
-            }
-
-            res.items.forEach(user => {
-                const li = el('li', {
-                    style: {
-                        padding: '12px 15px', borderBottom: '1px solid #e5e7eb', cursor: 'pointer',
-                        display: 'flex', flexDirection: 'column', gap: '4px', transition: 'background 0.2s'
-                    }
-                });
-
-                // Эффект наведения и клик
-                li.onclick = () => this.selectUser(user, li);
-                li.addEventListener('mouseover', () => li.style.background = '#eff6ff');
-                li.addEventListener('mouseout', () => {
-                    if (this.state.selectedUserId !== user.id) li.style.background = 'transparent';
-                });
-
-                // ИЗМЕНЕНИЕ: Формируем правильный адрес из объекта room
-                const address = user.room
-                    ? `${user.room.dormitory_name} / ком. ${user.room.room_number}`
-                    : 'Без адреса (Не привязан к комнате)';
-
-                li.appendChild(el('strong', { style: { color: '#1f2937', fontSize: '14px' } }, user.username));
-                li.appendChild(el('span', { style: { color: '#6b7280', fontSize: '12px' } }, address));
-
-                this.dom.userList.appendChild(li);
-            });
-
+            const res = await api.get(`/users?search=${encodeURIComponent(query)}&limit=${DROPDOWN_LIMIT}`);
+            if (myToken !== this.state.searchToken) return;  // устаревший ответ
+            this.state.results = res.items || [];
+            this.state.activeIdx = this.state.results.length ? 0 : -1;
+            this._renderDropdownResults(query);
         } catch (e) {
-            // БЕЗОПАСНЫЙ ВЫВОД ОШИБКИ (Защита от XSS)
-            this.dom.userList.innerHTML = '';
-            this.dom.userList.appendChild(
-                el('li', { style: { padding: '15px', color: 'red', textAlign: 'center' } }, `Ошибка: ${e.message}`)
-            );
+            if (myToken !== this.state.searchToken) return;
+            this._renderDropdownError(e.message);
         }
     },
 
-    async selectUser(user, liElement) {
+    // -------- DROPDOWN render -----------------------------------------------
+
+    _showDropdown() {
+        if (this.dom.userList) this.dom.userList.hidden = false;
+    },
+
+    _hideDropdown() {
+        if (this.dom.userList) {
+            this.dom.userList.hidden = true;
+            this.state.activeIdx = -1;
+        }
+    },
+
+    _renderDropdownLoading(query) {
+        this.dom.userList.innerHTML = '';
+        const li = el('li', { class: 'is-loading' },
+            '🔎 Ищу «' + query + '»…'
+        );
+        this.dom.userList.appendChild(li);
+        this._showDropdown();
+    },
+
+    _renderDropdownError(message) {
+        this.dom.userList.innerHTML = '';
+        const li = el('li', { class: 'is-empty', style: { color: 'var(--danger-color)' } },
+            'Ошибка: ' + message
+        );
+        this.dom.userList.appendChild(li);
+        this._showDropdown();
+    },
+
+    _renderDropdownResults(query) {
+        this.dom.userList.innerHTML = '';
+        if (!this.state.results.length) {
+            this.dom.userList.appendChild(
+                el('li', { class: 'is-empty' }, 'Ничего не найдено')
+            );
+            this._showDropdown();
+            return;
+        }
+        this.state.results.forEach((user, idx) => {
+            const li = document.createElement('li');
+            li.setAttribute('role', 'option');
+            li.dataset.userId = String(user.id);
+            if (idx === this.state.activeIdx) li.classList.add('is-active');
+
+            const address = user.room
+                ? `${user.room.dormitory_name} / ком. ${user.room.room_number}`
+                : 'Без адреса (не привязан к комнате)';
+
+            // Подсветка совпадения в username (case-insensitive).
+            const nameHtml = this._highlight(user.username, query);
+            li.innerHTML =
+                `<strong>${nameHtml}</strong>` +
+                `<span class="addr">${escapeHtml(address)}</span>`;
+            this.dom.userList.appendChild(li);
+        });
+        this._showDropdown();
+    },
+
+    _setActiveIdx(idx) {
+        this.state.activeIdx = idx;
+        Array.from(this.dom.userList.children).forEach((li, i) => {
+            li.classList.toggle('is-active', i === idx);
+        });
+        const activeLi = this.dom.userList.children[idx];
+        if (activeLi && activeLi.scrollIntoView) {
+            activeLi.scrollIntoView({ block: 'nearest' });
+        }
+    },
+
+    // Подсветка совпадающей подстроки. Возвращает HTML с <mark> вокруг матча.
+    _highlight(text, query) {
+        const safe = escapeHtml(text || '');
+        if (!query) return safe;
+        const qLower = query.toLowerCase();
+        const tLower = safe.toLowerCase();
+        const idx = tLower.indexOf(qLower);
+        if (idx === -1) return safe;
+        const end = idx + query.length;
+        return safe.slice(0, idx) + '<mark>' + safe.slice(idx, end) + '</mark>' + safe.slice(end);
+    },
+
+    // -------- ВЫБОР ЖИЛЬЦА --------------------------------------------------
+
+    async selectUser(user) {
         this.state.selectedUserId = user.id;
         this.dom.inId.value = user.id;
-        this.dom.lblSelectedUser.textContent = user.username;
+        this._renderSelectedChip(user);
+        this._hideDropdown();
 
-        // Визуальное выделение списка
-        Array.from(this.dom.userList.children).forEach(li => li.style.background = 'transparent');
-        if (liElement) liElement.style.background = '#dbeafe';
+        // Очищаем поиск — пользователь выбран, поле должно быть «пустым приглашением».
+        this.dom.searchInput.value = '';
+        if (this.dom.searchClear) this.dom.searchClear.hidden = true;
 
         // Разблокируем форму
         this.dom.formCard.style.opacity = '1';
         this.dom.formCard.style.pointerEvents = 'auto';
         this.dom.form.reset();
 
-        // Фокус на первое поле для скорости
+        // Фокус на первое поле — админ сразу печатает показания.
         this.dom.inHot.focus();
 
-        // Загружаем состояние счетчиков для пользователя
+        // Загружаем состояние счётчиков для пользователя.
         try {
             const state = await api.get(`/admin/readings/manual-state/${user.id}`);
 
@@ -220,6 +347,77 @@ export const ManualModule = {
         }
     },
 
+    _renderSelectedChip(user) {
+        if (!this.dom.lblSelectedUser) return;
+        if (!user) {
+            this.dom.lblSelectedUser.classList.remove('has-user');
+            this.dom.lblSelectedUser.innerHTML = '<i class="fa-regular fa-user"></i> Жилец не выбран';
+            return;
+        }
+        this.dom.lblSelectedUser.classList.add('has-user');
+        const addr = user.room
+            ? ` · ${escapeHtml(user.room.dormitory_name)}/${escapeHtml(String(user.room.room_number))}`
+            : '';
+        this.dom.lblSelectedUser.innerHTML =
+            `<i class="fa-solid fa-circle-check"></i> ${escapeHtml(user.username)}${addr}` +
+            ` <button type="button" class="change-btn" id="manualChangeUserBtn">сменить</button>`;
+        // Кнопка «сменить» — фокус возвращается на поиск.
+        const changeBtn = document.getElementById('manualChangeUserBtn');
+        if (changeBtn) {
+            changeBtn.addEventListener('click', () => {
+                this._resetSelection();
+                this.dom.searchInput.focus();
+            });
+        }
+    },
+
+    _resetSelection() {
+        this.state.selectedUserId = null;
+        this.dom.inId.value = '';
+        this._renderSelectedChip(null);
+        this.dom.formCard.style.opacity = '0.5';
+        this.dom.formCard.style.pointerEvents = 'none';
+        this.dom.alertDraft.style.display = 'none';
+        this.dom.form.reset();
+    },
+
+    // -------- ПЕРИОД --------------------------------------------------------
+
+    async _loadPeriods() {
+        if (!this.dom.periodSelect) return;
+        try {
+            const periods = await api.get('/admin/periods/history');
+            const items = Array.isArray(periods) ? periods : (periods.items || []);
+            items.sort((a, b) => {
+                if (a.is_active && !b.is_active) return -1;
+                if (!a.is_active && b.is_active) return 1;
+                return (b.id || 0) - (a.id || 0);
+            });
+            const cur = this.dom.periodSelect.querySelector('option[value=""]');
+            this.dom.periodSelect.innerHTML = '';
+            if (cur) this.dom.periodSelect.appendChild(cur);
+            items.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = String(p.id);
+                opt.textContent = p.name + (p.is_active ? ' (активный)' : ' (закрытый)');
+                this.dom.periodSelect.appendChild(opt);
+            });
+            this._updatePeriodWarn();
+        } catch (e) {
+            console.warn('manual: не удалось загрузить периоды:', e.message);
+        }
+    },
+
+    _updatePeriodWarn() {
+        if (!this.dom.periodWarn || !this.dom.periodSelect) return;
+        const v = this.dom.periodSelect.value;
+        const opt = this.dom.periodSelect.options[this.dom.periodSelect.selectedIndex];
+        const isPast = v && opt && !opt.textContent.includes('(активный)');
+        this.dom.periodWarn.style.display = isPast ? 'block' : 'none';
+    },
+
+    // -------- SUBMIT --------------------------------------------------------
+
     validate() {
         const h = parseFloat(this.dom.inHot.value);
         const c = parseFloat(this.dom.inCold.value);
@@ -245,8 +443,6 @@ export const ManualModule = {
             cold_water: parseFloat(this.dom.inCold.value),
             electricity: parseFloat(this.dom.inElect.value),
         };
-        // Если выбран конкретный период — передаём period_id.
-        // Пустая строка → не передаём (back-compat: будет использован active).
         const pid = this.dom.periodSelect?.value;
         if (pid) payload.period_id = parseInt(pid);
 
@@ -254,17 +450,8 @@ export const ManualModule = {
             await api.post('/admin/readings/manual', payload);
             toast('Показания успешно сохранены (Черновик)', 'success');
 
-            // Сбрасываем форму
-            this.dom.formCard.style.opacity = '0.5';
-            this.dom.formCard.style.pointerEvents = 'none';
-            this.dom.lblSelectedUser.textContent = 'Не выбран';
-            this.state.selectedUserId = null;
-            Array.from(this.dom.userList.children).forEach(li => li.style.background = 'transparent');
-            this.dom.alertDraft.style.display = 'none';
-            this.dom.form.reset();
-
-            // Возвращаем курсор в строку поиска для следующего жильца
-            this.dom.searchInput.value = '';
+            // Сбрасываем форму и готовим к следующему жильцу.
+            this._resetSelection();
             this.dom.searchInput.focus();
 
         } catch (err) {

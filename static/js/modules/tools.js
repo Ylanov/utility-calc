@@ -5,8 +5,16 @@
 // этот модуль отвечает только за раскрытие/сворачивание секций
 // и синхронизацию с URL (?section=manual).
 
+// Группы верхних табов. Должны совпадать с data-ops-tab атрибутами секций
+// в tab_tools.html. При добавлении новой секции — допишите её ops-tab сюда
+// и в HTML, чтобы UI знал куда её положить.
+const OPS_TABS = ['readings', 'tariffs', 'finance', 'analytics', 'system'];
+const OPS_TAB_LS_KEY = 'ops:tab';
+const OPS_TAB_DEFAULT = 'readings';
+
 export const ToolsModule = {
     isInitialized: false,
+    currentOpsTab: OPS_TAB_DEFAULT,
 
     init() {
         const root = document.getElementById('toolsAccordion');
@@ -14,12 +22,68 @@ export const ToolsModule = {
 
         if (!this.isInitialized) {
             this._bindEvents(root);
+            this._bindOpsTabs();
+            // Глобальный мост: другие модули (dashboard и т.п.) могут
+            // открыть конкретную секцию через CustomEvent — это переключит
+            // нужный ops-tab автоматически.
+            window.addEventListener('tools:open-section', (e) => {
+                const name = e?.detail?.section;
+                if (name) this.openByName(name);
+            });
             this.isInitialized = true;
         }
 
+        // Восстанавливаем активный ops-tab из localStorage.
+        const savedTab = this._readSavedTab();
+        this.setOpsTab(savedTab, { persist: false });
+
         // При повторном входе на вкладку — если в hash/search есть section=xxx,
-        // откроем соответствующую секцию.
+        // откроем соответствующую секцию (и переключим её ops-tab).
         this._applyInitialState(root);
+    },
+
+    _readSavedTab() {
+        try {
+            const v = localStorage.getItem(OPS_TAB_LS_KEY);
+            return OPS_TABS.includes(v) ? v : OPS_TAB_DEFAULT;
+        } catch { return OPS_TAB_DEFAULT; }
+    },
+
+    _bindOpsTabs() {
+        const tabsNav = document.getElementById('opsTabs');
+        if (!tabsNav) return;
+        tabsNav.addEventListener('click', (e) => {
+            const btn = e.target.closest('.ops-tab');
+            if (!btn) return;
+            const name = btn.dataset.opsTab;
+            if (!name) return;
+            this.setOpsTab(name);
+        });
+    },
+
+    // Переключает активный верхний таб «Операций» и скрывает аккордеоны
+    // других групп. По умолчанию запоминает выбор в localStorage.
+    setOpsTab(name, { persist = true } = {}) {
+        if (!OPS_TABS.includes(name)) name = OPS_TAB_DEFAULT;
+        this.currentOpsTab = name;
+
+        // Подсветка кнопки
+        document.querySelectorAll('.ops-tab').forEach(btn => {
+            const active = btn.dataset.opsTab === name;
+            btn.classList.toggle('active', active);
+            btn.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+
+        // Показ/скрытие секций. Используем класс (не inline display) чтобы
+        // не затирать собственный style="display:none" у scheduled — он
+        // отображается только если есть запланированные тарифы.
+        document.querySelectorAll('.accordion-section[data-ops-tab]').forEach(s => {
+            s.classList.toggle('is-hidden-by-tab', s.dataset.opsTab !== name);
+        });
+
+        if (persist) {
+            try { localStorage.setItem(OPS_TAB_LS_KEY, name); } catch {}
+        }
     },
 
     _bindEvents(root) {
@@ -84,11 +148,17 @@ export const ToolsModule = {
     },
 
     // Открывает секцию по её data-section и плавно прокручивает к ней.
+    // Если секция лежит в другом ops-tab — сначала переключает таб,
+    // иначе раскрытие произойдёт «вслепую» (секция скрыта).
     openByName(name) {
         const section = document.querySelector(
             `.accordion-section[data-section="${CSS.escape(name)}"]`
         );
         if (!section) return;
+        const opsTab = section.dataset.opsTab;
+        if (opsTab && opsTab !== this.currentOpsTab) {
+            this.setOpsTab(opsTab);
+        }
         this.open(section);
         // Небольшая задержка, чтобы анимация раскрытия успела начаться.
         setTimeout(() => {
@@ -106,7 +176,15 @@ export const ToolsModule = {
         );
         const target = params.get('section');
         if (target) {
-            // Закрываем всё кроме выбранной
+            // Если секция в другом ops-tab — переключаем туда.
+            const targetSection = root.querySelector(
+                `.accordion-section[data-section="${CSS.escape(target)}"]`
+            );
+            const opsTab = targetSection?.dataset.opsTab;
+            if (opsTab && opsTab !== this.currentOpsTab) {
+                this.setOpsTab(opsTab);
+            }
+            // Закрываем всё кроме выбранной (только в пределах текущего ops-tab).
             root.querySelectorAll('.accordion-section').forEach(s => {
                 if (s.dataset.section === target) {
                     this.open(s);
@@ -115,10 +193,7 @@ export const ToolsModule = {
                 }
             });
             setTimeout(() => {
-                const s = root.querySelector(
-                    `.accordion-section[data-section="${CSS.escape(target)}"]`
-                );
-                if (s) s.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                if (targetSection) targetSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
             }, 120);
         }
         // Иначе остаётся дефолтное состояние из разметки (первая секция open).
