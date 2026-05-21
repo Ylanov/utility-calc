@@ -2374,3 +2374,388 @@ async def reload_period_apply(
         "errors_count": len(errors),
         "errors": errors,
     }
+
+
+# =========================================================================
+# AUTO-REBUILD FROM GSHEETS — массовая авто-пересборка всех данных за год.
+#
+# Use case: «Сделать выборку за год → начальный период = самый ранний месяц
+# подачи, остальные месяцы → reading'и (latest по timestamp в каждом).
+# Применить ко всем жильцам сразу».
+#
+# Алгоритм:
+#   1. Берём все matched GSheetsImportRow за указанный year.
+#   2. Группируем по matched_user_id.
+#   3. Для каждого жильца:
+#      a. Группируем подачи по (year, month) sheet_timestamp;
+#      b. В каждом месяце берём latest по sheet_timestamp (если 10 подач
+#         в один месяц — побеждает последняя);
+#      c. Сортируем picked-список по (year, month) восходяще;
+#      d. Первая запись → INITIAL_FROM_GSHEETS (baseline комнаты);
+#      e. Остальные → MeterReading per-period через _apply_approve.
+#   4. Все «проигравшие» в дедупликации GSheets-строки помечаются
+#      status='rejected' с причиной 'superseded_by_later_in_month'.
+#   5. Все существующие MeterReading жильца за затронутые периоды
+#      удаляются перед созданием новых.
+# =========================================================================
+
+def _bucket_by_month(rows: list) -> dict[tuple[int, int], list]:
+    """Группирует GSheetsImportRow-список по (year, month) sheet_timestamp."""
+    out: dict[tuple[int, int], list] = {}
+    for r in rows:
+        if not r.sheet_timestamp:
+            continue
+        key = (r.sheet_timestamp.year, r.sheet_timestamp.month)
+        out.setdefault(key, []).append(r)
+    return out
+
+
+def _build_rebuild_plan(matched_rows: list) -> list[dict]:
+    """Возвращает план пересборки: для каждого user_id — baseline + readings.
+
+    matched_rows должны быть отсортированы или содержать matched_user_id.
+    План — массив элементов: {user_id, baseline: {...}, readings: [...],
+    duplicates: [row_ids проигнорированных как «более ранние в том же месяце»]}.
+    """
+    by_user: dict[int, list] = {}
+    for r in matched_rows:
+        by_user.setdefault(r.matched_user_id, []).append(r)
+
+    plan: list[dict] = []
+    for uid, rs in by_user.items():
+        by_month = _bucket_by_month(rs)
+        if not by_month:
+            continue
+        picked_per_month: dict[tuple[int, int], object] = {}
+        duplicates: list[int] = []
+        for key, month_rs in by_month.items():
+            month_rs_sorted = sorted(month_rs, key=lambda r: r.sheet_timestamp, reverse=True)
+            picked_per_month[key] = month_rs_sorted[0]
+            duplicates.extend(r.id for r in month_rs_sorted[1:])
+
+        keys_sorted = sorted(picked_per_month.keys())
+        if not keys_sorted:
+            continue
+
+        baseline_key = keys_sorted[0]
+        baseline_row = picked_per_month[baseline_key]
+        readings: list[dict] = []
+        for key in keys_sorted[1:]:
+            row = picked_per_month[key]
+            readings.append({
+                "year": key[0],
+                "month": key[1],
+                "row_id": row.id,
+                "hot_water": float(row.hot_water or 0),
+                "cold_water": float(row.cold_water or 0),
+                "sheet_timestamp": row.sheet_timestamp.isoformat() if row.sheet_timestamp else None,
+                "current_status": row.status,
+            })
+
+        plan.append({
+            "user_id": uid,
+            "baseline": {
+                "year": baseline_key[0],
+                "month": baseline_key[1],
+                "row_id": baseline_row.id,
+                "hot_water": float(baseline_row.hot_water or 0),
+                "cold_water": float(baseline_row.cold_water or 0),
+                "sheet_timestamp": baseline_row.sheet_timestamp.isoformat() if baseline_row.sheet_timestamp else None,
+            },
+            "readings": readings,
+            "duplicates_rejected": duplicates,
+        })
+    return plan
+
+
+@router.get("/auto-rebuild/preview")
+async def auto_rebuild_preview(
+    year: int = Query(..., ge=2020, le=2100),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Показывает план авто-пересборки за год: для каждого жильца — какой
+    месяц станет baseline, какие месяцы → reading'и, какие подачи
+    «проиграли» дедупликацию (более ранние в том же месяце)."""
+    require_admin(current_user)
+    start = datetime(year, 1, 1)
+    end = datetime(year + 1, 1, 1)
+
+    rows = (await db.execute(
+        select(GSheetsImportRow)
+        .where(
+            GSheetsImportRow.sheet_timestamp >= start,
+            GSheetsImportRow.sheet_timestamp < end,
+            GSheetsImportRow.matched_user_id.is_not(None),
+            GSheetsImportRow.status != "rejected",
+        )
+    )).scalars().all()
+
+    plan = _build_rebuild_plan(rows)
+
+    # Подгрузим ФИО + адрес для каждого user_id.
+    uids = [p["user_id"] for p in plan]
+    users_q = (await db.execute(
+        select(User).options(selectinload(User.room)).where(User.id.in_(uids))
+    )).scalars().all() if uids else []
+    users_by_id = {u.id: u for u in users_q}
+    for entry in plan:
+        u = users_by_id.get(entry["user_id"])
+        if u:
+            entry["username"] = u.username
+            entry["full_name"] = u.full_name
+            if u.room:
+                entry["dormitory_name"] = u.room.dormitory_name
+                entry["room_number"] = u.room.room_number
+
+    # Также покажем общую статистику.
+    total_rows = len(rows)
+    total_users = len(plan)
+    total_readings_to_create = sum(len(p["readings"]) for p in plan)
+    total_duplicates = sum(len(p["duplicates_rejected"]) for p in plan)
+
+    return {
+        "year": year,
+        "stats": {
+            "total_rows_scanned": total_rows,
+            "total_users": total_users,
+            "total_baselines": total_users,
+            "total_readings_to_create": total_readings_to_create,
+            "total_duplicates_rejected": total_duplicates,
+        },
+        "plan": plan,
+    }
+
+
+@router.post("/auto-rebuild/apply")
+async def auto_rebuild_apply(
+    year: int = Query(..., ge=2020, le=2100),
+    confirm: str = Query(..., description="Должно быть 'YES_REBUILD_FROM_GSHEETS'"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Apply: реализует план из preview.
+
+    Транзакция: одна, либо весь rebuild, либо ничего. Audit log с
+    user_ids/counts.
+    """
+    require_admin(current_user)
+    if confirm != "YES_REBUILD_FROM_GSHEETS":
+        raise HTTPException(400, "confirm-param должен быть 'YES_REBUILD_FROM_GSHEETS'")
+
+    start = datetime(year, 1, 1)
+    end = datetime(year + 1, 1, 1)
+    rows = (await db.execute(
+        select(GSheetsImportRow)
+        .where(
+            GSheetsImportRow.sheet_timestamp >= start,
+            GSheetsImportRow.sheet_timestamp < end,
+            GSheetsImportRow.matched_user_id.is_not(None),
+            GSheetsImportRow.status != "rejected",
+        )
+    )).scalars().all()
+
+    plan = _build_rebuild_plan(rows)
+
+    # Кэш period.id по (year, month) — чтобы не создавать дубли.
+    period_cache: dict[tuple[int, int], int] = {}
+
+    async def _get_or_create_period(y: int, m: int) -> BillingPeriod:
+        key = (y, m)
+        if key in period_cache:
+            return await db.get(BillingPeriod, period_cache[key])
+        period_name = f"{_MONTH_NAMES_RU[m]} {y}"
+        period = (await db.execute(
+            select(BillingPeriod).where(BillingPeriod.name == period_name)
+        )).scalars().first()
+        if not period:
+            period = BillingPeriod(name=period_name, is_active=False)
+            db.add(period)
+            await db.flush()
+        period_cache[key] = period.id
+        return period
+
+    rows_by_id = {r.id: r for r in rows}
+
+    baselines_created = 0
+    readings_created = 0
+    readings_deleted = 0
+    duplicates_rejected = 0
+    errors: list[dict] = []
+
+    for entry in plan:
+        uid = entry["user_id"]
+        user = (await db.execute(
+            select(User).options(selectinload(User.room)).where(User.id == uid)
+        )).scalars().first()
+        if not user or not user.room_id:
+            errors.append({"user_id": uid, "error": "Жилец без комнаты"})
+            continue
+        room = await db.get(Room, user.room_id)
+        if not room:
+            errors.append({"user_id": uid, "error": "Комната не найдена"})
+            continue
+
+        # 1. Удалить существующие MR жильца за затронутые периоды.
+        affected_period_names = []
+        affected_period_names.append(
+            f"{_MONTH_NAMES_RU[entry['baseline']['month']]} {entry['baseline']['year']}"
+        )
+        for rd in entry["readings"]:
+            affected_period_names.append(f"{_MONTH_NAMES_RU[rd['month']]} {rd['year']}")
+        affected_periods = (await db.execute(
+            select(BillingPeriod.id).where(BillingPeriod.name.in_(affected_period_names))
+        )).all()
+        affected_period_ids = [r[0] for r in affected_periods]
+        if affected_period_ids:
+            existing = (await db.execute(
+                select(MeterReading.id).where(
+                    MeterReading.user_id == uid,
+                    MeterReading.period_id.in_(affected_period_ids),
+                )
+            )).all()
+            existing_ids = [r[0] for r in existing]
+            if existing_ids:
+                from sqlalchemy import update as _upd, delete as _del
+                await db.execute(
+                    _upd(GSheetsImportRow)
+                    .where(GSheetsImportRow.reading_id.in_(existing_ids))
+                    .values(reading_id=None, processed_at=None, status="auto_approved")
+                )
+                await db.execute(_del(MeterReading).where(MeterReading.id.in_(existing_ids)))
+                readings_deleted += len(existing_ids)
+
+        # 2. Создать/обновить baseline (INITIAL_FROM_GSHEETS).
+        baseline_row = rows_by_id.get(entry["baseline"]["row_id"])
+        if baseline_row is None:
+            errors.append({"user_id": uid, "error": "baseline_row not found"})
+            continue
+
+        new_hot = baseline_row.hot_water or Decimal("0")
+        new_cold = baseline_row.cold_water or Decimal("0")
+
+        initial = (await db.execute(
+            select(MeterReading).where(
+                MeterReading.room_id == room.id,
+                MeterReading.anomaly_flags.in_([
+                    "INITIAL_SETUP",
+                    "INITIAL_FROM_FIRST_SUBMISSION",
+                    "INITIAL_FROM_GSHEETS",
+                    "AUTO_GENERATED",
+                ]),
+            ).order_by(MeterReading.created_at.desc())
+        )).scalars().first()
+        if initial is not None:
+            initial.hot_water = new_hot
+            initial.cold_water = new_cold
+            initial.electricity = initial.electricity or Decimal("0")
+            initial.anomaly_flags = "INITIAL_FROM_GSHEETS"
+            initial.anomaly_score = 0
+            initial.is_approved = True
+            db.add(initial)
+            await db.flush()
+            initial_id = initial.id
+        else:
+            initial = MeterReading(
+                room_id=room.id, user_id=uid, period_id=None,
+                hot_water=new_hot, cold_water=new_cold,
+                electricity=Decimal("0"),
+                is_approved=True,
+                anomaly_flags="INITIAL_FROM_GSHEETS",
+                anomaly_score=0,
+                total_209=Decimal("0"), total_205=Decimal("0"),
+            )
+            db.add(initial)
+            await db.flush()
+            initial_id = initial.id
+
+        room.last_hot_water = new_hot
+        room.last_cold_water = new_cold
+        db.add(room)
+
+        baseline_row.status = "approved"
+        baseline_row.reading_id = initial_id
+        baseline_row.processed_at = utcnow()
+        baseline_row.processed_by_id = current_user.id
+        baseline_row.conflict_reason = None
+        db.add(baseline_row)
+        baselines_created += 1
+
+        # 3. Для каждого remaining-месяца → создаём MeterReading через _apply_approve.
+        # _apply_approve сам разруливает period (из sheet_timestamp), считает cost,
+        # учитывает meaningful_prev (теперь это INITIAL_FROM_GSHEETS, не AUTO_GENERATED).
+        for rd in entry["readings"]:
+            r_row = rows_by_id.get(rd["row_id"])
+            if r_row is None:
+                continue
+            r_row.reading_id = None
+            r_row.processed_at = None
+            r_row.status = "auto_approved"
+            db.add(r_row)
+            await db.flush()
+            try:
+                mr = await _apply_approve(db, r_row, current_user)
+                r_row.reading_id = mr.id
+                r_row.processed_at = utcnow()
+                r_row.status = "approved"
+                db.add(r_row)
+                readings_created += 1
+            except HTTPException as e:
+                errors.append({
+                    "user_id": uid,
+                    "row_id": r_row.id,
+                    "year": rd["year"], "month": rd["month"],
+                    "error": e.detail if hasattr(e, "detail") else str(e),
+                })
+            except Exception as e:
+                errors.append({
+                    "user_id": uid, "row_id": r_row.id,
+                    "year": rd["year"], "month": rd["month"],
+                    "error": str(e),
+                })
+
+        # 4. Помечаем дубли (более ранние в том же месяце) как rejected.
+        if entry["duplicates_rejected"]:
+            from sqlalchemy import update as _upd_d
+            await db.execute(
+                _upd_d(GSheetsImportRow)
+                .where(GSheetsImportRow.id.in_(entry["duplicates_rejected"]))
+                .values(
+                    status="rejected",
+                    conflict_reason="superseded_by_later_in_month",
+                    processed_at=utcnow(),
+                    processed_by_id=current_user.id,
+                )
+            )
+            duplicates_rejected += len(entry["duplicates_rejected"])
+
+    # 5. Audit log.
+    try:
+        await write_audit_log(
+            db, current_user.id, current_user.username,
+            action="auto_rebuild_from_gsheets",
+            entity_type="billing_year",
+            entity_id=year,
+            details={
+                "year": year,
+                "baselines_created": baselines_created,
+                "readings_created": readings_created,
+                "readings_deleted": readings_deleted,
+                "duplicates_rejected": duplicates_rejected,
+                "errors_count": len(errors),
+            },
+        )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("audit_log for auto-rebuild failed")
+
+    await db.commit()
+    return {
+        "year": year,
+        "baselines_created": baselines_created,
+        "readings_created": readings_created,
+        "readings_deleted": readings_deleted,
+        "duplicates_rejected": duplicates_rejected,
+        "errors_count": len(errors),
+        "errors": errors[:50],  # обрезаем чтобы не разнести payload
+    }

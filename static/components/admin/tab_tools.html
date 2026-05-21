@@ -874,6 +874,9 @@
                             <button type="button" data-analyzer-tab="reload" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px; color:#dc2626;">
                                 <i class="fa-solid fa-rotate"></i> Переподгрузка периода
                             </button>
+                            <button type="button" data-analyzer-tab="autorebuild" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px; color:#7c3aed;">
+                                <i class="fa-solid fa-wand-magic-sparkles"></i> Авто-пересборка за год
+                            </button>
                             <button type="button" data-analyzer-tab="maintenance" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
                                 <i class="fa-solid fa-broom"></i> Обслуживание
                             </button>
@@ -1130,6 +1133,35 @@
 
                             <div id="reloadPreviewContainer">
                                 <p style="color:var(--text-secondary); font-size:13px;">Выберите период и нажмите «Предпросмотр» — увидите что в БД сейчас, что в GSheets, и что изменится после переподгрузки.</p>
+                            </div>
+                        </div>
+
+                        <!-- ==================== ТАБ AUTOREBUILD: авто-пересборка по году из GSheets ==================== -->
+                        <div data-analyzer-pane="autorebuild" style="display:none;">
+                            <div style="background:#faf5ff; border:1px solid #d8b4fe; border-left:4px solid #7c3aed; padding:12px 16px; border-radius:6px; margin-bottom:14px;">
+                                <div style="font-weight:700; color:#5b21b6; font-size:14px;">
+                                    <i class="fa-solid fa-wand-magic-sparkles"></i> Авто-пересборка года из Google Sheets
+                                </div>
+                                <div style="font-size:12.5px; color:#4c1d95; margin-top:6px; line-height:1.55;">
+                                    Берёт <b>все</b> подачи года из Google-таблицы, для каждого жильца:<br>
+                                    • группирует по месяцам, в каждом месяце оставляет <b>самую позднюю</b> подачу (если жилец подавал 10 раз — победит последняя);<br>
+                                    • самый ранний месяц с подачей → <b>Начальный период</b> комнаты (INITIAL_FROM_GSHEETS);<br>
+                                    • остальные месяцы → MeterReading'и с корректной дельтой;<br>
+                                    • удаляет существующие reading'и за затронутые периоды.<br>
+                                    Дубликаты «более ранних в том же месяце» помечаются rejected.
+                                </div>
+                            </div>
+
+                            <div style="display:flex; align-items:center; gap:10px; margin-bottom:14px; flex-wrap:wrap;">
+                                <label style="font-size:13px; color:var(--text-secondary);">Год:</label>
+                                <select id="rebuildYear" style="width:100px;"></select>
+                                <button id="btnRebuildPreview" class="action-btn warning-btn" style="padding:6px 14px; font-size:13px;">
+                                    <i class="fa-solid fa-eye"></i> Предпросмотр плана
+                                </button>
+                            </div>
+
+                            <div id="rebuildPreviewContainer">
+                                <p style="color:var(--text-secondary); font-size:13px;">Выберите год и нажмите «Предпросмотр плана» — увидите для каждого жильца какая подача станет baseline, какие — reading'ами по месяцам.</p>
                             </div>
                         </div>
 

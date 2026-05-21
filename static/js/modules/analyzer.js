@@ -121,6 +121,11 @@ export const AnalyzerModule = {
             reloadMonth: document.getElementById('reloadMonth'),
             btnReloadPreview: document.getElementById('btnReloadPreview'),
             reloadPreviewContainer: document.getElementById('reloadPreviewContainer'),
+
+            // Таб «Авто-пересборка за год»
+            rebuildYear: document.getElementById('rebuildYear'),
+            btnRebuildPreview: document.getElementById('btnRebuildPreview'),
+            rebuildPreviewContainer: document.getElementById('rebuildPreviewContainer'),
         };
     },
 
@@ -212,6 +217,17 @@ export const AnalyzerModule = {
             if (applyBtn) {
                 e.preventDefault();
                 this.applyReload();
+            }
+        });
+
+        // Таб «Авто-пересборка за год»
+        this._initRebuildYearSelect();
+        this.dom.btnRebuildPreview?.addEventListener('click', () => this.loadRebuildPreview());
+        this.dom.rebuildPreviewContainer?.addEventListener('click', (e) => {
+            const applyBtn = e.target.closest('button[data-rebuild-apply]');
+            if (applyBtn) {
+                e.preventDefault();
+                this.applyRebuild();
             }
         });
 
@@ -1909,6 +1925,170 @@ export const AnalyzerModule = {
             ${renderTable('Будет заменено (значения отличаются)', '#f59e0b', data.diff.to_replace, 'replace')}
             ${renderTable('Будет создано (новые из GSheets)', '#10b981', data.diff.to_create, 'simple')}
             ${applyBtn}`;
+    },
+
+    // ============================================================
+    // АВТО-ПЕРЕСБОРКА ГОДА (auto-rebuild from GSheets)
+    // ============================================================
+    _initRebuildYearSelect() {
+        const sel = this.dom.rebuildYear;
+        if (!sel || sel.children.length > 0) return;
+        const currentYear = new Date().getFullYear();
+        for (let y = currentYear; y >= currentYear - 3; y--) {
+            const opt = document.createElement('option');
+            opt.value = y;
+            opt.textContent = y;
+            if (y === currentYear) opt.selected = true;
+            sel.appendChild(opt);
+        }
+    },
+
+    async loadRebuildPreview() {
+        if (!this.dom.rebuildPreviewContainer) return;
+        const year = Number(this.dom.rebuildYear?.value);
+        if (!year) {
+            toast('Выберите год', 'warning');
+            return;
+        }
+        this._rebuildYear = year;
+        this.dom.rebuildPreviewContainer.innerHTML =
+            '<p style="color:var(--text-secondary); padding:20px;">Строим план… (может занять 5-15 секунд)</p>';
+        try {
+            const data = await api.get(`/admin/gsheets/auto-rebuild/preview?year=${year}`);
+            this._renderRebuildPreview(data);
+        } catch (e) {
+            this.dom.rebuildPreviewContainer.innerHTML =
+                `<p style="color:var(--danger-color);">Ошибка: ${escapeHtml(e.message)}</p>`;
+        }
+    },
+
+    _renderRebuildPreview(data) {
+        const monthName = (m) => ['', 'Янв', 'Фев', 'Мар', 'Апр', 'Май', 'Июн', 'Июл', 'Авг', 'Сен', 'Окт', 'Ноя', 'Дек'][m];
+        const plan = data.plan || [];
+        const stats = data.stats || {};
+
+        if (plan.length === 0) {
+            this.dom.rebuildPreviewContainer.innerHTML = `
+                <div style="text-align:center; padding:30px; color:var(--text-secondary);">
+                    <i class="fa-solid fa-inbox" style="font-size:24px;"></i>
+                    <div style="margin-top:8px;">Подач за ${data.year} год не найдено в Google Sheets.</div>
+                </div>`;
+            return;
+        }
+
+        const statsBar = `
+            <div style="display:flex; gap:16px; margin-bottom:14px; padding:12px; background:var(--bg-page); border-radius:8px; font-size:13px; flex-wrap:wrap;">
+                <div><b>Всего строк:</b> ${stats.total_rows_scanned}</div>
+                <div><b>Жильцов:</b> ${stats.total_users}</div>
+                <div><b>Baseline'ов:</b> ${stats.total_baselines}</div>
+                <div><b>Reading'ов создастся:</b> ${stats.total_readings_to_create}</div>
+                <div style="color:var(--text-tertiary);">
+                    <b>Дублей отбросится:</b> ${stats.total_duplicates_rejected}
+                </div>
+            </div>`;
+
+        const rows = plan.slice(0, 200).map(p => {
+            const addr = p.dormitory_name
+                ? `${escapeHtml(p.dormitory_name)}/${escapeHtml(String(p.room_number || ''))}`
+                : '—';
+            const baselineLabel = `<span style="background:#dbeafe; color:#1e40af; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:600;">
+                Baseline: ${monthName(p.baseline.month)} ${p.baseline.year} → ${Number(p.baseline.hot_water).toFixed(2)} / ${Number(p.baseline.cold_water).toFixed(2)}
+            </span>`;
+            const readingTags = p.readings.map(r =>
+                `<span style="background:#dcfce7; color:#166534; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:4px;">
+                    ${monthName(r.month)}: ${Number(r.hot_water).toFixed(2)} / ${Number(r.cold_water).toFixed(2)}
+                </span>`
+            ).join('');
+            const dupNote = p.duplicates_rejected.length > 0
+                ? `<span style="color:var(--text-tertiary); font-size:11px;">отбросится дублей: ${p.duplicates_rejected.length}</span>`
+                : '';
+            return `<tr style="border-bottom:1px solid var(--border-color);">
+                <td style="padding:8px 10px; min-width:200px;">
+                    <div style="font-weight:600; font-size:12.5px;">${escapeHtml(p.full_name || p.username || '—')}</div>
+                    <div style="font-size:10.5px; color:var(--text-secondary);">${addr}</div>
+                </td>
+                <td style="padding:8px 10px;">${baselineLabel}</td>
+                <td style="padding:8px 10px;">${readingTags || '<span style="color:var(--text-tertiary); font-size:11px;">только baseline</span>'}</td>
+                <td style="padding:8px 10px; text-align:right;">${dupNote}</td>
+            </tr>`;
+        }).join('');
+
+        const more = plan.length > 200
+            ? `<p style="font-size:11px; color:var(--text-tertiary); margin-top:6px;">…и ещё ${plan.length - 200} жильцов в плане.</p>`
+            : '';
+
+        const applyBtn = `
+            <div style="margin-top:14px; padding:14px; background:#fef2f2; border:1px solid #fecaca; border-radius:8px;">
+                <div style="font-weight:700; color:#991b1b; margin-bottom:8px;">
+                    <i class="fa-solid fa-triangle-exclamation"></i> Подтверждение
+                </div>
+                <div style="font-size:13px; color:#7f1d1d; margin-bottom:10px;">
+                    <b>Удалит:</b> существующие MeterReading'и за все затронутые периоды у ${stats.total_users} жильцов.<br>
+                    <b>Создаст:</b> ${stats.total_baselines} baseline'ов + ${stats.total_readings_to_create} reading'ов из GSheets.<br>
+                    <b>Отклонит:</b> ${stats.total_duplicates_rejected} дублирующих строк.
+                </div>
+                <button class="action-btn danger-btn" data-rebuild-apply="1" style="padding:8px 16px; font-size:13px; background:#7c3aed; color:#fff; border:1px solid #7c3aed;">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> Запустить пересборку
+                </button>
+            </div>`;
+
+        this.dom.rebuildPreviewContainer.innerHTML = `
+            <h3 style="margin:0 0 12px 0; font-size:16px;">План пересборки за ${data.year} год</h3>
+            ${statsBar}
+            <div style="overflow-x:auto; border:1px solid var(--border-color); border-radius:8px;">
+                <table style="width:100%; min-width:780px;">
+                    <thead>
+                        <tr style="background:var(--bg-page); font-size:11px;">
+                            <th style="text-align:left; padding:8px 10px;">Жилец / адрес</th>
+                            <th style="text-align:left; padding:8px 10px;">Baseline</th>
+                            <th style="text-align:left; padding:8px 10px;">Reading'и по месяцам</th>
+                            <th style="text-align:right; padding:8px 10px;">Дубли</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+            ${more}
+            ${applyBtn}`;
+    },
+
+    async applyRebuild() {
+        const year = this._rebuildYear;
+        if (!year) {
+            toast('Сначала «Предпросмотр»', 'warning');
+            return;
+        }
+        if (!window.confirm(
+            `Запустить авто-пересборку за ${year} год?\n\n` +
+            `Это удалит существующие reading'и за все затронутые периоды и создаст ` +
+            `новые из GSheets-подач по правилу "latest-per-month + baseline=earliest". ` +
+            `Audit log будет записан.`
+        )) return;
+        const typed = window.prompt(
+            `Для подтверждения введите год:\n"${year}"`
+        );
+        if (typed !== String(year)) {
+            toast('Подтверждение не совпало — отмена', 'warning');
+            return;
+        }
+        this.dom.rebuildPreviewContainer.innerHTML =
+            '<p style="color:var(--text-secondary); padding:20px;">Выполняем пересборку… (может занять 30+ сек на больших объёмах)</p>';
+        try {
+            const res = await api.post(
+                `/admin/gsheets/auto-rebuild/apply?year=${year}&confirm=YES_REBUILD_FROM_GSHEETS`,
+                {}
+            );
+            const msg = `Готово: baseline ${res.baselines_created}, reading'ов ${res.readings_created}, удалено ${res.readings_deleted}`
+                + (res.errors_count ? `, ошибок ${res.errors_count}` : '');
+            toast(msg, res.errors_count ? 'warning' : 'success');
+            if (res.errors_count) {
+                console.warn('[auto-rebuild errors]', res.errors);
+            }
+            await this.loadRebuildPreview();
+        } catch (e) {
+            this.dom.rebuildPreviewContainer.innerHTML =
+                `<p style="color:var(--danger-color);">Ошибка: ${escapeHtml(e.message)}</p>`;
+        }
     },
 
     async applyReload() {
