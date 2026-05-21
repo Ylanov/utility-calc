@@ -1049,6 +1049,124 @@ async def debts_undo_import(
     }
 
 
+@router.get(
+    "/debts/check-resident-coverage/{user_id}",
+    summary="Найти жильца в архивах последних импортов 1С (диагностика)",
+)
+async def debts_check_resident_coverage(
+    user_id: int,
+    last_n: int = 10,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Для конкретного жильца перебирает последние N импортов 1С,
+    парсит архивные xlsx, ищет ФИО (точное совпадение + substring).
+    Полезно для диагностики «почему у Миронова нет долгов»:
+      - если в архивах есть с цифрами → fuzzy-привязка ошиблась, нужен reassign
+      - если есть с нулями → нормально, нет долга
+      - если нет вообще → жильца не передавали из 1С
+    """
+    if current_user.role not in ("admin", "financier"):
+        raise HTTPException(403, "Недостаточно прав")
+
+    user = await db.get(User, user_id)
+    if not user:
+        raise HTTPException(404, "Жилец не найден")
+
+    fio_db = (user.full_name or user.username or "").strip()
+    if not fio_db:
+        raise HTTPException(400, "У жильца нет ФИО — нечего искать")
+
+    # Нормализация для substring-сравнения (нижний регистр, без точек,
+    # без двойных пробелов).
+    import re as _re
+    def _norm(s: str) -> str:
+        s = (s or "").lower().replace(".", " ").replace(",", " ")
+        s = _re.sub(r"\s+", " ", s).strip()
+        return s
+
+    fio_db_norm = _norm(fio_db)
+    # Также берём фамилию + первую букву имени для substring-поиска.
+    parts = fio_db_norm.split()
+    surname = parts[0] if parts else ""
+
+    logs = (await db.execute(
+        select(DebtImportLog)
+        .where(
+            DebtImportLog.archive_path.is_not(None),
+            DebtImportLog.status.in_(["completed", "reverted"]),
+        )
+        .order_by(desc(DebtImportLog.id))
+        .limit(last_n)
+    )).scalars().all()
+
+    import openpyxl as _opx
+    import os as _os
+    from decimal import Decimal as _D
+    results = []
+    for log in logs:
+        item = {
+            "log_id": log.id,
+            "account_type": log.account_type,
+            "started_at": log.started_at.isoformat() if log.started_at else None,
+            "status": log.status,
+            "matches": [],
+            "error": None,
+        }
+        try:
+            if not _os.path.exists(log.archive_path):
+                item["error"] = "archive_missing"
+                results.append(item)
+                continue
+            wb = _opx.load_workbook(filename=log.archive_path, read_only=True, data_only=True)
+            ws = wb.active
+            # ФИО обычно в столбце B (col_idx=1). Сальдо в нескольких столбцах.
+            # Просто ищем строки где есть ФИО содержащее фамилию.
+            for row_idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
+                if not row or len(row) < 2:
+                    continue
+                fio_cell = row[1] if len(row) > 1 else None
+                if fio_cell is None:
+                    continue
+                fio_cell_norm = _norm(str(fio_cell))
+                if not fio_cell_norm or not surname:
+                    continue
+                # Substring-матч по фамилии. Дополнительный sanity: если в
+                # ФИО из БД есть имя/отчество — должно совпадать хотя бы
+                # одно слово после фамилии.
+                if surname not in fio_cell_norm:
+                    continue
+                # Собираем числовые значения по всей строке для preview.
+                numeric_cols = []
+                for col_val in row[2:]:
+                    if col_val is None or col_val == "":
+                        continue
+                    try:
+                        d = _D(str(col_val).replace(",", "."))
+                        if d != 0:
+                            numeric_cols.append(float(d))
+                    except Exception:
+                        pass
+                exact = fio_cell_norm == fio_db_norm
+                item["matches"].append({
+                    "row_excel": row_idx,
+                    "fio_in_excel": str(fio_cell).strip(),
+                    "exact_match": exact,
+                    "numeric_values": numeric_cols[:6],
+                })
+            wb.close()
+        except Exception as exc:
+            item["error"] = f"parse_failed: {exc}"
+        results.append(item)
+
+    return {
+        "user_id": user_id,
+        "fio_db": fio_db,
+        "imports_checked": len(logs),
+        "results": results,
+    }
+
+
 @router.delete("/debts/import-history/{log_id}", summary="Удалить запись истории импорта 1С")
 async def debts_delete_import_history(
     log_id: int,

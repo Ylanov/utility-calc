@@ -558,6 +558,14 @@ export const DebtsModule = {
                 title: 'История долгов через все импорты 1С',
                 onclick: () => this.openUserDebtHistory(u.id, u.username),
             }, '📊'));
+            // 🔍 — поиск ФИО в архивах последних импортов 1С. Use case:
+            // у жильца «—» в обоих счетах, а в Excel он должен быть. Эта
+            // кнопка показывает где он есть/нет в архивах + значения.
+            actionsCell.appendChild(el('button', {
+                class: 'action-btn', style: { padding: '4px 8px', fontSize: '12px', background: '#fff', color: '#0ea5e9', border: '1px solid #bae6fd', marginRight: '4px' },
+                title: 'Найти ФИО в архивах последних импортов 1С (диагностика «почему нет долга»)',
+                onclick: () => this.openCheckCoverage(u.id, u.username),
+            }, '🔍'));
             // Кнопка «Сбросить баланс» — обнуляет debt/overpay у всех reading
             // жильца. Полезно когда после отката импорта у жильца остались
             // зависшие сальдо в других периодах.
@@ -774,6 +782,101 @@ export const DebtsModule = {
             this.loadImportHistory();
         } catch (e) {
             toast('Ошибка чистки: ' + e.message, 'error');
+        }
+    },
+
+    /** Поиск ФИО жильца в архивах последних импортов 1С. Открывает
+     *  модалку которая для каждого импорта показывает: найдено / не
+     *  найдено + значения из строки (если найдено). Помогает понять
+     *  почему у жильца «—» в долгах. */
+    async openCheckCoverage(userId, username) {
+        // Простая модалка через document.body. Не используем глобальные
+        // modal-helpers чтобы не плодить зависимости.
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
+        overlay.innerHTML = `
+            <div style="background:#fff; border-radius:8px; width:min(720px, 100%); max-height:90vh; display:flex; flex-direction:column;">
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:14px 18px; border-bottom:1px solid var(--border-color);">
+                    <h3 style="margin:0; font-size:15px;">
+                        🔍 Поиск «${esc(username)}» в архивах 1С
+                    </h3>
+                    <button data-close-coverage style="background:none; border:none; font-size:20px; color:#6b7280; cursor:pointer;">×</button>
+                </div>
+                <div style="padding:16px 18px; overflow-y:auto; flex:1;" id="coverageContent">
+                    <p style="color:var(--text-secondary); font-size:13px;">
+                        <i class="fa-solid fa-spinner fa-spin"></i> Парсим архивы… (до 20 сек, openpyxl на read-only)
+                    </p>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+        const close = () => overlay.remove();
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay || e.target.closest('[data-close-coverage]')) close();
+        });
+
+        try {
+            const data = await api.get(`/financier/debts/check-resident-coverage/${userId}`);
+            const cont = overlay.querySelector('#coverageContent');
+            if (!cont) return;
+
+            const headerHtml = `
+                <div style="margin-bottom:14px; padding:10px 12px; background:#f3f4f6; border-radius:6px; font-size:12.5px;">
+                    <div><b>ФИО в БД:</b> ${esc(data.fio_db)}</div>
+                    <div style="color:var(--text-secondary); margin-top:3px;">
+                        Проверено импортов: ${data.imports_checked} (последних)
+                    </div>
+                </div>`;
+
+            const items = (data.results || []).map(r => {
+                let body;
+                if (r.error) {
+                    body = `<div style="color:#dc2626; font-size:11px;">⚠ ${esc(r.error)}</div>`;
+                } else if (!r.matches.length) {
+                    body = `<div style="color:var(--text-secondary); font-size:11px; font-style:italic;">Не найдено в этом архиве</div>`;
+                } else {
+                    body = r.matches.map(m => `
+                        <div style="padding:6px 8px; background:${m.exact_match ? '#dcfce7' : '#fef3c7'}; border-radius:4px; margin-top:4px; font-size:11px;">
+                            <b>${m.exact_match ? '✓ Точное совпадение' : '~ Похожее ФИО'}:</b>
+                            ${esc(m.fio_in_excel)}<br>
+                            <span style="color:var(--text-secondary);">Excel row ${m.row_excel} · значения: ${m.numeric_values.length ? m.numeric_values.map(v => v.toFixed(2)).join(' / ') : 'все нули'}</span>
+                        </div>
+                    `).join('');
+                }
+                const statusColor = r.status === 'completed' ? '#059669' : '#6b7280';
+                return `
+                    <div style="border:1px solid var(--border-color); border-radius:6px; padding:10px 12px; margin-bottom:8px;">
+                        <div style="display:flex; justify-content:space-between; font-size:12px;">
+                            <span><b>№${r.log_id} · ${esc(r.account_type)}</b> · <span style="color:${statusColor};">${esc(r.status)}</span></span>
+                            <span style="color:var(--text-secondary);">${r.started_at ? esc(r.started_at.split('T')[0]) : '—'}</span>
+                        </div>
+                        ${body}
+                    </div>`;
+            }).join('');
+
+            // Подсказки админу.
+            const anyFound = (data.results || []).some(r => r.matches && r.matches.length > 0);
+            const anyWithValues = (data.results || []).some(r =>
+                r.matches && r.matches.some(m => m.numeric_values && m.numeric_values.length > 0)
+            );
+            let hint;
+            if (!anyFound) {
+                hint = `<div style="background:#fee2e2; color:#991b1b; padding:10px 12px; border-radius:6px; font-size:12px; margin-top:8px;">
+                    💡 <b>ФИО не найдено ни в одном из последних импортов.</b> Жилец не передавался из 1С — обратитесь к бухгалтерии.
+                </div>`;
+            } else if (anyWithValues) {
+                hint = `<div style="background:#fef3c7; color:#92400e; padding:10px 12px; border-radius:6px; font-size:12px; margin-top:8px;">
+                    💡 <b>ФИО найдено с цифрами, но в БД у жильца долгов нет.</b> Возможно fuzzy-привязка пошла к другому жильцу. Откройте бейдж «⚠ N» (not_found) у соответствующего импорта и попробуйте reassign.
+                </div>`;
+            } else {
+                hint = `<div style="background:#dcfce7; color:#166534; padding:10px 12px; border-radius:6px; font-size:12px; margin-top:8px;">
+                    💡 <b>ФИО найдено, но с нулями.</b> Это нормально — у жильца нет долгов в 1С.
+                </div>`;
+            }
+
+            cont.innerHTML = headerHtml + items + hint;
+        } catch (e) {
+            const cont = overlay.querySelector('#coverageContent');
+            if (cont) cont.innerHTML = `<p style="color:var(--danger-color);">Ошибка: ${esc(e.message)}</p>`;
         }
     },
 
