@@ -73,19 +73,46 @@ def compute_reading_breakdown(
 
     Raises CalculationError — если тариф пустой (см. calculate_utilities).
     """
-    # Baseline: первая подача жильца — счёт = 0, начислять нечего.
-    # Это согласовано с client_readings/admin_readings_approve: в обоих
-    # местах при prev=None вся стоимость = 0, чтобы не считать дельту от
-    # «грязных» прошлых жильцов.
+    # Baseline: первая подача жильца → потребление-зависимые статьи = 0
+    # (счётчик может быть «накручен» за годы, считать дельту от 0 = деньги
+    # в миллионы). НО area-based начисления (содержание, найм, ТКО,
+    # отопление) — ПЛАТЯТСЯ ВСЕГДА, независимо от показаний.
+    #
+    # Раньше тут возвращался полный набор нулей — это съедало законные
+    # area×tariff начисления (~5000-7000 ₽/мес на жильца) ВСЕМ кто имел
+    # только AUTO_GENERATED 0/0/0 baseline. Инцидент: Резунов апр-2026,
+    # 5804 ₽ area-based не начислилось → формально жилец «не должен»,
+    # система тихо теряла доход.
+    #
+    # Фикс: вызываем calculate_utilities с volume_*=0. Тогда:
+    #   cost_hot_water / cold_water / sewage / electricity = 0 (как и было);
+    #   cost_maintenance / social_rent / waste / fixed_part = area × tariff
+    #     (полноценное начисление).
     if prev_reading is None:
+        try:
+            baseline_costs = calculate_utilities(
+                user=user, room=room, tariff=tariff,
+                volume_hot=ZERO, volume_cold=ZERO,
+                volume_sewage=ZERO, volume_electricity_share=ZERO,
+                heating_season_active=heating_season_active,
+                hot_water_heating_active=hot_water_heating_active,
+            )
+        except CalculationError:
+            # На случай битого тарифа — fallback на старое поведение, чтобы
+            # save-точка не падала. Лучше нулевой счёт чем 500-ка.
+            baseline_costs = {
+                "cost_hot_water": ZERO, "cost_cold_water": ZERO,
+                "cost_sewage": ZERO, "cost_electricity": ZERO,
+                "cost_maintenance": ZERO, "cost_social_rent": ZERO,
+                "cost_waste": ZERO, "cost_fixed_part": ZERO,
+                "total_cost": ZERO, "sanity_warning": None,
+            }
+        cost_205_b = baseline_costs.get("cost_social_rent", ZERO)
+        cost_209_b = baseline_costs.get("total_cost", ZERO) - cost_205_b
         return {
-            "cost_hot_water": ZERO, "cost_cold_water": ZERO,
-            "cost_sewage": ZERO, "cost_electricity": ZERO,
-            "cost_maintenance": ZERO, "cost_social_rent": ZERO,
-            "cost_waste": ZERO, "cost_fixed_part": ZERO,
-            "total_cost": ZERO,
-            "total_209": ZERO, "total_205": ZERO,
-            "sanity_warning": None,
+            **baseline_costs,
+            "total_209": cost_209_b,
+            "total_205": cost_205_b,
             "is_baseline": True,
             "meter_decreased": False,
             "prev_is_auto": False,

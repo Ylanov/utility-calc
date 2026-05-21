@@ -882,23 +882,51 @@ def _recalc_compute_one(db_session, reading, user, room, prev_reading, tariffs_b
         or tariffs_by_active
     )
 
-    # BASELINE: первая подача жильца в системе — накопленное значение
-    # счётчика. Считать от нуля нельзя (получится квитанция в миллионы).
-    # Все cost_* = 0, абсолютные показания остаются в БД для следующего
-    # расчёта. Тот же подход в approve_single и bulk_approve_drafts.
+    # BASELINE: первая подача жильца — потребление = 0, но area-based
+    # (содержание/найм/ТКО/отопление) ПЛАТЯТСЯ ВСЕГДА. Bug L (фикс
+    # may 2026): раньше тут возвращались сплошные нули — area-based
+    # начисления ~5000-7000 ₽/мес теряли все жильцы с AUTO_GENERATED
+    # baseline. Теперь вызываем calculate_utilities с volume_*=0:
+    # water/sewage = 0 (правильно), area-based = area × tariff.
     if prev_reading is None:
-        zero_costs = {
-            "cost_hot_water": ZERO, "cost_cold_water": ZERO, "cost_sewage": ZERO,
-            "cost_electricity": ZERO, "cost_maintenance": ZERO, "cost_social_rent": ZERO,
-            "cost_waste": ZERO, "cost_fixed_part": ZERO, "total_cost": ZERO,
-        }
-        total_209_b = Decimal("0") + (reading.debt_209 or Decimal("0")) - (reading.overpayment_209 or Decimal("0"))
-        total_205_b = Decimal("0") + (reading.debt_205 or Decimal("0")) - (reading.overpayment_205 or Decimal("0"))
+        from app.modules.utility.services.calculations import CalculationError as _CE
+        try:
+            baseline = calculate_utilities(
+                user=user, room=room, tariff=tariff,
+                volume_hot=ZERO, volume_cold=ZERO,
+                volume_sewage=ZERO, volume_electricity_share=ZERO,
+                heating_season_active=(global_heating_on and tariff.is_heating_active_now()),
+                hot_water_heating_active=(global_hw_on and tariff.is_hw_heating_active_now()),
+            )
+            base_total = Decimal(str(baseline.get("total_cost") or 0))
+            base_205 = Decimal(str(baseline.get("cost_social_rent") or 0))
+            base_209 = base_total - base_205
+        except _CE as _exc:
+            logger.warning(
+                "[recalc] baseline calc_utilities failed reading_id=%s: %s",
+                reading.id, _exc,
+            )
+            baseline = {
+                "cost_hot_water": ZERO, "cost_cold_water": ZERO, "cost_sewage": ZERO,
+                "cost_electricity": ZERO, "cost_maintenance": ZERO, "cost_social_rent": ZERO,
+                "cost_waste": ZERO, "cost_fixed_part": ZERO, "total_cost": ZERO,
+            }
+            base_total = base_205 = base_209 = ZERO
+
+        total_209_b = base_209 + Decimal(str(reading.debt_209 or 0)) - Decimal(str(reading.overpayment_209 or 0))
+        total_205_b = base_205 + Decimal(str(reading.debt_205 or 0)) - Decimal(str(reading.overpayment_205 or 0))
         return {
             "total_209": total_209_b,
             "total_205": total_205_b,
             "total_cost": total_209_b + total_205_b,
-            **zero_costs,
+            "cost_hot_water": Decimal(str(baseline.get("cost_hot_water") or 0)),
+            "cost_cold_water": Decimal(str(baseline.get("cost_cold_water") or 0)),
+            "cost_sewage": Decimal(str(baseline.get("cost_sewage") or 0)),
+            "cost_electricity": Decimal(str(baseline.get("cost_electricity") or 0)),
+            "cost_maintenance": Decimal(str(baseline.get("cost_maintenance") or 0)),
+            "cost_social_rent": Decimal(str(baseline.get("cost_social_rent") or 0)),
+            "cost_waste": Decimal(str(baseline.get("cost_waste") or 0)),
+            "cost_fixed_part": Decimal(str(baseline.get("cost_fixed_part") or 0)),
         }
 
     p_hot = D(prev_reading.hot_water)

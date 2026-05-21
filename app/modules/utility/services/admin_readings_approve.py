@@ -146,16 +146,32 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
         if prev is not None and prev.id == reading.id:
             prev = None
 
-        # BASELINE — первая в жизни подача жильца в этой комнате.
-        # Без него счётчики с огромными накопленными значениями дали бы
-        # квитанцию на миллионы. Первая подача = baseline, cost_* = 0.
-        # При переезде в другую комнату baseline сработает заново.
+        # BASELINE — первая подача. Bug L: area-based (содержание/найм/ТКО/
+        # отопление) платятся ВСЕГДА. Вызываем calculate_utilities с
+        # volume_*=0 — water/sewage=0 (правильно), area-based начислится.
         if prev is None:
-            zero_costs = {
-                "cost_hot_water": ZERO, "cost_cold_water": ZERO, "cost_sewage": ZERO,
-                "cost_electricity": ZERO, "cost_maintenance": ZERO, "cost_social_rent": ZERO,
-                "cost_waste": ZERO, "cost_fixed_part": ZERO, "total_cost": ZERO,
-            }
+            from app.modules.utility.services.tariff_cache import tariff_cache as _tc_base
+            _bl_tariff = _tc_base.get_effective_tariff(user=user, room=room) or default_tariff
+            _bl_heating = _seasonal.heating_season_active and _bl_tariff.is_heating_active_now()
+            _bl_hw = _seasonal.hot_water_heating_active and _bl_tariff.is_hw_heating_active_now()
+            try:
+                bl_costs = calculate_utilities(
+                    user=user, room=room, tariff=_bl_tariff,
+                    volume_hot=ZERO, volume_cold=ZERO,
+                    volume_sewage=ZERO, volume_electricity_share=ZERO,
+                    heating_season_active=_bl_heating,
+                    hot_water_heating_active=_bl_hw,
+                )
+            except Exception:
+                bl_costs = {
+                    "cost_hot_water": ZERO, "cost_cold_water": ZERO, "cost_sewage": ZERO,
+                    "cost_electricity": ZERO, "cost_maintenance": ZERO, "cost_social_rent": ZERO,
+                    "cost_waste": ZERO, "cost_fixed_part": ZERO, "total_cost": ZERO,
+                }
+            bl_cost_205 = bl_costs.get("cost_social_rent", ZERO)
+            bl_cost_209 = bl_costs.get("total_cost", ZERO) - bl_cost_205
+            bl_total_209 = bl_cost_209 + (reading.debt_209 or ZERO) - (reading.overpayment_209 or ZERO) + adj_map.get(user.id, {}).get('209', ZERO)
+            bl_total_205 = bl_cost_205 + (reading.debt_205 or ZERO) - (reading.overpayment_205 or ZERO) + adj_map.get(user.id, {}).get('205', ZERO)
             update_mappings.append({
                 # MeterReading PK составной (id + created_at) — оба обязательны
                 # в bulk-update mappings, иначе SQLAlchemy 2.0 рейзит ошибку
@@ -163,12 +179,19 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
                 "id": reading.id,
                 "created_at": reading.created_at,
                 "is_approved": True,
-                "total_cost": ZERO,
-                "total_209": ZERO,
-                "total_205": ZERO,
+                "total_cost": bl_total_209 + bl_total_205,
+                "total_209": bl_total_209,
+                "total_205": bl_total_205,
                 "anomaly_flags": "BASELINE",
                 "anomaly_score": 0,
-                **zero_costs,
+                "cost_hot_water": bl_costs.get("cost_hot_water", ZERO),
+                "cost_cold_water": bl_costs.get("cost_cold_water", ZERO),
+                "cost_sewage": bl_costs.get("cost_sewage", ZERO),
+                "cost_electricity": bl_costs.get("cost_electricity", ZERO),
+                "cost_maintenance": bl_costs.get("cost_maintenance", ZERO),
+                "cost_social_rent": bl_costs.get("cost_social_rent", ZERO),
+                "cost_waste": bl_costs.get("cost_waste", ZERO),
+                "cost_fixed_part": bl_costs.get("cost_fixed_part", ZERO),
             })
             room_updates.append({
                 "id": room.id,
@@ -340,12 +363,25 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
     is_baseline = prev is None
 
     if is_baseline:
-        ZERO_COSTS = {
-            "cost_hot_water": ZERO, "cost_cold_water": ZERO, "cost_sewage": ZERO,
-            "cost_electricity": ZERO, "cost_maintenance": ZERO, "cost_social_rent": ZERO,
-            "cost_waste": ZERO, "cost_fixed_part": ZERO, "total_cost": ZERO,
-        }
-        costs = ZERO_COSTS
+        # Bug L: area-based (содержание/найм/ТКО/отопление) платятся всегда.
+        from app.modules.utility.routers.settings import _load_seasonal
+        _seasonal_bl = await _load_seasonal(db)
+        _bl_heating = _seasonal_bl.heating_season_active and t.is_heating_active_now()
+        _bl_hw = _seasonal_bl.hot_water_heating_active and t.is_hw_heating_active_now()
+        try:
+            costs = calculate_utilities(
+                user=user, room=room, tariff=t,
+                volume_hot=ZERO, volume_cold=ZERO,
+                volume_sewage=ZERO, volume_electricity_share=ZERO,
+                heating_season_active=_bl_heating,
+                hot_water_heating_active=_bl_hw,
+            )
+        except Exception:
+            costs = {
+                "cost_hot_water": ZERO, "cost_cold_water": ZERO, "cost_sewage": ZERO,
+                "cost_electricity": ZERO, "cost_maintenance": ZERO, "cost_social_rent": ZERO,
+                "cost_waste": ZERO, "cost_fixed_part": ZERO, "total_cost": ZERO,
+            }
         d_hot_final = d_cold_final = d_elect_final = ZERO
     else:
         p_hot = D(prev.hot_water)

@@ -371,13 +371,32 @@ async def save_reading(
     # is_baseline уже посчитан выше (в блоке валидации).
     ZERO_MONEY = Decimal("0.00")
     if is_baseline:
-        costs = {
-            "cost_hot_water": ZERO_MONEY, "cost_cold_water": ZERO_MONEY,
-            "cost_sewage": ZERO_MONEY, "cost_electricity": ZERO_MONEY,
-            "cost_maintenance": ZERO_MONEY, "cost_social_rent": ZERO_MONEY,
-            "cost_waste": ZERO_MONEY, "cost_fixed_part": ZERO_MONEY,
-            "total_cost": ZERO_MONEY,
-        }
+        # Bug L: area-based начисления (содержание/найм/ТКО/отопление)
+        # платятся ВСЕГДА, даже при первой подаче. Вместо zero_costs
+        # вызываем calculate_utilities с volume_*=0 — water/sewage/elect
+        # будут 0, а area-based корректно начислятся.
+        from app.modules.utility.routers.settings import _load_seasonal
+        from app.modules.utility.services.calculations import (
+            calculate_utilities as _calc_baseline,
+            CalculationError as _CE_baseline,
+        )
+        try:
+            _seasonal_b = await _load_seasonal(db)
+            costs = _calc_baseline(
+                user=user, room=room, tariff=tariff,
+                volume_hot=ZERO_MONEY, volume_cold=ZERO_MONEY,
+                volume_sewage=ZERO_MONEY, volume_electricity_share=ZERO_MONEY,
+                heating_season_active=(_seasonal_b.heating_season_active and tariff.is_heating_active_now()),
+                hot_water_heating_active=(_seasonal_b.hot_water_heating_active and tariff.is_hw_heating_active_now()),
+            )
+        except _CE_baseline:
+            costs = {
+                "cost_hot_water": ZERO_MONEY, "cost_cold_water": ZERO_MONEY,
+                "cost_sewage": ZERO_MONEY, "cost_electricity": ZERO_MONEY,
+                "cost_maintenance": ZERO_MONEY, "cost_social_rent": ZERO_MONEY,
+                "cost_waste": ZERO_MONEY, "cost_fixed_part": ZERO_MONEY,
+                "total_cost": ZERO_MONEY,
+            }
     else:
         # Сезонные флаги. Двухуровневая логика (с tariffs_seasonal_002):
         #   1. Глобальный SystemSetting — emergency «stop». Если false,

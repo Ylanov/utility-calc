@@ -144,21 +144,24 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
     # approve_single / bulk_approve_drafts / client save_reading). Флаг
     # BASELINE попадёт в реестр, чтобы админ не искал «откуда ноль».
     is_baseline = prev_latest is None
+    # Сезонные флаги: global emergency override AND per-tariff (heating_active + даты).
+    # См. комментарий в client_readings POST /api/calculate.
+    from app.modules.utility.routers.settings import _load_seasonal
+    _seasonal = await _load_seasonal(db)
+    _heating = _seasonal.heating_season_active and t.is_heating_active_now()
+    _hw = _seasonal.hot_water_heating_active and t.is_hw_heating_active_now()
     if is_baseline:
-        costs = {
-            "cost_hot_water": ZERO, "cost_cold_water": ZERO,
-            "cost_sewage": ZERO, "cost_electricity": ZERO,
-            "cost_maintenance": ZERO, "cost_social_rent": ZERO,
-            "cost_waste": ZERO, "cost_fixed_part": ZERO,
-            "total_cost": ZERO,
-        }
+        # Bug L: area-based начисления (содержание/найм/ТКО/отопление)
+        # платятся ВСЕГДА, даже при первой подаче. Вызываем calculate_utilities
+        # с volume_*=0 → water/sewage = 0, area-based = area × tariff.
+        costs = calculate_utilities(
+            user=user, room=room, tariff=t,
+            volume_hot=ZERO, volume_cold=ZERO,
+            volume_sewage=ZERO, volume_electricity_share=ZERO,
+            heating_season_active=_heating,
+            hot_water_heating_active=_hw,
+        )
     else:
-        # Сезонные флаги: global emergency override AND per-tariff (heating_active + даты).
-        # См. комментарий в client_readings POST /api/calculate.
-        from app.modules.utility.routers.settings import _load_seasonal
-        _seasonal = await _load_seasonal(db)
-        _heating = _seasonal.heating_season_active and t.is_heating_active_now()
-        _hw = _seasonal.hot_water_heating_active and t.is_hw_heating_active_now()
         costs = calculate_utilities(
             user=user, room=room, tariff=t, volume_hot=d_hot, volume_cold=d_cold,
             volume_sewage=d_hot + d_cold, volume_electricity_share=user_share_elect,
@@ -310,24 +313,23 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
 
     user_share_elect = (Decimal(residents_count) / Decimal(total_room)) * d_elect
 
-    # BASELINE: первая в жизни подача по комнате → 0 (см. комментарий выше).
-    # Для разового начисления это редкий сценарий (обычно у выселяющегося
-    # уже есть история), но технически возможен — страхуемся.
+    # BASELINE: первая в жизни подача по комнате → потребление = 0, но
+    # area-based начисления платятся всегда (см. Bug L в save_manual_entry).
     is_baseline = prev_latest is None
+    # См. комментарий в save_manual_entry — те же сезонные флаги (global + per-tariff).
+    from app.modules.utility.routers.settings import _load_seasonal
+    _seasonal = await _load_seasonal(db)
+    _heating = _seasonal.heating_season_active and t.is_heating_active_now()
+    _hw = _seasonal.hot_water_heating_active and t.is_hw_heating_active_now()
     if is_baseline:
-        costs = {
-            "cost_hot_water": ZERO, "cost_cold_water": ZERO,
-            "cost_sewage": ZERO, "cost_electricity": ZERO,
-            "cost_maintenance": ZERO, "cost_social_rent": ZERO,
-            "cost_waste": ZERO, "cost_fixed_part": ZERO,
-            "total_cost": ZERO,
-        }
+        costs = calculate_utilities(
+            user=user, room=room, tariff=t,
+            volume_hot=ZERO, volume_cold=ZERO,
+            volume_sewage=ZERO, volume_electricity_share=ZERO, fraction=fraction,
+            heating_season_active=_heating,
+            hot_water_heating_active=_hw,
+        )
     else:
-        # См. комментарий в save_manual_entry — те же сезонные флаги (global + per-tariff).
-        from app.modules.utility.routers.settings import _load_seasonal
-        _seasonal = await _load_seasonal(db)
-        _heating = _seasonal.heating_season_active and t.is_heating_active_now()
-        _hw = _seasonal.hot_water_heating_active and t.is_hw_heating_active_now()
         costs = calculate_utilities(
             user=user, room=room, tariff=t, volume_hot=d_hot, volume_cold=d_cold,
             volume_sewage=d_hot + d_cold, volume_electricity_share=user_share_elect, fraction=fraction,
