@@ -1980,6 +1980,8 @@ export const AnalyzerModule = {
             <div style="display:flex; gap:16px; margin-bottom:14px; padding:12px; background:var(--bg-page); border-radius:8px; font-size:13px; flex-wrap:wrap;">
                 <div><b>Всего строк:</b> ${stats.total_rows_scanned}</div>
                 <div><b>Жильцов:</b> ${stats.total_users}</div>
+                <div style="color:#166534;"><b>К обработке:</b> ${stats.ok_users || 0}</div>
+                ${stats.skipped_users > 0 ? `<div style="color:#dc2626;"><b>Пропустится:</b> ${stats.skipped_users}</div>` : ''}
                 <div><b>Baseline'ов:</b> ${stats.total_baselines}</div>
                 <div><b>Reading'ов создастся:</b> ${stats.total_readings_to_create}</div>
                 <div style="color:var(--text-tertiary);">
@@ -1987,22 +1989,46 @@ export const AnalyzerModule = {
                 </div>
             </div>`;
 
-        const rows = plan.slice(0, 200).map(p => {
+        // Сортируем: сначала проблемные (skipped) — чтобы админ их сразу увидел.
+        const sortedPlan = [...plan].sort((a, b) => {
+            const aOk = a.is_ok !== false ? 1 : 0;
+            const bOk = b.is_ok !== false ? 1 : 0;
+            return aOk - bOk;
+        });
+
+        const rows = sortedPlan.slice(0, 200).map(p => {
             const addr = p.dormitory_name
                 ? `${escapeHtml(p.dormitory_name)}/${escapeHtml(String(p.room_number || ''))}`
                 : '—';
-            const baselineLabel = `<span style="background:#dbeafe; color:#1e40af; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:600;">
-                Baseline: ${monthName(p.baseline.month)} ${p.baseline.year} → ${Number(p.baseline.hot_water).toFixed(2)} / ${Number(p.baseline.cold_water).toFixed(2)}
+            const isSkipped = p.is_ok === false;
+            const rowStyle = isSkipped
+                ? 'border-bottom:1px solid var(--border-color); background:#fef2f2;'
+                : 'border-bottom:1px solid var(--border-color);';
+            const baselineColors = isSkipped
+                ? 'background:#fee2e2; color:#991b1b;'
+                : 'background:#dbeafe; color:#1e40af;';
+            const baselineLabel = `<span style="${baselineColors} padding:2px 6px; border-radius:4px; font-size:11px; font-weight:600;">
+                ${isSkipped ? '⛔ ' : ''}Baseline: ${monthName(p.baseline.month)} ${p.baseline.year} → ${Number(p.baseline.hot_water).toFixed(2)} / ${Number(p.baseline.cold_water).toFixed(2)}
             </span>`;
-            const readingTags = p.readings.map(r =>
-                `<span style="background:#dcfce7; color:#166534; padding:2px 6px; border-radius:4px; font-size:11px; margin-right:4px;">
+            const readingTags = p.readings.map(r => {
+                const tagColors = isSkipped
+                    ? 'background:#fed7aa; color:#9a3412;'
+                    : 'background:#dcfce7; color:#166534;';
+                return `<span style="${tagColors} padding:2px 6px; border-radius:4px; font-size:11px; margin-right:4px;">
                     ${monthName(r.month)}: ${Number(r.hot_water).toFixed(2)} / ${Number(r.cold_water).toFixed(2)}
-                </span>`
-            ).join('');
+                </span>`;
+            }).join('');
             const dupNote = p.duplicates_rejected.length > 0
                 ? `<span style="color:var(--text-tertiary); font-size:11px;">отбросится дублей: ${p.duplicates_rejected.length}</span>`
                 : '';
-            return `<tr style="border-bottom:1px solid var(--border-color);">
+            const skipReasonRow = isSkipped
+                ? `<tr style="background:#fef2f2;">
+                    <td colspan="4" style="padding:6px 10px; font-size:11px; color:#991b1b; border-bottom:2px solid #fca5a5;">
+                        <i class="fa-solid fa-ban"></i> <b>Пропустится:</b> ${escapeHtml(p.skip_reason || '')}
+                    </td>
+                </tr>`
+                : '';
+            return `<tr style="${rowStyle}">
                 <td style="padding:8px 10px; min-width:200px;">
                     <div style="font-weight:600; font-size:12.5px;">${escapeHtml(p.full_name || p.username || '—')}</div>
                     <div style="font-size:10.5px; color:var(--text-secondary);">${addr}</div>
@@ -2010,12 +2036,20 @@ export const AnalyzerModule = {
                 <td style="padding:8px 10px;">${baselineLabel}</td>
                 <td style="padding:8px 10px;">${readingTags || '<span style="color:var(--text-tertiary); font-size:11px;">только baseline</span>'}</td>
                 <td style="padding:8px 10px; text-align:right;">${dupNote}</td>
-            </tr>`;
+            </tr>${skipReasonRow}`;
         }).join('');
 
         const more = plan.length > 200
             ? `<p style="font-size:11px; color:var(--text-tertiary); margin-top:6px;">…и ещё ${plan.length - 200} жильцов в плане.</p>`
             : '';
+
+        const skippedNote = stats.skipped_users > 0 ? `
+            <div style="margin-top:8px; padding:10px 12px; background:#fffbeb; border-left:3px solid #f59e0b; border-radius:4px; font-size:12px; color:#78350f;">
+                <i class="fa-solid fa-circle-info"></i>
+                <b>${stats.skipped_users}</b> жильцов будет <b>пропущено</b> — их строки выделены красным.
+                Сначала исправьте данные в Google-таблице (пропущенные точки или счётчик упал),
+                потом повторите предпросмотр. Остальные ${stats.ok_users} жильцов обработаются нормально.
+            </div>` : '';
 
         const applyBtn = `
             <div style="margin-top:14px; padding:14px; background:#fef2f2; border:1px solid #fecaca; border-radius:8px;">
@@ -2023,14 +2057,17 @@ export const AnalyzerModule = {
                     <i class="fa-solid fa-triangle-exclamation"></i> Подтверждение
                 </div>
                 <div style="font-size:13px; color:#7f1d1d; margin-bottom:10px;">
-                    <b>Удалит:</b> существующие MeterReading'и за все затронутые периоды у ${stats.total_users} жильцов.<br>
+                    <b>Обработается:</b> ${stats.ok_users || 0} жильцов из ${stats.total_users}.<br>
+                    <b>Удалит:</b> существующие MeterReading'и за затронутые периоды у обрабатываемых жильцов.<br>
                     <b>Создаст:</b> ${stats.total_baselines} baseline'ов + ${stats.total_readings_to_create} reading'ов из GSheets.<br>
                     <b>Отклонит:</b> ${stats.total_duplicates_rejected} дублирующих строк.
+                    ${stats.skipped_users > 0 ? `<br><b style="color:#f59e0b;">Пропустит:</b> ${stats.skipped_users} жильцов с ошибочными данными (см. красные строки).` : ''}
                 </div>
                 <button class="action-btn danger-btn" data-rebuild-apply="1" style="padding:8px 16px; font-size:13px; background:#7c3aed; color:#fff; border:1px solid #7c3aed;">
                     <i class="fa-solid fa-wand-magic-sparkles"></i> Запустить пересборку
                 </button>
-            </div>`;
+            </div>
+            ${skippedNote}`;
 
         this.dom.rebuildPreviewContainer.innerHTML = `
             <h3 style="margin:0 0 12px 0; font-size:16px;">План пересборки за ${data.year} год</h3>
@@ -2079,6 +2116,7 @@ export const AnalyzerModule = {
                 {}
             );
             const msg = `Готово: baseline ${res.baselines_created}, reading'ов ${res.readings_created}, удалено ${res.readings_deleted}`
+                + (res.skipped_users ? `, пропущено ${res.skipped_users}` : '')
                 + (res.errors_count ? `, ошибок ${res.errors_count}` : '');
             toast(msg, res.errors_count ? 'warning' : 'success');
             if (res.errors_count) {

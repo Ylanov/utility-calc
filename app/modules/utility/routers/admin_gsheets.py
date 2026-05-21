@@ -2410,12 +2410,55 @@ def _bucket_by_month(rows: list) -> dict[tuple[int, int], list]:
     return out
 
 
+def _validate_user_entry(entry: dict) -> tuple[bool, str]:
+    """Sanity-check для одного user-плана. Возвращает (is_ok, skip_reason).
+
+    Защитные правила:
+      - baseline.hot/cold ≤ MAX_WATER_METER_VALUE (10000) — иначе у жильца
+        пропущена точка (типа Мухаметкулов 850484);
+      - монотонность в цепочке reading'ов: каждое следующее ≥ предыдущего
+        (иначе после apply будет meter_decreased conflict);
+      - все reading'и тоже ≤ MAX_WATER_METER_VALUE.
+    """
+    from app.modules.utility.services.reading_validators import MAX_WATER_METER_VALUE
+    max_v = float(MAX_WATER_METER_VALUE)
+    bl = entry["baseline"]
+    if bl["hot_water"] > max_v or bl["cold_water"] > max_v:
+        return False, (
+            f"baseline_too_large: ГВС={bl['hot_water']:.2f} ХВС={bl['cold_water']:.2f} "
+            f"> {max_v:.0f}. Похоже на пропущенную десятичную точку — "
+            f"исправьте февральскую/мартовскую запись в Google-таблице."
+        )
+    prev_hot = bl["hot_water"]
+    prev_cold = bl["cold_water"]
+    for rd in entry["readings"]:
+        m_label = f"{rd['year']}-{rd['month']:02d}"
+        if rd["hot_water"] > max_v or rd["cold_water"] > max_v:
+            return False, (
+                f"reading_too_large @ {m_label}: ГВС={rd['hot_water']:.2f} "
+                f"ХВС={rd['cold_water']:.2f} > {max_v:.0f}."
+            )
+        if rd["hot_water"] < prev_hot or rd["cold_water"] < prev_cold:
+            return False, (
+                f"meter_decreased @ {m_label}: "
+                f"ГВС {prev_hot:.2f}→{rd['hot_water']:.2f}, "
+                f"ХВС {prev_cold:.2f}→{rd['cold_water']:.2f}. "
+                f"Возможно перепутаны столбцы ГВС/ХВС или жилец сменил счётчик."
+            )
+        prev_hot = rd["hot_water"]
+        prev_cold = rd["cold_water"]
+    return True, ""
+
+
 def _build_rebuild_plan(matched_rows: list) -> list[dict]:
     """Возвращает план пересборки: для каждого user_id — baseline + readings.
 
     matched_rows должны быть отсортированы или содержать matched_user_id.
     План — массив элементов: {user_id, baseline: {...}, readings: [...],
     duplicates: [row_ids проигнорированных как «более ранние в том же месяце»]}.
+
+    Каждый элемент дополнительно содержит is_ok и skip_reason (см.
+    _validate_user_entry) — UI/apply используют для исключения проблемных.
     """
     by_user: dict[int, list] = {}
     for r in matched_rows:
@@ -2452,7 +2495,7 @@ def _build_rebuild_plan(matched_rows: list) -> list[dict]:
                 "current_status": row.status,
             })
 
-        plan.append({
+        entry = {
             "user_id": uid,
             "baseline": {
                 "year": baseline_key[0],
@@ -2464,7 +2507,11 @@ def _build_rebuild_plan(matched_rows: list) -> list[dict]:
             },
             "readings": readings,
             "duplicates_rejected": duplicates,
-        })
+        }
+        is_ok, skip_reason = _validate_user_entry(entry)
+        entry["is_ok"] = is_ok
+        entry["skip_reason"] = skip_reason
+        plan.append(entry)
     return plan
 
 
@@ -2508,20 +2555,23 @@ async def auto_rebuild_preview(
                 entry["dormitory_name"] = u.room.dormitory_name
                 entry["room_number"] = u.room.room_number
 
-    # Также покажем общую статистику.
+    # Также покажем общую статистику. Раздельно: OK-жильцы (будут обработаны)
+    # и SKIPPED (с baseline_too_large / meter_decreased — нужны исправления
+    # в GSheets перед apply).
+    ok_plan = [p for p in plan if p.get("is_ok", True)]
+    skipped_plan = [p for p in plan if not p.get("is_ok", True)]
     total_rows = len(rows)
-    total_users = len(plan)
-    total_readings_to_create = sum(len(p["readings"]) for p in plan)
-    total_duplicates = sum(len(p["duplicates_rejected"]) for p in plan)
 
     return {
         "year": year,
         "stats": {
             "total_rows_scanned": total_rows,
-            "total_users": total_users,
-            "total_baselines": total_users,
-            "total_readings_to_create": total_readings_to_create,
-            "total_duplicates_rejected": total_duplicates,
+            "total_users": len(plan),
+            "ok_users": len(ok_plan),
+            "skipped_users": len(skipped_plan),
+            "total_baselines": len(ok_plan),
+            "total_readings_to_create": sum(len(p["readings"]) for p in ok_plan),
+            "total_duplicates_rejected": sum(len(p["duplicates_rejected"]) for p in ok_plan),
         },
         "plan": plan,
     }
@@ -2583,7 +2633,13 @@ async def auto_rebuild_apply(
     duplicates_rejected = 0
     errors: list[dict] = []
 
+    skipped_users = 0
     for entry in plan:
+        # Skip жильцов с baseline_too_large / meter_decreased — их данные
+        # нужно сначала исправить в Google-таблице. См. _validate_user_entry.
+        if not entry.get("is_ok", True):
+            skipped_users += 1
+            continue
         uid = entry["user_id"]
         user = (await db.execute(
             select(User).options(selectinload(User.room)).where(User.id == uid)
@@ -2756,6 +2812,7 @@ async def auto_rebuild_apply(
         "readings_created": readings_created,
         "readings_deleted": readings_deleted,
         "duplicates_rejected": duplicates_rejected,
+        "skipped_users": skipped_users,
         "errors_count": len(errors),
         "errors": errors[:50],  # обрезаем чтобы не разнести payload
     }
