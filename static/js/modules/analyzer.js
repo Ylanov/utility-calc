@@ -126,6 +126,11 @@ export const AnalyzerModule = {
             rebuildYear: document.getElementById('rebuildYear'),
             btnRebuildPreview: document.getElementById('btnRebuildPreview'),
             rebuildPreviewContainer: document.getElementById('rebuildPreviewContainer'),
+
+            // Таб «Претенденты на переезд»
+            moveCandYear: document.getElementById('moveCandYear'),
+            btnLoadMoveCand: document.getElementById('btnLoadMoveCand'),
+            moveCandContainer: document.getElementById('moveCandContainer'),
         };
     },
 
@@ -228,6 +233,22 @@ export const AnalyzerModule = {
             if (applyBtn) {
                 e.preventDefault();
                 this.applyRebuild();
+            }
+        });
+
+        // Таб «Претенденты на переезд»
+        this._initMoveCandYearSelect();
+        this.dom.btnLoadMoveCand?.addEventListener('click', () => this.loadMoveCandidates());
+        this.dom.moveCandContainer?.addEventListener('click', (e) => {
+            const moveBtn = e.target.closest('button[data-move-to-room]');
+            if (moveBtn) {
+                e.preventDefault();
+                this.moveResidentToRoom(
+                    Number(moveBtn.dataset.userId),
+                    Number(moveBtn.dataset.moveToRoom),
+                    moveBtn.dataset.userFio || '',
+                    moveBtn.dataset.targetRoomLabel || '',
+                );
             }
         });
 
@@ -2100,6 +2121,133 @@ export const AnalyzerModule = {
             </div>
             ${more}
             ${applyBtn}`;
+    },
+
+    // ============================================================
+    // ПРЕТЕНДЕНТЫ НА ПЕРЕЕЗД
+    // ============================================================
+    _initMoveCandYearSelect() {
+        const sel = this.dom.moveCandYear;
+        if (!sel || sel.children.length > 0) return;
+        const currentYear = new Date().getFullYear();
+        for (let y = currentYear; y >= currentYear - 3; y--) {
+            const opt = document.createElement('option');
+            opt.value = y;
+            opt.textContent = y;
+            if (y === currentYear) opt.selected = true;
+            sel.appendChild(opt);
+        }
+    },
+
+    async loadMoveCandidates() {
+        if (!this.dom.moveCandContainer) return;
+        const year = Number(this.dom.moveCandYear?.value) || new Date().getFullYear();
+        this.dom.moveCandContainer.innerHTML =
+            '<p style="color:var(--text-secondary); padding:20px;"><i class="fa-solid fa-spinner fa-spin"></i> Анализируем подачи…</p>';
+        try {
+            const data = await api.get(`/admin/users/move-candidates?year=${year}`);
+            this._renderMoveCandidates(data);
+        } catch (e) {
+            this.dom.moveCandContainer.innerHTML =
+                `<p style="color:var(--danger-color);">Ошибка: ${escapeHtml(e.message)}</p>`;
+        }
+    },
+
+    _renderMoveCandidates(data) {
+        const candidates = data.candidates || [];
+        if (candidates.length === 0) {
+            this.dom.moveCandContainer.innerHTML = `
+                <div style="text-align:center; padding:30px; color:var(--success-color);">
+                    <i class="fa-solid fa-check-circle" style="font-size:24px;"></i>
+                    <div style="margin-top:8px; font-weight:600;">Кандидатов на переезд не найдено</div>
+                    <div style="margin-top:4px; font-size:12px; color:var(--text-secondary);">
+                        Все жильцы подают показания из своих текущих комнат.
+                    </div>
+                </div>`;
+            return;
+        }
+
+        const cards = candidates.map(c => {
+            const cur = c.current_room;
+            const curLabel = cur
+                ? `${escapeHtml(cur.dormitory_name || '—')} / ${escapeHtml(String(cur.room_number || '—'))}`
+                : '<span style="color:#dc2626;">нет комнаты</span>';
+            const seenRows = (c.seen_rooms || []).map(r => {
+                const bg = r.is_current ? '#dcfce7' : '#fef3c7';
+                const fg = r.is_current ? '#166534' : '#92400e';
+                const tag = r.is_current ? '✓ текущая' : '⤴ другая';
+                const moveBtn = !r.is_current && r.room_id
+                    ? `<button class="action-btn" style="padding:4px 10px; font-size:11px; background:#0ea5e9; color:#fff; border:1px solid #0ea5e9;"
+                                data-move-to-room="${r.room_id}"
+                                data-user-id="${c.user_id}"
+                                data-user-fio="${escapeHtml(c.full_name || c.username)}"
+                                data-target-room-label="${escapeHtml((r.dormitory_name || '') + '/' + (r.room_number || ''))}"
+                                title="Закрыть текущую запись о проживании и открыть новую для этой комнаты">
+                          <i class="fa-solid fa-truck-moving"></i> Переселить сюда
+                       </button>`
+                    : '';
+                return `<tr>
+                    <td style="padding:5px 8px;">
+                        <span style="background:${bg}; color:${fg}; padding:2px 6px; border-radius:4px; font-size:11px; font-weight:600;">${tag}</span>
+                    </td>
+                    <td style="padding:5px 8px; font-size:12px;">
+                        ${escapeHtml(r.dormitory_name || '—')} / ${escapeHtml(String(r.room_number || '—'))}
+                    </td>
+                    <td style="padding:5px 8px; font-size:11px; color:var(--text-secondary);">
+                        ${r.row_count} подач(и)
+                    </td>
+                    <td style="padding:5px 8px; text-align:right;">${moveBtn}</td>
+                </tr>`;
+            }).join('');
+
+            return `
+                <div style="border:1px solid var(--border-color); border-radius:8px; padding:12px 14px; margin-bottom:10px;">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:8px;">
+                        <div>
+                            <div style="font-weight:700; font-size:13px;">${escapeHtml(c.full_name || c.username || '—')}</div>
+                            <div style="font-size:11px; color:var(--text-secondary);">
+                                Текущая комната: <b>${curLabel}</b>
+                            </div>
+                        </div>
+                        <div style="font-size:11px; color:var(--text-secondary); white-space:nowrap;">
+                            всего подач: <b>${c.rows_total}</b>
+                        </div>
+                    </div>
+                    <table style="width:100%; font-size:12px;">
+                        <tbody>${seenRows}</tbody>
+                    </table>
+                </div>`;
+        }).join('');
+
+        this.dom.moveCandContainer.innerHTML = `
+            <div style="margin-bottom:14px; padding:10px 12px; background:var(--bg-page); border-radius:6px; font-size:13px;">
+                Найдено кандидатов: <b>${candidates.length}</b>
+            </div>
+            ${cards}`;
+    },
+
+    async moveResidentToRoom(userId, newRoomId, fio, targetLabel) {
+        if (!userId || !newRoomId) return;
+        if (!window.confirm(
+            `Переселить жильца «${fio}» в комнату «${targetLabel}»?\n\n` +
+            `• Текущая запись о проживании закроется (moved_out_at = сегодня)\n` +
+            `• Создастся новая запись для комнаты ${targetLabel}\n` +
+            `• Если в старой никого не останется — она пометится Вакантной\n\n` +
+            `Записи показаний счётчика остаются в обеих комнатах.`
+        )) return;
+        try {
+            const note = `Авто-детект переезда из «Претенденты на переезд» (${new Date().toISOString().slice(0, 10)})`;
+            const res = await api.post(
+                `/admin/users/${userId}/move-to-room?new_room_id=${newRoomId}&note=${encodeURIComponent(note)}`,
+                {},
+            );
+            toast(`Готово: ${escapeHtml(fio)} переселён в ${escapeHtml(targetLabel)}`, 'success');
+            console.log('[move-to-room]', res);
+            // Перезагружаем список
+            this.loadMoveCandidates();
+        } catch (e) {
+            toast('Ошибка переселения: ' + e.message, 'error');
+        }
     },
 
     async applyRebuild() {

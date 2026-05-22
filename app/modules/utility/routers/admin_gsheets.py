@@ -2715,34 +2715,31 @@ async def auto_rebuild_preview(
         q = q.where(GSheetsImportRow.matched_user_id == user_id)
     rows = (await db.execute(q)).scalars().all()
 
-    # Bug W: фильтр по текущей комнате жильца. Если жилец переехал
-    # (Шиян: 504 → 212), подачи в старой комнате не должны учитываться
-    # при построении плана — иначе валидатор детектит false-positive
-    # meter_decreased «656 в комн.504 → 183 в комн.212» как падение
-    # счётчика, хотя это разные счётчики разных комнат.
-    user_room_map = {}
-    if rows:
-        all_uids = {r.matched_user_id for r in rows if r.matched_user_id}
-        if all_uids:
-            users_q = (await db.execute(
-                select(User.id, User.room_id).where(User.id.in_(all_uids))
-            )).all()
-            user_room_map = {uid: rid for uid, rid in users_q}
-    rows_filtered = []
+    # Bug W: фильтр по текущей комнате жильца — ТОЛЬКО для bulk-режима
+    # (когда user_id не задан). Для individual rebuild (user_id указан)
+    # фильтр снимается, чтобы видеть ВСЕ подачи жильца — админ сам
+    # решает что делать с подачами в другой комнате.
     rows_skipped_other_room = 0
-    for r in rows:
-        cur_room_id = user_room_map.get(r.matched_user_id)
-        if cur_room_id is None:
-            # У жильца нет текущей комнаты — пропускаем строку (она
-            # всё равно не сможет привязаться к reading).
-            rows_skipped_other_room += 1
-            continue
-        if r.matched_room_id and r.matched_room_id != cur_room_id:
-            # Подача была в другой комнате (до переезда) — игнорируем.
-            rows_skipped_other_room += 1
-            continue
-        rows_filtered.append(r)
-    rows = rows_filtered
+    if user_id is None:
+        user_room_map = {}
+        if rows:
+            all_uids = {r.matched_user_id for r in rows if r.matched_user_id}
+            if all_uids:
+                users_q = (await db.execute(
+                    select(User.id, User.room_id).where(User.id.in_(all_uids))
+                )).all()
+                user_room_map = {uid: rid for uid, rid in users_q}
+        rows_filtered = []
+        for r in rows:
+            cur_room_id = user_room_map.get(r.matched_user_id)
+            if cur_room_id is None:
+                rows_skipped_other_room += 1
+                continue
+            if r.matched_room_id and r.matched_room_id != cur_room_id:
+                rows_skipped_other_room += 1
+                continue
+            rows_filtered.append(r)
+        rows = rows_filtered
 
     plan = _build_rebuild_plan(rows)
 
@@ -2864,8 +2861,9 @@ async def auto_rebuild_apply(
         q = q.where(GSheetsImportRow.matched_user_id == user_id)
     rows = (await db.execute(q)).scalars().all()
 
-    # Bug W: тот же фильтр по текущей комнате что и в preview.
-    if rows:
+    # Bug W: фильтр по текущей комнате — только для bulk-режима. Для
+    # individual rebuild админ должен видеть все подачи жильца.
+    if rows and user_id is None:
         all_uids = {r.matched_user_id for r in rows if r.matched_user_id}
         user_room_map = {}
         if all_uids:

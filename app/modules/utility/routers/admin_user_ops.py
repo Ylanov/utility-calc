@@ -290,6 +290,129 @@ async def admin_user_residency_history(
     return {"user_id": user_id, "history": items}
 
 
+@router.get("/api/admin/users/move-candidates")
+async def admin_user_move_candidates(
+    year: int | None = None,
+    current_user: User = Depends(allow_move),
+    db: AsyncSession = Depends(get_db),
+):
+    """Жильцы у которых в GSheets-подачах за период (по умолчанию текущий
+    год) есть подачи в комнатах ОТЛИЧНЫХ от их текущей room_id.
+
+    Use case: Шиян переехал 504 → 212, но админ забыл оформить переезд
+    в системе. В GSheets за фев лежит подача из 504, за март/апрель/май
+    из 212. Этот endpoint найдёт его и предложит сделать переезд
+    официально через move-to-room.
+
+    Возвращает для каждого жильца:
+      user_id, fio, current_room (id + dormitory/number),
+      seen_rooms[] — список комнат в которых встречалась подача,
+      rows_in_current — сколько подач в текущей,
+      rows_in_other  — сколько в других.
+    """
+    from datetime import datetime
+    from app.modules.utility.models import (
+        GSheetsImportRow,
+        Room,
+    )
+    from sqlalchemy import select, and_
+    if year is None:
+        year = datetime.now().year
+    start = datetime(year, 1, 1)
+    end = datetime(year + 1, 1, 1)
+
+    # Все matched-строки за год.
+    rows = (await db.execute(
+        select(GSheetsImportRow).where(
+            and_(
+                GSheetsImportRow.sheet_timestamp >= start,
+                GSheetsImportRow.sheet_timestamp < end,
+                GSheetsImportRow.matched_user_id.is_not(None),
+                GSheetsImportRow.matched_room_id.is_not(None),
+                GSheetsImportRow.status != "rejected",
+            )
+        )
+    )).scalars().all()
+
+    # Группируем по user_id, собираем set комнат.
+    by_user: dict[int, set] = {}
+    rows_per_room: dict[tuple[int, int], int] = {}  # (uid, room_id) -> count
+    for r in rows:
+        by_user.setdefault(r.matched_user_id, set()).add(r.matched_room_id)
+        rows_per_room[(r.matched_user_id, r.matched_room_id)] = (
+            rows_per_room.get((r.matched_user_id, r.matched_room_id), 0) + 1
+        )
+
+    # Фильтруем: подача была в ≥2 разных комнатах ИЛИ единственная комната
+    # отличается от current_room жильца.
+    candidates = []
+    uids = list(by_user.keys())
+    if uids:
+        users_q = (await db.execute(
+            select(User).where(User.id.in_(uids))
+        )).scalars().all()
+        users_by_id = {u.id: u for u in users_q}
+
+        room_ids_all = set()
+        for room_set in by_user.values():
+            room_ids_all.update(room_set)
+        for u in users_q:
+            if u.room_id:
+                room_ids_all.add(u.room_id)
+        rooms_q = (await db.execute(
+            select(Room).where(Room.id.in_(room_ids_all))
+        )).scalars().all() if room_ids_all else []
+        rooms_by_id = {r.id: r for r in rooms_q}
+
+        for uid, room_set in by_user.items():
+            user = users_by_id.get(uid)
+            if not user:
+                continue
+            current_room_id = user.room_id
+            # «Кандидат» если есть подачи НЕ из текущей комнаты.
+            seen_rooms = sorted(room_set)
+            has_other = any(rid != current_room_id for rid in seen_rooms)
+            if not has_other:
+                continue
+            current_room = rooms_by_id.get(current_room_id) if current_room_id else None
+            seen_rooms_info = []
+            for rid in seen_rooms:
+                room = rooms_by_id.get(rid)
+                seen_rooms_info.append({
+                    "room_id": rid,
+                    "dormitory_name": room.dormitory_name if room else None,
+                    "room_number": room.room_number if room else None,
+                    "row_count": rows_per_room.get((uid, rid), 0),
+                    "is_current": rid == current_room_id,
+                })
+            # Сортируем seen_rooms_info: сначала текущая, потом по row_count desc
+            seen_rooms_info.sort(key=lambda r: (not r["is_current"], -r["row_count"]))
+            candidates.append({
+                "user_id": uid,
+                "username": user.username,
+                "full_name": user.full_name,
+                "current_room": {
+                    "id": current_room.id if current_room else None,
+                    "dormitory_name": current_room.dormitory_name if current_room else None,
+                    "room_number": current_room.room_number if current_room else None,
+                } if current_room else None,
+                "seen_rooms": seen_rooms_info,
+                "rows_total": sum(r["row_count"] for r in seen_rooms_info),
+            })
+
+    # Сортируем кандидатов: больше всего подач в "другой" комнате — выше.
+    candidates.sort(
+        key=lambda c: sum(r["row_count"] for r in c["seen_rooms"] if not r["is_current"]),
+        reverse=True,
+    )
+
+    return {
+        "year": year,
+        "count": len(candidates),
+        "candidates": candidates,
+    }
+
+
 @router.get("/api/admin/rooms/vacant")
 async def admin_vacant_rooms(
     current_user: User = Depends(allow_move),
