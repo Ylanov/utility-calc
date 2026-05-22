@@ -274,106 +274,163 @@ a:hover {
 .accordion-group .accordion-section:last-child { margin-bottom: 0; }
 
 /* =========================================
-   ЛЕЙАУТ ДАШБОРДА: основная зона + журнал справа
+   Bug AC: ЛЕЙАУТ ДАШБОРДА — простая вертикальная колонка.
+   Раньше тут была двухколоночная сетка с журналом справа; журнал
+   переехал в отдельную вкладку, и дашборд стал full-width.
+   .dashboard-stack — основной контейнер всех виджетов, gap=20px.
    ========================================= */
-.dashboard-layout {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) var(--side-panel-width);
-    gap: 24px;
-    align-items: start;
-    position: relative;
-}
-
-/* Свёрнутое состояние журнала — растягиваем основную колонку на всю ширину.
-   Состояние переключает JS (dashboard.js), сохраняется в localStorage, чтобы
-   журнал оставался скрыт между перезагрузками. */
-.dashboard-layout.audit-hidden {
-    grid-template-columns: 1fr;
-}
-.dashboard-layout.audit-hidden .dashboard-side {
-    display: none;
-}
-
-/* Кнопка «Журнал» в углу, появляется только когда aside свёрнут. */
-.audit-show-btn {
-    position: absolute;
-    top: 0;
-    right: 0;
-    padding: 6px 12px !important;
-    font-size: 12px !important;
-    z-index: 2;
-}
-.dashboard-layout.audit-hidden #btnShowAudit {
-    display: inline-flex !important;
-}
-
-.dashboard-main {
+.dashboard-stack {
     display: flex;
     flex-direction: column;
     gap: 20px;
     min-width: 0; /* фикс переполнения вложенных table-responsive */
 }
 
-.dashboard-side {
-    position: sticky;
-    top: 16px;
-    /* Журнал не должен быть выше вьюпорта, внутри — свой скролл */
-    max-height: calc(100vh - 32px);
+/* =========================================
+   Bug AC: ЦЕНТР ВНИМАНИЯ — сетка алертов.
+   Каждая плитка кликабельна, ведёт в нужную вкладку. Цвета и иконки
+   берутся из ответа backend `/api/admin/dashboard/attention-center`.
+   ========================================= */
+.attention-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px;
+}
+.attention-tile {
     display: flex;
-    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 14px 16px;
+    background: #fff;
+    border: 1px solid var(--border-color);
+    border-left: 4px solid #94a3b8;
+    border-radius: 10px;
+    cursor: pointer;
+    transition: transform .15s, box-shadow .15s, border-color .15s;
+}
+.attention-tile:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+.attention-tile.severity-critical { border-left-color: #dc2626; background: #fef2f2; }
+.attention-tile.severity-warning  { border-left-color: #f59e0b; background: #fffbeb; }
+.attention-tile.severity-info     { border-left-color: #0ea5e9; background: #eff6ff; }
+.attention-tile.severity-ok       { border-left-color: #94a3b8; opacity: 0.6; }
+.attention-tile.severity-ok:hover { opacity: 1; }
+
+.attention-tile .at-icon {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.7);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+}
+.attention-tile .at-body { flex: 1; min-width: 0; }
+.attention-tile .at-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-main);
+    margin-bottom: 2px;
+}
+.attention-tile .at-hint {
+    font-size: 11px;
+    color: var(--text-secondary);
+    line-height: 1.3;
+}
+.attention-tile .at-count {
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1;
+    margin-left: auto;
+    align-self: center;
 }
 
-.dashboard-side > .card {
-    margin-bottom: 0;
+/* =========================================
+   Bug AC: БЫСТРЫЕ ДЕЙСТВИЯ — большие кнопки
+   ========================================= */
+.quick-actions-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 10px;
+}
+.quick-action-btn {
     display: flex;
     flex-direction: column;
-    flex: 1 1 auto;
-    min-height: 0;
+    align-items: flex-start;
+    gap: 4px;
+    padding: 12px 14px;
+    background: #fff;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: all .15s;
+    text-align: left;
+    font-family: inherit;
+}
+.quick-action-btn:hover {
+    transform: translateY(-1px);
+    border-color: var(--primary-color);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+.quick-action-btn:active {
+    transform: translateY(0);
+}
+.quick-action-btn > i {
+    font-size: 20px;
+    margin-bottom: 4px;
+}
+.quick-action-btn .qa-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-main);
+}
+.quick-action-btn .qa-hint {
+    font-size: 11px;
+    color: var(--text-secondary);
+}
+
+/* =========================================
+   Bug AC: МИНИ-ЧАРТ ТРЕНДА (горизонтальные бары без библиотек)
+   ========================================= */
+.trend-row {
+    display: grid;
+    grid-template-columns: 90px 1fr 110px;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 0;
+    font-size: 13px;
+}
+.trend-row + .trend-row { border-top: 1px dashed #f1f5f9; }
+.trend-row.is-active { background: #fef3c7; border-radius: 6px; padding: 8px 8px; }
+.trend-row .tr-name {
+    font-weight: 500;
+    color: var(--text-main);
+    white-space: nowrap;
     overflow: hidden;
+    text-overflow: ellipsis;
 }
-
-.dashboard-side #auditLogContainer {
-    flex: 1 1 auto;
-    overflow-y: auto;
-    min-height: 0;
-    margin: 0 -8px;
+.trend-row .tr-bar {
+    height: 18px;
+    background: #f1f5f9;
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
 }
-
-/* Компактный вид элементов журнала в боковой панели — узкая колонка
-   плохо переваривает 14px отступы из базового .card-body */
-.dashboard-side #auditLogContainer > div > div {
-    padding: 10px 12px !important;
-    gap: 10px !important;
+.trend-row .tr-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #3b82f6, #6366f1);
+    border-radius: 4px;
+    transition: width .35s ease;
 }
-
-.dashboard-side #auditLogContainer > div > div > div:first-child {
-    width: 28px !important;
-    height: 28px !important;
-    font-size: 12px !important;
+.trend-row.is-active .tr-bar-fill {
+    background: linear-gradient(90deg, #f59e0b, #f97316);
 }
-
-/* Стилизованный thin scrollbar для журнала */
-.dashboard-side #auditLogContainer::-webkit-scrollbar { width: 6px; }
-.dashboard-side #auditLogContainer::-webkit-scrollbar-thumb {
-    background: var(--border-color);
-    border-radius: 3px;
-}
-.dashboard-side #auditLogContainer::-webkit-scrollbar-thumb:hover {
-    background: var(--text-secondary);
-}
-
-/* На планшетах и ниже — журнал под основным контентом */
-@media (max-width: 1200px) {
-    .dashboard-layout {
-        grid-template-columns: 1fr;
-    }
-    .dashboard-side {
-        position: static;
-        max-height: none;
-    }
-    .dashboard-side #auditLogContainer {
-        max-height: 600px;
-    }
+.trend-row .tr-sum {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    color: var(--text-main);
 }
 
 /* =========================================

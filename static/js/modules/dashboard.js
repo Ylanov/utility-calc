@@ -1,41 +1,30 @@
 // static/js/modules/dashboard.js
+//
+// Bug AC: рефакторинг дашборда — убрали «Журнал действий» (он есть отдельной
+// вкладкой). Добавили:
+//   • «Центр внимания» — агрегат всех алертов из улучшений за месяц
+//     (Bug H/I/N/O/W/X/Y/Z + tickets + stuck-drafts). Endpoint
+//     /api/admin/dashboard/attention-center делает все count'ы одним
+//     SQL-snapshot.
+//   • «Быстрые действия» — частые операции одним кликом (импорт 1С,
+//     утвердить безопасные, auto-rebuild, аномальные дельты, переезд, долги).
+//   • «Тренд начислений» — мини-чарт горизонтальных баров за N мес
+//     по последним N закрытым периодам (без сторонних библиотек).
 import { api } from '../core/api.js';
-import { el, toast } from '../core/dom.js';
-
-function esc(str) {
-    if (str === null || str === undefined) return '';
-    const d = document.createElement('div');
-    d.textContent = String(str);
-    return d.innerHTML;
-}
-
-// Человекопонятные названия действий и сущностей
-const ACTION_LABELS = {
-    create: '➕ Создание', update: '✏️ Изменение', delete: '🗑 Удаление',
-    approve: '✅ Утверждение', approve_bulk: '⚡ Массовое утв.',
-    close_period: '🔒 Закрытие периода', open_period: '📂 Открытие периода',
-    import: '📥 Импорт', login: '🔑 Вход', change_password: '🔐 Смена пароля',
-    relocate: '🚚 Переселение', evict: '🚪 Выселение',
-    replace_meter: '🔄 Замена счётчика', adjustment: '💰 Корректировка',
-    activate_tariff: '⚡ Активация тарифа',
-};
-
-const ENTITY_LABELS = {
-    user: 'Жилец', room: 'Комната', tariff: 'Тариф',
-    reading: 'Показания', period: 'Период', adjustment: 'Корректировка',
-    system: 'Система',
-};
+import { toast } from '../core/dom.js';
 
 export const DashboardModule = {
     isInitialized: false,
-    auditState: { page: 1, limit: 30, total: 0, filterAction: '', filterEntity: '' },
-    // Request-id счётчики — защита от race condition. Если пользователь
-    // кликает рефреш/открывает KPI-модалку несколько раз подряд, ответ
-    // на старый запрос может прилететь ПОСЛЕ свежего и перезаписать UI.
-    // Проверяем актуальность id после каждого await.
+    // Request-id счётчики — защита от race condition. Если админ кликает
+    // рефреш/открывает KPI-модалку несколько раз подряд, поздний ответ
+    // не должен перезаписать свежий рендер. После каждого await проверяем id.
     _kpiReqId: 0,
     _gsheetsReqId: 0,
     _detailReqId: 0,
+    _attentionReqId: 0,
+    _trendReqId: 0,
+    // Состояние мини-чарта тренда — выбранный диапазон месяцев.
+    trendState: { months: 6 },
 
     init() {
         this.cacheDOM();
@@ -45,8 +34,8 @@ export const DashboardModule = {
         }
         this.loadKPI();
         this.loadGsheetsWidget();
-        this.loadAuditFilters();
-        this.loadAuditLog();
+        this.loadAttentionCenter();
+        this.loadRevenueTrend();
     },
 
     cacheDOM() {
@@ -70,68 +59,26 @@ export const DashboardModule = {
             gsheetsWidgetMeta: document.getElementById('gsheetsWidgetMeta'),
             btnGsheetsWidgetOpen: document.getElementById('btnGsheetsWidgetOpen'),
             btnGsheetsWidgetRefresh: document.getElementById('btnGsheetsWidgetRefresh'),
-            // KPI detail modal (единая модалка для всех кликабельных KPI)
+            // KPI detail modal
             detailModal: document.getElementById('dashboardDetailModal'),
             detailTitle: document.getElementById('dashboardDetailTitle'),
             detailBody: document.getElementById('dashboardDetailBody'),
             detailNavBtn: document.querySelector('[data-dd-navigate]'),
-            // Audit
-            auditContainer: document.getElementById('auditLogContainer'),
-            auditFilterAction: document.getElementById('auditFilterAction'),
-            auditFilterEntity: document.getElementById('auditFilterEntity'),
-            auditTotal: document.getElementById('auditTotal'),
-            btnRefresh: document.getElementById('btnRefreshAudit'),
-            btnPrev: document.getElementById('btnAuditPrev'),
-            btnNext: document.getElementById('btnAuditNext'),
-            pageInfo: document.getElementById('auditPageInfo'),
-            // Свёртывание журнала
-            btnHideAudit: document.getElementById('btnHideAudit'),
-            btnShowAudit: document.getElementById('btnShowAudit'),
-            dashboardLayout: document.querySelector('.dashboard-layout'),
+            // Bug AC: новые виджеты
+            attentionGrid: document.getElementById('attentionGrid'),
+            attentionSummary: document.getElementById('attentionSummary'),
+            btnRefreshAttention: document.getElementById('btnRefreshAttention'),
+            trendBody: document.getElementById('revenueTrendBody'),
+            trendMonths: document.getElementById('trendMonths'),
+            btnRefreshTrend: document.getElementById('btnRefreshTrend'),
         };
     },
 
-    // Состояние «журнал скрыт» сохраняем в localStorage — чтобы админ
-    // при следующей загрузке не видел его снова, если скрыл намеренно.
-    AUDIT_HIDDEN_KEY: 'dashboard_audit_hidden',
-
-    applyAuditHiddenState() {
-        if (!this.dom.dashboardLayout) return;
-        const hidden = localStorage.getItem(this.AUDIT_HIDDEN_KEY) === '1';
-        this.dom.dashboardLayout.classList.toggle('audit-hidden', hidden);
-    },
-
-    setAuditHidden(hidden) {
-        if (!this.dom.dashboardLayout) return;
-        this.dom.dashboardLayout.classList.toggle('audit-hidden', hidden);
-        localStorage.setItem(this.AUDIT_HIDDEN_KEY, hidden ? '1' : '0');
-        // Если только что раскрыли — перечитаем журнал, т.к. данные могли
-        // устареть за время пока он был свёрнут.
-        if (!hidden) {
-            this.auditState.page = 1;
-            this.loadAuditLog();
-        }
-    },
-
     bindEvents() {
-        // Применяем сохранённое состояние (скрыт/показан) при первом биндинге.
-        this.applyAuditHiddenState();
-        this.dom.btnHideAudit?.addEventListener('click', () => this.setAuditHidden(true));
-        this.dom.btnShowAudit?.addEventListener('click', () => this.setAuditHidden(false));
-
-        if (this.dom.btnRefresh) this.dom.btnRefresh.addEventListener('click', () => {
-            this.loadKPI();
-            this.loadGsheetsWidget();
-            this.auditState.page = 1;
-            this.loadAuditLog();
-        });
+        // GSheets widget — refresh и переход в Операции/GSheets
         this.dom.btnGsheetsWidgetRefresh?.addEventListener('click', () => this.loadGsheetsWidget());
         this.dom.btnGsheetsWidgetOpen?.addEventListener('click', () => {
-            // «Операции» — там секция gsheets. Роутер переключает таб по hash.
             window.location.hash = 'tools';
-            // После переключения таба ToolsModule сам выберет нужный ops-tab,
-            // откроет аккордеон и проскроллит. CustomEvent — мост чтобы не
-            // импортить tools.js сюда и не плодить связи.
             setTimeout(() => {
                 window.dispatchEvent(new CustomEvent('tools:open-section', {
                     detail: { section: 'gsheets' },
@@ -143,29 +90,223 @@ export const DashboardModule = {
         document.querySelectorAll('[data-dashboard-kpi]').forEach(card => {
             card.addEventListener('click', () => this.openKpiDetail(card.dataset.dashboardKpi));
         });
-        // Закрытие модалки
         this.dom.detailModal?.addEventListener('click', (e) => {
             if (e.target.closest('[data-dd-close]') || e.target === this.dom.detailModal) {
                 this.closeDetailModal();
             }
         });
-        if (this.dom.btnPrev) this.dom.btnPrev.addEventListener('click', () => {
-            if (this.auditState.page > 1) { this.auditState.page--; this.loadAuditLog(); }
+
+        // Bug AC: Центр внимания — refresh и клики по тайлам
+        this.dom.btnRefreshAttention?.addEventListener('click', () => this.loadAttentionCenter());
+
+        // Bug AC: Тренд начислений — смена диапазона и refresh
+        this.dom.trendMonths?.addEventListener('change', (e) => {
+            this.trendState.months = parseInt(e.target.value, 10) || 6;
+            this.loadRevenueTrend();
         });
-        if (this.dom.btnNext) this.dom.btnNext.addEventListener('click', () => {
-            const totalPages = Math.ceil(this.auditState.total / this.auditState.limit) || 1;
-            if (this.auditState.page < totalPages) { this.auditState.page++; this.loadAuditLog(); }
+        this.dom.btnRefreshTrend?.addEventListener('click', () => this.loadRevenueTrend());
+
+        // Bug AC: Быстрые действия — делегирование клика по контейнеру.
+        // data-quick-action указывает что именно делать. Большинство —
+        // навигация в вкладку, часть запускает действие на месте.
+        document.querySelectorAll('[data-quick-action]').forEach(btn => {
+            btn.addEventListener('click', () => this._handleQuickAction(btn.dataset.quickAction));
         });
-        if (this.dom.auditFilterAction) this.dom.auditFilterAction.addEventListener('change', (e) => {
-            this.auditState.filterAction = e.target.value;
-            this.auditState.page = 1;
-            this.loadAuditLog();
+    },
+
+    // =====================================================
+    // Bug AC: QUICK ACTIONS
+    // Стараемся переиспользовать существующие потоки: вместо
+    // вызова API дёргаем уже-готовые кнопки/таб-переключатели.
+    // =====================================================
+    _handleQuickAction(action) {
+        switch (action) {
+            case 'import-1c':
+                window.location.hash = 'debts';
+                setTimeout(() => {
+                    document.getElementById('debtFile209')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }, 300);
+                break;
+
+            case 'approve-safe': {
+                // Если мы уже на дашборде — есть кнопка #btnBulkApprove ниже.
+                const btn = document.getElementById('btnBulkApprove');
+                if (btn) {
+                    btn.click();
+                    btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                } else {
+                    window.location.hash = 'dashboard';
+                    setTimeout(() => document.getElementById('btnBulkApprove')?.click(), 300);
+                }
+                break;
+            }
+
+            case 'auto-rebuild':
+                window.location.hash = 'tools';
+                setTimeout(() => {
+                    window.dispatchEvent(new CustomEvent('tools:open-section', {
+                        detail: { section: 'analyzer', subTab: 'auto-rebuild' },
+                    }));
+                }, 400);
+                break;
+
+            case 'anomalous-deltas':
+                window.location.hash = 'tools';
+                setTimeout(() => {
+                    window.dispatchEvent(new CustomEvent('tools:open-section', {
+                        detail: { section: 'analyzer', subTab: 'anomalous-deltas' },
+                    }));
+                }, 400);
+                break;
+
+            case 'move-candidates':
+                window.location.hash = 'tools';
+                setTimeout(() => {
+                    window.dispatchEvent(new CustomEvent('tools:open-section', {
+                        detail: { section: 'analyzer', subTab: 'move-candidates' },
+                    }));
+                }, 400);
+                break;
+
+            case 'debts-1c':
+                window.location.hash = 'debts';
+                break;
+
+            default:
+                toast(`Действие «${action}» пока не реализовано`, 'warning');
+        }
+    },
+
+    // =====================================================
+    // Bug AC: ЦЕНТР ВНИМАНИЯ
+    // Один endpoint /api/admin/dashboard/attention-center
+    // возвращает массив items {key, label, hint, count, severity,
+    // icon, color, tab, subTab?}. Рендерим сетку плиток. Клик на
+    // плитку → переключаем хеш-таб (+ опционально подвкладку).
+    // =====================================================
+    async loadAttentionCenter() {
+        if (!this.dom.attentionGrid) return;
+        const myId = ++this._attentionReqId;
+        try {
+            const data = await api.get('/admin/dashboard/attention-center');
+            if (myId !== this._attentionReqId) return;
+            this._renderAttentionCenter(data);
+        } catch (e) {
+            if (myId !== this._attentionReqId) return;
+            this.dom.attentionGrid.innerHTML =
+                `<div style="padding:18px; color:var(--danger-color); grid-column:1/-1;">
+                    Ошибка загрузки алертов: ${this._escape(e.message || 'неизвестно')}
+                </div>`;
+        }
+    },
+
+    _renderAttentionCenter(data) {
+        const items = data?.items || [];
+        if (this.dom.attentionSummary) {
+            const period = data?.active_period ? ` · период: ${this._escape(data.active_period)}` : '';
+            this.dom.attentionSummary.innerHTML = data?.total_alerts > 0
+                ? `<span style="color:#dc2626; font-weight:600;">⚠ ${data.total_alerts} активных алертов</span>${period}`
+                : `<span style="color:#10b981;">✓ Все спокойно</span>${period}`;
+        }
+
+        if (!items.length) {
+            this.dom.attentionGrid.innerHTML =
+                `<div style="padding:18px; color:var(--text-secondary); grid-column:1/-1; text-align:center;">
+                    Нет данных
+                </div>`;
+            return;
+        }
+
+        this.dom.attentionGrid.innerHTML = items.map(it => {
+            const safeLabel = this._escape(it.label || '');
+            const safeHint = this._escape(it.hint || '');
+            const sev = it.severity || 'info';
+            const isOk = sev === 'ok' || (it.count || 0) === 0;
+            return `
+                <div class="attention-tile severity-${sev}"
+                     data-attention-key="${this._escape(it.key)}"
+                     data-attention-tab="${this._escape(it.tab || '')}"
+                     data-attention-sub="${this._escape(it.subTab || '')}"
+                     title="${safeHint}">
+                    <div class="at-icon" style="color:${it.color || '#64748b'};">
+                        <i class="fa-solid ${this._escape(it.icon || 'fa-circle-info')}"></i>
+                    </div>
+                    <div class="at-body">
+                        <div class="at-label">${safeLabel}</div>
+                        <div class="at-hint">${safeHint}</div>
+                    </div>
+                    <div class="at-count" style="color:${isOk ? '#94a3b8' : (it.color || '#dc2626')};">
+                        ${it.count || 0}
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        // Делегируем клики по тайлам — переключаем вкладку (и подвкладку,
+        // если задана через data-attention-sub).
+        this.dom.attentionGrid.querySelectorAll('.attention-tile').forEach(tile => {
+            tile.addEventListener('click', () => {
+                const tab = tile.dataset.attentionTab;
+                const sub = tile.dataset.attentionSub;
+                if (!tab) return;
+                window.location.hash = tab;
+                if (sub) {
+                    setTimeout(() => {
+                        window.dispatchEvent(new CustomEvent('tools:open-section', {
+                            detail: { section: 'analyzer', subTab: sub },
+                        }));
+                    }, 400);
+                }
+            });
         });
-        if (this.dom.auditFilterEntity) this.dom.auditFilterEntity.addEventListener('change', (e) => {
-            this.auditState.filterEntity = e.target.value;
-            this.auditState.page = 1;
-            this.loadAuditLog();
-        });
+    },
+
+    // =====================================================
+    // Bug AC: ТРЕНД НАЧИСЛЕНИЙ
+    // GET /api/admin/dashboard/revenue-trend?months=N → массив периодов.
+    // Рисуем горизонтальные бары через CSS grid (.trend-row).
+    // =====================================================
+    async loadRevenueTrend() {
+        if (!this.dom.trendBody) return;
+        const months = this.trendState.months || 6;
+        const myId = ++this._trendReqId;
+        try {
+            const data = await api.get(`/admin/dashboard/revenue-trend?months=${months}`);
+            if (myId !== this._trendReqId) return;
+            this._renderRevenueTrend(data);
+        } catch (e) {
+            if (myId !== this._trendReqId) return;
+            this.dom.trendBody.innerHTML =
+                `<div style="padding:16px; color:var(--danger-color);">
+                    Ошибка загрузки тренда: ${this._escape(e.message || 'неизвестно')}
+                </div>`;
+        }
+    },
+
+    _renderRevenueTrend(data) {
+        const items = data?.items || [];
+        const max = Math.max(data?.max_sum || 0, 1); // защита от деления на 0
+        if (!items.length) {
+            this.dom.trendBody.innerHTML =
+                `<div style="padding:16px; color:var(--text-secondary); text-align:center;">
+                    Нет закрытых периодов
+                </div>`;
+            return;
+        }
+        const fmtMoney = (v) => Number(v || 0).toLocaleString('ru-RU',
+            { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + ' ₽';
+
+        this.dom.trendBody.innerHTML = items.map(p => {
+            const pct = Math.max(2, Math.round((p.approved_sum / max) * 100));
+            return `
+                <div class="trend-row ${p.is_active ? 'is-active' : ''}"
+                     title="${this._escape(p.name)}: ${p.count} утверждённых записей">
+                    <div class="tr-name">${this._escape(p.name)}${p.is_active ? ' · <span style="color:#f59e0b; font-size:11px;">тек.</span>' : ''}</div>
+                    <div class="tr-bar"><div class="tr-bar-fill" style="width:${pct}%;"></div></div>
+                    <div class="tr-sum">${fmtMoney(p.approved_sum)}</div>
+                </div>
+            `;
+        }).join('');
     },
 
     // =====================================================
@@ -631,114 +772,4 @@ export const DashboardModule = {
             .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     },
-
-    // =====================================================
-    // ЖУРНАЛ ДЕЙСТВИЙ
-    // =====================================================
-    async loadAuditFilters() {
-        try {
-            const data = await api.get('/admin/audit-log/actions');
-
-            if (this.dom.auditFilterAction && data.actions) {
-                let html = '<option value="">Все действия</option>';
-                data.actions.forEach(a => {
-                    const label = ACTION_LABELS[a.name] || a.name;
-                    html += `<option value="${esc(a.name)}">${label} (${a.count})</option>`;
-                });
-                this.dom.auditFilterAction.innerHTML = html;
-            }
-
-            if (this.dom.auditFilterEntity && data.entities) {
-                let html = '<option value="">Все объекты</option>';
-                data.entities.forEach(e => {
-                    const label = ENTITY_LABELS[e.name] || e.name;
-                    html += `<option value="${esc(e.name)}">${label} (${e.count})</option>`;
-                });
-                this.dom.auditFilterEntity.innerHTML = html;
-            }
-        } catch (e) {
-            // Если журнал пуст — фильтры будут дефолтными
-        }
-    },
-
-    async loadAuditLog() {
-        if (!this.dom.auditContainer) return;
-
-        const params = new URLSearchParams({
-            page: this.auditState.page,
-            limit: this.auditState.limit
-        });
-        if (this.auditState.filterAction) params.set('action', this.auditState.filterAction);
-        if (this.auditState.filterEntity) params.set('entity_type', this.auditState.filterEntity);
-
-        try {
-            const data = await api.get(`/admin/audit-log?${params.toString()}`);
-            this.auditState.total = data.total;
-            this.renderAuditLog(data.items);
-            this.updateAuditPagination();
-        } catch (e) {
-            this.dom.auditContainer.innerHTML =
-                `<div style="text-align:center; padding:30px; color:var(--text-secondary);">Журнал пуст или недоступен</div>`;
-        }
-    },
-
-    renderAuditLog(items) {
-        if (!items || items.length === 0) {
-            this.dom.auditContainer.innerHTML =
-                `<div style="text-align:center; padding:40px; color:var(--text-secondary);">
-                    <div style="font-size:32px; margin-bottom:12px;">📋</div>
-                    <div style="font-size:15px; font-weight:500;">Журнал действий пуст</div>
-                    <div style="font-size:13px; margin-top:4px;">Действия будут появляться здесь по мере работы в системе</div>
-                </div>`;
-            return;
-        }
-
-        let html = '<div style="padding:0;">';
-        items.forEach(item => {
-            const actionLabel = ACTION_LABELS[item.action] || item.action;
-            const entityLabel = ENTITY_LABELS[item.entity_type] || item.entity_type;
-            const idPart = item.entity_id ? ` #${item.entity_id}` : '';
-
-            let detailsHtml = '';
-            if (item.details) {
-                const entries = Object.entries(item.details).slice(0, 4);
-                if (entries.length > 0) {
-                    detailsHtml = '<div style="font-size:11px; color:#9ca3af; margin-top:4px;">' +
-                        entries.map(([k, v]) => `${esc(k)}: <b>${esc(String(v))}</b>`).join(' · ') +
-                        '</div>';
-                }
-            }
-
-            html += `
-                <div style="display:flex; gap:14px; padding:12px 16px; border-bottom:1px solid var(--border-color); align-items:flex-start;">
-                    <div style="flex-shrink:0; width:36px; height:36px; border-radius:50%; background:#f3f4f6; display:flex; align-items:center; justify-content:center; font-size:14px;">
-                        ${(ACTION_LABELS[item.action] || '📝').split(' ')[0]}
-                    </div>
-                    <div style="flex:1; min-width:0;">
-                        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:4px;">
-                            <span style="font-weight:600; font-size:13px; color:var(--text-main);">${esc(item.username)}</span>
-                            <span style="font-size:11px; color:#9ca3af; white-space:nowrap;">${esc(item.created_at)}</span>
-                        </div>
-                        <div style="font-size:13px; color:var(--text-secondary); margin-top:2px;">
-                            ${actionLabel} → <span style="font-weight:500;">${entityLabel}${idPart}</span>
-                        </div>
-                        ${detailsHtml}
-                    </div>
-                </div>
-            `;
-        });
-        html += '</div>';
-
-        this.dom.auditContainer.innerHTML = html;
-    },
-
-    updateAuditPagination() {
-        const totalPages = Math.ceil(this.auditState.total / this.auditState.limit) || 1;
-        if (this.dom.pageInfo) {
-            this.dom.pageInfo.textContent = `Стр. ${this.auditState.page} из ${totalPages} (${this.auditState.total} записей)`;
-        }
-        if (this.dom.btnPrev) this.dom.btnPrev.disabled = this.auditState.page <= 1;
-        if (this.dom.btnNext) this.dom.btnNext.disabled = this.auditState.page >= totalPages;
-        if (this.dom.auditTotal) this.dom.auditTotal.textContent = `Всего: ${this.auditState.total}`;
-    }
 };

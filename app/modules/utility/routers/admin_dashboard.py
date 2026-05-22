@@ -12,7 +12,7 @@ from sqlalchemy import func, desc, case, or_
 from app.core.database import get_db
 from app.core.request_context import current_request_id
 from app.modules.utility.models import (
-    User, Room, MeterReading, BillingPeriod, AuditLog
+    User, Room, MeterReading, BillingPeriod, AuditLog, SupportTicket
 )
 from app.core.dependencies import RoleChecker
 
@@ -239,6 +239,235 @@ async def get_dashboard_kpi(
         "comparison": comparison,
         "total_debt": total_debt,
     }
+
+
+# =====================================================================
+# Bug AC: ЦЕНТР ВНИМАНИЯ — единый агрегат «что требует действий».
+# Собирает все алерты из улучшений за последний месяц разработки
+# (Bug H/I/N/O/W/X/Y/Z + tickets + stuck-drafts) одним SQL-snapshot,
+# чтобы дашборд делал один запрос вместо 6 параллельных.
+# =====================================================================
+@router.get("/api/admin/dashboard/attention-center",
+            summary="Агрегат алертов для дашборда")
+async def get_attention_center(
+    current_user: User = Depends(allow_dashboard),
+    db: AsyncSession = Depends(get_db),
+):
+    """Возвращает счётчики «требует внимания» для главного виджета.
+    Каждый item: {key, label, count, severity, hash_target}, где
+    hash_target — куда переключить вкладку при клике.
+    Порядок — по severity (critical → warning → info)."""
+
+    # 1. Активный период — для расчётов «кто не сдал».
+    active_period = (await db.execute(
+        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
+    )).scalars().first()
+
+    # 2. Аномалии в открытых черновиках (score ≥80) — Bug H/G/F
+    anomalies_count = 0
+    not_submitted_count = 0
+    if active_period:
+        anomalies_count = (await db.execute(
+            select(func.count(MeterReading.id)).where(
+                MeterReading.period_id == active_period.id,
+                MeterReading.is_approved.is_(False),
+                MeterReading.anomaly_score >= 80,
+            )
+        )).scalar_one() or 0
+
+        # Кол-во by_meter комнат БЕЗ показаний в активном периоде
+        rooms_metered = (await db.execute(
+            select(func.count(func.distinct(User.room_id))).where(
+                User.is_deleted.is_(False),
+                User.role == "user",
+                User.room_id.is_not(None),
+                User.billing_mode == "by_meter",
+            )
+        )).scalar_one() or 0
+        rooms_submitted = (await db.execute(
+            select(func.count(func.distinct(MeterReading.room_id))).where(
+                MeterReading.period_id == active_period.id,
+                or_(
+                    MeterReading.hot_water.is_not(None),
+                    MeterReading.cold_water.is_not(None),
+                    MeterReading.electricity.is_not(None),
+                ),
+            )
+        )).scalar_one() or 0
+        not_submitted_count = max(0, rooms_metered - rooms_submitted)
+
+    # 3. Заблокированные показания (DATA_OVERFLOW_RESET) — Bug B+
+    stuck_drafts_count = (await db.execute(
+        select(func.count(MeterReading.id)).where(
+            MeterReading.is_approved.is_(False),
+            MeterReading.anomaly_flags.contains("DATA_OVERFLOW_RESET"),
+        )
+    )).scalar_one() or 0
+
+    # 4. Высокие дельты (REVIEW_HIGH_DELTA) — Bug H
+    high_delta_count = (await db.execute(
+        select(func.count(MeterReading.id)).where(
+            MeterReading.is_approved.is_(True),
+            MeterReading.anomaly_flags.contains("REVIEW_HIGH_DELTA"),
+        )
+    )).scalar_one() or 0
+
+    # 5. Свободные комнаты — Bug Y (RoomAssignment + Room.is_vacant)
+    vacant_rooms_count = (await db.execute(
+        select(func.count(Room.id)).where(Room.is_vacant.is_(True))
+    )).scalar_one() or 0
+
+    # 6. Открытые тикеты поддержки
+    open_tickets_count = (await db.execute(
+        select(func.count(SupportTicket.id)).where(
+            SupportTicket.status.in_(["open", "in_progress"])
+        )
+    )).scalar_one() or 0
+
+    # 7. Жильцы без комнаты (orphan users) — частый источник проблем 1С
+    orphan_users_count = (await db.execute(
+        select(func.count(User.id)).where(
+            User.is_deleted.is_(False),
+            User.role == "user",
+            User.room_id.is_(None),
+        )
+    )).scalar_one() or 0
+
+    items = [
+        {
+            "key": "anomalies",
+            "label": "Аномалии в черновиках",
+            "hint": "Подозрительные показания (score ≥80) в активном периоде",
+            "count": anomalies_count,
+            "severity": "critical" if anomalies_count > 0 else "ok",
+            "icon": "fa-triangle-exclamation",
+            "color": "#dc2626",
+            "tab": "readings",
+        },
+        {
+            "key": "high_delta",
+            "label": "Высокие дельты",
+            "hint": "Утверждённые с большим скачком vs prev/baseline (Bug H)",
+            "count": high_delta_count,
+            "severity": "warning" if high_delta_count > 0 else "ok",
+            "icon": "fa-chart-line",
+            "color": "#f59e0b",
+            "tab": "tools",
+            "subTab": "anomalous-deltas",
+        },
+        {
+            "key": "stuck_drafts",
+            "label": "Заблокированные показания",
+            "hint": "DATA_OVERFLOW_RESET — ждут решения админа",
+            "count": stuck_drafts_count,
+            "severity": "critical" if stuck_drafts_count > 0 else "ok",
+            "icon": "fa-lock",
+            "color": "#7c2d12",
+            "tab": "tools",
+            "subTab": "stuck-drafts",
+        },
+        {
+            "key": "not_submitted",
+            "label": "Не сдали показания",
+            "hint": "Комнаты by_meter без подачи в текущем периоде",
+            "count": not_submitted_count,
+            "severity": "warning" if not_submitted_count > 10 else (
+                "info" if not_submitted_count > 0 else "ok"),
+            "icon": "fa-clock",
+            "color": "#0ea5e9",
+            "tab": "dashboard",
+        },
+        {
+            "key": "vacant_rooms",
+            "label": "Свободные комнаты",
+            "hint": "Можно заселить или забронировать",
+            "count": vacant_rooms_count,
+            "severity": "info",
+            "icon": "fa-door-open",
+            "color": "#10b981",
+            "tab": "housing",
+        },
+        {
+            "key": "open_tickets",
+            "label": "Обращения без ответа",
+            "hint": "Тикеты от жильцов в статусе open/in_progress",
+            "count": open_tickets_count,
+            "severity": "warning" if open_tickets_count > 0 else "ok",
+            "icon": "fa-envelope",
+            "color": "#8b5cf6",
+            "tab": "tickets",
+        },
+        {
+            "key": "orphan_users",
+            "label": "Жильцы без комнаты",
+            "hint": "У жильца не назначена комната — частая причина пустых ОСВ",
+            "count": orphan_users_count,
+            "severity": "warning" if orphan_users_count > 0 else "ok",
+            "icon": "fa-user-slash",
+            "color": "#64748b",
+            "tab": "users",
+        },
+    ]
+
+    # Сортировка: сначала критичные с count>0, потом warning>0, потом info>0,
+    # потом всё с count=0 (без подсветки) — чтобы внимание сразу шло на проблемы.
+    severity_order = {"critical": 0, "warning": 1, "info": 2, "ok": 3}
+    items.sort(key=lambda i: (
+        severity_order.get(i["severity"], 9),
+        -(i["count"] or 0),
+    ))
+
+    return {
+        "active_period": active_period.name if active_period else None,
+        "items": items,
+        "total_alerts": sum(1 for i in items if i["count"] > 0 and i["severity"] != "ok"),
+    }
+
+
+# =====================================================================
+# Bug AC: ТРЕНД НАЧИСЛЕНИЙ ЗА N МЕСЯЦЕВ — горизонтальные бары для дашборда.
+# =====================================================================
+@router.get("/api/admin/dashboard/revenue-trend",
+            summary="История начислений за последние N периодов")
+async def get_revenue_trend(
+    months: int = Query(6, ge=2, le=12),
+    current_user: User = Depends(allow_dashboard),
+    db: AsyncSession = Depends(get_db),
+):
+    """Возвращает массив `{name, approved_sum, count, period_id, is_active}`
+    для последних N периодов (включая активный). Используется в мини-чарте
+    «Тренд начислений» на дашборде."""
+
+    periods = (await db.execute(
+        select(BillingPeriod)
+        .order_by(desc(BillingPeriod.id))
+        .limit(months)
+    )).scalars().all()
+
+    items = []
+    for p in periods:
+        row = (await db.execute(
+            select(
+                func.count(MeterReading.id),
+                func.coalesce(func.sum(MeterReading.total_cost), 0),
+            ).where(
+                MeterReading.period_id == p.id,
+                MeterReading.is_approved.is_(True),
+            )
+        )).one()
+        items.append({
+            "period_id": p.id,
+            "name": p.name,
+            "is_active": bool(p.is_active),
+            "count": int(row[0] or 0),
+            "approved_sum": float(row[1] or 0),
+        })
+
+    # На фронте удобнее в хронологическом порядке (старые → новые)
+    items.reverse()
+
+    max_sum = max((i["approved_sum"] for i in items), default=0)
+    return {"items": items, "max_sum": max_sum, "months_requested": months}
 
 
 # =====================================================================
