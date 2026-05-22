@@ -896,10 +896,12 @@ async def debts_import_diff(
     debt_closed = []
     new_overpay = []
 
-    all_room_ids = set(cur_state.keys()) | set(prev_state.keys())
-    for room_id in all_room_ids:
-        cur = cur_state.get(room_id, {})
-        prev = prev_state.get(room_id, {})
+    # Bug AG: applied_state теперь keyed by user_id (раньше room_id — в
+    # коммуналке два жильца перезаписывали друг друга).
+    all_user_ids = set(cur_state.keys()) | set(prev_state.keys())
+    for user_id_str in all_user_ids:
+        cur = cur_state.get(user_id_str, {})
+        prev = prev_state.get(user_id_str, {})
         cur_debt = _dec(cur, debt_key)
         prev_debt = _dec(prev, debt_key)
         cur_over = _dec(cur, over_key)
@@ -908,10 +910,19 @@ async def debts_import_diff(
         # Метаданные берём из cur если есть, иначе из prev (если жилец исчез)
         meta_username = cur.get("username") or prev.get("username") or "—"
         meta_room = cur.get("room_label") or prev.get("room_label") or "—"
+        # room_id хранится внутри applied_state (после Bug AG) либо берём
+        # из cur/prev. Для legacy-логов до Bug AG в applied_state нет user_id,
+        # вместо него стоит room_id — попробуем привести к int безопасно.
+        room_id_val = cur.get("room_id") or prev.get("room_id")
+        try:
+            user_id_int = int(user_id_str)
+        except Exception:
+            user_id_int = None
 
         if cur_debt > prev_debt:
             entry = {
-                "room_id": int(room_id),
+                "user_id": user_id_int,
+                "room_id": room_id_val,
                 "username": meta_username,
                 "room_label": meta_room,
                 "prev_debt": float(prev_debt),
@@ -924,7 +935,8 @@ async def debts_import_diff(
                 debt_grew.append(entry)
         elif cur_debt < prev_debt:
             entry = {
-                "room_id": int(room_id),
+                "user_id": user_id_int,
+                "room_id": room_id_val,
                 "username": meta_username,
                 "room_label": meta_room,
                 "prev_debt": float(prev_debt),
@@ -939,7 +951,8 @@ async def debts_import_diff(
         # Появилась переплата которой не было — сигнал что админ должен возвратить
         if cur_over > 0 and prev_over == 0:
             new_overpay.append({
-                "room_id": int(room_id),
+                "user_id": user_id_int,
+                "room_id": room_id_val,
                 "username": meta_username,
                 "room_label": meta_room,
                 "overpayment": float(cur_over),
@@ -989,13 +1002,10 @@ async def debts_user_history(
     db: AsyncSession = Depends(get_db),
 ):
     """Возвращает точки графика для одного жильца: на каждый
-    completed-импорт — debt+overpayment по этому юзеру (по его room_id).
+    completed-импорт — debt+overpayment по этому юзеру.
 
-    Сортировка по started_at. Если у жильца менялась комната — она
-    учитывается: ищем applied_state по room_id, который был у жильца
-    на момент импорта. Для простоты MVP берём текущий room_id юзера —
-    это покрывает 99% случаев (миграции редки).
-
+    Bug AG: applied_state теперь keyed by user_id, поэтому переезды
+    больше не теряют точки (раньше при смене комнаты история обрывалась).
     UI рисует две линии: 209 (коммунальный) и 205 (найм), плюс tabular
     разрез по каждому импорту.
     """
@@ -1004,16 +1014,8 @@ async def debts_user_history(
     user = await db.get(User, user_id)
     if not user:
         raise HTTPException(404, "Жилец не найден")
-    if not user.room_id:
-        return {
-            "user_id": user_id,
-            "username": user.username,
-            "room_id": None,
-            "points": [],
-            "fatal": "У жильца нет комнаты — долги привязываются к комнате, не к юзеру.",
-        }
 
-    room_id_key = str(user.room_id)
+    user_id_key = str(user.id)
 
     # Все completed-импорты с applied_state — отсортированы по дате
     logs = (await db.execute(
@@ -1029,7 +1031,7 @@ async def debts_user_history(
     last_room_label = None
     for log in logs:
         st = log.applied_state or {}
-        entry = st.get(room_id_key)
+        entry = st.get(user_id_key)
         if not entry:
             # В этот импорт этой комнаты не было — пропускаем точку, чтобы
             # не подмешивать «0», которое на самом деле «нет данных».

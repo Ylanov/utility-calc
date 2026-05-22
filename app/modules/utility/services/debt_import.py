@@ -545,12 +545,26 @@ def sync_import_debts_process(
             if norm and uid in users_by_id:
                 aliases_map[norm] = uid
 
-        # 2. Предзагрузка показаний (черновиков) по КОМНАТАМ
+        # 2. Предзагрузка показаний активного периода. Ключ — user_id, не room_id.
+        #
+        # Bug AG (2026-05-22): в коммуналке (комната с >1 холостяком) долги
+        # каждого жильца должны быть СВОИМИ — раньше мы ключевали по room_id
+        # и суммировали долги всех жильцов в один reading первого встреченного.
+        # Симптом: в комнате 4дв.стр.18/206 живут Муравьев (id=159, заплатил)
+        # и Шелюков (id=160, должен 635.92). Импорт делал reset reading'а
+        # Муравьева → ADD 0 → ADD 635.92 Шелюкова → debt_209=635.92 на reading
+        # с user_id=159. Дашборд SUM'ил по user_id и показывал «Муравьев 635.92»,
+        # хотя реально должник — Шелюков.
+        #
+        # Теперь: каждый жилец = свой reading в активном периоде.
+        # Семья (несколько FamilyMember) всё равно остаётся одним user → один
+        # reading (как было). Коммуналки двух холостяков = два reading'а с
+        # одинаковым room_id, но разными user_id.
         readings_raw = db.execute(
             select(MeterReading).where(MeterReading.period_id == active_period.id)
         ).scalars().all()
 
-        readings_map = {r.room_id: r for r in readings_raw if r.room_id is not None}
+        readings_map = {r.user_id: r for r in readings_raw if r.user_id is not None}
 
         stats = {
             "processed": 0, "updated": 0, "created": 0,
@@ -567,9 +581,12 @@ def sync_import_debts_process(
         existing_contracts_cache: Dict[int, set] = {}
 
         updates_dict = {}  # reading_id -> reading object (для обновления)
-        inserts_dict = {}  # room_id -> reading object (для вставки)
+        inserts_dict = {}  # user_id -> reading object (для вставки) — Bug AG: ключ per-user
         fuzzy_cache = {}
-        processed_rooms = set()  # Для обнуления старых долгов комнаты перед прибавлением новых из 1С
+        # Bug AG: per-user обнуление — каждый жилец сбрасывает СВОЙ reading в 0
+        # перед прибавлением своего долга из 1С. Раньше processed_rooms — после
+        # первого жильца комнаты вторые ДОБАВЛЯЛИ к нему, не сбрасывали.
+        processed_users = set()
 
         # snapshot_data: сохраняем ДО-состояние debt_*/overpayment_* по каждому
         # затронутому existing reading. Используется для отката импорта.
@@ -702,13 +719,17 @@ def sync_import_debts_process(
             room_id = user_data["room_id"]
             last_matched_user_id = user_id  # для парсера договоров ниже
 
-            # 4. Если для этой комнаты уже есть черновик в БД
-            if room_id in readings_map:
-                reading = readings_map[room_id]
+            # 4. Если у ЭТОГО ЖИЛЬЦА уже есть reading в активном периоде — апдейтим.
+            # Bug AG: раньше ключ был room_id и долги нескольких жильцов
+            # одной комнаты ВСЕ присваивались reading'у первого. Теперь
+            # каждый user имеет свой reading со своим долгом.
+            if user_id in readings_map:
+                reading = readings_map[user_id]
 
-                # Если мы первый раз встречаем эту комнату в файле 1С - сбрасываем старые долги в 0
-                if room_id not in processed_rooms:
-                    # Снимаем snapshot до обнуления — для отката
+                # Первый раз встречаем этого жильца в файле — снимок до + reset.
+                # (Несколько строк на одного user'а в файле — редкий кейс,
+                # но если случится, второй раз reset не делаем, просто прибавим.)
+                if user_id not in processed_users:
                     if reading.id not in snapshot_before:
                         snapshot_before[reading.id] = {
                             "debt_209": str(reading.debt_209 or 0),
@@ -726,10 +747,9 @@ def sync_import_debts_process(
                         reading.overpayment_205 = Decimal("0.00")
                         reading.obor_debit_205 = Decimal("0.00")
                         reading.obor_credit_205 = Decimal("0.00")
-                    processed_rooms.add(room_id)
+                    processed_users.add(user_id)
                     updates_dict[reading.id] = reading
 
-                # ПРИБАВЛЯЕМ долги (если в 1С несколько жильцов из одной комнаты, долги просуммируются)
                 if account_type == "209":
                     reading.debt_209 += debt_val
                     reading.overpayment_209 += over_val
@@ -743,9 +763,10 @@ def sync_import_debts_process(
 
                 stats["updated"] += 1
 
-            # 5. Если черновика в БД нет, но мы его уже создали в памяти в цикле
-            elif room_id in inserts_dict:
-                reading = inserts_dict[room_id]
+            # 5. Reading'а в БД нет, но мы его уже создали в памяти на этой
+            # итерации (несколько строк на одного user'а в файле — редкий кейс).
+            elif user_id in inserts_dict:
+                reading = inserts_dict[user_id]
                 if account_type == "209":
                     reading.debt_209 += debt_val
                     reading.overpayment_209 += over_val
@@ -759,10 +780,10 @@ def sync_import_debts_process(
 
                 stats["updated"] += 1
 
-            # 6. Если черновика нет вообще - создаем новый
+            # 6. Reading'а нет вообще — создаём новый ИМЕННО для ЭТОГО жильца.
             else:
                 new_reading = MeterReading(
-                    user_id=user_id,  # Первый встреченный жилец становится номинальным автором черновика
+                    user_id=user_id,
                     room_id=room_id,
                     period_id=active_period.id,
                     is_approved=False,
@@ -783,8 +804,8 @@ def sync_import_debts_process(
                     new_reading.obor_debit_205 = obor_d_val
                     new_reading.obor_credit_205 = obor_c_val
 
-                inserts_dict[room_id] = new_reading
-                processed_rooms.add(room_id)
+                inserts_dict[user_id] = new_reading
+                processed_users.add(user_id)
                 stats["created"] += 1
 
         # 7. Сохраняем в БД
@@ -894,14 +915,14 @@ def sync_import_debts_process(
         }
 
         # applied_state — state ПОСЛЕ применения импорта, для последующего
-        # diff. Собираем denormalized {room_id: {долги, username, room_label}}
+        # diff. Собираем denormalized {user_id: {долги, username, room_label, room_id}}
         # по всем затронутым reading'ам (updates + inserts).
-        # username/room_label берём чтобы UI diff не делал JOIN на каждую
-        # строку — память дешевле кликов.
+        #
+        # Bug AG: ключ — user_id (раньше room_id, в коммуналке два жильца
+        # перезаписывали друг друга). Diff/undo тоже ходят через user_id.
         applied_state: dict[str, dict] = {}
         all_touched_readings = list(updates_dict.values()) + list(inserts_dict.values())
         if all_touched_readings:
-            # Подтягиваем User+Room одним запросом — для denormalized snapshot.
             room_ids = list({r.room_id for r in all_touched_readings if r.room_id})
             user_ids = list({r.user_id for r in all_touched_readings if r.user_id})
             rooms_map = {}
@@ -919,16 +940,17 @@ def sync_import_debts_process(
                 users_map_id = {u.id: u for u in users_rows}
 
             for r in all_touched_readings:
-                if not r.room_id:
+                if not r.user_id:
                     continue
-                room = rooms_map.get(r.room_id)
-                user = users_map_id.get(r.user_id) if r.user_id else None
-                applied_state[str(r.room_id)] = {
+                room = rooms_map.get(r.room_id) if r.room_id else None
+                user = users_map_id.get(r.user_id)
+                applied_state[str(r.user_id)] = {
                     "debt_209": str(r.debt_209 or 0),
                     "overpayment_209": str(r.overpayment_209 or 0),
                     "debt_205": str(r.debt_205 or 0),
                     "overpayment_205": str(r.overpayment_205 or 0),
                     "username": user.username if user else None,
+                    "room_id": r.room_id,
                     "room_label": (
                         f"{room.dormitory_name} / {room.room_number}"
                         if room else None
