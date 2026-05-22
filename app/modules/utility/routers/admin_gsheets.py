@@ -2715,6 +2715,35 @@ async def auto_rebuild_preview(
         q = q.where(GSheetsImportRow.matched_user_id == user_id)
     rows = (await db.execute(q)).scalars().all()
 
+    # Bug W: фильтр по текущей комнате жильца. Если жилец переехал
+    # (Шиян: 504 → 212), подачи в старой комнате не должны учитываться
+    # при построении плана — иначе валидатор детектит false-positive
+    # meter_decreased «656 в комн.504 → 183 в комн.212» как падение
+    # счётчика, хотя это разные счётчики разных комнат.
+    user_room_map = {}
+    if rows:
+        all_uids = {r.matched_user_id for r in rows if r.matched_user_id}
+        if all_uids:
+            users_q = (await db.execute(
+                select(User.id, User.room_id).where(User.id.in_(all_uids))
+            )).all()
+            user_room_map = {uid: rid for uid, rid in users_q}
+    rows_filtered = []
+    rows_skipped_other_room = 0
+    for r in rows:
+        cur_room_id = user_room_map.get(r.matched_user_id)
+        if cur_room_id is None:
+            # У жильца нет текущей комнаты — пропускаем строку (она
+            # всё равно не сможет привязаться к reading).
+            rows_skipped_other_room += 1
+            continue
+        if r.matched_room_id and r.matched_room_id != cur_room_id:
+            # Подача была в другой комнате (до переезда) — игнорируем.
+            rows_skipped_other_room += 1
+            continue
+        rows_filtered.append(r)
+    rows = rows_filtered
+
     plan = _build_rebuild_plan(rows)
 
     # Bug P: для каждого жильца проверяем не лежит ли в БД утв. reading с
@@ -2792,6 +2821,7 @@ async def auto_rebuild_preview(
         "year": year,
         "stats": {
             "total_rows_scanned": total_rows,
+            "total_rows_skipped_other_room": rows_skipped_other_room,
             "total_users": len(plan),
             "ok_users": len(ok_plan),
             "skipped_users": len(skipped_plan),
@@ -2833,6 +2863,21 @@ async def auto_rebuild_apply(
     if user_id is not None:
         q = q.where(GSheetsImportRow.matched_user_id == user_id)
     rows = (await db.execute(q)).scalars().all()
+
+    # Bug W: тот же фильтр по текущей комнате что и в preview.
+    if rows:
+        all_uids = {r.matched_user_id for r in rows if r.matched_user_id}
+        user_room_map = {}
+        if all_uids:
+            users_q = (await db.execute(
+                select(User.id, User.room_id).where(User.id.in_(all_uids))
+            )).all()
+            user_room_map = {uid: rid for uid, rid in users_q}
+        rows = [
+            r for r in rows
+            if user_room_map.get(r.matched_user_id) is not None
+            and (not r.matched_room_id or r.matched_room_id == user_room_map[r.matched_user_id])
+        ]
 
     plan = _build_rebuild_plan(rows)
 
