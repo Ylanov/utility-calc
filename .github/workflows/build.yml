@@ -267,12 +267,28 @@ jobs:
         working-directory: /opt/utility_calc
         run: docker compose up -d --remove-orphans
 
+      # Bug AJ: nginx serving static с bind-mount /opt/utility_calc/static.
+      # Раньше полагались на rsync ./ /opt/utility_calc/ — но иногда runner
+      # докатывал не все файлы (race с .git? --delete?). Теперь после старта
+      # web-контейнера явно копируем актуальную static-копию из его файловой
+      # системы поверх host-bind. Это гарантия что nginx отдаст ровно те JS/CSS,
+      # которые собрались в этот же docker image.
+      - name: Sync static from web container to host bind-mount
+        working-directory: /opt/utility_calc
+        run: |
+          echo "Waiting for web container to be ready..."
+          sleep 5
+          docker cp utility_calc_web_jkh:/app/static/. /opt/utility_calc/static/
+          echo "Static sync done."
+
       # 🔥 КЛЮЧЕВОЙ ФИКС (против 502)
       - name: Restart nginx after backend startup
         working-directory: /opt/utility_calc
         run: |
           echo "Waiting for backend to stabilize..."
-          sleep 20
+          sleep 15
+          # Очищаем nginx proxy-кеш на случай если он держит старые версии.
+          docker exec utility_nginx find /var/cache/nginx -type f -delete 2>/dev/null || true
           docker compose restart nginx
 
       - name: Health check
