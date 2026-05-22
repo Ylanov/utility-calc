@@ -844,15 +844,21 @@ def sync_import_debts_process(
             #      WARNING (видно сразу в docker logs).
             from sqlalchemy import update as _sa_update
 
-            # 1) snapshot
+            # 1) snapshot — включая обороты (Bug AI: раньше UPDATE их не писал,
+            # потому inline-движение в UI всегда было пустым, и анализатор drift
+            # не мог посчитать «было/оплатил»).
             final_values = []
             for r in updates_dict.values():
                 final_values.append({
                     "id": r.id,
                     "debt_209": r.debt_209,
                     "overpayment_209": r.overpayment_209,
+                    "obor_debit_209": r.obor_debit_209 or Decimal("0"),
+                    "obor_credit_209": r.obor_credit_209 or Decimal("0"),
                     "debt_205": r.debt_205,
                     "overpayment_205": r.overpayment_205,
+                    "obor_debit_205": r.obor_debit_205 or Decimal("0"),
+                    "obor_credit_205": r.obor_credit_205 or Decimal("0"),
                 })
 
             # 2) expunge — отвязываем от ORM-session (для безопасности
@@ -864,7 +870,7 @@ def sync_import_debts_process(
                 except Exception:
                     pass  # объект уже мог быть detached
 
-            # 3) write
+            # 3) write — теперь включая обороты (Bug AI).
             total_affected = 0
             for upd in final_values:
                 res = db.execute(
@@ -873,8 +879,12 @@ def sync_import_debts_process(
                     .values(
                         debt_209=upd["debt_209"],
                         overpayment_209=upd["overpayment_209"],
+                        obor_debit_209=upd["obor_debit_209"],
+                        obor_credit_209=upd["obor_credit_209"],
                         debt_205=upd["debt_205"],
                         overpayment_205=upd["overpayment_205"],
+                        obor_debit_205=upd["obor_debit_205"],
+                        obor_credit_205=upd["obor_credit_205"],
                     )
                 )
                 total_affected += res.rowcount or 0

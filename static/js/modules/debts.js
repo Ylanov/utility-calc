@@ -765,7 +765,13 @@ export const DebtsModule = {
 
             const tr = el('tr', { class: 'table-row', style: { cssText: rowBg } },
                 el('td', {}, String(u.id)),
-                el('td', { style: { fontWeight: '600' } }, u.username),
+                // Bug AI: ФИО кликабельно — открывает модалку «карточка жильца»
+                // с разбором было/оплатил/осталось по каждому счёту + история.
+                el('td', {
+                    style: { fontWeight: '600', cursor: 'pointer', color: '#4338ca' },
+                    title: 'Открыть карточку жильца с раскладкой долга',
+                    onclick: () => this.openUserCard(u),
+                }, u.username),
                 el('td', { style: { fontSize: '12px' } }, room),
             );
 
@@ -2218,6 +2224,152 @@ export const DebtsModule = {
                     <div style="margin-top:10px;">Изменений нет — суммы совпадают с прошлым импортом.</div>
                 </div>`;
         }
+    },
+
+    // ==========================================================================
+    // КАРТОЧКА ЖИЛЬЦА — полная раскладка долга по клику на ФИО (Bug AI)
+    // ==========================================================================
+    /** Модалка по клику на ФИО в таблице «Долги 1С».
+     *  Показывает построчно по 209 и 205:
+     *    Был долг (начало) → Доначислено → Оплачено → Стало (конец)
+     *  + быстрые действия: 📊 история через все импорты, 🔍 поиск в архивах,
+     *  ✏ корректировка, 🧹 сброс баланса.
+     *
+     *  Аргумент u — объект из таблицы со всеми полями (debt_209, obor_*, etc).
+     */
+    openUserCard(u) {
+        document.getElementById('debtUserCardModal')?.remove();
+        const d209 = parseFloat(u.debt_209 || 0), o209 = parseFloat(u.overpayment_209 || 0);
+        const d205 = parseFloat(u.debt_205 || 0), o205 = parseFloat(u.overpayment_205 || 0);
+        const od209 = parseFloat(u.obor_debit_209 || 0), oc209 = parseFloat(u.obor_credit_209 || 0);
+        const od205 = parseFloat(u.obor_debit_205 || 0), oc205 = parseFloat(u.obor_credit_205 || 0);
+        // Старт = end + Кр_оборот − Дт_оборот (обратное вычисление по дебетовому счёту 209/205).
+        const start209 = d209 + oc209 - od209;
+        const start205 = d205 + oc205 - od205;
+        const room = u.room ? `${u.room.dormitory_name || '—'} / ${u.room.room_number || '—'}` : '—';
+
+        const f = (v) => {
+            const abs = Math.abs(v);
+            if (abs < 0.005) return '0,00';
+            return v.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+        };
+
+        // Helper: рендерит одну секцию счёта (209 или 205) с раскладкой.
+        const accountSection = (label, color, startD, endD, oborD, oborC, endO) => {
+            const hadDebt = startD > 0.005;
+            const hasDebtNow = endD > 0.005;
+            const hasOverpayNow = endO > 0.005;
+            const noMovement = oborD < 0.005 && oborC < 0.005;
+            const noDebtNoMovement = !hadDebt && !hasDebtNow && !hasOverpayNow && noMovement;
+
+            let verdictText, verdictColor, verdictIcon;
+            if (noDebtNoMovement) {
+                verdictText = 'нет данных из 1С';
+                verdictColor = '#9ca3af';
+                verdictIcon = '·';
+            } else if (hadDebt && !hasDebtNow && oborC > 0) {
+                verdictText = 'погашен полностью';
+                verdictColor = '#15803d';
+                verdictIcon = '✓';
+            } else if (hadDebt && hasDebtNow && oborC > 0) {
+                verdictText = `оплачено частично (осталось ${f(endD)} ₽)`;
+                verdictColor = '#a16207';
+                verdictIcon = '⚠';
+            } else if (endD > startD + 0.005) {
+                verdictText = `долг вырос на ${f(endD - startD)} ₽`;
+                verdictColor = '#b91c1c';
+                verdictIcon = '↑';
+            } else if (hasDebtNow && noMovement) {
+                verdictText = 'без движения — долг не оплачивался';
+                verdictColor = '#b91c1c';
+                verdictIcon = '!';
+            } else if (hasOverpayNow) {
+                verdictText = `переплата ${f(endO)} ₽`;
+                verdictColor = '#15803d';
+                verdictIcon = '+';
+            } else {
+                verdictText = '0 ₽';
+                verdictColor = '#15803d';
+                verdictIcon = '✓';
+            }
+
+            const row = (k, v, vColor, vSign) => `
+                <tr>
+                    <td style="padding:6px 0; color:#6b7280; font-size:12px;">${k}</td>
+                    <td style="padding:6px 0; text-align:right; font-weight:600; color:${vColor || '#111827'}; font-variant-numeric:tabular-nums;">${vSign || ''}${f(v)} ₽</td>
+                </tr>`;
+
+            return `
+                <div style="border:1px solid var(--border-color); border-radius:8px; padding:14px; background:#fff;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                        <h4 style="margin:0; font-size:14px; color:${color};">${label}</h4>
+                        <span style="font-size:11px; padding:3px 8px; background:${verdictColor}15; color:${verdictColor}; border-radius:12px; font-weight:600;">${verdictIcon} ${verdictText}</span>
+                    </div>
+                    <table style="width:100%; border-collapse:collapse;">
+                        ${row('Долг на начало периода', startD, startD > 0 ? '#b91c1c' : '#9ca3af')}
+                        ${oborD > 0.005 ? row('+ Доначислили за период', oborD, '#b91c1c', '+') : ''}
+                        ${oborC > 0.005 ? row('− Оплачено за период', oborC, '#15803d', '−') : ''}
+                        <tr><td colspan="2" style="border-bottom:1px dashed #e5e7eb; padding:2px 0;"></td></tr>
+                        ${row('Долг на конец периода', endD, endD > 0 ? '#b91c1c' : '#15803d')}
+                        ${endO > 0.005 ? row('Переплата на конец', endO, '#15803d', '+') : ''}
+                    </table>
+                </div>
+            `;
+        };
+
+        const modal = document.createElement('div');
+        modal.id = 'debtUserCardModal';
+        modal.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:1000; display:flex; align-items:center; justify-content:center; padding:20px;';
+        modal.innerHTML = `
+            <div style="background:#f9fafb; border-radius:12px; max-width:720px; width:100%; max-height:90vh; display:flex; flex-direction:column; box-shadow:0 12px 40px rgba(0,0,0,0.3);">
+                <div style="padding:14px 20px; border-bottom:1px solid var(--border-color); background:#fff; border-radius:12px 12px 0 0; display:flex; align-items:center; justify-content:space-between;">
+                    <div>
+                        <h3 style="margin:0; font-size:16px;">${esc(u.username)}</h3>
+                        <div style="font-size:12px; color:#6b7280; margin-top:2px;">
+                            ID ${u.id} · ${esc(room)}
+                        </div>
+                    </div>
+                    <button data-close-card style="background:none; border:none; font-size:20px; color:#6b7280; cursor:pointer;">×</button>
+                </div>
+                <div style="padding:16px 20px; overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:12px;">
+                    ${accountSection('209 — Коммуналка', '#c0392b', start209, d209, od209, oc209, o209)}
+                    ${accountSection('205 — Найм', '#d35400', start205, d205, od205, oc205, o205)}
+
+                    <div style="font-size:11px; color:#6b7280; padding:8px 12px; background:#fffbeb; border-left:3px solid #fbbf24; border-radius:4px;">
+                        💡 «Долг на начало» считается обратно: <code>конец + оплачено − доначислено</code>.
+                        Если в строке «Доначислили» или «Оплачено» нет — значит в этом периоде по этому счёту движения не было.
+                    </div>
+                </div>
+                <div style="padding:12px 20px; border-top:1px solid var(--border-color); background:#fff; border-radius:0 0 12px 12px; display:flex; gap:8px; flex-wrap:wrap; justify-content:flex-end;">
+                    <button data-card-action="history" style="padding:8px 12px; background:#fff; color:#4338ca; border:1px solid #c7d2fe; border-radius:4px; cursor:pointer; font-size:12px;">
+                        <i class="fa-solid fa-chart-line"></i> История через импорты
+                    </button>
+                    <button data-card-action="coverage" style="padding:8px 12px; background:#fff; color:#0ea5e9; border:1px solid #bae6fd; border-radius:4px; cursor:pointer; font-size:12px;">
+                        <i class="fa-solid fa-magnifying-glass"></i> Найти в архивах 1С
+                    </button>
+                    <button data-card-action="reset" style="padding:8px 12px; background:#fff; color:#b91c1c; border:1px solid #fecaca; border-radius:4px; cursor:pointer; font-size:12px;">
+                        <i class="fa-solid fa-broom"></i> Сбросить баланс
+                    </button>
+                    <button data-card-action="adjust" style="padding:8px 14px; background:#6366f1; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:600;">
+                        <i class="fa-solid fa-pen"></i> Корректировка
+                    </button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(modal);
+        const close = () => modal.remove();
+        modal.querySelector('[data-close-card]').addEventListener('click', close);
+        modal.addEventListener('click', (e) => { if (e.target === modal) close(); });
+        modal.querySelectorAll('[data-card-action]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const action = btn.getAttribute('data-card-action');
+                close();
+                if (action === 'history') this.openUserDebtHistory(u.id, u.username);
+                else if (action === 'coverage') this.openCheckCoverage(u.id, u.username);
+                else if (action === 'reset') this.resetUserBalance(u.id, u.username);
+                else if (action === 'adjust') this.openAdjustModal(u.id, u.username);
+            });
+        });
     },
 
     // ==========================================================================
