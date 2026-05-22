@@ -2610,24 +2610,41 @@ def _build_rebuild_plan(matched_rows: list) -> list[dict]:
 
     plan: list[dict] = []
     for uid, rs in by_user.items():
-        # Bug Z-fix: группируем подачи по комнате. У жильца могут быть
-        # подачи в разных комнатах (переезд). Каждая комната — свой
-        # счётчик, нельзя строить общую монотонную последовательность.
-        # Выбираем «primary room» = комната с наибольшим числом подач
-        # (обычно текущая). Подачи в других комнатах помечаем как
-        # skipped_other_rooms для отчёта.
-        by_room: dict[int, list] = {}
+        # Bug Z-fix2: группируем подачи по сырому raw_room_number из Excel
+        # (а НЕ по matched_room_id — он часто = current room жильца
+        # потому что fuzzy матчер сматчил всех в текущую). Это раскрывает
+        # переезды: Шиян фев=504 / мар-май=212 → две группы.
+        # Если raw_room_number отсутствует — fallback на matched_room_id.
+        from app.modules.utility.services.gsheets_sync import parse_room_number
+        by_room_key: dict[str, list] = {}
         for r in rs:
-            if r.matched_room_id is None:
+            key = None
+            if r.raw_room_number:
+                parsed = parse_room_number(r.raw_room_number)
+                if parsed:
+                    key = f"raw:{parsed}"
+            if key is None and r.matched_room_id is not None:
+                key = f"id:{r.matched_room_id}"
+            if key is None:
                 continue
-            by_room.setdefault(r.matched_room_id, []).append(r)
-        if not by_room:
+            by_room_key.setdefault(key, []).append(r)
+        if not by_room_key:
             continue
-        primary_room_id = max(by_room.keys(), key=lambda rid: len(by_room[rid]))
-        primary_rows = by_room[primary_room_id]
+        primary_key = max(by_room_key.keys(), key=lambda k: len(by_room_key[k]))
+        primary_rows = by_room_key[primary_key]
+        # primary_room_id: пытаемся определить id комнаты (для UI).
+        primary_room_id = None
+        if primary_key.startswith("id:"):
+            primary_room_id = int(primary_key[3:])
+        else:
+            # raw:NUMBER — берём matched_room_id из любой строки primary_rows
+            for pr in primary_rows:
+                if pr.matched_room_id is not None:
+                    primary_room_id = pr.matched_room_id
+                    break
         other_room_row_ids: list[int] = []
-        for rid, room_rs in by_room.items():
-            if rid != primary_room_id:
+        for rk, room_rs in by_room_key.items():
+            if rk != primary_key:
                 other_room_row_ids.extend(r.id for r in room_rs)
 
         by_month = _bucket_by_month(primary_rows)
