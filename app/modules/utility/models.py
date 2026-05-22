@@ -416,6 +416,16 @@ class MeterReading(Base):
     debt_205 = Column(Numeric(12, 2), default=0.00)
     overpayment_205 = Column(Numeric(12, 2), default=0.00)
 
+    # Bug V: обороты за период из ОСВ 1С — для показа «движения средств»
+    # в админке. obor_debit = доначисления (новые суммы), obor_credit =
+    # поступления (что заплатил жилец). Сальдо конец = start_d - start_c
+    # + obor_d - obor_c, его храним в debt/overpayment_*. Эти 4 колонки —
+    # для визуализации движения, не для расчётов.
+    obor_debit_209 = Column(Numeric(12, 2), nullable=True)
+    obor_credit_209 = Column(Numeric(12, 2), nullable=True)
+    obor_debit_205 = Column(Numeric(12, 2), nullable=True)
+    obor_credit_205 = Column(Numeric(12, 2), nullable=True)
+
     hot_correction = Column(Numeric(12, 3), default=0.0)
     cold_correction = Column(Numeric(12, 3), default=0.0)
     electricity_correction = Column(Numeric(12, 3), default=0.0)

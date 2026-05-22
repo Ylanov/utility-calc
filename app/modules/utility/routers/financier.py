@@ -445,10 +445,16 @@ async def get_users_with_debts(
     o209 = func.coalesce(func.sum(MeterReading.overpayment_209), 0).label("overpayment_209")
     d205 = func.coalesce(func.sum(MeterReading.debt_205), 0).label("debt_205")
     o205 = func.coalesce(func.sum(MeterReading.overpayment_205), 0).label("overpayment_205")
+    # Bug V: обороты для UI «движение средств».
+    od209 = func.coalesce(func.sum(MeterReading.obor_debit_209), 0).label("obor_debit_209")
+    oc209 = func.coalesce(func.sum(MeterReading.obor_credit_209), 0).label("obor_credit_209")
+    od205 = func.coalesce(func.sum(MeterReading.obor_debit_205), 0).label("obor_debit_205")
+    oc205 = func.coalesce(func.sum(MeterReading.obor_credit_205), 0).label("obor_credit_205")
     total = func.coalesce(func.sum(MeterReading.total_cost), 0).label("current_total_cost")
 
     stmt = select(
         User, Room, d209, o209, d205, o205, total,
+        od209, oc209, od205, oc205,
     ).outerjoin(
         Room, User.room_id == Room.id
     ).outerjoin(
@@ -531,7 +537,12 @@ async def get_users_with_debts(
             "overpayment_209": row[3],
             "debt_205": row[4],
             "overpayment_205": row[5],
-            "current_total_cost": row[6]
+            "current_total_cost": row[6],
+            # Bug V: движение средств — обороты периода.
+            "obor_debit_209": row[7],
+            "obor_credit_209": row[8],
+            "obor_debit_205": row[9],
+            "obor_credit_205": row[10],
         })
 
     return {"total": total_items, "page": page, "size": limit, "items": items}

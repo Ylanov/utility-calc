@@ -617,6 +617,9 @@ export const DebtsModule = {
         users.forEach(u => {
             const d209 = parseFloat(u.debt_209 || 0), o209 = parseFloat(u.overpayment_209 || 0);
             const d205 = parseFloat(u.debt_205 || 0), o205 = parseFloat(u.overpayment_205 || 0);
+            // Bug V: обороты для индикатора движения.
+            const od209 = parseFloat(u.obor_debit_209 || 0), oc209 = parseFloat(u.obor_credit_209 || 0);
+            const od205 = parseFloat(u.obor_debit_205 || 0), oc205 = parseFloat(u.obor_credit_205 || 0);
             const totalDebt = d209 + d205;
             const total = parseFloat(u.current_total_cost || 0);
 
@@ -628,19 +631,61 @@ export const DebtsModule = {
 
             const room = u.room ? `${u.room.dormitory_name || '—'} / ${u.room.room_number || '—'}` : '—';
 
+            // Bug V helper: ячейка сальдо с inline-индикатором оборотов.
+            // Показываем «—» если значения нет И оборотов нет (пусто без движения).
+            // Если есть обороты — показываем «0 ⤓» или «0 ⤒» чтобы было видно
+            // что движение было.
+            const saldoCell = (value, oborD, oborC, isDebt, accColor) => {
+                const hasValue = value > 0;
+                const hasObor = oborD > 0 || oborC > 0;
+                if (!hasValue && !hasObor) {
+                    return `<span style="color:#ccc;">—</span>`;
+                }
+                if (!hasValue && hasObor) {
+                    // 0 с движением → «0 ✓» (оплачено всё) или иконка
+                    const movement = oborD > 0 && oborC > 0
+                        ? `+${oborD.toFixed(2)} / −${oborC.toFixed(2)}`
+                        : (oborD > 0 ? `+${oborD.toFixed(2)} начисл.` : `−${oborC.toFixed(2)} оплачено`);
+                    return `<span style="color:#15803d; font-size:11px;" title="Движение: ${movement}; итог 0">
+                        0,00 <small style="color:#9ca3af;">${oborC > 0 ? '✓' : '↑'}</small>
+                    </span>`;
+                }
+                // Есть value. Если есть и обороты — показать tooltip с движением.
+                let tooltip = '';
+                if (hasObor) {
+                    const startDebt = isDebt ? (value + oborC - oborD).toFixed(2) : '—';
+                    tooltip = ` title="Начало: ${startDebt}; +начисл ${oborD.toFixed(2)}; −оплат ${oborC.toFixed(2)}; конец: ${value.toFixed(2)}"`;
+                }
+                const arrow = hasObor && oborC > 0
+                    ? '<small style="color:#9ca3af; margin-left:2px;">↓</small>'
+                    : (hasObor && oborD > 0 ? '<small style="color:#9ca3af; margin-left:2px;">↑</small>' : '');
+                return `<span style="color:${accColor};"${tooltip}>${fmtMoney(value).replace(' ₽', '')}${arrow}</span>`;
+            };
+
             const tr = el('tr', { class: 'table-row', style: { cssText: rowBg } },
                 el('td', {}, String(u.id)),
                 el('td', { style: { fontWeight: '600' } }, u.username),
                 el('td', { style: { fontSize: '12px' } }, room),
-                el('td', { style: { color: d209 > 0 ? '#c0392b' : '#ccc', borderLeft: '2px solid #eee' } },
-                    d209 > 0 ? fmtMoney(d209) : '—'),
-                el('td', { style: { color: o209 > 0 ? '#27ae60' : '#ccc' } },
-                    o209 > 0 ? fmtMoney(o209) : '—'),
-                el('td', { style: { color: d205 > 0 ? '#d35400' : '#ccc', borderLeft: '2px solid #eee' } },
-                    d205 > 0 ? fmtMoney(d205) : '—'),
-                el('td', { style: { color: o205 > 0 ? '#27ae60' : '#ccc' } },
-                    o205 > 0 ? fmtMoney(o205) : '—'),
             );
+
+            // Долг/Перепл 209 с движением
+            const d209Td = el('td', { style: { borderLeft: '2px solid #eee' } });
+            d209Td.innerHTML = saldoCell(d209, od209, oc209, true, '#c0392b');
+            tr.appendChild(d209Td);
+
+            const o209Td = el('td', {});
+            o209Td.innerHTML = saldoCell(o209, od209, oc209, false, '#27ae60');
+            tr.appendChild(o209Td);
+
+            // Долг/Перепл 205 с движением
+            const d205Td = el('td', { style: { borderLeft: '2px solid #eee' } });
+            d205Td.innerHTML = saldoCell(d205, od205, oc205, true, '#d35400');
+            tr.appendChild(d205Td);
+
+            const o205Td = el('td', {});
+            o205Td.innerHTML = saldoCell(o205, od205, oc205, false, '#27ae60');
+            tr.appendChild(o205Td);
+
             // Суммарный долг + чип
             const sumCell = el('td', { style: { fontWeight: '700', color: totalDebt > 0 ? '#b91c1c' : 'var(--text-secondary)' } });
             sumCell.innerHTML = totalDebt > 0 ? `${fmtMoney(totalDebt)}${this.debtChip(totalDebt)}` : '—';

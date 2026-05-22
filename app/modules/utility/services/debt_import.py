@@ -667,6 +667,20 @@ def sync_import_debts_process(
                 obor_credit_col=obor_credit_col,
             )
 
+            # Bug V: извлекаем обороты для UI «движение средств».
+            def _read_cell_dec(col):
+                if col is None or col >= len(row):
+                    return Decimal("0")
+                v = row[col]
+                if v is None or v == "":
+                    return Decimal("0")
+                try:
+                    return clean_decimal(v)
+                except Exception:
+                    return Decimal("0")
+            obor_d_val = _read_cell_dec(obor_debit_col)
+            obor_c_val = _read_cell_dec(obor_credit_col)
+
             user_data = get_user_data_optimized(fio_raw)
 
             if not user_data or not user_data["room_id"]:
@@ -705,9 +719,13 @@ def sync_import_debts_process(
                     if account_type == "209":
                         reading.debt_209 = Decimal("0.00")
                         reading.overpayment_209 = Decimal("0.00")
+                        reading.obor_debit_209 = Decimal("0.00")
+                        reading.obor_credit_209 = Decimal("0.00")
                     elif account_type == "205":
                         reading.debt_205 = Decimal("0.00")
                         reading.overpayment_205 = Decimal("0.00")
+                        reading.obor_debit_205 = Decimal("0.00")
+                        reading.obor_credit_205 = Decimal("0.00")
                     processed_rooms.add(room_id)
                     updates_dict[reading.id] = reading
 
@@ -715,9 +733,13 @@ def sync_import_debts_process(
                 if account_type == "209":
                     reading.debt_209 += debt_val
                     reading.overpayment_209 += over_val
+                    reading.obor_debit_209 = (reading.obor_debit_209 or Decimal("0")) + obor_d_val
+                    reading.obor_credit_209 = (reading.obor_credit_209 or Decimal("0")) + obor_c_val
                 elif account_type == "205":
                     reading.debt_205 += debt_val
                     reading.overpayment_205 += over_val
+                    reading.obor_debit_205 = (reading.obor_debit_205 or Decimal("0")) + obor_d_val
+                    reading.obor_credit_205 = (reading.obor_credit_205 or Decimal("0")) + obor_c_val
 
                 stats["updated"] += 1
 
@@ -727,9 +749,13 @@ def sync_import_debts_process(
                 if account_type == "209":
                     reading.debt_209 += debt_val
                     reading.overpayment_209 += over_val
+                    reading.obor_debit_209 = (reading.obor_debit_209 or Decimal("0")) + obor_d_val
+                    reading.obor_credit_209 = (reading.obor_credit_209 or Decimal("0")) + obor_c_val
                 elif account_type == "205":
                     reading.debt_205 += debt_val
                     reading.overpayment_205 += over_val
+                    reading.obor_debit_205 = (reading.obor_debit_205 or Decimal("0")) + obor_d_val
+                    reading.obor_credit_205 = (reading.obor_credit_205 or Decimal("0")) + obor_c_val
 
                 stats["updated"] += 1
 
@@ -741,15 +767,21 @@ def sync_import_debts_process(
                     period_id=active_period.id,
                     is_approved=False,
                     debt_209=Decimal("0.00"), overpayment_209=Decimal("0.00"),
-                    debt_205=Decimal("0.00"), overpayment_205=Decimal("0.00")
+                    debt_205=Decimal("0.00"), overpayment_205=Decimal("0.00"),
+                    obor_debit_209=Decimal("0.00"), obor_credit_209=Decimal("0.00"),
+                    obor_debit_205=Decimal("0.00"), obor_credit_205=Decimal("0.00"),
                 )
 
                 if account_type == "209":
                     new_reading.debt_209 = debt_val
                     new_reading.overpayment_209 = over_val
+                    new_reading.obor_debit_209 = obor_d_val
+                    new_reading.obor_credit_209 = obor_c_val
                 elif account_type == "205":
                     new_reading.debt_205 = debt_val
                     new_reading.overpayment_205 = over_val
+                    new_reading.obor_debit_205 = obor_d_val
+                    new_reading.obor_credit_205 = obor_c_val
 
                 inserts_dict[room_id] = new_reading
                 processed_rooms.add(room_id)
