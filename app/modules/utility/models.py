@@ -61,6 +61,12 @@ class Room(Base):
     # НОВОЕ: Отслеживание последнего изменения
     updated_at = Column(DateTime, nullable=True, onupdate=_utcnow)
 
+    # Bug X: статус «вакантная» — комната без жильцов. При переезде
+    # последнего жильца автоматически ставится True. Комната НЕ удаляется
+    # (история reading'ов остаётся, чтобы новый жилец видел показания
+    # счётчика на момент въезда).
+    is_vacant = Column(Boolean, default=False, nullable=False, index=True)
+
     __table_args__ = (
         Index(
             "uq_room_dormitory_number",

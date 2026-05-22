@@ -188,3 +188,130 @@ async def admin_reset_password(
         "username": user.username,
         "temp_password": temp_password,
     }
+
+
+# =====================================================================
+# Bug Y: переселение жильца в другую комнату
+# =====================================================================
+allow_move = RoleChecker(["accountant", "admin"])
+
+
+@router.post("/api/admin/users/{user_id}/move-to-room")
+async def admin_move_user_to_room(
+    user_id: int,
+    new_room_id: int | None = None,
+    note: str | None = None,
+    current_user: User = Depends(allow_move),
+    db: AsyncSession = Depends(get_db),
+):
+    """Переселяет жильца в другую комнату.
+
+    Use case: Шиян переехал 4дв.стр.5/504 → 4дв.стр.5/212. Раньше админ
+    просто менял User.room_id — история переездов терялась, импорты ОСВ
+    за прошлые месяцы не могли понять, где жил человек тогда.
+
+    Теперь:
+      1) Закрывается активная RoomAssignment (moved_out_at=now);
+      2) Создаётся новая открытая запись для new_room_id;
+      3) User.room_id обновляется;
+      4) Если в старой комнате никого не осталось — Room.is_vacant=True
+         (комната не удаляется, история reading'ов сохраняется);
+      5) Если новая комната была is_vacant — флаг снимается.
+
+    new_room_id=None означает «выселить, никуда не заселять» (увольнение).
+    """
+    user = await db.get(User, user_id)
+    if not user or user.is_deleted:
+        raise HTTPException(404, "Пользователь не найден")
+
+    from app.modules.utility.services.room_assignment import move_user_to_room
+    closed, opened = await move_user_to_room(
+        db, user=user, new_room_id=new_room_id, note=note,
+    )
+
+    # Audit log.
+    try:
+        from app.modules.utility.routers.admin_dashboard import write_audit_log
+        await write_audit_log(
+            db, current_user.id, current_user.username,
+            "move_user", "user", user.id,
+            {
+                "from_room_id": closed.room_id if closed else None,
+                "to_room_id": new_room_id,
+                "note": note,
+            },
+        )
+    except Exception:
+        logger.exception("[ADMIN-MOVE] audit_log write failed")
+
+    await db.commit()
+    return {
+        "status": "success",
+        "user_id": user.id,
+        "username": user.username,
+        "moved_from": closed.room_id if closed else None,
+        "moved_to": new_room_id,
+        "assignment_id_closed": closed.id if closed else None,
+        "assignment_id_opened": opened.id if opened else None,
+    }
+
+
+@router.get("/api/admin/users/{user_id}/residency-history")
+async def admin_user_residency_history(
+    user_id: int,
+    current_user: User = Depends(allow_move),
+    db: AsyncSession = Depends(get_db),
+):
+    """История проживания жильца — все его RoomAssignment записи.
+
+    Возвращает массив {room_id, dormitory_name, room_number, moved_in_at,
+    moved_out_at, note} в порядке от свежих к старым.
+    """
+    user = await db.get(User, user_id)
+    if not user or user.is_deleted:
+        raise HTTPException(404, "Пользователь не найден")
+
+    from app.modules.utility.services.room_assignment import get_user_history
+    from app.modules.utility.models import Room as _Room
+    history = await get_user_history(db, user_id)
+    items = []
+    for h in history:
+        room = await db.get(_Room, h.room_id)
+        items.append({
+            "id": h.id,
+            "room_id": h.room_id,
+            "dormitory_name": room.dormitory_name if room else None,
+            "room_number": room.room_number if room else None,
+            "moved_in_at": h.moved_in_at.isoformat() if h.moved_in_at else None,
+            "moved_out_at": h.moved_out_at.isoformat() if h.moved_out_at else None,
+            "is_current": h.moved_out_at is None,
+            "note": h.note,
+        })
+    return {"user_id": user_id, "history": items}
+
+
+@router.get("/api/admin/rooms/vacant")
+async def admin_vacant_rooms(
+    current_user: User = Depends(allow_move),
+    db: AsyncSession = Depends(get_db),
+):
+    """Список всех вакантных комнат (is_vacant=True или нет привязанных
+    активных жильцов). Полезно для админа: «куда селить нового жильца»."""
+    from app.modules.utility.models import Room as _Room
+    from sqlalchemy import select as _sel
+    rows = (await db.execute(
+        _sel(_Room).where(_Room.is_vacant.is_(True))
+        .order_by(_Room.dormitory_name, _Room.room_number)
+    )).scalars().all()
+    return {
+        "count": len(rows),
+        "rooms": [
+            {
+                "id": r.id,
+                "dormitory_name": r.dormitory_name,
+                "room_number": r.room_number,
+                "apartment_area": float(r.apartment_area or 0),
+            }
+            for r in rows
+        ],
+    }

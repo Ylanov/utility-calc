@@ -82,7 +82,34 @@ async def move_user_to_room(
         await db.flush()
 
     # Шаг 4: обновляем быстрый указатель
+    old_room_id = user.room_id
     user.room_id = new_room_id
+
+    # Шаг 5 (Bug Y): авто-Vacant логика.
+    # Если жилец уехал из old_room и там не осталось других жильцов —
+    # помечаем комнату is_vacant=True (не удаляем — история reading'ов
+    # должна остаться для следующего жильца, чтобы он не получил счёт
+    # со счётчика с нуля).
+    # Если новая комната была is_vacant — снимаем флаг (жилец заехал).
+    from sqlalchemy import select as _sel, func as _func
+    from app.modules.utility.models import Room as _Room
+    if old_room_id and old_room_id != new_room_id:
+        # Проверяем сколько жильцов осталось.
+        others_count = (await db.execute(
+            _sel(_func.count(User.id)).where(
+                User.room_id == old_room_id,
+                User.id != user.id,
+                User.is_deleted.is_(False),
+            )
+        )).scalar_one()
+        if others_count == 0:
+            old_room = await db.get(_Room, old_room_id)
+            if old_room:
+                old_room.is_vacant = True
+    if new_room_id and new_room_id != old_room_id:
+        new_room = await db.get(_Room, new_room_id)
+        if new_room and new_room.is_vacant:
+            new_room.is_vacant = False
 
     return closed, opened
 
