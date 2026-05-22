@@ -2610,7 +2610,27 @@ def _build_rebuild_plan(matched_rows: list) -> list[dict]:
 
     plan: list[dict] = []
     for uid, rs in by_user.items():
-        by_month = _bucket_by_month(rs)
+        # Bug Z-fix: группируем подачи по комнате. У жильца могут быть
+        # подачи в разных комнатах (переезд). Каждая комната — свой
+        # счётчик, нельзя строить общую монотонную последовательность.
+        # Выбираем «primary room» = комната с наибольшим числом подач
+        # (обычно текущая). Подачи в других комнатах помечаем как
+        # skipped_other_rooms для отчёта.
+        by_room: dict[int, list] = {}
+        for r in rs:
+            if r.matched_room_id is None:
+                continue
+            by_room.setdefault(r.matched_room_id, []).append(r)
+        if not by_room:
+            continue
+        primary_room_id = max(by_room.keys(), key=lambda rid: len(by_room[rid]))
+        primary_rows = by_room[primary_room_id]
+        other_room_row_ids: list[int] = []
+        for rid, room_rs in by_room.items():
+            if rid != primary_room_id:
+                other_room_row_ids.extend(r.id for r in room_rs)
+
+        by_month = _bucket_by_month(primary_rows)
         if not by_month:
             continue
         picked_per_month: dict[tuple[int, int], object] = {}
@@ -2641,6 +2661,8 @@ def _build_rebuild_plan(matched_rows: list) -> list[dict]:
 
         entry = {
             "user_id": uid,
+            "primary_room_id": primary_room_id,
+            "other_room_row_ids": other_room_row_ids,
             "baseline": {
                 "year": baseline_key[0],
                 "month": baseline_key[1],
