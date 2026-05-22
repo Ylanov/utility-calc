@@ -1701,6 +1701,124 @@ async def debts_parser_diagnose(
     }
 
 
+@router.get(
+    "/debts/orphan-readings",
+    summary="Жильцы с >1 reading в активном периоде (диагностика для Bug AF)",
+)
+async def debts_orphan_readings(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bug AF: после переездов / auto-Vacant может оказаться, что у одного
+    user_id в активном периоде существует несколько MeterReading с разными
+    room_id. Дашборд агрегирует SUM(debt_*) по user_id, а импорт 1С
+    обновляет reading по room_id. Если осиротевший reading с прошлой
+    комнатой не зачищен — его debt_209 продолжает суммироваться в общий,
+    и reparse его не чинит (импорт обновляет только текущий room_id).
+
+    Read-only endpoint: возвращает список жильцов с >1 reading + раскладку
+    каждого reading'а (room_id, debt, current/orphan). По нему уже решаем,
+    что чистить — отдельный POST-endpoint.
+    """
+    _require_finance(current_user)
+
+    active_period = (await db.execute(
+        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
+    )).scalars().first()
+    if not active_period:
+        raise HTTPException(404, "Нет активного периода")
+    period_id = active_period.id
+
+    dup_q = (
+        select(MeterReading.user_id, func.count(MeterReading.id).label("cnt"))
+        .where(
+            MeterReading.period_id == period_id,
+            MeterReading.user_id.is_not(None),
+        )
+        .group_by(MeterReading.user_id)
+        .having(func.count(MeterReading.id) > 1)
+    )
+    dup_rows = (await db.execute(dup_q)).all()
+    user_ids = [r.user_id for r in dup_rows]
+    if not user_ids:
+        return {"period_id": period_id, "count": 0, "users": []}
+
+    readings = (await db.execute(
+        select(MeterReading)
+        .where(
+            MeterReading.period_id == period_id,
+            MeterReading.user_id.in_(user_ids),
+        )
+        .order_by(MeterReading.user_id, MeterReading.created_at)
+    )).scalars().all()
+
+    users = (await db.execute(
+        select(User).where(User.id.in_(user_ids))
+    )).scalars().all()
+    users_map = {u.id: u for u in users}
+
+    room_ids = {r.room_id for r in readings if r.room_id}
+    room_ids.update(u.room_id for u in users if u.room_id)
+    rooms_map = {}
+    if room_ids:
+        rooms = (await db.execute(
+            select(Room).where(Room.id.in_(room_ids))
+        )).scalars().all()
+        rooms_map = {r.id: r for r in rooms}
+
+    def _room_label(rid):
+        if rid is None:
+            return None
+        r = rooms_map.get(rid)
+        return f"{r.dormitory_name} / {r.room_number}" if r else f"id={rid}"
+
+    by_user: dict[int, list] = {}
+    for r in readings:
+        by_user.setdefault(r.user_id, []).append(r)
+
+    items = []
+    for uid, urs in by_user.items():
+        user = users_map.get(uid)
+        cur_room_id = user.room_id if user else None
+        orphan_debt = sum(
+            float(r.debt_209 or 0) + float(r.debt_205 or 0)
+            for r in urs if r.room_id != cur_room_id
+        )
+        items.append({
+            "user_id": uid,
+            "username": user.username if user else None,
+            "current_room_id": cur_room_id,
+            "current_room_label": _room_label(cur_room_id),
+            "total_debt_209": sum(float(r.debt_209 or 0) for r in urs),
+            "total_debt_205": sum(float(r.debt_205 or 0) for r in urs),
+            "orphan_debt_sum": orphan_debt,
+            "readings": [
+                {
+                    "id": r.id,
+                    "room_id": r.room_id,
+                    "room_label": _room_label(r.room_id) or "(нет комнаты)",
+                    "is_current_room": (r.room_id == cur_room_id),
+                    "debt_209": float(r.debt_209 or 0),
+                    "overpayment_209": float(r.overpayment_209 or 0),
+                    "debt_205": float(r.debt_205 or 0),
+                    "overpayment_205": float(r.overpayment_205 or 0),
+                    "created_at": r.created_at.isoformat() if r.created_at else None,
+                    "is_approved": r.is_approved,
+                }
+                for r in urs
+            ],
+        })
+
+    # Сортировка: сначала те, у кого больше всего «осиротевших» денег.
+    items.sort(key=lambda x: -x["orphan_debt_sum"])
+
+    return {
+        "period_id": period_id,
+        "count": len(items),
+        "users": items,
+    }
+
+
 @router.delete("/debts/import-history/{log_id}", summary="Удалить запись истории импорта 1С")
 async def debts_delete_import_history(
     log_id: int,
