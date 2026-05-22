@@ -1823,6 +1823,185 @@ async def debts_probe_update(
 
 
 @router.get(
+    "/debts/zombie-readings",
+    summary="Reading'и с долгом, которых нет в свежем импорте (Этап 3)",
+)
+async def debts_zombie_readings(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bug AG cleanup: после переключения импорта на per-user-key (Bug AG)
+    в БД могут остаться reading'и с ненулевыми debt_*/overpayment_*, которых
+    в свежем impart'е 1С уже нет (т.е. в файле от 1С этого жильца не передавали,
+    значит долг должен быть 0). Раньше эти суммы суммировались в общий
+    reading комнаты — после Bug AG они становятся «висяком» на чужом юзере.
+
+    Логика: смотрим последние completed-импорты 209 и 205, собираем все
+    user_id из их applied_state. Все reading'и активного периода с
+    долгом/переплатой, чей user_id НЕ упомянут ни в одном из этих логов —
+    кандидаты на zombie.
+
+    Read-only. POST /debts/cleanup-zombie-readings занулит их (с
+    подтверждением).
+    """
+    _require_finance(current_user)
+
+    active_period = (await db.execute(
+        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
+    )).scalars().first()
+    if not active_period:
+        raise HTTPException(404, "Нет активного периода")
+    period_id = active_period.id
+
+    async def _latest_applied(acct: str):
+        log = (await db.execute(
+            select(DebtImportLog)
+            .where(
+                DebtImportLog.account_type == acct,
+                DebtImportLog.status == "completed",
+                DebtImportLog.applied_state.is_not(None),
+            )
+            .order_by(DebtImportLog.id.desc()).limit(1)
+        )).scalars().first()
+        return log
+
+    log_209 = await _latest_applied("209")
+    log_205 = await _latest_applied("205")
+    state_209 = (log_209.applied_state or {}) if log_209 else {}
+    state_205 = (log_205.applied_state or {}) if log_205 else {}
+    known_user_ids = set(state_209.keys()) | set(state_205.keys())
+
+    if not known_user_ids:
+        return {
+            "period_id": period_id,
+            "count": 0,
+            "zombies": [],
+            "note": "Нет свежих импортов с applied_state — нечего сравнивать.",
+        }
+
+    readings = (await db.execute(
+        select(MeterReading)
+        .where(
+            MeterReading.period_id == period_id,
+            or_(
+                MeterReading.debt_209 > 0,
+                MeterReading.debt_205 > 0,
+                MeterReading.overpayment_209 > 0,
+                MeterReading.overpayment_205 > 0,
+            ),
+        )
+    )).scalars().all()
+
+    user_ids_in_db = {r.user_id for r in readings if r.user_id}
+    if not user_ids_in_db:
+        return {"period_id": period_id, "count": 0, "zombies": []}
+
+    users = (await db.execute(
+        select(User).where(User.id.in_(user_ids_in_db))
+    )).scalars().all()
+    users_map = {u.id: u for u in users}
+
+    room_ids = {r.room_id for r in readings if r.room_id}
+    rooms_map = {}
+    if room_ids:
+        rooms = (await db.execute(
+            select(Room).where(Room.id.in_(room_ids))
+        )).scalars().all()
+        rooms_map = {r.id: r for r in rooms}
+
+    zombies = []
+    for r in readings:
+        if not r.user_id:
+            continue
+        if str(r.user_id) in known_user_ids:
+            continue  # есть в свежем импорте — не зомби
+        user = users_map.get(r.user_id)
+        room = rooms_map.get(r.room_id) if r.room_id else None
+        zombies.append({
+            "reading_id": r.id,
+            "user_id": r.user_id,
+            "username": user.username if user else None,
+            "room_id": r.room_id,
+            "room_label": (
+                f"{room.dormitory_name} / {room.room_number}"
+                if room else None
+            ),
+            "debt_209": float(r.debt_209 or 0),
+            "overpayment_209": float(r.overpayment_209 or 0),
+            "debt_205": float(r.debt_205 or 0),
+            "overpayment_205": float(r.overpayment_205 or 0),
+            "total_to_clean": (
+                float(r.debt_209 or 0) + float(r.debt_205 or 0)
+                + float(r.overpayment_209 or 0) + float(r.overpayment_205 or 0)
+            ),
+        })
+
+    zombies.sort(key=lambda x: -x["total_to_clean"])
+    return {
+        "period_id": period_id,
+        "latest_209_log_id": log_209.id if log_209 else None,
+        "latest_205_log_id": log_205.id if log_205 else None,
+        "count": len(zombies),
+        "zombies": zombies,
+    }
+
+
+@router.post(
+    "/debts/cleanup-zombie-readings",
+    summary="Занулить debt_*/overpayment_* у zombie-reading'ов (Этап 3)",
+)
+async def debts_cleanup_zombie_readings(
+    confirm: str = Query(..., pattern="^YES$"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Зануляет debt_209/205 и overpayment_209/205 у всех reading'ов,
+    которые попали в список /debts/zombie-readings.
+
+    Reading'и НЕ удаляются (audit/история сохраняется) — только зануляются
+    финансовые поля. После этого дашборд показывает 0₽ у соответствующих
+    жильцов.
+
+    Требует ?confirm=YES.
+    """
+    _require_finance(current_user)
+
+    # Реюзаем логику /debts/zombie-readings — чтобы не дублировать.
+    result = await debts_zombie_readings(current_user=current_user, db=db)
+    zombies = result.get("zombies", [])
+    if not zombies:
+        return {"status": "ok", "cleaned": 0, "note": "Zombie-reading'ов нет"}
+
+    reading_ids = [z["reading_id"] for z in zombies]
+    from sqlalchemy import update as _sa_update
+    total = 0
+    for rid in reading_ids:
+        res = await db.execute(
+            _sa_update(MeterReading)
+            .where(MeterReading.id == rid)
+            .values(
+                debt_209=Decimal("0.00"),
+                overpayment_209=Decimal("0.00"),
+                debt_205=Decimal("0.00"),
+                overpayment_205=Decimal("0.00"),
+            )
+        )
+        total += res.rowcount or 0
+
+    await db.commit()
+    logger.info(
+        "[ZOMBIE-CLEANUP] %s reading-ов занулено (запросил %s)",
+        total, current_user.username,
+    )
+    return {
+        "status": "ok",
+        "cleaned": total,
+        "requested": len(reading_ids),
+        "zombies": zombies[:50],
+    }
+
+
+@router.get(
     "/debts/orphan-readings",
     summary="Жильцы с >1 reading в активном периоде (диагностика для Bug AF)",
 )

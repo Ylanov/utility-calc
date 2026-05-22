@@ -71,6 +71,7 @@ export const DebtsModule = {
             tableBody: document.getElementById('debtsTableBody'),
             btnRefresh: document.getElementById('btnRefreshDebts'),
             btnExport: document.getElementById('btnExportDebts'),
+            btnZombieCheck: document.getElementById('btnZombieCheck'),
             btnPrev: document.getElementById('btnPrevDebts'),
             btnNext: document.getElementById('btnNextDebts'),
             pageInfo: document.getElementById('debtsPageInfo'),
@@ -114,6 +115,7 @@ export const DebtsModule = {
     bindEvents() {
         this.dom.btnRefresh?.addEventListener('click', () => this.reload());
         this.dom.btnExport?.addEventListener('click', () => this.exportExcel());
+        this.dom.btnZombieCheck?.addEventListener('click', () => this.openZombieModal());
         this.dom.btnUpload?.addEventListener('click', () => this.handleUpload());
 
         // Авто-предпросмотр при выборе файла (Bug T)
@@ -1029,6 +1031,117 @@ export const DebtsModule = {
     /** Диагностика парсера: какие колонки нашёл, какие значения извлёк
      *  для sample-жильцов. Помогает понять «почему у Бендаса всё ещё
      *  2385.07» без захода на сервер за логами. */
+    /** Этап 3: модалка zombie-сальдо. Находит reading'и с долгом, которых
+     *  в свежем импорте 1С уже нет. Кандидаты на зануление. */
+    async openZombieModal() {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
+        overlay.innerHTML = `
+            <div style="background:#fff; border-radius:8px; width:min(900px, 100%); max-height:90vh; display:flex; flex-direction:column;">
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:14px 18px; border-bottom:1px solid var(--border-color);">
+                    <h3 style="margin:0; font-size:15px;">
+                        👻 Zombie-сальдо: долги без свежего импорта 1С
+                    </h3>
+                    <button data-close-zombie style="background:none; border:none; font-size:20px; color:#6b7280; cursor:pointer;">×</button>
+                </div>
+                <div id="zombieContent" style="padding:14px 18px; overflow-y:auto; flex:1;">
+                    <p style="color:var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Поиск...</p>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        const close = () => overlay.remove();
+        overlay.querySelector('[data-close-zombie]').addEventListener('click', close);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+        try {
+            const data = await api.get('/financier/debts/zombie-readings');
+            this._renderZombieContent(overlay, data);
+        } catch (e) {
+            const c = overlay.querySelector('#zombieContent');
+            if (c) c.innerHTML = `<p style="color:var(--danger-color);">Ошибка: ${esc(e.message)}</p>`;
+        }
+    },
+
+    _renderZombieContent(overlay, data) {
+        const cont = overlay.querySelector('#zombieContent');
+        if (!cont) return;
+        if (data.note) {
+            cont.innerHTML = `<p style="color:var(--text-secondary);">${esc(data.note)}</p>`;
+            return;
+        }
+        if (!data.count) {
+            cont.innerHTML = `
+                <div style="padding:24px; text-align:center; color:#15803d;">
+                    <i class="fa-solid fa-circle-check" style="font-size:32px;"></i>
+                    <p style="margin:12px 0 0; font-weight:600;">Zombie-сальдо не найдено</p>
+                    <p style="font-size:12px; color:#6b7280;">Все долги в БД соответствуют свежему импорту 1С.</p>
+                </div>`;
+            return;
+        }
+        const totalSum = data.zombies.reduce((s, z) => s + (z.total_to_clean || 0), 0);
+        const rowsHtml = data.zombies.map(z => `
+            <tr>
+                <td style="padding:6px 8px;">${z.user_id}</td>
+                <td style="padding:6px 8px; font-weight:500;">${esc(z.username || '—')}</td>
+                <td style="padding:6px 8px; font-size:11px; color:#6b7280;">${esc(z.room_label || '—')}</td>
+                <td style="padding:6px 8px; text-align:right; color:#b91c1c;">${z.debt_209 ? z.debt_209.toFixed(2) : '—'}</td>
+                <td style="padding:6px 8px; text-align:right; color:#b91c1c;">${z.debt_205 ? z.debt_205.toFixed(2) : '—'}</td>
+                <td style="padding:6px 8px; text-align:right; color:#15803d;">${(z.overpayment_209 + z.overpayment_205) > 0 ? (z.overpayment_209 + z.overpayment_205).toFixed(2) : '—'}</td>
+            </tr>
+        `).join('');
+        cont.innerHTML = `
+            <div style="margin-bottom:12px; padding:10px 12px; background:#fef2f2; border-left:3px solid #b91c1c; border-radius:4px;">
+                <b>Найдено zombie-reading'ов:</b> ${data.count}
+                · сумма к занулению: <b>${totalSum.toFixed(2)} ₽</b>
+                · сверка с логами 209=№${data.latest_209_log_id || '—'}, 205=№${data.latest_205_log_id || '—'}
+                <p style="margin:6px 0 0; font-size:12px; color:#6b7280;">
+                    Это reading'и с долгом/переплатой, чьего user_id нет в свежем импорте 1С.
+                    Обычно — остатки от старого per-room импорта (Bug AG). Зануление безопасно: reading'и остаются
+                    в БД (для аудита), но debt_*/overpayment_* становятся 0.
+                </p>
+            </div>
+            <div style="overflow:auto; max-height:50vh;">
+                <table style="width:100%; border-collapse:collapse; font-size:12px;">
+                    <thead style="background:#f9fafb; position:sticky; top:0;">
+                        <tr>
+                            <th style="padding:6px 8px; text-align:left;">user_id</th>
+                            <th style="padding:6px 8px; text-align:left;">ФИО</th>
+                            <th style="padding:6px 8px; text-align:left;">Комната</th>
+                            <th style="padding:6px 8px; text-align:right;">Долг 209</th>
+                            <th style="padding:6px 8px; text-align:right;">Долг 205</th>
+                            <th style="padding:6px 8px; text-align:right;">Перепл.</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+            </div>
+            <div style="margin-top:14px; display:flex; justify-content:flex-end; gap:8px;">
+                <button data-zombie-confirm
+                        style="padding:8px 14px; background:#b91c1c; color:#fff; border:none; border-radius:4px; cursor:pointer; font-weight:500;">
+                    <i class="fa-solid fa-broom"></i> Занулить ${data.count} reading'ов
+                </button>
+            </div>
+        `;
+        overlay.querySelector('[data-zombie-confirm]')?.addEventListener('click', () => this._confirmZombieCleanup(overlay, data));
+    },
+
+    async _confirmZombieCleanup(overlay, data) {
+        if (!confirm(
+            `Занулить debt_209, debt_205, overpayment_209, overpayment_205 у ${data.count} reading-ов?\n\n` +
+            `Reading'и НЕ удалятся — только финансовые поля станут 0₽. Это обратимо через откат импорта или ручную корректировку.`
+        )) return;
+        try {
+            const res = await api.post('/financier/debts/cleanup-zombie-readings?confirm=YES');
+            toast(`Занулено ${res.cleaned} reading'ов`, 'success');
+            overlay.remove();
+            this.reload();
+            this.loadStats();
+        } catch (e) {
+            toast('Ошибка: ' + (e.message || 'неизвестно'), 'error');
+        }
+    },
+
     async openDiagnoseModal(logId) {
         const overlay = document.createElement('div');
         overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
