@@ -13,6 +13,17 @@
 import { api } from '../core/api.js';
 import { toast } from '../core/dom.js';
 
+// Локальный escape — используется в обычных функциях рендера KPI и в
+// шаблонных строках, где нет доступа к `this._escape`. Безопасно для
+// текста, не для атрибутов (для атрибутов используем this._escape с
+// дополнительной экранировкой кавычек — оно у нас же делается).
+function esc(str) {
+    if (str === null || str === undefined) return '';
+    const d = document.createElement('div');
+    d.textContent = String(str);
+    return d.innerHTML;
+}
+
 export const DashboardModule = {
     isInitialized: false,
     // Request-id счётчики — защита от race condition. Если админ кликает
