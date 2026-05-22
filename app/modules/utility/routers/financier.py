@@ -1823,6 +1823,227 @@ async def debts_probe_update(
 
 
 @router.get(
+    "/debts/integrity-check",
+    summary="Анализатор: сравнить applied_state свежего импорта с БД (Этап 2)",
+)
+async def debts_integrity_check(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Этап 2: проверка целостности долгов в активном периоде.
+
+    Сравнивает что **должно** быть (по applied_state последних 209 и 205
+    импортов) с тем, что **есть** в `readings.debt_*`. Три категории
+    проблем:
+
+      1) **drift** — applied_state[u] и reading[u] оба есть, но debt
+         различается > 1₽. Симптом: что-то перезаписало после импорта
+         (manual_receipt, recalc, ручная правка).
+      2) **missing_in_db** — applied_state ожидает долг у юзера, а
+         reading'а у него вообще нет. Симптом: импорт не дошёл, или
+         reading удалён вручную.
+      3) **extra_in_db** — reading с долгом есть, в applied_state юзера
+         нет. Симптом: zombie от старого Bug AG (см. /debts/zombie-readings).
+
+    Read-only. Auto-fix не делает (на каждую категорию — свой инструмент:
+    drift → reparse, missing → reparse, extra → cleanup-zombie-readings).
+    """
+    _require_finance(current_user)
+
+    active_period = (await db.execute(
+        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
+    )).scalars().first()
+    if not active_period:
+        raise HTTPException(404, "Нет активного периода")
+    period_id = active_period.id
+
+    async def _latest_applied(acct: str):
+        log = (await db.execute(
+            select(DebtImportLog)
+            .where(
+                DebtImportLog.account_type == acct,
+                DebtImportLog.status == "completed",
+                DebtImportLog.applied_state.is_not(None),
+            )
+            .order_by(DebtImportLog.id.desc()).limit(1)
+        )).scalars().first()
+        return log
+
+    log_209 = await _latest_applied("209")
+    log_205 = await _latest_applied("205")
+    state_209 = (log_209.applied_state or {}) if log_209 else {}
+    state_205 = (log_205.applied_state or {}) if log_205 else {}
+
+    # Объединяем expected_state по юзерам: для каждого user_id — ожидаемые debt_209/205.
+    expected: dict[int, dict] = {}
+    for uid_str, vals in state_209.items():
+        try:
+            uid = int(uid_str)
+        except Exception:
+            continue
+        expected.setdefault(uid, {"username": None, "room_label": None})
+        expected[uid]["debt_209"] = float(vals.get("debt_209", "0") or 0)
+        expected[uid]["overpayment_209"] = float(vals.get("overpayment_209", "0") or 0)
+        expected[uid]["username"] = vals.get("username")
+        expected[uid]["room_label"] = vals.get("room_label")
+    for uid_str, vals in state_205.items():
+        try:
+            uid = int(uid_str)
+        except Exception:
+            continue
+        expected.setdefault(uid, {"username": None, "room_label": None})
+        expected[uid]["debt_205"] = float(vals.get("debt_205", "0") or 0)
+        expected[uid]["overpayment_205"] = float(vals.get("overpayment_205", "0") or 0)
+        if not expected[uid].get("username"):
+            expected[uid]["username"] = vals.get("username")
+        if not expected[uid].get("room_label"):
+            expected[uid]["room_label"] = vals.get("room_label")
+
+    # Все reading'и активного периода (одной выборкой).
+    readings = (await db.execute(
+        select(MeterReading).where(MeterReading.period_id == period_id)
+    )).scalars().all()
+    readings_by_user: dict[int, "MeterReading"] = {}
+    for r in readings:
+        if r.user_id is not None:
+            readings_by_user[r.user_id] = r
+
+    drift = []
+    missing_in_db = []
+    extra_in_db = []
+
+    THR = 1.0  # порог расхождения в рублях
+
+    # 1+2: сверяем expected → reality
+    for uid, exp in expected.items():
+        r = readings_by_user.get(uid)
+        exp_d209 = exp.get("debt_209", 0.0)
+        exp_o209 = exp.get("overpayment_209", 0.0)
+        exp_d205 = exp.get("debt_205", 0.0)
+        exp_o205 = exp.get("overpayment_205", 0.0)
+        if r is None:
+            # missing — только если ожидалось ненулевое сальдо
+            if max(exp_d209, exp_o209, exp_d205, exp_o205) > THR:
+                missing_in_db.append({
+                    "user_id": uid,
+                    "username": exp.get("username"),
+                    "room_label": exp.get("room_label"),
+                    "expected": {
+                        "debt_209": exp_d209, "overpayment_209": exp_o209,
+                        "debt_205": exp_d205, "overpayment_205": exp_o205,
+                    },
+                })
+            continue
+
+        actual_d209 = float(r.debt_209 or 0)
+        actual_o209 = float(r.overpayment_209 or 0)
+        actual_d205 = float(r.debt_205 or 0)
+        actual_o205 = float(r.overpayment_205 or 0)
+
+        diff_d209 = actual_d209 - exp_d209
+        diff_o209 = actual_o209 - exp_o209
+        diff_d205 = actual_d205 - exp_d205
+        diff_o205 = actual_o205 - exp_o205
+        max_abs_diff = max(abs(diff_d209), abs(diff_o209), abs(diff_d205), abs(diff_o205))
+        if max_abs_diff > THR:
+            drift.append({
+                "user_id": uid,
+                "reading_id": r.id,
+                "username": exp.get("username"),
+                "room_label": exp.get("room_label"),
+                "expected": {
+                    "debt_209": exp_d209, "overpayment_209": exp_o209,
+                    "debt_205": exp_d205, "overpayment_205": exp_o205,
+                },
+                "actual": {
+                    "debt_209": actual_d209, "overpayment_209": actual_o209,
+                    "debt_205": actual_d205, "overpayment_205": actual_o205,
+                },
+                "max_abs_diff": max_abs_diff,
+            })
+
+    # 3: reading'и, которых нет в expected (zombie)
+    known = set(expected.keys())
+    user_ids_for_rooms = set()
+    for r in readings:
+        if r.user_id is None:
+            continue
+        if r.user_id in known:
+            continue
+        has_money = (
+            float(r.debt_209 or 0) > THR or float(r.debt_205 or 0) > THR
+            or float(r.overpayment_209 or 0) > THR or float(r.overpayment_205 or 0) > THR
+        )
+        if not has_money:
+            continue
+        user_ids_for_rooms.add(r.user_id)
+
+    # Загружаем username/комнаты для zombie batch'ем
+    extra_users_map = {}
+    extra_rooms_map = {}
+    if user_ids_for_rooms:
+        u_rows = (await db.execute(
+            select(User).where(User.id.in_(user_ids_for_rooms))
+        )).scalars().all()
+        extra_users_map = {u.id: u for u in u_rows}
+        rids = {r.room_id for r in readings if r.user_id in user_ids_for_rooms and r.room_id}
+        if rids:
+            r_rows = (await db.execute(
+                select(Room).where(Room.id.in_(rids))
+            )).scalars().all()
+            extra_rooms_map = {rm.id: rm for rm in r_rows}
+
+    for r in readings:
+        if r.user_id is None or r.user_id in known:
+            continue
+        has_money = (
+            float(r.debt_209 or 0) > THR or float(r.debt_205 or 0) > THR
+            or float(r.overpayment_209 or 0) > THR or float(r.overpayment_205 or 0) > THR
+        )
+        if not has_money:
+            continue
+        u = extra_users_map.get(r.user_id)
+        rm = extra_rooms_map.get(r.room_id) if r.room_id else None
+        extra_in_db.append({
+            "user_id": r.user_id,
+            "reading_id": r.id,
+            "username": u.username if u else None,
+            "room_label": (f"{rm.dormitory_name} / {rm.room_number}" if rm else None),
+            "actual": {
+                "debt_209": float(r.debt_209 or 0),
+                "overpayment_209": float(r.overpayment_209 or 0),
+                "debt_205": float(r.debt_205 or 0),
+                "overpayment_205": float(r.overpayment_205 or 0),
+            },
+        })
+
+    drift.sort(key=lambda x: -x["max_abs_diff"])
+    extra_in_db.sort(
+        key=lambda x: -(
+            x["actual"]["debt_209"] + x["actual"]["debt_205"]
+            + x["actual"]["overpayment_209"] + x["actual"]["overpayment_205"]
+        )
+    )
+
+    return {
+        "period_id": period_id,
+        "threshold_rub": THR,
+        "latest_209_log_id": log_209.id if log_209 else None,
+        "latest_205_log_id": log_205.id if log_205 else None,
+        "summary": {
+            "drift_count": len(drift),
+            "missing_in_db_count": len(missing_in_db),
+            "extra_in_db_count": len(extra_in_db),
+            "expected_users": len(expected),
+            "actual_readings": len(readings_by_user),
+        },
+        "drift": drift[:200],
+        "missing_in_db": missing_in_db[:200],
+        "extra_in_db": extra_in_db[:200],
+    }
+
+
+@router.get(
     "/debts/zombie-readings",
     summary="Reading'и с долгом, которых нет в свежем импорте (Этап 3)",
 )

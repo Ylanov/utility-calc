@@ -78,6 +78,10 @@
                     Скрыть пустых
                 </label>
                 <input type="text" id="debtsSearchInput" placeholder="Поиск по ФИО / комнате…">
+                <button id="btnIntegrityCheck" class="icon-btn" title="Проверить целостность долгов: сверка applied_state свежих импортов с БД (drift / missing / zombie)"
+                        style="color: #0ea5e9;">
+                    <i class="fa-solid fa-stethoscope"></i>
+                </button>
                 <button id="btnZombieCheck" class="icon-btn" title="Найти zombie-сальдо (Этап 3): долги, которых нет в свежем импорте 1С — кандидаты на зануление"
                         style="color: #b91c1c;">
                     <i class="fa-solid fa-ghost"></i>

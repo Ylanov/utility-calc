@@ -72,6 +72,7 @@ export const DebtsModule = {
             btnRefresh: document.getElementById('btnRefreshDebts'),
             btnExport: document.getElementById('btnExportDebts'),
             btnZombieCheck: document.getElementById('btnZombieCheck'),
+            btnIntegrityCheck: document.getElementById('btnIntegrityCheck'),
             btnPrev: document.getElementById('btnPrevDebts'),
             btnNext: document.getElementById('btnNextDebts'),
             pageInfo: document.getElementById('debtsPageInfo'),
@@ -116,6 +117,7 @@ export const DebtsModule = {
         this.dom.btnRefresh?.addEventListener('click', () => this.reload());
         this.dom.btnExport?.addEventListener('click', () => this.exportExcel());
         this.dom.btnZombieCheck?.addEventListener('click', () => this.openZombieModal());
+        this.dom.btnIntegrityCheck?.addEventListener('click', () => this.openIntegrityModal());
         this.dom.btnUpload?.addEventListener('click', () => this.handleUpload());
 
         // Авто-предпросмотр при выборе файла (Bug T)
@@ -1031,6 +1033,154 @@ export const DebtsModule = {
     /** Диагностика парсера: какие колонки нашёл, какие значения извлёк
      *  для sample-жильцов. Помогает понять «почему у Бендаса всё ещё
      *  2385.07» без захода на сервер за логами. */
+    /** Этап 2: модалка-анализатор целостности долгов.
+     *  Сравнивает applied_state свежих 209/205-импортов с readings БД,
+     *  показывает три категории: drift / missing / extra. */
+    async openIntegrityModal() {
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
+        overlay.innerHTML = `
+            <div style="background:#fff; border-radius:8px; width:min(1000px, 100%); max-height:90vh; display:flex; flex-direction:column;">
+                <div style="display:flex; justify-content:space-between; align-items:center; padding:14px 18px; border-bottom:1px solid var(--border-color);">
+                    <h3 style="margin:0; font-size:15px;">
+                        🩺 Целостность долгов: applied_state ↔ БД
+                    </h3>
+                    <button data-close-integrity style="background:none; border:none; font-size:20px; color:#6b7280; cursor:pointer;">×</button>
+                </div>
+                <div id="integrityContent" style="padding:14px 18px; overflow-y:auto; flex:1;">
+                    <p style="color:var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Анализ...</p>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        const close = () => overlay.remove();
+        overlay.querySelector('[data-close-integrity]').addEventListener('click', close);
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+
+        try {
+            const data = await api.get('/financier/debts/integrity-check');
+            this._renderIntegrityContent(overlay, data);
+        } catch (e) {
+            const c = overlay.querySelector('#integrityContent');
+            if (c) c.innerHTML = `<p style="color:var(--danger-color);">Ошибка: ${esc(e.message)}</p>`;
+        }
+    },
+
+    _renderIntegrityContent(overlay, data) {
+        const cont = overlay.querySelector('#integrityContent');
+        if (!cont) return;
+        const s = data.summary || {};
+        const f = (v) => Number(v || 0).toFixed(2);
+
+        const allClean = s.drift_count === 0 && s.missing_in_db_count === 0 && s.extra_in_db_count === 0;
+
+        const driftHtml = !s.drift_count ? '' : `
+            <h4 style="margin:18px 0 6px; color:#a16207;">⚠ Drift (${s.drift_count}) — долг в БД не совпадает со свежим импортом</h4>
+            <p style="font-size:11px; color:#6b7280; margin:0 0 6px;">Кандидат на reparse соответствующего импорта.</p>
+            <table style="width:100%; border-collapse:collapse; font-size:11.5px;">
+                <thead style="background:#fffbeb;">
+                    <tr>
+                        <th style="padding:5px 7px; text-align:left;">ФИО</th>
+                        <th style="padding:5px 7px; text-align:left;">Комната</th>
+                        <th style="padding:5px 7px; text-align:right;">Ожидается 209</th>
+                        <th style="padding:5px 7px; text-align:right;">В БД 209</th>
+                        <th style="padding:5px 7px; text-align:right;">Ожидается 205</th>
+                        <th style="padding:5px 7px; text-align:right;">В БД 205</th>
+                        <th style="padding:5px 7px; text-align:right;">Δ</th>
+                    </tr>
+                </thead>
+                <tbody>
+                ${data.drift.map(d => `
+                    <tr>
+                        <td style="padding:4px 7px;">${esc(d.username || '—')}</td>
+                        <td style="padding:4px 7px; color:#6b7280;">${esc(d.room_label || '—')}</td>
+                        <td style="padding:4px 7px; text-align:right;">${f(d.expected.debt_209)}</td>
+                        <td style="padding:4px 7px; text-align:right; color:#b91c1c;">${f(d.actual.debt_209)}</td>
+                        <td style="padding:4px 7px; text-align:right;">${f(d.expected.debt_205)}</td>
+                        <td style="padding:4px 7px; text-align:right; color:#b91c1c;">${f(d.actual.debt_205)}</td>
+                        <td style="padding:4px 7px; text-align:right; font-weight:600;">${f(d.max_abs_diff)}</td>
+                    </tr>
+                `).join('')}
+                </tbody>
+            </table>`;
+
+        const missingHtml = !s.missing_in_db_count ? '' : `
+            <h4 style="margin:18px 0 6px; color:#dc2626;">❗ Missing (${s.missing_in_db_count}) — в файле есть, в БД нет reading</h4>
+            <p style="font-size:11px; color:#6b7280; margin:0 0 6px;">Импорт не дошёл / reading удалён вручную. Reparse решит.</p>
+            <table style="width:100%; border-collapse:collapse; font-size:11.5px;">
+                <thead style="background:#fef2f2;">
+                    <tr>
+                        <th style="padding:5px 7px; text-align:left;">ФИО</th>
+                        <th style="padding:5px 7px; text-align:left;">Комната</th>
+                        <th style="padding:5px 7px; text-align:right;">Ожидается 209</th>
+                        <th style="padding:5px 7px; text-align:right;">Ожидается 205</th>
+                    </tr>
+                </thead>
+                <tbody>
+                ${data.missing_in_db.map(m => `
+                    <tr>
+                        <td style="padding:4px 7px;">${esc(m.username || '—')}</td>
+                        <td style="padding:4px 7px; color:#6b7280;">${esc(m.room_label || '—')}</td>
+                        <td style="padding:4px 7px; text-align:right;">${f(m.expected.debt_209)}</td>
+                        <td style="padding:4px 7px; text-align:right;">${f(m.expected.debt_205)}</td>
+                    </tr>
+                `).join('')}
+                </tbody>
+            </table>`;
+
+        const extraHtml = !s.extra_in_db_count ? '' : `
+            <h4 style="margin:18px 0 6px; color:#7c3aed;">👻 Extra/Zombie (${s.extra_in_db_count}) — в БД долг есть, в файле жильца нет</h4>
+            <p style="font-size:11px; color:#6b7280; margin:0 0 6px;">Кандидат на кнопку 👻 (Zombie cleanup) в шапке таблицы.</p>
+            <table style="width:100%; border-collapse:collapse; font-size:11.5px;">
+                <thead style="background:#f5f3ff;">
+                    <tr>
+                        <th style="padding:5px 7px; text-align:left;">ФИО</th>
+                        <th style="padding:5px 7px; text-align:left;">Комната</th>
+                        <th style="padding:5px 7px; text-align:right;">Долг 209</th>
+                        <th style="padding:5px 7px; text-align:right;">Долг 205</th>
+                    </tr>
+                </thead>
+                <tbody>
+                ${data.extra_in_db.map(z => `
+                    <tr>
+                        <td style="padding:4px 7px;">${esc(z.username || '—')}</td>
+                        <td style="padding:4px 7px; color:#6b7280;">${esc(z.room_label || '—')}</td>
+                        <td style="padding:4px 7px; text-align:right; color:#b91c1c;">${f(z.actual.debt_209)}</td>
+                        <td style="padding:4px 7px; text-align:right; color:#b91c1c;">${f(z.actual.debt_205)}</td>
+                    </tr>
+                `).join('')}
+                </tbody>
+            </table>`;
+
+        cont.innerHTML = `
+            <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:12px;">
+                <div style="padding:10px; background:#fffbeb; border-radius:4px; border-left:3px solid #a16207;">
+                    <div style="font-size:11px; color:#6b7280;">Drift</div>
+                    <div style="font-size:22px; font-weight:700; color:#a16207;">${s.drift_count}</div>
+                </div>
+                <div style="padding:10px; background:#fef2f2; border-radius:4px; border-left:3px solid #dc2626;">
+                    <div style="font-size:11px; color:#6b7280;">Missing</div>
+                    <div style="font-size:22px; font-weight:700; color:#dc2626;">${s.missing_in_db_count}</div>
+                </div>
+                <div style="padding:10px; background:#f5f3ff; border-radius:4px; border-left:3px solid #7c3aed;">
+                    <div style="font-size:11px; color:#6b7280;">Extra/Zombie</div>
+                    <div style="font-size:22px; font-weight:700; color:#7c3aed;">${s.extra_in_db_count}</div>
+                </div>
+            </div>
+            <div style="font-size:11px; color:#6b7280;">
+                Сверка с логами 209=№${data.latest_209_log_id || '—'}, 205=№${data.latest_205_log_id || '—'}.
+                Порог расхождения: ${data.threshold_rub} ₽. Жильцов в applied_state: ${s.expected_users}. Reading'ов в БД: ${s.actual_readings}.
+            </div>
+            ${allClean ? `
+                <div style="margin-top:20px; padding:24px; text-align:center; color:#15803d;">
+                    <i class="fa-solid fa-circle-check" style="font-size:32px;"></i>
+                    <p style="margin:12px 0 0; font-weight:600;">Целостность данных в норме</p>
+                    <p style="font-size:12px; color:#6b7280;">Никаких расхождений между импортом и БД не обнаружено.</p>
+                </div>
+            ` : (driftHtml + missingHtml + extraHtml)}
+        `;
+    },
+
     /** Этап 3: модалка zombie-сальдо. Находит reading'и с долгом, которых
      *  в свежем импорте 1С уже нет. Кандидаты на зануление. */
     async openZombieModal() {
