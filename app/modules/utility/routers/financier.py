@@ -1105,6 +1105,72 @@ async def debts_import_download(
     )
 
 
+@router.post("/debts/import-history/{log_id}/reparse",
+             summary="Переимпорт лога 1С из архива с актуальной логикой парсера")
+async def debts_reparse(
+    log_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bug AE: Reading'и, импортированные до Bug U-fix6, имеют
+    debt_209/debt_205 = начальное сальдо вместо конечного (когда обороты
+    Кредит погасили долг, а end-колонки в ОСВ пустые). Парсер обновлён
+    (pick_saldo_pair учитывает обороты), но сами reading'и в БД не
+    пересчитаны автоматически — там лежат старые значения.
+
+    Этот endpoint берёт archive_path лога и заново запускает
+    import_debts_task: pipeline UPDATE-ит существующие reading'и
+    значениями из актуальной логики парсинга. Новый DebtImportLog
+    создаётся (для аудита и возможного отката).
+
+    Что НЕ делает:
+      - не удаляет старый log (audit trail сохраняется)
+      - не trigger'ит revert старого (snapshot_data старого остаётся
+        корректным относительно того момента, отдельная история)
+    """
+    _require_finance(current_user)
+    log = await db.get(DebtImportLog, log_id)
+    if not log:
+        raise HTTPException(404, "Лог импорта не найден")
+    if not log.archive_path:
+        raise HTTPException(
+            404,
+            "Архив этого импорта не сохранён (старый импорт до миграции debts_002). "
+            "Загрузите тот же файл из 1С вручную через форму импорта.",
+        )
+    if not os.path.exists(log.archive_path):
+        raise HTTPException(
+            404,
+            "Файл архива физически удалён (retention-policy / ручная очистка). "
+            "Загрузите тот же файл из 1С вручную через форму импорта.",
+        )
+
+    import uuid as _uuid
+    batch_id = str(_uuid.uuid4())
+    task = import_debts_task.delay(
+        log.archive_path,
+        log.account_type,
+        started_by_id=current_user.id,
+        started_by_username=current_user.username,
+        batch_id=batch_id,
+        original_file_name=log.file_name or f"reparse_{log.account_type}_{log.id}.xlsx",
+    )
+
+    logger.info(
+        f"[REPARSE] log_id={log_id} account={log.account_type} "
+        f"archive={log.archive_path} task={task.id} batch={batch_id}"
+    )
+
+    return {
+        "task_id": task.id,
+        "status": "processing",
+        "account_type": log.account_type,
+        "batch_id": batch_id,
+        "source_log_id": log_id,
+        "source_file": log.file_name,
+    }
+
+
 @router.get("/debts/import-history/{log_id}/not-found", summary="Не найденные ФИО в импорте")
 async def debts_not_found(
     log_id: int,

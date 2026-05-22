@@ -202,6 +202,7 @@ export const DebtsModule = {
             else if (action === 'undo') this.undoImport(logId);
             else if (action === 'diff') this.openDiffModal(logId);
             else if (action === 'diagnose') this.openDiagnoseModal(logId);
+            else if (action === 'reparse') this.reparseImport(logId);  // Bug AE
             else if (action === 'delete') this.deleteImportHistory(logId);
             else if (action === 'cleanup') this.cleanupImportHistory();
         });
@@ -876,7 +877,13 @@ export const DebtsModule = {
                             title="Диагностика парсера: какие колонки нашёл, какие значения извлёк (для отладки «почему долг неправильный»)"
                             style="padding:3px 8px; font-size:11px; white-space:nowrap; background:#fffbeb; color:#92400e; border-color:#fde68a;">
                         <i class="fa-solid fa-microscope"></i>
-                    </button>` : ''}
+                    </button>
+                    ${log.has_archive ? `
+                        <button class="action-btn secondary-btn" data-history-action="reparse" data-log-id="${log.id}"
+                                title="Bug AE: переимпорт того же файла с актуальной логикой парсера. Полезно если reading'и созданы старой версией (debt берёт начальное сальдо вместо погашенного оборотами)."
+                                style="padding:3px 8px; font-size:11px; white-space:nowrap; background:#ecfdf5; color:#065f46; border-color:#a7f3d0;">
+                            <i class="fa-solid fa-arrows-rotate"></i> Переимпорт
+                        </button>` : ''}` : ''}
                 ${canUndo ? `
                     <button class="action-btn danger-btn" data-history-action="undo" data-log-id="${log.id}"
                             style="padding:3px 8px; font-size:11px; white-space:nowrap;">
@@ -901,6 +908,37 @@ export const DebtsModule = {
             this.loadImportHistory();
         } catch (e) {
             toast('Ошибка отката: ' + e.message, 'error');
+        }
+    },
+
+    /** Bug AE: Переимпорт лога 1С из архива.
+     *  Reading'и созданные старой версией парсера (до Bug U-fix6) могут иметь
+     *  debt = начальное сальдо вместо погашенного оборотами. Этот endpoint
+     *  берёт archive_path и запускает import_debts_task — pipeline UPDATE-ит
+     *  существующие reading'и значениями из актуальной логики. */
+    async reparseImport(logId) {
+        if (!confirm(
+            `Переимпортировать импорт №${logId} из архива?\n\n` +
+            `• Файл из 1С возьмётся из архивного хранилища\n` +
+            `• Парсер применит актуальную логику (с учётом оборотов Дт/Кр)\n` +
+            `• Долги жильцов обновятся, погашенные оборотами обнулятся\n` +
+            `• Создастся новый лог импорта (старый останется для аудита)\n\n` +
+            `Полезно если у жильцов в «Долги 1С» видны старые цифры (Муравьев Павел: 635,92 ₽ долг, хотя по ОСВ — погашено).`
+        )) return;
+        try {
+            const res = await api.post(`/financier/debts/import-history/${logId}/reparse`);
+            toast(
+                `Переимпорт запущен (task=${res.task_id?.slice?.(0, 8) || '—'}), счёт ${res.account_type}. ` +
+                `Обнови историю через ~10-15 сек.`,
+                'success'
+            );
+            // Через 12 секунд автоматически перезагружаем историю и таблицу
+            setTimeout(() => {
+                this.loadImportHistory();
+                this.reload();
+            }, 12000);
+        } catch (e) {
+            toast('Ошибка переимпорта: ' + (e.message || 'неизвестно'), 'error');
         }
     },
 
