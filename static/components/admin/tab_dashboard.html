@@ -240,6 +240,10 @@
                 </h3>
                 <div class="header-controls">
                     <span id="gsheetsWidgetMeta" style="font-size:12px; color:var(--text-secondary);">Загрузка…</span>
+                    <button id="btnRosterDiagnose" class="action-btn secondary-btn" style="padding:6px 12px; font-size:12px;"
+                            title="Bug AD: вставить копию таблицы из Google Sheets — система покажет где какая строка оказалась">
+                        <i class="fa-solid fa-magnifying-glass-chart"></i> Сверить ростер
+                    </button>
                     <button id="btnGsheetsWidgetOpen" class="action-btn secondary-btn" style="padding:6px 12px; font-size:12px;"
                             title="Открыть вкладку «Операции» → раздел Google Sheets">
                         <i class="fa-solid fa-arrow-up-right-from-square"></i> Открыть
@@ -252,6 +256,37 @@
             <div id="gsheetsWidgetBody" style="display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:10px; padding:4px 0 0;">
                 <div style="padding:14px; text-align:center; color:var(--text-secondary); grid-column:1/-1;">
                     <i class="fa-solid fa-spinner fa-spin"></i> Загрузка…
+                </div>
+            </div>
+        </div>
+
+        <!-- Bug AD: МОДАЛКА — диагностика ростера. Админ вставляет копию таблицы
+             (TSV из Google Sheets), система парсит и показывает где какая строка. -->
+        <div id="rosterDiagnoseModal" class="modal-overlay">
+            <div class="modal-window" style="width:900px; max-width:95vw;">
+                <div class="modal-header" style="background:#ecfdf5; border-bottom:1px solid #a7f3d0;">
+                    <h3 style="color:#065f46;">
+                        <i class="fa-solid fa-magnifying-glass-chart"></i> Сверить ростер GSheets
+                    </h3>
+                    <button class="close-btn close-icon" data-roster-close>&times;</button>
+                </div>
+                <div class="modal-form" style="padding:14px 18px;">
+                    <p class="hint-text" style="font-size:12px; margin-bottom:10px;">
+                        Скопируй из Google Sheets диапазон строк и вставь сюда (формат: timestamp · ФИО · общ · комната · ГВС · ХВС). Можно вставить только колонки с ФИО и комнатой. Система найдёт каждую запись в матчере и покажет где она зависла.
+                    </p>
+                    <textarea id="rosterText" rows="9" placeholder="01.05.2026 15:03:15&#9;Иванов И.И.&#9;1&#9;101&#9;100&#9;200&#10;..."
+                              style="width:100%; font-family:monospace; font-size:12px; padding:10px;"></textarea>
+                    <div style="display:flex; gap:8px; align-items:center; margin-top:10px;">
+                        <button id="btnRosterRun" class="action-btn primary-btn">
+                            <i class="fa-solid fa-play"></i> Разобрать
+                        </button>
+                        <button id="btnRosterClear" class="action-btn secondary-btn">Очистить</button>
+                        <span id="rosterSummary" style="font-size:12px; color:var(--text-secondary); margin-left:auto;"></span>
+                    </div>
+                    <div id="rosterResult" style="margin-top:14px;"></div>
+                </div>
+                <div class="modal-footer">
+                    <button class="action-btn secondary-btn" data-roster-close>Закрыть</button>
                 </div>
             </div>
         </div>

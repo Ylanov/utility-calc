@@ -373,6 +373,256 @@ async def get_dashboard(
 
 
 # =========================================================================
+# Bug AD: ДИАГНОСТИКА РОСТЕРА — admin вставляет копию таблицы из Google
+# Sheets, система отвечает «куда какая строка попала».
+# Решает вопрос «в логе 56 ФИО, в системе видно только 35 — где остальные».
+# =========================================================================
+class RosterDiagnoseRequest(BaseModel):
+    text: str
+    # Если задано — фильтруем поиск reading'ов этим периодом (id). Иначе
+    # ищем по всем периодам (полезно, если админ вставляет таблицу за месяц
+    # отличный от активного).
+    period_id: Optional[int] = None
+
+
+def _parse_roster_line(line: str) -> Optional[dict]:
+    """Парсит одну строку «timestamp ФИО общ комната ГВС ХВС».
+
+    Разделители: таб, многократные пробелы, точка с запятой. Колонок может
+    быть от 3 (ФИО + общ + комната) до 6 (полная строка). Возвращает dict
+    с полями fio, room, dormitory или None если строка пуста / нечитаема.
+    """
+    s = (line or "").strip()
+    if not s:
+        return None
+
+    # Разделители: таб приоритетно, иначе ;, иначе 2+ пробелов
+    if "\t" in s:
+        parts = [p.strip() for p in s.split("\t") if p.strip()]
+    elif ";" in s:
+        parts = [p.strip() for p in s.split(";") if p.strip()]
+    else:
+        # 2+ пробелов как разделитель колонок
+        import re as _re
+        parts = [p.strip() for p in _re.split(r"\s{2,}", s) if p.strip()]
+
+    if len(parts) < 2:
+        return None
+
+    # Первое поле часто timestamp — определяем по наличию '.' и ':'
+    ts_first = ("." in parts[0] and ":" in parts[0]) or parts[0][:2].isdigit() and "." in parts[0]
+    if ts_first and len(parts) >= 3:
+        # timestamp, ФИО, [общ], [комната], [ГВС], [ХВС]
+        fio = parts[1]
+        dormitory = parts[2] if len(parts) >= 4 else None
+        room = parts[3] if len(parts) >= 5 else (parts[2] if len(parts) == 3 else None)
+        # Если общежитие выглядит как номер комнаты — переставим
+        if dormitory and room and not _looks_like_dorm(dormitory) and _looks_like_room(dormitory):
+            room, dormitory = dormitory, None
+    else:
+        # ФИО, [общ], [комната], [...]
+        fio = parts[0]
+        dormitory = parts[1] if len(parts) >= 2 else None
+        room = parts[2] if len(parts) >= 3 else None
+        if dormitory and not _looks_like_dorm(dormitory) and _looks_like_room(dormitory):
+            room, dormitory = dormitory, None
+
+    return {"fio": fio, "room": room, "dormitory": dormitory}
+
+
+def _looks_like_room(v: str) -> bool:
+    """Похоже ли значение на номер комнаты (короткий, цифровой/буквенно-цифровой)."""
+    if not v:
+        return False
+    v = v.strip()
+    return len(v) <= 6 and any(c.isdigit() for c in v)
+
+
+def _looks_like_dorm(v: str) -> bool:
+    """Похоже ли значение на название общежития (длинное / содержит «стр.»/«дв.»)."""
+    if not v:
+        return False
+    low = v.lower()
+    return any(k in low for k in ("стр", "дв.", "общеж", "корп")) or len(v) > 8
+
+
+@router.post("/diagnose-roster", summary="Сверить список подач с системой")
+async def diagnose_roster(
+    body: RosterDiagnoseRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Принимает вставленный из Google Sheets текст со списком подач, для
+    каждой строки находит:
+      - **gsheets_status**: pending / conflict / unmatched / approved /
+        auto_approved / rejected / not_in_gsheets (если строки нет в
+        gsheets_import_rows вообще);
+      - **reading_id**: если status=approved/auto_approved — id MeterReading
+        который создал импорт;
+      - **user_id / username**: к какому жильцу гет матч;
+      - **note**: коротко человеком — что делать дальше.
+
+    Используется со страницы дашборда: «Сверить ростер» → модалка
+    с textarea → таблица с раскладкой по каждой строке."""
+    require_admin(current_user)
+
+    if not body.text or not body.text.strip():
+        raise HTTPException(status_code=400, detail="Пустой текст")
+
+    # Парсим строки
+    parsed: list[dict] = []
+    for idx, raw_line in enumerate(body.text.splitlines(), start=1):
+        rec = _parse_roster_line(raw_line)
+        if rec:
+            rec["line_no"] = idx
+            rec["raw"] = raw_line.strip()
+            parsed.append(rec)
+
+    if not parsed:
+        return {"items": [], "summary": {"parsed": 0}, "warning": "Не удалось распарсить ни одной строки"}
+
+    # Сводим к уникальным ФИО (если в логе человек подавал несколько раз —
+    # достаточно увидеть текущее положение в системе один раз).
+    seen_keys = set()
+    unique_records: list[dict] = []
+    for rec in parsed:
+        key = (_normalize_fio(rec["fio"]), (rec.get("room") or "").strip())
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        unique_records.append(rec)
+
+    # Загружаем gsheets_import_rows по нормализованному ФИО.
+    # Делаем один SELECT всех нужных rows IN-фильтром по raw_fio (после
+    # нормализации). Постом — мапим в Python.
+    fios_norm = list({_normalize_fio(r["fio"]) for r in unique_records})
+
+    # Все строки в gsheets_import_rows с подходящим ФИО (берём все статусы).
+    gs_rows = (await db.execute(
+        select(GSheetsImportRow).options(
+            selectinload(GSheetsImportRow.matched_user).selectinload(User.room),
+            selectinload(GSheetsImportRow.matched_room),
+        ).where(GSheetsImportRow.raw_fio.isnot(None))
+    )).scalars().all()
+
+    # Группируем по нормализованному ФИО
+    gs_by_fio: dict[str, list[GSheetsImportRow]] = {}
+    for r in gs_rows:
+        nf = _normalize_fio(r.raw_fio or "")
+        if nf in fios_norm:
+            gs_by_fio.setdefault(nf, []).append(r)
+
+    # Также ищем напрямую в users (если в gsheets вообще не дошло)
+    users_all = (await db.execute(
+        select(User).options(selectinload(User.room)).where(
+            User.is_deleted.is_(False), User.role == "user"
+        )
+    )).scalars().all()
+    users_by_norm = {}
+    for u in users_all:
+        nf = _normalize_fio(u.full_name or u.username or "")
+        users_by_norm.setdefault(nf, []).append(u)
+
+    # Для approved строк проверяем actual reading
+    items: list[dict] = []
+    summary = {
+        "parsed": len(parsed),
+        "unique": len(unique_records),
+        "found_reading": 0,
+        "in_gsheets_pending": 0,
+        "in_gsheets_conflict": 0,
+        "in_gsheets_unmatched": 0,
+        "in_gsheets_rejected": 0,
+        "not_in_gsheets_but_user_exists": 0,
+        "user_not_found": 0,
+    }
+
+    for rec in unique_records:
+        norm = _normalize_fio(rec["fio"])
+        gs_list = gs_by_fio.get(norm, [])
+
+        # Берём самую свежую gsheets-строку по этому ФИО.
+        # Если в room указано что-то — выбираем строку с совпадением;
+        # иначе просто свежую.
+        chosen_gs: Optional[GSheetsImportRow] = None
+        if gs_list:
+            room_target = (rec.get("room") or "").strip()
+            if room_target:
+                for r in gs_list:
+                    if (r.raw_room_number or "").strip() == room_target:
+                        chosen_gs = r
+                        break
+            if chosen_gs is None:
+                # Свежая по sheet_timestamp
+                chosen_gs = sorted(
+                    gs_list,
+                    key=lambda x: x.sheet_timestamp or datetime.min,
+                    reverse=True,
+                )[0]
+
+        status = chosen_gs.status if chosen_gs else "not_in_gsheets"
+        user = chosen_gs.matched_user if chosen_gs else None
+        room = (chosen_gs.matched_room or (user.room if user else None)) if chosen_gs else None
+        reading_id = chosen_gs.reading_id if chosen_gs else None
+
+        # Если не нашли в gsheets — попробуем напрямую User по ФИО
+        users_for_fio = users_by_norm.get(norm, [])
+        user_exists = len(users_for_fio) > 0
+
+        # note по правилам
+        if status == "approved" and reading_id:
+            note = "✅ Утверждено, reading создан"
+            summary["found_reading"] += 1
+        elif status == "auto_approved" and reading_id:
+            note = "🤖 Авто-утверждено, reading создан"
+            summary["found_reading"] += 1
+        elif status == "pending":
+            note = "⏳ В матчере: pending"
+            summary["in_gsheets_pending"] += 1
+        elif status == "conflict":
+            note = f"🔀 Конфликт: {chosen_gs.conflict_reason or 'не задано'}"
+            summary["in_gsheets_conflict"] += 1
+        elif status == "unmatched":
+            note = "🔍 Не найден в БД (ФИО не сматчилось)"
+            summary["in_gsheets_unmatched"] += 1
+        elif status == "rejected":
+            note = "🗑 Отклонено админом"
+            summary["in_gsheets_rejected"] += 1
+        elif status == "not_in_gsheets":
+            if user_exists:
+                note = "⚠ В gsheets не пришло (sync отстал?), но в БД жилец есть"
+                summary["not_in_gsheets_but_user_exists"] += 1
+            else:
+                note = "❌ Не в gsheets и нет в БД (фио / опечатка)"
+                summary["user_not_found"] += 1
+        else:
+            note = f"? unknown status: {status}"
+
+        items.append({
+            "line_no": rec["line_no"],
+            "fio": rec["fio"],
+            "room_input": rec.get("room"),
+            "dormitory_input": rec.get("dormitory"),
+            "gsheets_id": chosen_gs.id if chosen_gs else None,
+            "gsheets_status": status,
+            "gsheets_room": chosen_gs.raw_room_number if chosen_gs else None,
+            "user_id": user.id if user else (users_for_fio[0].id if users_for_fio else None),
+            "username": user.username if user else (users_for_fio[0].username if users_for_fio else None),
+            "matched_room": (
+                f"{room.dormitory_name}, ком. {room.room_number}"
+                if room else (
+                    f"{users_for_fio[0].room.dormitory_name}, ком. {users_for_fio[0].room.room_number}"
+                    if (users_for_fio and users_for_fio[0].room) else None
+                )
+            ),
+            "reading_id": reading_id,
+            "note": note,
+        })
+
+    return {"summary": summary, "items": items}
+
+
+# =========================================================================
 # LIST ROWS
 # =========================================================================
 @router.get("/rows")

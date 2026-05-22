@@ -82,6 +82,14 @@ export const DashboardModule = {
             trendBody: document.getElementById('revenueTrendBody'),
             trendMonths: document.getElementById('trendMonths'),
             btnRefreshTrend: document.getElementById('btnRefreshTrend'),
+            // Bug AD: «Сверить ростер»
+            btnRosterDiagnose: document.getElementById('btnRosterDiagnose'),
+            rosterModal: document.getElementById('rosterDiagnoseModal'),
+            rosterText: document.getElementById('rosterText'),
+            btnRosterRun: document.getElementById('btnRosterRun'),
+            btnRosterClear: document.getElementById('btnRosterClear'),
+            rosterResult: document.getElementById('rosterResult'),
+            rosterSummary: document.getElementById('rosterSummary'),
         };
     },
 
@@ -123,6 +131,131 @@ export const DashboardModule = {
         document.querySelectorAll('[data-quick-action]').forEach(btn => {
             btn.addEventListener('click', () => this._handleQuickAction(btn.dataset.quickAction));
         });
+
+        // Bug AD: «Сверить ростер» — модалка диагностики подач
+        this.dom.btnRosterDiagnose?.addEventListener('click', () => this._openRosterModal());
+        this.dom.btnRosterRun?.addEventListener('click', () => this._runRosterDiagnose());
+        this.dom.btnRosterClear?.addEventListener('click', () => {
+            if (this.dom.rosterText) this.dom.rosterText.value = '';
+            if (this.dom.rosterResult) this.dom.rosterResult.innerHTML = '';
+            if (this.dom.rosterSummary) this.dom.rosterSummary.textContent = '';
+        });
+        this.dom.rosterModal?.addEventListener('click', (e) => {
+            if (e.target.closest('[data-roster-close]') || e.target === this.dom.rosterModal) {
+                this.dom.rosterModal.classList.remove('open');
+            }
+        });
+    },
+
+    // =====================================================
+    // Bug AD: «Сверить ростер» — открыть/запустить диагностику
+    // POST /api/admin/gsheets/diagnose-roster принимает текст,
+    // возвращает summary + items[]. Рендерим таблицей.
+    // =====================================================
+    _openRosterModal() {
+        if (!this.dom.rosterModal) return;
+        this.dom.rosterModal.classList.add('open');
+        setTimeout(() => this.dom.rosterText?.focus(), 100);
+    },
+
+    async _runRosterDiagnose() {
+        const text = (this.dom.rosterText?.value || '').trim();
+        if (!text) {
+            toast('Вставь список из Google Sheets', 'warning');
+            return;
+        }
+        this.dom.rosterResult.innerHTML =
+            `<div style="padding:20px; text-align:center; color:var(--text-secondary);">
+                <i class="fa-solid fa-spinner fa-spin"></i> Разбор…
+            </div>`;
+        try {
+            const data = await api.post('/admin/gsheets/diagnose-roster', { text });
+            this._renderRosterResult(data);
+        } catch (e) {
+            this.dom.rosterResult.innerHTML =
+                `<div style="padding:16px; color:var(--danger-color);">
+                    Ошибка: ${this._escape(e.message || 'неизвестно')}
+                </div>`;
+        }
+    },
+
+    _renderRosterResult(data) {
+        const s = data?.summary || {};
+        const items = data?.items || [];
+
+        if (this.dom.rosterSummary) {
+            const parts = [];
+            if (s.parsed) parts.push(`распарсено ${s.parsed} строк`);
+            if (s.unique && s.unique !== s.parsed) parts.push(`уник. ${s.unique}`);
+            if (s.found_reading) parts.push(`<span style="color:#10b981;">✅ ${s.found_reading} в системе</span>`);
+            if (s.in_gsheets_pending) parts.push(`<span style="color:#3b82f6;">⏳ ${s.in_gsheets_pending} pending</span>`);
+            if (s.in_gsheets_conflict) parts.push(`<span style="color:#f59e0b;">🔀 ${s.in_gsheets_conflict} конфликт</span>`);
+            if (s.in_gsheets_unmatched) parts.push(`<span style="color:#ef4444;">🔍 ${s.in_gsheets_unmatched} не найдены</span>`);
+            if (s.in_gsheets_rejected) parts.push(`<span style="color:#6b7280;">🗑 ${s.in_gsheets_rejected} отклонены</span>`);
+            if (s.not_in_gsheets_but_user_exists) parts.push(`<span style="color:#dc2626;">⚠ ${s.not_in_gsheets_but_user_exists} не дошли до gsheets</span>`);
+            if (s.user_not_found) parts.push(`<span style="color:#7c2d12;">❌ ${s.user_not_found} нет в БД</span>`);
+            this.dom.rosterSummary.innerHTML = parts.join(' · ');
+        }
+
+        if (!items.length) {
+            this.dom.rosterResult.innerHTML =
+                `<div style="padding:16px; color:var(--text-secondary);">${this._escape(data?.warning || 'Ничего не распарсилось')}</div>`;
+            return;
+        }
+
+        const statusColor = {
+            approved: '#10b981',
+            auto_approved: '#10b981',
+            pending: '#3b82f6',
+            conflict: '#f59e0b',
+            unmatched: '#ef4444',
+            rejected: '#6b7280',
+            not_in_gsheets: '#dc2626',
+        };
+
+        const rows = items.map(it => {
+            const sc = statusColor[it.gsheets_status] || '#64748b';
+            const room = it.room_input ? this._escape(it.room_input) : '—';
+            const matched = it.matched_room ? this._escape(it.matched_room) : '—';
+            const userPart = it.username
+                ? `<a href="#" data-roster-user="${it.user_id}" style="color:var(--primary-color);">${this._escape(it.username)}</a>`
+                : '—';
+            const gsLink = it.gsheets_id
+                ? `<a href="#tools" title="Открыть в матчере" style="color:var(--primary-color);">#${it.gsheets_id}</a>`
+                : '—';
+            return `
+                <tr>
+                    <td style="padding:6px 8px; color:var(--text-secondary); font-size:11px;">${it.line_no}</td>
+                    <td style="padding:6px 8px; font-weight:500;">${this._escape(it.fio)}</td>
+                    <td style="padding:6px 8px; text-align:center; font-family:monospace; font-size:12px;">${room}</td>
+                    <td style="padding:6px 8px;">${userPart}</td>
+                    <td style="padding:6px 8px; font-size:12px; color:var(--text-secondary);">${matched}</td>
+                    <td style="padding:6px 8px; text-align:center;">${gsLink}</td>
+                    <td style="padding:6px 8px;">
+                        <span style="color:${sc}; font-size:12px;">${this._escape(it.note)}</span>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        this.dom.rosterResult.innerHTML = `
+            <div style="max-height:55vh; overflow:auto; border:1px solid var(--border-color); border-radius:8px;">
+                <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                    <thead style="background:#f8fafc; position:sticky; top:0; z-index:1;">
+                        <tr>
+                            <th style="padding:8px; text-align:left; width:32px;">№</th>
+                            <th style="padding:8px; text-align:left;">ФИО (из вставки)</th>
+                            <th style="padding:8px; width:80px;">Комната</th>
+                            <th style="padding:8px; text-align:left;">Жилец в БД</th>
+                            <th style="padding:8px; text-align:left;">Комната в системе</th>
+                            <th style="padding:8px; width:70px;">GS row</th>
+                            <th style="padding:8px; text-align:left;">Статус</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+        `;
     },
 
     // =====================================================
