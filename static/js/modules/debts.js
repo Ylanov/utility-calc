@@ -1081,8 +1081,16 @@ export const DebtsModule = {
         const allClean = s.drift_count === 0 && s.missing_in_db_count === 0 && s.extra_in_db_count === 0;
 
         const driftHtml = !s.drift_count ? '' : `
-            <h4 style="margin:18px 0 6px; color:#a16207;">⚠ Drift (${s.drift_count}) — долг в БД не совпадает со свежим импортом</h4>
-            <p style="font-size:11px; color:#6b7280; margin:0 0 6px;">Кандидат на reparse соответствующего импорта.</p>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin:18px 0 6px;">
+                <h4 style="margin:0; color:#a16207;">⚠ Drift (${s.drift_count}) — долг в БД не совпадает со свежим импортом</h4>
+                <button data-fix-category="drift"
+                        style="padding:6px 12px; background:#a16207; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:500;">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> Исправить все ${s.drift_count}
+                </button>
+            </div>
+            <p style="font-size:11px; color:#6b7280; margin:0 0 6px;">
+                Записать «Ожидается» в БД (UPDATE по reading.id). Альтернатива — нажать ↻ Переимпорт на соответствующем логе.
+            </p>
             <table style="width:100%; border-collapse:collapse; font-size:11.5px;">
                 <thead style="background:#fffbeb;">
                     <tr>
@@ -1093,6 +1101,7 @@ export const DebtsModule = {
                         <th style="padding:5px 7px; text-align:right;">Ожидается 205</th>
                         <th style="padding:5px 7px; text-align:right;">В БД 205</th>
                         <th style="padding:5px 7px; text-align:right;">Δ</th>
+                        <th style="padding:5px 7px;"></th>
                     </tr>
                 </thead>
                 <tbody>
@@ -1105,14 +1114,28 @@ export const DebtsModule = {
                         <td style="padding:4px 7px; text-align:right;">${f(d.expected.debt_205)}</td>
                         <td style="padding:4px 7px; text-align:right; color:#b91c1c;">${f(d.actual.debt_205)}</td>
                         <td style="padding:4px 7px; text-align:right; font-weight:600;">${f(d.max_abs_diff)}</td>
+                        <td style="padding:4px 7px;">
+                            <button data-fix-user="${d.user_id}" title="Исправить только этого"
+                                    style="padding:3px 7px; background:#fff; color:#a16207; border:1px solid #fde68a; border-radius:3px; cursor:pointer; font-size:11px;">
+                                🛠
+                            </button>
+                        </td>
                     </tr>
                 `).join('')}
                 </tbody>
             </table>`;
 
         const missingHtml = !s.missing_in_db_count ? '' : `
-            <h4 style="margin:18px 0 6px; color:#dc2626;">❗ Missing (${s.missing_in_db_count}) — в файле есть, в БД нет reading</h4>
-            <p style="font-size:11px; color:#6b7280; margin:0 0 6px;">Импорт не дошёл / reading удалён вручную. Reparse решит.</p>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin:18px 0 6px;">
+                <h4 style="margin:0; color:#dc2626;">❗ Missing (${s.missing_in_db_count}) — в файле есть, в БД нет reading</h4>
+                <button data-fix-category="missing"
+                        style="padding:6px 12px; background:#dc2626; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:500;">
+                    <i class="fa-solid fa-plus"></i> Создать все ${s.missing_in_db_count}
+                </button>
+            </div>
+            <p style="font-size:11px; color:#6b7280; margin:0 0 6px;">
+                INSERT недостающих reading'ов с ожидаемыми значениями из applied_state.
+            </p>
             <table style="width:100%; border-collapse:collapse; font-size:11.5px;">
                 <thead style="background:#fef2f2;">
                     <tr>
@@ -1120,6 +1143,7 @@ export const DebtsModule = {
                         <th style="padding:5px 7px; text-align:left;">Комната</th>
                         <th style="padding:5px 7px; text-align:right;">Ожидается 209</th>
                         <th style="padding:5px 7px; text-align:right;">Ожидается 205</th>
+                        <th style="padding:5px 7px;"></th>
                     </tr>
                 </thead>
                 <tbody>
@@ -1129,14 +1153,28 @@ export const DebtsModule = {
                         <td style="padding:4px 7px; color:#6b7280;">${esc(m.room_label || '—')}</td>
                         <td style="padding:4px 7px; text-align:right;">${f(m.expected.debt_209)}</td>
                         <td style="padding:4px 7px; text-align:right;">${f(m.expected.debt_205)}</td>
+                        <td style="padding:4px 7px;">
+                            <button data-fix-user="${m.user_id}" title="Создать reading этому"
+                                    style="padding:3px 7px; background:#fff; color:#dc2626; border:1px solid #fecaca; border-radius:3px; cursor:pointer; font-size:11px;">
+                                🛠
+                            </button>
+                        </td>
                     </tr>
                 `).join('')}
                 </tbody>
             </table>`;
 
         const extraHtml = !s.extra_in_db_count ? '' : `
-            <h4 style="margin:18px 0 6px; color:#7c3aed;">👻 Extra/Zombie (${s.extra_in_db_count}) — в БД долг есть, в файле жильца нет</h4>
-            <p style="font-size:11px; color:#6b7280; margin:0 0 6px;">Кандидат на кнопку 👻 (Zombie cleanup) в шапке таблицы.</p>
+            <div style="display:flex; justify-content:space-between; align-items:center; margin:18px 0 6px;">
+                <h4 style="margin:0; color:#7c3aed;">👻 Extra/Zombie (${s.extra_in_db_count}) — в БД долг есть, в файле жильца нет</h4>
+                <button data-zombie-from-integrity
+                        style="padding:6px 12px; background:#7c3aed; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:500;">
+                    <i class="fa-solid fa-broom"></i> Открыть Zombie-cleanup
+                </button>
+            </div>
+            <p style="font-size:11px; color:#6b7280; margin:0 0 6px;">
+                Зануляется через кнопку 👻 в шапке таблицы (отдельная модалка с подтверждением).
+            </p>
             <table style="width:100%; border-collapse:collapse; font-size:11.5px;">
                 <thead style="background:#f5f3ff;">
                     <tr>
@@ -1158,6 +1196,18 @@ export const DebtsModule = {
                 </tbody>
             </table>`;
 
+        const fixAllBtn = (s.drift_count + s.missing_in_db_count) === 0 ? '' : `
+            <div style="margin-bottom:14px; padding:12px 14px; background:#eff6ff; border-left:3px solid #2563eb; border-radius:4px; display:flex; justify-content:space-between; align-items:center;">
+                <div style="font-size:13px;">
+                    <b>Найдено расхождений:</b> Drift=${s.drift_count}, Missing=${s.missing_in_db_count}, Extra=${s.extra_in_db_count}.
+                    Drift+Missing исправляются автоматически из applied_state.
+                </div>
+                <button data-fix-category="all"
+                        style="padding:8px 14px; background:#2563eb; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:13px; font-weight:600; white-space:nowrap;">
+                    <i class="fa-solid fa-wand-magic-sparkles"></i> Исправить всё (${s.drift_count + s.missing_in_db_count})
+                </button>
+            </div>`;
+
         cont.innerHTML = `
             <div style="display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:12px;">
                 <div style="padding:10px; background:#fffbeb; border-radius:4px; border-left:3px solid #a16207;">
@@ -1173,7 +1223,7 @@ export const DebtsModule = {
                     <div style="font-size:22px; font-weight:700; color:#7c3aed;">${s.extra_in_db_count}</div>
                 </div>
             </div>
-            <div style="font-size:11px; color:#6b7280;">
+            <div style="font-size:11px; color:#6b7280; margin-bottom:12px;">
                 Сверка с логами 209=№${data.latest_209_log_id || '—'}, 205=№${data.latest_205_log_id || '—'}.
                 Порог расхождения: ${data.threshold_rub} ₽. Жильцов в applied_state: ${s.expected_users}. Reading'ов в БД: ${s.actual_readings}.
             </div>
@@ -1183,8 +1233,57 @@ export const DebtsModule = {
                     <p style="margin:12px 0 0; font-weight:600;">Целостность данных в норме</p>
                     <p style="font-size:12px; color:#6b7280;">Никаких расхождений между импортом и БД не обнаружено.</p>
                 </div>
-            ` : (driftHtml + missingHtml + extraHtml)}
+            ` : (fixAllBtn + driftHtml + missingHtml + extraHtml)}
         `;
+
+        // Прицепляем хендлеры на все кнопки фикса (group и individual).
+        cont.querySelectorAll('[data-fix-category]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const cat = btn.getAttribute('data-fix-category');
+                this._integrityFix(overlay, { category: cat });
+            });
+        });
+        cont.querySelectorAll('[data-fix-user]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const uid = parseInt(btn.getAttribute('data-fix-user'), 10);
+                if (uid) this._integrityFix(overlay, { category: 'user', user_id: uid });
+            });
+        });
+        cont.querySelector('[data-zombie-from-integrity]')?.addEventListener('click', () => {
+            overlay.remove();
+            this.openZombieModal();
+        });
+    },
+
+    /** Auto-fix Bug AK: вызывает /debts/integrity-fix с подтверждением.
+     *  После фикса перезагружает модалку integrity-check, чтобы показать
+     *  актуальное состояние (расхождений должно стать меньше или 0). */
+    async _integrityFix(overlay, params) {
+        const { category, user_id } = params;
+        let confirmText;
+        if (category === 'all') confirmText = 'Применить ВСЕ исправления (drift + missing) из applied_state?';
+        else if (category === 'drift') confirmText = 'Записать «Ожидается» в БД для всех drift-расхождений?';
+        else if (category === 'missing') confirmText = 'Создать reading-и для всех missing жильцов?';
+        else if (category === 'user') confirmText = `Исправить расхождение для user_id=${user_id}?`;
+        if (!confirm(confirmText)) return;
+
+        try {
+            const qs = new URLSearchParams({ category, confirm: 'YES' });
+            if (user_id) qs.set('user_id', String(user_id));
+            const res = await api.post(`/financier/debts/integrity-fix?${qs.toString()}`);
+            const total = (res.fixed_drift || 0) + (res.fixed_missing || 0);
+            toast(`Исправлено: drift=${res.fixed_drift || 0}, missing=${res.fixed_missing || 0}`, total > 0 ? 'success' : 'info');
+            if ((res.errors || []).length) {
+                console.warn('integrity-fix errors:', res.errors);
+            }
+            // Перезагружаем содержимое модалки и таблицу долгов.
+            const fresh = await api.get('/financier/debts/integrity-check');
+            this._renderIntegrityContent(overlay, fresh);
+            this.reload();
+            this.loadStats();
+        } catch (e) {
+            toast('Ошибка фикса: ' + (e.message || 'неизвестно'), 'error');
+        }
     },
 
     /** Этап 3: модалка zombie-сальдо. Находит reading'и с долгом, которых

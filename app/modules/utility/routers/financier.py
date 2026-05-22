@@ -2043,6 +2043,130 @@ async def debts_integrity_check(
     }
 
 
+@router.post(
+    "/debts/integrity-fix",
+    summary="Авто-фикс расхождений integrity-check (Bug AK)",
+)
+async def debts_integrity_fix(
+    category: str = Query("all", pattern="^(all|drift|missing|user)$"),
+    user_id: Optional[int] = None,
+    confirm: str = Query(..., pattern="^YES$"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Применяет ожидаемые значения из applied_state свежих 209/205-импортов
+    в БД. Покрывает категории:
+
+      - **drift**: UPDATE существующих reading'ов до значений из applied_state
+        (когда импорт правильно посчитал, но что-то после перезаписало).
+      - **missing**: INSERT недостающих reading'ов из applied_state
+        (когда жилец есть в файле, а в БД его reading нет).
+      - **all**: drift + missing вместе.
+      - **user**: фикс только для конкретного user_id (точечно).
+
+    Extra/Zombie фиксится отдельным endpoint'ом /debts/cleanup-zombie-readings —
+    у них нет «ожидаемого значения», только зануление.
+
+    Требует ?confirm=YES.
+    """
+    _require_finance(current_user)
+
+    # Реюзаем диагностику чтобы не дублировать логику расчёта расхождений.
+    data = await debts_integrity_check(current_user=current_user, db=db)
+
+    active_period = (await db.execute(
+        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
+    )).scalars().first()
+    if not active_period:
+        raise HTTPException(404, "Нет активного периода")
+
+    from sqlalchemy import update as _sa_update
+
+    fixed_drift = 0
+    fixed_missing = 0
+    errors = []
+
+    drift_items = data.get("drift", [])
+    missing_items = data.get("missing_in_db", [])
+
+    # Фильтр по user_id если category=user
+    if category == "user":
+        if not user_id:
+            raise HTTPException(400, "category=user требует user_id")
+        drift_items = [d for d in drift_items if d.get("user_id") == user_id]
+        missing_items = [m for m in missing_items if m.get("user_id") == user_id]
+
+    # 1) drift — UPDATE существующих reading'ов
+    if category in ("all", "drift", "user"):
+        for item in drift_items:
+            try:
+                res = await db.execute(
+                    _sa_update(MeterReading)
+                    .where(MeterReading.id == item["reading_id"])
+                    .values(
+                        debt_209=Decimal(str(item["expected"]["debt_209"])),
+                        overpayment_209=Decimal(str(item["expected"]["overpayment_209"])),
+                        debt_205=Decimal(str(item["expected"]["debt_205"])),
+                        overpayment_205=Decimal(str(item["expected"]["overpayment_205"])),
+                    )
+                )
+                if res.rowcount:
+                    fixed_drift += 1
+            except Exception as e:
+                errors.append({
+                    "kind": "drift",
+                    "user_id": item.get("user_id"),
+                    "error": str(e)[:200],
+                })
+
+    # 2) missing — INSERT недостающих reading'ов из applied_state
+    if category in ("all", "missing", "user"):
+        for item in missing_items:
+            try:
+                user = await db.get(User, item["user_id"])
+                if not user:
+                    errors.append({
+                        "kind": "missing",
+                        "user_id": item.get("user_id"),
+                        "error": "user не найден в БД",
+                    })
+                    continue
+                new_reading = MeterReading(
+                    user_id=item["user_id"],
+                    room_id=user.room_id,
+                    period_id=active_period.id,
+                    is_approved=False,
+                    debt_209=Decimal(str(item["expected"]["debt_209"])),
+                    overpayment_209=Decimal(str(item["expected"]["overpayment_209"])),
+                    debt_205=Decimal(str(item["expected"]["debt_205"])),
+                    overpayment_205=Decimal(str(item["expected"]["overpayment_205"])),
+                    obor_debit_209=Decimal("0"), obor_credit_209=Decimal("0"),
+                    obor_debit_205=Decimal("0"), obor_credit_205=Decimal("0"),
+                )
+                db.add(new_reading)
+                fixed_missing += 1
+            except Exception as e:
+                errors.append({
+                    "kind": "missing",
+                    "user_id": item.get("user_id"),
+                    "error": str(e)[:200],
+                })
+
+    await db.commit()
+    logger.info(
+        "[INTEGRITY-FIX] category=%s drift=%d missing=%d errors=%d (by %s)",
+        category, fixed_drift, fixed_missing, len(errors), current_user.username,
+    )
+
+    return {
+        "status": "ok",
+        "category": category,
+        "fixed_drift": fixed_drift,
+        "fixed_missing": fixed_missing,
+        "errors": errors[:50],
+    }
+
+
 @router.get(
     "/debts/zombie-readings",
     summary="Reading'и с долгом, которых нет в свежем импорте (Этап 3)",
