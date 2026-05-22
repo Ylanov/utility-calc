@@ -423,6 +423,7 @@ async def get_users_with_debts(
         # Новые фильтры/сортировка для вкладки «Долги 1С»
         only_debtors: bool = Query(False, description="Только с положительным долгом 209 или 205"),
         only_overpaid: bool = Query(False, description="Только с положительной переплатой"),
+        has_data: bool = Query(False, description="Скрыть жильцов без данных из 1С (все 8 финансовых полей = 0)"),
         dormitory: Optional[str] = Query(None, description="Фильтр по названию общежития"),
         min_debt: Optional[float] = Query(None, ge=0, description="Минимальный суммарный долг (209+205)"),
         sort_by: str = Query("room", pattern="^(room|username|debt|overpay|total)$"),
@@ -488,6 +489,12 @@ async def get_users_with_debts(
         stmt = stmt.having((o209 + o205) > 0)
     if min_debt is not None:
         stmt = stmt.having((d209 + d205) >= min_debt)
+    if has_data:
+        # Bug AB: «не показывать пустых» — хотя бы одно из 8 финансовых
+        # полей (сальдо + обороты по 209 и 205) > 0.
+        stmt = stmt.having(
+            (d209 + o209 + d205 + o205 + od209 + oc209 + od205 + oc205) > 0
+        )
 
     # Сортировка: столбец + направление
     sort_map = {
@@ -514,9 +521,9 @@ async def get_users_with_debts(
     if dormitory:
         count_stmt = count_stmt.where(Room.dormitory_name == dormitory)
 
-    # Для only_debtors/only_overpaid/min_debt count тоже надо пересчитать через HAVING —
-    # делаем через subquery вместо дублирования логики.
-    if only_debtors or only_overpaid or min_debt is not None:
+    # Для only_debtors/only_overpaid/min_debt/has_data count тоже надо
+    # пересчитать через HAVING — делаем через subquery вместо дублирования.
+    if only_debtors or only_overpaid or min_debt is not None or has_data:
         inner = stmt.with_only_columns(User.id).limit(None).offset(None).order_by(None).subquery()
         count_stmt = select(func.count()).select_from(inner)
 

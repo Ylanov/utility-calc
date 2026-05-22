@@ -34,6 +34,7 @@ export const DebtsModule = {
     state: {
         page: 1, limit: 50, total: 0, search: '',
         filterType: '', dormitory: '', minDebt: '',
+        hideEmpty: true,  // Bug AB: по умолчанию скрываем пустые
         sortBy: 'room', sortDir: 'asc',
         importTaskId: null, pollTimer: null, isUploading: false, lastRequestId: 0,
         currentPollId: null,
@@ -41,6 +42,11 @@ export const DebtsModule = {
 
     init() {
         this.cacheDOM();
+        // Bug AB: синхронизируем стартовое состояние чекбокса с state
+        // (HTML может прийти с другим default'ом).
+        if (this.dom.hideEmpty) {
+            this.state.hideEmpty = !!this.dom.hideEmpty.checked;
+        }
         if (!this.isInitialized) {
             this.bindEvents();
             this.isInitialized = true;
@@ -73,6 +79,7 @@ export const DebtsModule = {
             filterType: document.getElementById('debtsFilterType'),
             filterDorm: document.getElementById('debtsFilterDormitory'),
             minDebt: document.getElementById('debtsMinDebt'),
+            hideEmpty: document.getElementById('debtsHideEmpty'),
             // Импорт
             btnUpload: document.getElementById('btnUploadDebts'),
             // Парный импорт v2 — два отдельных file-input. Старый
@@ -132,6 +139,13 @@ export const DebtsModule = {
         this.dom.minDebt?.addEventListener('input', () => {
             clearTimeout(minDebtTimer);
             minDebtTimer = setTimeout(refilter, 400);
+        });
+
+        // Bug AB: «Скрыть пустых» — пользователи без данных из 1С
+        this.dom.hideEmpty?.addEventListener('change', (e) => {
+            this.state.hideEmpty = e.target.checked;
+            this.state.page = 1;
+            this.loadUsers();
         });
 
         let searchTimer;
@@ -574,6 +588,7 @@ export const DebtsModule = {
         if (this.state.filterType === 'overpaid') params.set('only_overpaid', 'true');
         if (this.state.dormitory) params.set('dormitory', this.state.dormitory);
         if (this.state.minDebt) params.set('min_debt', this.state.minDebt);
+        if (this.state.hideEmpty) params.set('has_data', 'true');
 
         try {
             const data = await api.get(`/financier/users-status?${params}`);

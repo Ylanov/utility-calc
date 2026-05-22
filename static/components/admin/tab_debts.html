@@ -72,6 +72,11 @@
                     <option value="">Все общежития</option>
                 </select>
                 <input type="number" id="debtsMinDebt" placeholder="Мин. долг ₽" min="0" style="width:110px;" title="Минимальный долг (209+205)">
+                <label style="display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--text-secondary); cursor:pointer; user-select:none;"
+                       title="Скрыть жильцов без данных из 1С (все сальдо и обороты = 0)">
+                    <input type="checkbox" id="debtsHideEmpty" checked style="cursor:pointer;">
+                    Скрыть пустых
+                </label>
                 <input type="text" id="debtsSearchInput" placeholder="Поиск по ФИО / комнате…">
                 <button id="btnExportDebts" class="icon-btn" title="Экспорт в Excel с текущими фильтрами" style="color: var(--success-color);">
                     <i class="fa-solid fa-file-excel"></i>
