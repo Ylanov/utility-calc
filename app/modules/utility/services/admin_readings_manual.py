@@ -193,19 +193,47 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
                (await db.execute(select(Adjustment.account_type, func.sum(Adjustment.amount))
                .where(Adjustment.user_id == user.id, Adjustment.period_id == active_period.id).group_by(Adjustment.account_type))).all()}
 
+    # Bug AL: ищем существующее показание ЭТОГО ЖИЛЬЦА в активном периоде —
+    # сначала draft, потом approved. Если admin вводит «поверх» подачи через
+    # Excel/gsheets, мы должны обновить approved, а не создавать второй
+    # reading для того же user_id+period.
     draft = (await db.execute(
-        select(MeterReading).where(MeterReading.room_id == room.id, MeterReading.is_approved.is_(False), MeterReading.period_id == active_period.id)
+        select(MeterReading).where(
+            MeterReading.user_id == user.id,
+            MeterReading.room_id == room.id,
+            MeterReading.is_approved.is_(False),
+            MeterReading.period_id == active_period.id,
+        )
     )).scalars().first()
 
-    total_209 = (costs['total_cost'] - costs['cost_social_rent']) + (draft.debt_209 or ZERO if draft else ZERO) - (draft.overpayment_209 or ZERO if draft else ZERO) + adj_map.get('209', ZERO)
-    total_205 = costs['cost_social_rent'] + (draft.debt_205 or ZERO if draft else ZERO) - (draft.overpayment_205 or ZERO if draft else ZERO) + adj_map.get('205', ZERO)
+    approved_current = None
+    if not draft:
+        approved_current = (await db.execute(
+            select(MeterReading).where(
+                MeterReading.user_id == user.id,
+                MeterReading.period_id == active_period.id,
+                MeterReading.is_approved.is_(True),
+            ).order_by(MeterReading.created_at.desc()).limit(1)
+        )).scalars().first()
 
-    if draft:
-        draft.hot_water, draft.cold_water, draft.electricity = hot_to_save, cold_to_save, elect_to_save
-        draft.anomaly_flags, draft.anomaly_score = flags, score
+    target = draft or approved_current
+    target_debt_209 = target.debt_209 if target else ZERO
+    target_over_209 = target.overpayment_209 if target else ZERO
+    target_debt_205 = target.debt_205 if target else ZERO
+    target_over_205 = target.overpayment_205 if target else ZERO
+
+    total_209 = (costs['total_cost'] - costs['cost_social_rent']) + (target_debt_209 or ZERO) - (target_over_209 or ZERO) + adj_map.get('209', ZERO)
+    total_205 = costs['cost_social_rent'] + (target_debt_205 or ZERO) - (target_over_205 or ZERO) + adj_map.get('205', ZERO)
+
+    if target:
+        # Обновляем существующий reading (draft или approved).
+        # Bug AL: при перезаписи approved оставляем is_approved=True —
+        # админ намеренно корректирует утверждённую квитанцию.
+        target.hot_water, target.cold_water, target.electricity = hot_to_save, cold_to_save, elect_to_save
+        target.anomaly_flags, target.anomaly_score = flags, score
         for k, v in costs_for_model_fields(costs).items():
-            setattr(draft, k, v)
-        draft.total_209, draft.total_205, draft.total_cost = total_209, total_205, total_209 + total_205
+            setattr(target, k, v)
+        target.total_209, target.total_205, target.total_cost = total_209, total_205, total_209 + total_205
     else:
         db.add(MeterReading(
             user_id=user.id, room_id=room.id, period_id=active_period.id,
@@ -217,7 +245,10 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
         ))
 
     await db.commit()
-    return {"status": "success"}
+    return {
+        "status": "success",
+        "updated_kind": "draft" if draft else ("approved" if approved_current else "new_draft"),
+    }
 
 
 async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):

@@ -71,6 +71,44 @@ export const ManualModule = {
         };
     },
 
+    /** Bug AL (Этап В): применяет конфиг счётчиков жильца к форме.
+     *  Скрывает группы тех счётчиков, что отключены у жильца, и снимает
+     *  required. Если совсем ничего не подаёт — показывает плашку.
+     *
+     *  cfg: { has_hw: bool, has_cw: bool, has_el: bool } */
+    _applyMeterConfig(cfg) {
+        const hasWater = cfg.has_hw || cfg.has_cw;
+        const hasElect = cfg.has_el;
+
+        // Управляем чекбоксом «вода подаётся» — если у жильца нет ни одного
+        // водяного счётчика, тогл выключаем и не даём включить.
+        if (this.dom.toggleWater) {
+            this.dom.toggleWater.checked = hasWater;
+            this.dom.toggleWater.disabled = !hasWater;
+        }
+        if (this.dom.toggleElect) {
+            this.dom.toggleElect.checked = hasElect;
+            this.dom.toggleElect.disabled = !hasElect;
+        }
+        this._applyGroupState('water');
+        this._applyGroupState('electricity');
+
+        // Если внутри водяной группы есть только один счётчик (например, только
+        // ХВС) — соответствующий input ГВС скрываем индивидуально.
+        const hotRow = this.dom.inHot?.closest('div.form-group, div.input-group') || this.dom.inHot?.parentElement;
+        const coldRow = this.dom.inCold?.closest('div.form-group, div.input-group') || this.dom.inCold?.parentElement;
+        if (hotRow) hotRow.style.display = (hasWater && cfg.has_hw) ? '' : 'none';
+        if (coldRow) coldRow.style.display = (hasWater && cfg.has_cw) ? '' : 'none';
+        if (this.dom.inHot) {
+            this.dom.inHot.disabled = !(hasWater && cfg.has_hw);
+            if (this.dom.inHot.disabled) this.dom.inHot.removeAttribute('required');
+        }
+        if (this.dom.inCold) {
+            this.dom.inCold.disabled = !(hasWater && cfg.has_cw);
+            if (this.dom.inCold.disabled) this.dom.inCold.removeAttribute('required');
+        }
+    },
+
     // Применяет состояние тогла к группе: визуальный is-off + поля disabled
     // и required=false (чтобы браузер не валидировал пустые при submit).
     _applyGroupState(group) {
@@ -366,14 +404,57 @@ export const ManualModule = {
             this.dom.lblPrevCold.textContent = state.prev_cold;
             this.dom.lblPrevElect.textContent = state.prev_elect;
 
-            if (state.has_draft) {
+            // Bug AL: приоритет — approved current (жилец УЖЕ подал),
+            // потом draft (черновик в работе), потом пусто.
+            if (state.has_approved_current) {
                 this.dom.alertDraft.style.display = 'block';
+                this.dom.alertDraft.style.background = '#dcfce7';
+                this.dom.alertDraft.style.color = '#166534';
+                this.dom.alertDraft.style.borderColor = '#86efac';
+                const totalStr = state.approved_total != null
+                    ? ` · итог: ${Number(state.approved_total).toFixed(2)} ₽`
+                    : '';
+                this.dom.alertDraft.innerHTML =
+                    `<b>✓ Жилец уже подал показания в этом периоде</b><br>` +
+                    `Значения подставлены в поля. Изменения <b>перезапишут</b> ` +
+                    `утверждённую квитанцию (без создания дубликата).${totalStr}`;
+                this.dom.inHot.value = state.approved_hot ?? '';
+                this.dom.inCold.value = state.approved_cold ?? '';
+                this.dom.inElect.value = state.approved_elect ?? '';
+                if (this.dom.btnSubmit) {
+                    this.dom.btnSubmit.innerHTML =
+                        '<i class="fa-solid fa-pen-to-square"></i> Перезаписать показания';
+                }
+            } else if (state.has_draft) {
+                this.dom.alertDraft.style.display = 'block';
+                this.dom.alertDraft.style.background = '#fef3c7';
+                this.dom.alertDraft.style.color = '#92400e';
+                this.dom.alertDraft.style.borderColor = '#fde68a';
+                this.dom.alertDraft.innerHTML =
+                    `<b>⚠ Есть черновик в этом периоде</b> — поля заполнены значениями черновика. ` +
+                    `Сохранение обновит черновик (не утверждает).`;
                 this.dom.inHot.value = state.draft_hot;
                 this.dom.inCold.value = state.draft_cold;
                 this.dom.inElect.value = state.draft_elect;
+                if (this.dom.btnSubmit) {
+                    this.dom.btnSubmit.innerHTML =
+                        '<i class="fa-solid fa-floppy-disk"></i> Сохранить показания (Черновик)';
+                }
             } else {
                 this.dom.alertDraft.style.display = 'none';
+                if (this.dom.btnSubmit) {
+                    this.dom.btnSubmit.innerHTML =
+                        '<i class="fa-solid fa-floppy-disk"></i> Сохранить показания (Черновик)';
+                }
             }
+
+            // Bug AL: учёт has_hw_meter/cw/el — скрываем секции отключённых
+            // счётчиков и снимаем валидацию. (Этап В.)
+            this._applyMeterConfig({
+                has_hw: state.has_hw_meter !== false,
+                has_cw: state.has_cw_meter !== false,
+                has_el: state.has_el_meter !== false,
+            });
 
         } catch (e) {
             toast('Ошибка получения истории (возможно, жилец не привязан к комнате): ' + e.message, 'error');
@@ -416,10 +497,27 @@ export const ManualModule = {
         this.dom.form.reset();
         // Form.reset() сбросит чекбоксы к defaultChecked=true — но это не
         // триггерит change, поэтому пересчитываем визуальное состояние.
-        if (this.dom.toggleWater) this.dom.toggleWater.checked = true;
-        if (this.dom.toggleElect) this.dom.toggleElect.checked = true;
+        if (this.dom.toggleWater) {
+            this.dom.toggleWater.checked = true;
+            this.dom.toggleWater.disabled = false;
+        }
+        if (this.dom.toggleElect) {
+            this.dom.toggleElect.checked = true;
+            this.dom.toggleElect.disabled = false;
+        }
+        // Возвращаем строки ГВС/ХВС обратно (могли быть скрыты под Bug AL).
+        const hotRow = this.dom.inHot?.closest('div.form-group, div.input-group') || this.dom.inHot?.parentElement;
+        const coldRow = this.dom.inCold?.closest('div.form-group, div.input-group') || this.dom.inCold?.parentElement;
+        if (hotRow) hotRow.style.display = '';
+        if (coldRow) coldRow.style.display = '';
+        if (this.dom.inHot) this.dom.inHot.disabled = false;
+        if (this.dom.inCold) this.dom.inCold.disabled = false;
         this._applyGroupState('water');
         this._applyGroupState('electricity');
+        if (this.dom.btnSubmit) {
+            this.dom.btnSubmit.innerHTML =
+                '<i class="fa-solid fa-floppy-disk"></i> Сохранить показания (Черновик)';
+        }
     },
 
     // -------- ПЕРИОД --------------------------------------------------------

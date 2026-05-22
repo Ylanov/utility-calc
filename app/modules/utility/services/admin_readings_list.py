@@ -579,7 +579,18 @@ async def get_decision_context(db: AsyncSession, reading_id: int):
 
 
 async def get_manual_state(db: AsyncSession, user_id: int):
-    """Получение состояния для формы ручного ввода показаний."""
+    """Получение состояния для формы ручного ввода показаний.
+
+    Bug AL: возвращает approved_current — если у ЭТОГО ЖИЛЬЦА уже есть
+    утверждённое показание в активном периоде (подал через Excel/gsheets
+    с auto-approval). UI заполнит форму этими значениями и поменяет
+    кнопку на «Перезаписать», чтобы админ корректировал без поиска
+    через реестр.
+
+    Также возвращает has_hw_meter/cw/el — UI скроет секции тех
+    счётчиков, которые у жильца отключены (см. tab_users, настройка
+    «какие счётчики подаёт»).
+    """
     user = (await db.execute(
         select(User).options(selectinload(User.room)).where(
             User.id == user_id,
@@ -590,6 +601,12 @@ async def get_manual_state(db: AsyncSession, user_id: int):
     if not user:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
 
+    meter_config = {
+        "has_hw_meter": bool(user.has_hw_meter),
+        "has_cw_meter": bool(user.has_cw_meter),
+        "has_el_meter": bool(user.has_el_meter),
+    }
+
     if not user.room:
         return {
             "user_id": user.id,
@@ -599,6 +616,8 @@ async def get_manual_state(db: AsyncSession, user_id: int):
             "prev_cold": ZERO,
             "prev_elect": ZERO,
             "has_draft": False,
+            "has_approved_current": False,
+            **meter_config,
         }
 
     prev = (await db.execute(
@@ -616,6 +635,7 @@ async def get_manual_state(db: AsyncSession, user_id: int):
     )).scalars().first()
 
     draft = None
+    approved_current = None
     if active_period:
         draft = (await db.execute(
             select(MeterReading).where(
@@ -623,6 +643,14 @@ async def get_manual_state(db: AsyncSession, user_id: int):
                 MeterReading.period_id == active_period.id,
                 MeterReading.is_approved.is_(False)
             )
+        )).scalars().first()
+        # Bug AL: approved в активном периоде у ЭТОГО ЖИЛЬЦА.
+        approved_current = (await db.execute(
+            select(MeterReading).where(
+                MeterReading.user_id == user.id,
+                MeterReading.period_id == active_period.id,
+                MeterReading.is_approved.is_(True),
+            ).order_by(desc(MeterReading.created_at)).limit(1)
         )).scalars().first()
 
     return {
@@ -640,4 +668,14 @@ async def get_manual_state(db: AsyncSession, user_id: int):
         "draft_hot": draft.hot_water if draft else None,
         "draft_cold": draft.cold_water if draft else None,
         "draft_elect": draft.electricity if draft else None,
+        # Bug AL: existing approved для этого жильца в активном периоде.
+        # UI: alert «Жилец уже подал, изменить?» + автозаполнение полей.
+        "has_approved_current": approved_current is not None,
+        "approved_id": approved_current.id if approved_current else None,
+        "approved_hot": approved_current.hot_water if approved_current else None,
+        "approved_cold": approved_current.cold_water if approved_current else None,
+        "approved_elect": approved_current.electricity if approved_current else None,
+        "approved_flags": approved_current.anomaly_flags if approved_current else None,
+        "approved_total": float(approved_current.total_cost or 0) if approved_current else None,
+        **meter_config,
     }
