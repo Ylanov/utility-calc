@@ -647,35 +647,116 @@ export const DebtsModule = {
 
             const room = u.room ? `${u.room.dormitory_name || '—'} / ${u.room.room_number || '—'}` : '—';
 
-            // Bug V helper: ячейка сальдо с inline-индикатором оборотов.
-            // Показываем «—» если значения нет И оборотов нет (пусто без движения).
-            // Если есть обороты — показываем «0 ⤓» или «0 ⤒» чтобы было видно
-            // что движение было.
+            // Bug AH: ячейка сальдо с inline-микроисторией движения средств.
+            // Раньше показывали только текущее значение + tooltip — админу
+            // приходилось вешать курсор, чтобы понять, что произошло.
+            // Теперь под главным числом — компактная строчка вида
+            // «был 635 · оплатил 635» с цветовым кодированием.
+            //
+            // Аргументы:
+            //   value  — текущее сальдо в этой колонке (debt или overpay)
+            //   oborD  — оборот Дт (доначислили) за период
+            //   oborC  — оборот Кр (заплатили) за период
+            //   isDebt — true для колонки «Долг», false для «Перепл.»
+            //   accColor — цвет основного числа (красный/оранжевый для долгов,
+            //              зелёный для переплат)
+            //
+            // Логика начального сальдо (обратное вычисление):
+            //   Если у жильца сейчас долг X и были обороты Дт/Кр —
+            //   start_debt = X + oborC - oborD
+            //   (заплатил и стало X, значит до этого было X + заплатил − начислили)
+            //   Если start_debt < 0 — было не долг, а переплата.
             const saldoCell = (value, oborD, oborC, isDebt, accColor) => {
-                const hasValue = value > 0;
-                const hasObor = oborD > 0 || oborC > 0;
+                const hasValue = value > 0.005;
+                const hasObor = oborD > 0.005 || oborC > 0.005;
+
+                // Совсем пусто — без движения и без сальдо.
                 if (!hasValue && !hasObor) {
                     return `<span style="color:#ccc;">—</span>`;
                 }
+
+                // Helper: компактное форматирование суммы без «₽» и без копеек,
+                // если они .00 — экономим место.
+                const f = (v) => {
+                    const abs = Math.abs(v);
+                    if (abs < 0.005) return '0';
+                    // Тысячи разделяем тонким пробелом.
+                    const fixed = abs >= 10000 ? abs.toFixed(0) : abs.toFixed(2);
+                    return fixed.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+                };
+
+                // Вычисляем «было в начале периода» по обратной формуле.
+                // Только для «Долг» — для «Перепл.» это симметрично, но мы
+                // отдадим расшифровку колонке Долг (чтобы не дублировать).
+                let startDebt = null;
+                if (isDebt && hasObor) {
+                    // value уже >0 ИЛИ был долг и сейчас 0 — обе ветки покрыты.
+                    startDebt = value + oborC - oborD;
+                }
+
+                // Случай 1: переплата (isDebt=false), просто показываем число.
+                // Движение здесь не описываем — оно в соседней колонке Долг.
+                if (!isDebt) {
+                    if (!hasValue) return `<span style="color:#ccc;">—</span>`;
+                    return `<div style="line-height:1.25;">
+                        <div style="font-weight:600; color:${accColor};">${f(value)}</div>
+                        <div style="font-size:10.5px; color:#16a34a;">переплата</div>
+                    </div>`;
+                }
+
+                // ── Колонка «Долг» — раскладываем движение в одну строчку.
+
+                // 1. Долг 0, есть обороты — погашен (или начислили + сразу оплатили)
                 if (!hasValue && hasObor) {
-                    // 0 с движением → «0 ✓» (оплачено всё) или иконка
-                    const movement = oborD > 0 && oborC > 0
-                        ? `+${oborD.toFixed(2)} / −${oborC.toFixed(2)}`
-                        : (oborD > 0 ? `+${oborD.toFixed(2)} начисл.` : `−${oborC.toFixed(2)} оплачено`);
-                    return `<span style="color:#15803d; font-size:11px;" title="Движение: ${movement}; итог 0">
-                        0,00 <small style="color:#9ca3af;">${oborC > 0 ? '✓' : '↑'}</small>
-                    </span>`;
+                    if (oborC > 0.005 && oborD < 0.005) {
+                        // Был долг — оплатили полностью.
+                        return `<div style="line-height:1.25;">
+                            <div style="font-weight:600; color:#15803d;">0 <span style="font-size:11px;">✓</span></div>
+                            <div style="font-size:10.5px; color:#6b7280;">был ${f(startDebt)} · оплатил ${f(oborC)}</div>
+                        </div>`;
+                    }
+                    if (oborD > 0.005 && oborC > 0.005) {
+                        // Начислили и оплатили — нулевое сальдо в результате.
+                        return `<div style="line-height:1.25;">
+                            <div style="font-weight:600; color:#15803d;">0 <span style="font-size:11px;">⊜</span></div>
+                            <div style="font-size:10.5px; color:#6b7280;">+${f(oborD)} начисл · −${f(oborC)} оплат</div>
+                        </div>`;
+                    }
+                    // Только начисление 0→0 — экзотика, fallback.
+                    return `<div style="line-height:1.25;">
+                        <div style="font-weight:600; color:#9ca3af;">0</div>
+                        <div style="font-size:10.5px; color:#6b7280;">+${f(oborD)} начислено</div>
+                    </div>`;
                 }
-                // Есть value. Если есть и обороты — показать tooltip с движением.
-                let tooltip = '';
-                if (hasObor) {
-                    const startDebt = isDebt ? (value + oborC - oborD).toFixed(2) : '—';
-                    tooltip = ` title="Начало: ${startDebt}; +начисл ${oborD.toFixed(2)}; −оплат ${oborC.toFixed(2)}; конец: ${value.toFixed(2)}"`;
+
+                // 2. Долг есть + обороты — раскрываем движение.
+                if (hasValue && hasObor) {
+                    // Долг вырос (доначислили больше, чем оплатили).
+                    if (value > (startDebt || 0) + 0.005) {
+                        return `<div style="line-height:1.25;">
+                            <div style="font-weight:600; color:#b91c1c;">${f(value)}</div>
+                            <div style="font-size:10.5px; color:#b91c1c;">был ${f(startDebt)} · +${f(oborD - oborC)} ↑</div>
+                        </div>`;
+                    }
+                    // Долг уменьшился — заплатил часть.
+                    if ((startDebt || 0) > value + 0.005) {
+                        return `<div style="line-height:1.25;">
+                            <div style="font-weight:600; color:#a16207;">${f(value)}</div>
+                            <div style="font-size:10.5px; color:#a16207;">был ${f(startDebt)} · оплатил ${f(oborC)}</div>
+                        </div>`;
+                    }
+                    // Без изменения, но обороты были (начислили = оплатил).
+                    return `<div style="line-height:1.25;">
+                        <div style="font-weight:600; color:${accColor};">${f(value)}</div>
+                        <div style="font-size:10.5px; color:#6b7280;">+${f(oborD)} · −${f(oborC)}</div>
+                    </div>`;
                 }
-                const arrow = hasObor && oborC > 0
-                    ? '<small style="color:#9ca3af; margin-left:2px;">↓</small>'
-                    : (hasObor && oborD > 0 ? '<small style="color:#9ca3af; margin-left:2px;">↑</small>' : '');
-                return `<span style="color:${accColor};"${tooltip}>${fmtMoney(value).replace(' ₽', '')}${arrow}</span>`;
+
+                // 3. Долг есть, оборотов нет — статичный долг (висит).
+                return `<div style="line-height:1.25;">
+                    <div style="font-weight:600; color:${accColor};">${f(value)}</div>
+                    <div style="font-size:10.5px; color:#9ca3af;">без движения</div>
+                </div>`;
             };
 
             const tr = el('tr', { class: 'table-row', style: { cssText: rowBg } },
