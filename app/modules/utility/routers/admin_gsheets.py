@@ -3147,6 +3147,23 @@ async def auto_rebuild_apply(
             )
             duplicates_rejected += len(entry["duplicates_rejected"])
 
+        # Bug AA: коммит после КАЖДОГО успешно обработанного жильца.
+        # Без этого общий db.commit() в конце откатывает всё при первой
+        # ошибке посреди loop'а — для Шияна вся пересборка терялась.
+        try:
+            await db.commit()
+        except Exception as commit_exc:
+            import logging
+            logging.getLogger(__name__).warning(
+                "[auto-rebuild] commit failed for user_id=%s: %s",
+                uid, commit_exc,
+            )
+            errors.append({
+                "user_id": uid,
+                "error": f"commit_failed: {commit_exc}",
+            })
+            await db.rollback()
+
     # 5. Audit log.
     try:
         await write_audit_log(
