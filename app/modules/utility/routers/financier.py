@@ -1701,6 +1701,125 @@ async def debts_parser_diagnose(
     }
 
 
+@router.post(
+    "/debts/probe-update/{user_id}",
+    summary="Bug AF: проверить, что UPDATE на reading жильца реально доходит до БД",
+)
+async def debts_probe_update(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bug AF probe: пробует UPDATE двумя стратегиями (только по `id` —
+    как сейчас в импорте; и по `(id, created_at)` — кандидат на фикс
+    партиционирования) и показывает rowcount/значение после каждой.
+
+    БЕЗОПАСНО: в конце делает rollback — БД не меняется. Используется
+    как «истина в последней инстанции» — если UPDATE по `id` возвращает
+    rowcount=0, это партиционная проблема (composite PK + RANGE BY
+    created_at). Если rowcount=1, но value не меняется — что-то другое.
+    """
+    _require_finance(current_user)
+
+    active_period = (await db.execute(
+        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
+    )).scalars().first()
+    if not active_period:
+        raise HTTPException(404, "Нет активного периода")
+
+    reading = (await db.execute(
+        select(MeterReading).where(
+            MeterReading.user_id == user_id,
+            MeterReading.period_id == active_period.id,
+        ).limit(1)
+    )).scalars().first()
+    if not reading:
+        raise HTTPException(404, f"Reading для user_id={user_id} в активном периоде не найден")
+
+    from sqlalchemy import update as _sa_update, text as _sa_text
+
+    reading_id = reading.id
+    created_at = reading.created_at
+    debt_before = float(reading.debt_209 or 0)
+
+    # Стратегия A: UPDATE по id (как сейчас в импорте).
+    res_a = await db.execute(
+        _sa_update(MeterReading)
+        .where(MeterReading.id == reading_id)
+        .values(debt_209=0)
+    )
+    rowcount_a = res_a.rowcount or 0
+    val_a = (await db.execute(
+        _sa_text("SELECT debt_209 FROM readings WHERE id = :rid AND created_at = :ca"),
+        {"rid": reading_id, "ca": created_at},
+    )).scalar()
+
+    # Откатываем A перед B — чистый эксперимент.
+    await db.rollback()
+
+    # Стратегия B: UPDATE по (id, created_at).
+    res_b = await db.execute(
+        _sa_update(MeterReading)
+        .where(MeterReading.id == reading_id)
+        .where(MeterReading.created_at == created_at)
+        .values(debt_209=0)
+    )
+    rowcount_b = res_b.rowcount or 0
+    val_b = (await db.execute(
+        _sa_text("SELECT debt_209 FROM readings WHERE id = :rid AND created_at = :ca"),
+        {"rid": reading_id, "ca": created_at},
+    )).scalar()
+
+    # Стратегия C: raw SQL — на случай если ORM что-то ломает.
+    await db.rollback()
+    res_c = await db.execute(
+        _sa_text(
+            "UPDATE readings SET debt_209 = 0 "
+            "WHERE id = :rid AND created_at = :ca"
+        ),
+        {"rid": reading_id, "ca": created_at},
+    )
+    rowcount_c = res_c.rowcount or 0
+    val_c = (await db.execute(
+        _sa_text("SELECT debt_209 FROM readings WHERE id = :rid AND created_at = :ca"),
+        {"rid": reading_id, "ca": created_at},
+    )).scalar()
+
+    # Финальный rollback — никаких изменений в БД.
+    await db.rollback()
+
+    return {
+        "user_id": user_id,
+        "reading_id": reading_id,
+        "created_at": created_at.isoformat() if created_at else None,
+        "debt_209_before": debt_before,
+        "strategies": {
+            "A_orm_by_id_only": {
+                "rowcount": rowcount_a,
+                "value_after_in_db": float(val_a) if val_a is not None else None,
+                "worked": (rowcount_a == 1 and val_a == 0),
+            },
+            "B_orm_by_id_and_created_at": {
+                "rowcount": rowcount_b,
+                "value_after_in_db": float(val_b) if val_b is not None else None,
+                "worked": (rowcount_b == 1 and val_b == 0),
+            },
+            "C_raw_sql_by_id_and_created_at": {
+                "rowcount": rowcount_c,
+                "value_after_in_db": float(val_c) if val_c is not None else None,
+                "worked": (rowcount_c == 1 and val_c == 0),
+            },
+        },
+        "diagnosis": (
+            "partitioning_blocks_update" if not (rowcount_a == 1) and rowcount_b == 1
+            else "orm_issue" if rowcount_b != 1 and rowcount_c == 1
+            else "all_work_check_other_writer" if rowcount_a == 1
+            else "all_fail_deeper_problem"
+        ),
+        "note": "Все стратегии в конце откатываются — БД не изменена.",
+    }
+
+
 @router.get(
     "/debts/orphan-readings",
     summary="Жильцы с >1 reading в активном периоде (диагностика для Bug AF)",
