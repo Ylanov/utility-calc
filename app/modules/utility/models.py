@@ -67,6 +67,18 @@ class Room(Base):
     # счётчика на момент въезда).
     is_vacant = Column(Boolean, default=False, nullable=False, index=True)
 
+    # Bug AS: «холостяцкая» квартира — здесь живут несколько холостяков,
+    # которые делят все коммунальные счета поровну. Каждый жилец получает
+    # свою квитанцию = (расчёт по квартире) / total_room_residents.
+    # Для семейных квартир флаг False — поведение прежнее (один user
+    # с residents_count платит полную сумму).
+    is_singles_apartment = Column(Boolean, default=False, nullable=False,
+                                   server_default="false", index=True)
+    # Максимальная вместимость (2-шка / 3-шка / 4-комнатная и т.д.).
+    # Опциональное информационное поле — используется в UI и для будущей
+    # валидации «нельзя зарегистрировать больше людей чем вмещает».
+    max_capacity = Column(Integer, nullable=True)
+
     __table_args__ = (
         Index(
             "uq_room_dormitory_number",
@@ -305,6 +317,20 @@ class Tariff(Base):
     hw_heating_active = Column(Boolean, nullable=False, default=True, server_default="true")
     hw_heating_season_start = Column(Date, nullable=True)
     hw_heating_season_end = Column(Date, nullable=True)
+
+    # Bug AS: skip-флаги «какие компоненты НЕ начисляются для
+    # холостяцких квартир» (room.is_singles_apartment=True). Default
+    # False — никаких изменений для существующих тарифов. Админ
+    # включает по необходимости в UI тарифа. Счётчики (ГВС/ХВС/электр)
+    # СКЁТЧЕТЫВАЮТСЯ ВСЕГДА — это потребление, не статья.
+    singles_skip_maintenance = Column(Boolean, nullable=False,
+                                        default=False, server_default="false")
+    singles_skip_social_rent = Column(Boolean, nullable=False,
+                                        default=False, server_default="false")
+    singles_skip_heating = Column(Boolean, nullable=False,
+                                    default=False, server_default="false")
+    singles_skip_waste = Column(Boolean, nullable=False,
+                                  default=False, server_default="false")
 
     # Отслеживание последнего изменения
     updated_at = Column(DateTime, nullable=True, onupdate=_utcnow)

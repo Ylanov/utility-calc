@@ -215,6 +215,13 @@ class TariffSchema(BaseModel):
     hw_heating_season_start: Optional[date] = None
     hw_heating_season_end: Optional[date] = None
 
+    # Bug AS: skip-флаги для холостяцких квартир (Room.is_singles_apartment).
+    # Все default False — поведение существующих тарифов не меняется.
+    singles_skip_maintenance: bool = False
+    singles_skip_social_rent: bool = False
+    singles_skip_heating: bool = False
+    singles_skip_waste: bool = False
+
     model_config = ConfigDict(from_attributes=True)
 
 
