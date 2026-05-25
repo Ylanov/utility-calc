@@ -134,6 +134,17 @@ celery.conf.beat_schedule = {
         "task": "remind_submit_readings_task",
         "schedule": crontab(minute=0, hour=10),
     },
+    # Bug AO: дневная авто-добивка нормативом. Каждый день в 03:45 проходит
+    # по периодам, которые закрыты (или давно неактивны), и добавляет
+    # reading'и для жильцов без подачи — по стратегии AUTO_NORM_SANCTION /
+    # AVG / FALLBACK (см. billing.auto_fill_period_readings).
+    # Активный период НЕ трогает (там жильцы ещё могут подать).
+    # Можно отключить через analyzer_settings: billing.auto_fill_enabled=false.
+    # Время 03:45 — после cleanup-old-readings (03:30), чтобы не пересекаться.
+    "auto-fill-missing-readings-daily": {
+        "task": "auto_fill_missing_readings_task",
+        "schedule": crontab(minute=45, hour=3),
+    },
 }
 
 # ИМПОРТЫ ЗАДАЧ
