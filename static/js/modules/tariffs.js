@@ -110,6 +110,13 @@ export const TariffsModule = {
     bindEvents() {
         if (this.dom.form) {
             this.dom.form.addEventListener('submit', (e) => this.handleSubmit(e));
+            // Bug AT: пресеты charge-флагов. Делегируем клик по data-charge-preset.
+            this.dom.form.addEventListener('click', (e) => {
+                const btn = e.target.closest('button[data-charge-preset]');
+                if (!btn) return;
+                e.preventDefault();
+                this._applyChargePreset(btn.getAttribute('data-charge-preset'));
+            });
         }
         if (this.dom.selector) {
             this.dom.selector.addEventListener('change', (e) => this.handleSelectChange(e));
@@ -417,6 +424,21 @@ export const TariffsModule = {
         setCbStrict('t_singles_skip_heating', tariff.singles_skip_heating);
         setCbStrict('t_singles_skip_waste', tariff.singles_skip_waste);
 
+        // Bug AT этап 2: charge_* — default true для существующих тарифов
+        // (null/undefined → true), снимаем только если backend явно вернул false.
+        const setCbDefaultTrue = (id, v) => {
+            const el = document.getElementById(id);
+            if (el) el.checked = (v === undefined || v === null) ? true : !!v;
+        };
+        setCbDefaultTrue('t_charge_hot_water', tariff.charge_hot_water);
+        setCbDefaultTrue('t_charge_cold_water', tariff.charge_cold_water);
+        setCbDefaultTrue('t_charge_sewage', tariff.charge_sewage);
+        setCbDefaultTrue('t_charge_electricity', tariff.charge_electricity);
+        setCbDefaultTrue('t_charge_maintenance', tariff.charge_maintenance);
+        setCbDefaultTrue('t_charge_social_rent', tariff.charge_social_rent);
+        setCbDefaultTrue('t_charge_heating', tariff.charge_heating);
+        setCbDefaultTrue('t_charge_waste', tariff.charge_waste);
+
         // Базовый тариф (id=1) удалять нельзя, прячем кнопку
         if (this.dom.btnDelete) {
             this.dom.btnDelete.style.display = (tariff.id === 1) ? 'none' : 'block';
@@ -426,6 +448,41 @@ export const TariffsModule = {
         this.loadUsage(tariff.id);
         this.loadDormitoriesForAssign();
         this.recalcPreview();
+    },
+
+    /** Bug AT: применяет пресет charge-флагов к 8 чекбоксам.
+     *  Пресеты:
+     *    'all'         — все галочки (Лидер, всё начисляется)
+     *    'rent_only'   — только charge_social_rent (тариф «только наём»)
+     *    'no_meters'   — все 4 meter-флага сняты, остальные стоят
+     *  После применения пересчитывает превью. */
+    _applyChargePreset(preset) {
+        const all = {
+            charge_hot_water: false, charge_cold_water: false,
+            charge_sewage: false, charge_electricity: false,
+            charge_maintenance: false, charge_social_rent: false,
+            charge_heating: false, charge_waste: false,
+        };
+        let state;
+        if (preset === 'all') {
+            state = Object.fromEntries(Object.keys(all).map(k => [k, true]));
+        } else if (preset === 'rent_only') {
+            state = { ...all, charge_social_rent: true };
+        } else if (preset === 'no_meters') {
+            state = Object.fromEntries(Object.keys(all).map(k => [k, true]));
+            state.charge_hot_water = false;
+            state.charge_cold_water = false;
+            state.charge_sewage = false;
+            state.charge_electricity = false;
+        } else {
+            return;
+        }
+        Object.entries(state).forEach(([k, v]) => {
+            const el = document.getElementById('t_' + k);
+            if (el) el.checked = v;
+        });
+        // recalcPreview если он есть — пересчитать виджет внизу.
+        if (typeof this.recalcPreview === 'function') this.recalcPreview();
     },
 
     clearFormForNew() {
@@ -463,6 +520,13 @@ export const TariffsModule = {
          't_singles_skip_heating', 't_singles_skip_waste'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.checked = false;
+        });
+        // Bug AT: charge_* default true — новый тариф начисляет всё.
+        ['t_charge_hot_water', 't_charge_cold_water', 't_charge_sewage',
+         't_charge_electricity', 't_charge_maintenance', 't_charge_social_rent',
+         't_charge_heating', 't_charge_waste'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.checked = true;
         });
 
         if (this.dom.btnDelete) this.dom.btnDelete.style.display = 'none';
@@ -733,6 +797,16 @@ export const TariffsModule = {
         data.singles_skip_social_rent = cbStrict('t_singles_skip_social_rent');
         data.singles_skip_heating = cbStrict('t_singles_skip_heating');
         data.singles_skip_waste = cbStrict('t_singles_skip_waste');
+
+        // Bug AT этап 2: charge_* — что начисляет тариф.
+        data.charge_hot_water = cbStrict('t_charge_hot_water');
+        data.charge_cold_water = cbStrict('t_charge_cold_water');
+        data.charge_sewage = cbStrict('t_charge_sewage');
+        data.charge_electricity = cbStrict('t_charge_electricity');
+        data.charge_maintenance = cbStrict('t_charge_maintenance');
+        data.charge_social_rent = cbStrict('t_charge_social_rent');
+        data.charge_heating = cbStrict('t_charge_heating');
+        data.charge_waste = cbStrict('t_charge_waste');
 
         // Тип тарифа (radio: family / singles).
         const ttypeRadio = document.querySelector('input[name="t_type"]:checked');
