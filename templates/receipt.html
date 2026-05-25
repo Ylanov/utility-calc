@@ -83,7 +83,8 @@ td { text-align: right; }
     <td class="col-left">Холодное водоснабжение</td><td>м³</td><td>{{ vol_cold|round(2) }}</td><td>{{ tariff.water_supply }}</td><td>{{ reading.cost_cold_water|round(2) }}</td>
 </tr>
 <tr>
-    <td class="col-left">Горячее водоснабжение</td><td>м³</td><td>{{ vol_hot|round(2) }}</td><td>{{ (tariff.water_supply + tariff.water_heating)|round(4) }}</td><td>{{ reading.cost_hot_water|round(2) }}</td>
+    {# Bug AQ/AR: тариф ГВС = только water_heating (не сумма с water_supply). #}
+    <td class="col-left">Горячее водоснабжение</td><td>м³</td><td>{{ vol_hot|round(2) }}</td><td>{{ tariff.water_heating|round(4) }}</td><td>{{ reading.cost_hot_water|round(2) }}</td>
 </tr>
 <tr>
     <td class="col-left">Водоотведение</td><td>м³</td><td>{{ vol_sewage|round(2) }}</td><td>{{ tariff.sewage }}</td><td>{{ reading.cost_sewage|round(2) }}</td>

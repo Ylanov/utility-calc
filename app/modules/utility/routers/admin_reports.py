@@ -1286,18 +1286,23 @@ async def _build_explain_response(reading_id: int, db: AsyncSession) -> dict:
 
     components = []
     if not is_baseline and calc_result:
-        # ГВС
+        # ГВС (Bug AQ/AR): формула обновлена под новую бизнес-логику —
+        # water_heating уже включает в себя стоимость воды + подогрева,
+        # поэтому НЕ суммируем с water_supply. Летняя профилактика
+        # (hot_water_heating_active=False) — переключение на water_supply.
         t_w_sup = _dec_or_zero(tariff.water_supply)
         t_w_heat = _dec_or_zero(tariff.water_heating)
+        if _hw:
+            hot_formula = "v_hot × water_heating"
+            hot_calc = f"{f3(d_hot)} × {f(t_w_heat)}"
+        else:
+            hot_formula = "v_hot × water_supply (профилактика ГВС)"
+            hot_calc = f"{f3(d_hot)} × {f(t_w_sup)}"
         components.append({
             "label": "Горячая вода",
             "kbk": "209",
-            "formula": "v_hot × (water_supply + water_heating)",
-            "calculation": (
-                f"{f3(d_hot)} × ({f(t_w_sup)} + "
-                f"{f(t_w_heat)}) = {f3(d_hot)} × "
-                f"{f(t_w_sup + t_w_heat)}"
-            ),
+            "formula": hot_formula,
+            "calculation": hot_calc,
             "result": f(calc_result["cost_hot_water"]) + " ₽",
         })
         # ХВС
