@@ -332,6 +332,24 @@ class Tariff(Base):
     singles_skip_waste = Column(Boolean, nullable=False,
                                   default=False, server_default="false")
 
+    # Bug AT: положительные флаги «что начисляет этот тариф». Default
+    # True (всё начисляется) — zero-impact на существующие тарифы.
+    # Применимы ДЛЯ ВСЕХ жильцов на этом тарифе (не только холостяки).
+    # Снять галочку = статья НЕ начисляется никому. Пресеты в UI:
+    # «Лидер» (всё) / «Только наём» (только social_rent) /
+    # «Без счётчиков» (все meter-флаги выключены).
+    #
+    # Если все 4 счётчика выключены — клиентский UI не показывает форму
+    # подачи показаний (см. /api/readings/state.submission_required).
+    charge_hot_water = Column(Boolean, nullable=False, default=True, server_default="true")
+    charge_cold_water = Column(Boolean, nullable=False, default=True, server_default="true")
+    charge_sewage = Column(Boolean, nullable=False, default=True, server_default="true")
+    charge_electricity = Column(Boolean, nullable=False, default=True, server_default="true")
+    charge_maintenance = Column(Boolean, nullable=False, default=True, server_default="true")
+    charge_social_rent = Column(Boolean, nullable=False, default=True, server_default="true")
+    charge_heating = Column(Boolean, nullable=False, default=True, server_default="true")
+    charge_waste = Column(Boolean, nullable=False, default=True, server_default="true")
+
     # Отслеживание последнего изменения
     updated_at = Column(DateTime, nullable=True, onupdate=_utcnow)
 

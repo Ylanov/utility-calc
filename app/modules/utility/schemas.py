@@ -229,6 +229,17 @@ class TariffSchema(BaseModel):
     singles_skip_heating: bool = False
     singles_skip_waste: bool = False
 
+    # Bug AT: глобальные флаги «что начисляет тариф». Default True —
+    # zero-impact. Снять = статья не считается никому на этом тарифе.
+    charge_hot_water: bool = True
+    charge_cold_water: bool = True
+    charge_sewage: bool = True
+    charge_electricity: bool = True
+    charge_maintenance: bool = True
+    charge_social_rent: bool = True
+    charge_heating: bool = True
+    charge_waste: bool = True
+
     model_config = ConfigDict(from_attributes=True)
 
 
