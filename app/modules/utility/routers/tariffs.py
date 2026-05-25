@@ -377,7 +377,32 @@ async def preview_calculation(
                     cleaned[k] = Decimal(str(v).replace(",", "."))
                 except Exception:
                     cleaned[k] = Decimal("0")
-        # Создаём временный объект Tariff для расчёта (без сохранения)
+        # Создаём временный объект Tariff для расчёта (без сохранения).
+        # Bug AP: важно передать сезонные поля hw_heating_active /
+        # heating_active. У колонок server_default="true", но он действует
+        # только при INSERT в БД. У in-memory объекта без явного значения
+        # атрибут останется None, и is_hw_heating_active_now() вернёт False
+        # (None → not None → True → return False). Тогда water_heating
+        # обнуляется в calculate_utilities и калькулятор показывает ГВС
+        # как «холодную» (3 × water_supply вместо 3 × (supply + heating)).
+        def _bool_field(key, default=True):
+            v = data.tariff_data.get(key)
+            if v is None:
+                return default
+            return bool(v) if isinstance(v, bool) else str(v).lower() not in ("false", "0", "")
+
+        def _date_field(key):
+            v = data.tariff_data.get(key)
+            if not v:
+                return None
+            from datetime import date as _date, datetime as _dt
+            if isinstance(v, _date):
+                return v
+            try:
+                return _dt.fromisoformat(str(v).split("T")[0]).date()
+            except Exception:
+                return None
+
         tariff = Tariff(
             name="__preview__",
             maintenance_repair=cleaned.get("maintenance_repair", Decimal("0")),
@@ -390,6 +415,13 @@ async def preview_calculation(
             electricity_per_sqm=cleaned.get("electricity_per_sqm", Decimal("0")),
             electricity_rate=cleaned.get("electricity_rate", Decimal("0")),
             per_capita_amount=cleaned.get("per_capita_amount", Decimal("0")),
+            # Bug AP: сезонные флаги — без них калькулятор «убивал» ГВС-подогрев.
+            heating_active=_bool_field("heating_active", True),
+            heating_season_start=_date_field("heating_season_start"),
+            heating_season_end=_date_field("heating_season_end"),
+            hw_heating_active=_bool_field("hw_heating_active", True),
+            hw_heating_season_start=_date_field("hw_heating_season_start"),
+            hw_heating_season_end=_date_field("hw_heating_season_end"),
         )
     elif data.tariff_id:
         tariff = await db.get(Tariff, data.tariff_id)

@@ -294,10 +294,15 @@ class Tariff(Base):
     # сохраняются как EMERGENCY override: если они false, отключаются
     # все тарифы сразу. Это страховочный «stop» для админа.
     # =====================================================================
-    heating_active = Column(Boolean, nullable=False, server_default="true")
+    # Bug AP: добавлен Python-default=True. server_default="true" работает
+    # только при INSERT в БД; для in-memory объектов (preview-калькулятор,
+    # тесты, временные расчёты) атрибут оставался None, что в
+    # is_hw_heating_active_now() трактовалось как «выключено» → ГВС считался
+    # без подогрева (3 × 63.83 вместо 3 × (63.83 + 244.14)).
+    heating_active = Column(Boolean, nullable=False, default=True, server_default="true")
     heating_season_start = Column(Date, nullable=True)
     heating_season_end = Column(Date, nullable=True)
-    hw_heating_active = Column(Boolean, nullable=False, server_default="true")
+    hw_heating_active = Column(Boolean, nullable=False, default=True, server_default="true")
     hw_heating_season_start = Column(Date, nullable=True)
     hw_heating_season_end = Column(Date, nullable=True)
 
