@@ -180,7 +180,10 @@ class TariffSchema(BaseModel):
     water_supply: DecimalTariff
     sewage: DecimalTariff
     waste_disposal: DecimalTariff
-    electricity_per_sqm: DecimalTariff
+    # Bug AM: electricity_per_sqm (ОДН) убран из формулы расчёта в мае 2026.
+    # Фронт его больше не отправляет, но колонка в БД осталась (default=0).
+    # Делаем Optional с default=0 чтобы сохранение тарифа не падало 422.
+    electricity_per_sqm: DecimalTariff = Decimal("0.00")
     electricity_rate: DecimalTariff
     # Фиксированная сумма за койко-место (для холостяков, billing_mode=per_capita).
     # 0 = тариф не предполагает одиночек.
