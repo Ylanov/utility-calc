@@ -234,6 +234,12 @@ def calculate_utilities(
     # ─────────────────────────────────────────────────
     # РАСЧЁТ ПО СЧЁТЧИКАМ
     # ─────────────────────────────────────────────────
+    # Bug AT: «charge_*»-флаги тарифа — глобально что начисляется.
+    # Для legacy-тарифов (где поля ещё None из БД) считаем как True
+    # через getattr с default.
+    def _charge(field: str) -> bool:
+        v = getattr(tariff, field, None)
+        return True if v is None else bool(v)
 
     # ГВС (Bug AP, 2026-05): тариф water_heating уже включает в себя
     # стоимость воды + подогрева — это единая цена 1 м³ ГВС.
@@ -244,19 +250,21 @@ def calculate_utilities(
     #
     # Летняя профилактика ТЭЦ: при hot_water_heating_active=False
     # подогрева нет → жилец платит как за ХВС (water_supply).
-    if hot_water_heating_active:
+    if not _charge("charge_hot_water"):
+        c_hot = ZERO
+    elif hot_water_heating_active:
         c_hot = quantize_money(v_hot * t_w_heat)
     else:
         c_hot = quantize_money(v_hot * t_w_sup)
 
     # ХВС: объём * тариф подачи
-    c_cold = quantize_money(v_cold * t_w_sup)
+    c_cold = ZERO if not _charge("charge_cold_water") else quantize_money(v_cold * t_w_sup)
 
     # Канализация: суммарный объём воды * тариф водоотведения
-    c_sewage = quantize_money(v_sew * t_sewage)
+    c_sewage = ZERO if not _charge("charge_sewage") else quantize_money(v_sew * t_sewage)
 
     # Электроэнергия (доля жильца от расхода комнаты): кВт·ч * тариф
-    c_elect = quantize_money(v_el * t_el)
+    c_elect = ZERO if not _charge("charge_electricity") else quantize_money(v_el * t_el)
 
     # ─────────────────────────────────────────────────
     # РАСЧЁТ ПО ПЛОЩАДИ (фиксированные начисления)
@@ -269,22 +277,30 @@ def calculate_utilities(
     # статей тарифа (наём/содержание/отопление/ТКО). Применяются
     # ПЕРЕД делением на жильцов: «не начисляется» = 0, потом этот 0
     # делится — всё равно 0.
+    # Bug AT этап 3: ПЕРЕД skip — проверяем глобальный charge-флаг.
+    # charge_X=False → c_X=0 для всех (не только холостяков).
     is_singles_apt = bool(getattr(room, "is_singles_apartment", False))
 
     # Содержание и ремонт
-    if is_singles_apt and bool(getattr(tariff, "singles_skip_maintenance", False)):
+    if not _charge("charge_maintenance"):
+        c_maint = ZERO
+    elif is_singles_apt and bool(getattr(tariff, "singles_skip_maintenance", False)):
         c_maint = ZERO
     else:
         c_maint = quantize_money(area * t_maint * frac)
 
     # Социальный наём
-    if is_singles_apt and bool(getattr(tariff, "singles_skip_social_rent", False)):
+    if not _charge("charge_social_rent"):
+        c_rent = ZERO
+    elif is_singles_apt and bool(getattr(tariff, "singles_skip_social_rent", False)):
         c_rent = ZERO
     else:
         c_rent = quantize_money(area * t_rent * frac)
 
     # ТКО (мусор)
-    if is_singles_apt and bool(getattr(tariff, "singles_skip_waste", False)):
+    if not _charge("charge_waste"):
+        c_waste = ZERO
+    elif is_singles_apt and bool(getattr(tariff, "singles_skip_waste", False)):
         c_waste = ZERO
     else:
         c_waste = quantize_money(area * t_waste * frac)
@@ -292,11 +308,14 @@ def calculate_utilities(
     # Фиксированная часть: отопление + ОДН электроэнергии. ОДН в новых
     # тарифах всегда = 0 (поле скрыто из UI с мая 2026), но формула
     # сохранена для исторических квитанций где ОДН был ненулевой.
-    # Для холостяков отопление можно отключить через singles_skip_heating.
-    _t_heat_effective = (
-        ZERO if (is_singles_apt and bool(getattr(tariff, "singles_skip_heating", False)))
-        else t_heat
-    )
+    # Для холостяков отопление можно отключить через singles_skip_heating;
+    # глобально — через charge_heating.
+    if not _charge("charge_heating"):
+        _t_heat_effective = ZERO
+    elif is_singles_apt and bool(getattr(tariff, "singles_skip_heating", False)):
+        _t_heat_effective = ZERO
+    else:
+        _t_heat_effective = t_heat
     c_fixed = quantize_money(area * (_t_heat_effective + t_el_sqm) * frac)
 
     # Bug AS этап 4: деление счёта поровну между фактически проживающими.

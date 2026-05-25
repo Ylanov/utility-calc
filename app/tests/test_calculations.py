@@ -54,6 +54,15 @@ class FakeTariff:
         singles_skip_social_rent=False,
         singles_skip_heating=False,
         singles_skip_waste=False,
+        # Bug AT: глобальные charge-флаги, default True (zero-impact).
+        charge_hot_water=True,
+        charge_cold_water=True,
+        charge_sewage=True,
+        charge_electricity=True,
+        charge_maintenance=True,
+        charge_social_rent=True,
+        charge_heating=True,
+        charge_waste=True,
     ):
         self.water_supply      = Decimal(water_supply)
         self.water_heating     = Decimal(water_heating)
@@ -73,6 +82,15 @@ class FakeTariff:
         self.singles_skip_social_rent = singles_skip_social_rent
         self.singles_skip_heating = singles_skip_heating
         self.singles_skip_waste = singles_skip_waste
+        # Bug AT: «что начисляет тариф».
+        self.charge_hot_water = charge_hot_water
+        self.charge_cold_water = charge_cold_water
+        self.charge_sewage = charge_sewage
+        self.charge_electricity = charge_electricity
+        self.charge_maintenance = charge_maintenance
+        self.charge_social_rent = charge_social_rent
+        self.charge_heating = charge_heating
+        self.charge_waste = charge_waste
 
 
 # ──────────────────────────────────────────────────────────────
@@ -848,6 +866,81 @@ def test_singles_apartment_off_keeps_legacy_behavior():
     # Конкретно ГВС: legacy 450, singles 150 (450/3).
     assert r_legacy["cost_hot_water"] == Decimal("450.00")
     assert r_singles["cost_hot_water"] == Decimal("150.00")
+
+
+# ──────────────────────────────────────────────────────────────
+# ТЕСТЫ ТАРИФА «ЧТО НАЧИСЛЯЕТСЯ» (Bug AT)
+# ──────────────────────────────────────────────────────────────
+
+def test_charge_flags_default_true_legacy_behavior():
+    """По умолчанию все charge_* = True — расчёт как раньше."""
+    user = FakeUser()
+    room = FakeRoom(area=50.0)
+    tariff = FakeTariff()
+    result = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=Decimal("3.0"), volume_cold=Decimal("5.0"),
+        volume_sewage=Decimal("8.0"), volume_electricity_share=Decimal("100.0"),
+    )
+    # Все компоненты должны быть ненулевые при ненулевых тарифах/объёмах.
+    assert result["cost_hot_water"] > 0
+    assert result["cost_cold_water"] > 0
+    assert result["cost_maintenance"] > 0
+    assert result["cost_social_rent"] > 0
+
+
+def test_charge_rent_only_preset():
+    """Пресет «Только наём»: только cost_social_rent ненулевой.
+    electricity_per_sqm=0 — ОДН-электричество (на площадь) отдельная
+    статья от charge_electricity (счётчик). В новых тарифах оно
+    всегда 0 (см. Bug AM), но в FakeTariff default 1.20 — обнулим явно."""
+    user = FakeUser()
+    room = FakeRoom(area=50.0)
+    tariff = FakeTariff(
+        electricity_per_sqm="0",  # ОДН-электр. отдельно от charge_electricity
+        charge_hot_water=False, charge_cold_water=False,
+        charge_sewage=False, charge_electricity=False,
+        charge_maintenance=False, charge_social_rent=True,
+        charge_heating=False, charge_waste=False,
+    )
+    result = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=Decimal("3.0"), volume_cold=Decimal("5.0"),
+        volume_sewage=Decimal("8.0"), volume_electricity_share=Decimal("100.0"),
+    )
+    assert result["cost_hot_water"] == Decimal("0.00")
+    assert result["cost_cold_water"] == Decimal("0.00")
+    assert result["cost_sewage"] == Decimal("0.00")
+    assert result["cost_electricity"] == Decimal("0.00")
+    assert result["cost_maintenance"] == Decimal("0.00")
+    assert result["cost_waste"] == Decimal("0.00")
+    assert result["cost_fixed_part"] == Decimal("0.00")  # heating off, ОДН=0
+    # Только наём: 50 × 5.10 = 255.00
+    assert result["cost_social_rent"] == Decimal("255.00")
+    assert result["total_cost"] == Decimal("255.00")
+
+
+def test_charge_no_meters_preset():
+    """Пресет «Без счётчиков»: 4 meter-флага false, остальные нормально."""
+    user = FakeUser()
+    room = FakeRoom(area=50.0)
+    tariff = FakeTariff(
+        charge_hot_water=False, charge_cold_water=False,
+        charge_sewage=False, charge_electricity=False,
+    )
+    result = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=Decimal("3.0"), volume_cold=Decimal("5.0"),
+        volume_sewage=Decimal("8.0"), volume_electricity_share=Decimal("100.0"),
+    )
+    # Все 4 meter-cost = 0.
+    assert result["cost_hot_water"] == Decimal("0.00")
+    assert result["cost_cold_water"] == Decimal("0.00")
+    assert result["cost_sewage"] == Decimal("0.00")
+    assert result["cost_electricity"] == Decimal("0.00")
+    # Площадь-компоненты на месте.
+    assert result["cost_maintenance"] > 0
+    assert result["cost_social_rent"] > 0
 
 
 # ──────────────────────────────────────────────────────────────
