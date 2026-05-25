@@ -333,6 +333,15 @@ class ReadingStateResponse(BaseModel):
     has_cw_meter: bool = True
     has_el_meter: bool = True
 
+    # Bug AT этап 4: «надо ли подавать показания». False — клиент
+    # скрывает форму подачи целиком и показывает «не требуется».
+    submission_required: bool = True
+    # Конкретные флаги тарифа — какие meter-статьи начисляются.
+    charge_hot_water: bool = True
+    charge_cold_water: bool = True
+    charge_sewage: bool = True
+    charge_electricity: bool = True
+
     # Подсказка по формату ввода счётчиков (см. /api/settings/meter-format).
     # Мобилка/портал показывают example_hint и instructions под полем ввода,
     # чтобы жилец не вводил «01427957» вместо «01427.957» (см. инцидент

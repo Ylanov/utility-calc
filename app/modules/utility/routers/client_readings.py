@@ -126,10 +126,29 @@ async def get_reading_state(
     # и показать только сумму к оплате. Подтягиваем сумму из тарифа.
     bm = getattr(user, "billing_mode", "by_meter")
     per_capita_amount = None
+    # Bug AT этап 4: если тариф полностью без счётчиков (все 4 charge_*-meter
+    # выключены) — клиент тоже не должен видеть форму подачи показаний.
+    # Это покрывает кейс «тариф только наём», «тариф без счётчиков».
+    submission_required = True
+    tariff_charge_flags = {
+        "charge_hot_water": True, "charge_cold_water": True,
+        "charge_sewage": True, "charge_electricity": True,
+    }
+    from app.modules.utility.services.tariff_cache import tariff_cache
+    eff_t = tariff_cache.get_effective_tariff(user=user, room=user.room)
     if bm == "per_capita":
-        from app.modules.utility.services.tariff_cache import tariff_cache
-        eff_t = tariff_cache.get_effective_tariff(user=user, room=user.room)
         per_capita_amount = eff_t.per_capita_amount if eff_t else None
+        submission_required = False
+    if eff_t:
+        tariff_charge_flags = {
+            "charge_hot_water": bool(getattr(eff_t, "charge_hot_water", True)),
+            "charge_cold_water": bool(getattr(eff_t, "charge_cold_water", True)),
+            "charge_sewage": bool(getattr(eff_t, "charge_sewage", True)),
+            "charge_electricity": bool(getattr(eff_t, "charge_electricity", True)),
+        }
+        # Если все meter-флаги тарифа False — счётчики не нужны вообще.
+        if not any(tariff_charge_flags.values()):
+            submission_required = False
 
     # Подсказка по формату ввода (см. /api/settings/meter-format). Берём
     # одним запросом, не блокируем основной flow если SystemSetting пуст.
@@ -184,6 +203,14 @@ async def get_reading_state(
         "meter_format_hint": meter_format_value,
         "meter_example": meter_example_value,
         "meter_instructions": meter_instructions_value,
+        # Bug AT этап 4: «надо ли подавать показания».
+        # False = тариф per_capita ИЛИ все charge_*-meter сняты.
+        # Клиент (web и mobile) должен по этому флагу скрыть форму
+        # подачи и показать «На вашем тарифе подача показаний не требуется».
+        "submission_required": submission_required,
+        # Отдельные флаги — какие именно счётчики начисляются в этом тарифе.
+        # Клиент может скрыть только ГВС-поле если charge_hot_water=False, и т.д.
+        **tariff_charge_flags,
     }
 
 
@@ -212,6 +239,26 @@ async def save_reading(
                 "Сумма к оплате фиксированная, см. в личном кабинете."
             ),
         )
+    # Bug AT этап 4: если тариф жильца с charge_*-meter=False — счётчиков
+    # в нём нет, POST подачи запрещён. Защита от клиента, который ещё не
+    # обновился под submission_required.
+    if user and user.room_id:
+        from app.modules.utility.services.tariff_cache import tariff_cache
+        _eff_t = tariff_cache.get_effective_tariff(user=user, room=user.room)
+        if _eff_t:
+            _meter_charges = any([
+                bool(getattr(_eff_t, "charge_hot_water", True)),
+                bool(getattr(_eff_t, "charge_cold_water", True)),
+                bool(getattr(_eff_t, "charge_electricity", True)),
+            ])
+            if not _meter_charges:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        "На вашем тарифе подача показаний счётчиков не требуется. "
+                        "Сумма к оплате фиксированная (см. квитанцию)."
+                    ),
+                )
 
     if not user or not user.room_id:
         raise HTTPException(status_code=400, detail="Вы не привязаны к помещению для подачи показаний.")
