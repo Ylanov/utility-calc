@@ -727,17 +727,30 @@ async def get_accountant_summary_v2(
 # Один запрос вместо N+1 — подтягиваем всё батчами.
 
 def _infer_source_flag(anomaly_flags):
+    """Bug AN: расширено различение auto-стратегий вместо единого «auto».
+    UI показывает админу, *как именно* система начислила: норматив×коэф,
+    среднее по дельтам, повтор предыдущего, или baseline."""
     if not anomaly_flags:
         return "manual"
-    af = anomaly_flags.split(",")[0].strip().upper()
+    af = anomaly_flags.upper()
     if "GSHEETS" in af:
         return "gsheets"
-    if "BASELINE" in af:
-        return "baseline"
     if "ONE_TIME_CHARGE" in af:
         return "one_time"
+    if "AUTO_NORM_SANCTION" in af:
+        return "auto_norm_sanction"
+    if "AUTO_AVG_FALLBACK" in af:
+        return "auto_avg_fallback"
+    if "AUTO_AVG" in af:
+        return "auto_avg"
+    if "AUTO_NO_HISTORY" in af:
+        return "auto_no_history"
     if "AUTO_GENERATED" in af:
         return "auto"
+    if "MANUAL_RECEIPT" in af:
+        return "manual_receipt"
+    if "BASELINE" in af:
+        return "baseline"
     if "INITIAL_SETUP" in af:
         return "initial"
     if "METER_CLOSED" in af or "METER_REPLACEMENT" in af:

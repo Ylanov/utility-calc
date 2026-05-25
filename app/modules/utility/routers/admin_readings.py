@@ -181,6 +181,32 @@ async def bulk_create_manual_receipts_endpoint(
     return await admin_readings_manual.bulk_create_manual_receipts(db, period_id)
 
 
+@router.post("/api/admin/billing/auto-fill-readings/{period_id}")
+async def auto_fill_period_endpoint(
+        period_id: int,
+        dry_run: bool = False,
+        current_user: User = Depends(allow_readings_manage),
+        db: AsyncSession = Depends(get_db),
+):
+    """Bug AN: добить пустые периоды auto-readings по правилам биллинга.
+
+    Применяет ту же стратегию что и close_current_period, но к
+    указанному period_id (не только активному):
+      - AUTO_NORM_SANCTION × коэф — после 3 пропусков подряд (4-й = санкция)
+      - AUTO_AVG — среднее по дельтам manual-подач
+      - AUTO_AVG_FALLBACK — повтор последних показаний (расход 0)
+      - AUTO_NO_HISTORY — только фикс-часть
+
+    Создаёт reading только для жильцов БЕЗ существующего reading в этом
+    периоде (любой статус). dry_run=true вернёт preview без записи в БД.
+    """
+    from app.modules.utility.services.billing import auto_fill_period_readings
+    try:
+        return await auto_fill_period_readings(db, period_id, dry_run=dry_run)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
 @router.get("/api/admin/readings/manual-state/{user_id}")
 async def get_manual_reading_state(
         user_id: int,

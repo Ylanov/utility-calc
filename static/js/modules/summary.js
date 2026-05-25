@@ -246,6 +246,21 @@ export const SummaryModule = {
                 this.loadData();
             });
             this.dom.periodSelector.appendChild(sel);
+
+            // Bug AN: кнопка «Авто-добить нормативом» — применяет к
+            // выбранному периоду логику AUTO_NORM_SANCTION/AVG/etc.
+            // Создаёт reading'и для жильцов, кто не подал в этом месяце.
+            const autoFillBtn = document.createElement('button');
+            autoFillBtn.type = 'button';
+            autoFillBtn.style.cssText =
+                'padding:7px 12px; margin-left:10px; font-size:12px; background:#7c3aed; color:#fff; ' +
+                'border:none; border-radius:4px; cursor:pointer; font-weight:500;';
+            autoFillBtn.title = 'Создать показания по нормативу для жильцов, не подавших в этом периоде. ' +
+                'После 3 пропусков подряд включается коэффициент × 3.';
+            autoFillBtn.innerHTML = '<i class="fa-solid fa-wand-sparkles"></i> Авто-добить нормативом';
+            autoFillBtn.addEventListener('click', () => this.autoFillSelectedPeriod());
+            this.dom.periodSelector.appendChild(autoFillBtn);
+
             // Default = АКТИВНЫЙ период. Раньше брался periodsCache[0]
             // (самый новый по id), что не всегда совпадает с активным —
             // админ открывал Финотчёт и видел не текущий месяц.
@@ -653,10 +668,27 @@ export const SummaryModule = {
         if (!hist.length) {
             return `<div style="color:var(--text-secondary); padding:10px 0;">Нет данных о показаниях.</div>`;
         }
+        // Bug AN: расширенные лейблы — различаем стратегии auto-генерации.
         const SRC_LABEL = {
-            gsheets: 'GSheets', app: 'Приложение', baseline: 'Baseline',
-            manual: 'Вручную', one_time: 'Разовое', auto: 'Автогенер.',
-            initial: 'Начальные', meter_op: 'Счётчик',
+            gsheets: 'GSheets',
+            app: 'Приложение',
+            baseline: 'Baseline',
+            manual: 'Вручную',
+            manual_receipt: 'Без подачи',
+            one_time: 'Разовое',
+            auto: 'Авто',
+            auto_norm_sanction: 'Авто (норма × 3)',
+            auto_avg: 'Авто (среднее)',
+            auto_avg_fallback: 'Авто (повтор)',
+            auto_no_history: 'Авто (нет истории)',
+            initial: 'Начальные',
+            meter_op: 'Счётчик',
+        };
+        // Bug AN: цветовая подсказка — сразу видно auto от подачи жильца.
+        const SRC_COLOR = {
+            auto: '#7c3aed', auto_norm_sanction: '#b91c1c', auto_avg: '#7c3aed',
+            auto_avg_fallback: '#a16207', auto_no_history: '#6b7280',
+            manual_receipt: '#a16207',
         };
         const fmtNum = v => v == null ? '—' : Number(v).toLocaleString('ru-RU', {maximumFractionDigits: 2});
         const fmtDelta = v => {
@@ -667,6 +699,8 @@ export const SummaryModule = {
         };
         const rows = hist.map(h => {
             const srcLbl = h.source ? (SRC_LABEL[h.source] || h.source) : '—';
+            const srcColor = h.source ? (SRC_COLOR[h.source] || 'var(--text-secondary)') : 'var(--text-tertiary)';
+            const srcSpan = `<span style="color:${srcColor}; font-weight:${h.source && h.source.startsWith('auto') ? '600' : '400'};">${esc(srcLbl)}</span>`;
             const flagsShort = (h.flags || [])
                 .filter(f => f && f !== 'PENDING')
                 .slice(0, 2).join(', ');
@@ -696,7 +730,7 @@ export const SummaryModule = {
                     <td style="padding:6px 8px; text-align:right;">${fmtDelta(h.delta_cold)}</td>
                     <td style="padding:6px 8px; text-align:right; font-family:monospace;">${fmtNum(h.electricity)}</td>
                     <td style="padding:6px 8px; text-align:right;">${fmtDelta(h.delta_elect)}</td>
-                    <td style="padding:6px 8px; font-size:11px;">${esc(srcLbl)}</td>
+                    <td style="padding:6px 8px; font-size:11px;">${srcSpan}</td>
                     <td style="padding:6px 8px; text-align:center;">${statusHtml}</td>
                     <td style="padding:6px 8px; font-size:10px; color:var(--text-secondary);">${esc(flagsShort)}</td>
                 </tr>`;
@@ -1236,6 +1270,53 @@ export const SummaryModule = {
     /** Точечная авто-пересборка одного жильца. Использует общий backend
      *  auto-rebuild с user_id-фильтром. Двухстадийно: preview модалка
      *  показывает что произойдёт → пользователь подтверждает → apply. */
+    /** Bug AN: «Авто-добить нормативом» для выбранного периода.
+     *  Сначала dry-run — показать что будет сгенерировано (по стратегиям).
+     *  При подтверждении — реальный запуск, обновление таблицы. */
+    async autoFillSelectedPeriod() {
+        const pid = Number(this.state.selectedPeriodId);
+        if (!pid) {
+            toast('Сначала выберите период', 'warning');
+            return;
+        }
+        const period = (this.periodsCache || []).find(p => Number(p.id) === pid);
+        const pName = period?.name || `id=${pid}`;
+        let preview;
+        try {
+            preview = await api.post(`/admin/billing/auto-fill-readings/${pid}?dry_run=true`);
+        } catch (e) {
+            toast('Не удалось получить preview: ' + (e.message || e), 'error');
+            return;
+        }
+        const by = preview.by_strategy || {};
+        const willCreate = preview.would_create || 0;
+        if (willCreate === 0) {
+            toast(`В периоде «${pName}» нет жильцов, которым нужно создать reading. ` +
+                  `Все уже подали или у них есть автогенерация.`, 'info');
+            return;
+        }
+        const strategyLines = Object.entries(by)
+            .map(([k, v]) => `  • ${k}: ${v} жильцов`).join('\n');
+        const ok = window.confirm(
+            `Авто-добить нормативом период «${pName}»?\n\n` +
+            `Будет создано ${willCreate} reading-ов:\n${strategyLines}\n\n` +
+            `Логика:\n` +
+            `  • AUTO_NORM_SANCTION — норматив × жильцов × коэф (для тех, кто пропустил 3+ месяца подряд)\n` +
+            `  • AUTO_AVG — среднее по дельтам прошлых подач\n` +
+            `  • AUTO_AVG_FALLBACK — повтор последних показаний (расход 0)\n` +
+            `  • AUTO_NO_HISTORY — только фикс-часть тарифа\n\n` +
+            `Существующие reading'и НЕ затрагиваются.`
+        );
+        if (!ok) return;
+        try {
+            const res = await api.post(`/admin/billing/auto-fill-readings/${pid}`);
+            toast(`Создано ${res.created} reading-ов в периоде «${res.period_name}»`, 'success');
+            await this.loadData();
+        } catch (e) {
+            toast('Ошибка авто-добивки: ' + (e.message || e), 'error');
+        }
+    },
+
     async rebuildResidentYear(userId, year) {
         if (!userId || !year) return;
         // Шаг 1 — preview.
