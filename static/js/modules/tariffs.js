@@ -405,6 +405,18 @@ export const TariffsModule = {
         setDate('t_hw_heating_start', tariff.hw_heating_season_start);
         setDate('t_hw_heating_end', tariff.hw_heating_season_end);
 
+        // Bug AS этап 3: skip-флаги для холостяцких квартир. Все default
+        // false — для существующих тарифов чекбоксы пустые, поведение
+        // не меняется (см. calculate_utilities этапа 4).
+        const setCbStrict = (id, v) => {
+            const el = document.getElementById(id);
+            if (el) el.checked = !!v;
+        };
+        setCbStrict('t_singles_skip_maintenance', tariff.singles_skip_maintenance);
+        setCbStrict('t_singles_skip_social_rent', tariff.singles_skip_social_rent);
+        setCbStrict('t_singles_skip_heating', tariff.singles_skip_heating);
+        setCbStrict('t_singles_skip_waste', tariff.singles_skip_waste);
+
         // Базовый тариф (id=1) удалять нельзя, прячем кнопку
         if (this.dom.btnDelete) {
             this.dom.btnDelete.style.display = (tariff.id === 1) ? 'none' : 'block';
@@ -445,6 +457,12 @@ export const TariffsModule = {
         ['t_heating_start', 't_heating_end', 't_hw_heating_start', 't_hw_heating_end'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.value = '';
+        });
+        // Bug AS: skip-флаги default false — холостяки платят за всё, как все.
+        ['t_singles_skip_maintenance', 't_singles_skip_social_rent',
+         't_singles_skip_heating', 't_singles_skip_waste'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.checked = false;
         });
 
         if (this.dom.btnDelete) this.dom.btnDelete.style.display = 'none';
@@ -708,6 +726,13 @@ export const TariffsModule = {
         data.hw_heating_active = cb('t_hw_heating_active');
         data.hw_heating_season_start = dt('t_hw_heating_start');
         data.hw_heating_season_end = dt('t_hw_heating_end');
+
+        // Bug AS этап 3: skip-флаги для холостяцких квартир.
+        const cbStrict = (id) => !!document.getElementById(id)?.checked;
+        data.singles_skip_maintenance = cbStrict('t_singles_skip_maintenance');
+        data.singles_skip_social_rent = cbStrict('t_singles_skip_social_rent');
+        data.singles_skip_heating = cbStrict('t_singles_skip_heating');
+        data.singles_skip_waste = cbStrict('t_singles_skip_waste');
 
         // Тип тарифа (radio: family / singles).
         const ttypeRadio = document.querySelector('input[name="t_type"]:checked');
