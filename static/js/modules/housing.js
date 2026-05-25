@@ -71,7 +71,10 @@ export const HousingModule = {
                 tariff: document.getElementById('roomTariffId'),
                 hw: document.getElementById('roomHwSerial'),
                 cw: document.getElementById('roomCwSerial'),
-                el: document.getElementById('roomElSerial')
+                el: document.getElementById('roomElSerial'),
+                // Bug AS: новые поля «холостяцкая квартира» + макс. вместимость.
+                isSingles: document.getElementById('roomIsSingles'),
+                maxCapacity: document.getElementById('roomMaxCapacity'),
             }
         };
 
@@ -524,10 +527,20 @@ export const HousingModule = {
             this.modal.inputs.hw.value = room.hw_meter_serial || '';
             this.modal.inputs.cw.value = room.cw_meter_serial || '';
             this.modal.inputs.el.value = room.el_meter_serial || '';
+            // Bug AS
+            if (this.modal.inputs.isSingles) {
+                this.modal.inputs.isSingles.checked = !!room.is_singles_apartment;
+            }
+            if (this.modal.inputs.maxCapacity) {
+                this.modal.inputs.maxCapacity.value = room.max_capacity ?? '';
+            }
             this.fillTariffSelect(room.tariff_id);
         } else {
             this.modal.title.textContent = 'Добавить помещение';
             this.modal.inputs.id.value = '';
+            // Bug AS: дефолты для нового помещения.
+            if (this.modal.inputs.isSingles) this.modal.inputs.isSingles.checked = false;
+            if (this.modal.inputs.maxCapacity) this.modal.inputs.maxCapacity.value = '';
             if (this.dom.dormFilterSelect.value) {
                 this.modal.inputs.dorm.value = this.dom.dormFilterSelect.value;
             }
@@ -541,6 +554,7 @@ export const HousingModule = {
         const btn = this.modal.form.querySelector('.confirm-btn');
         const id = this.modal.inputs.id.value;
         const tariffVal = this.modal.inputs.tariff?.value;
+        const maxCapVal = this.modal.inputs.maxCapacity?.value;
         const data = {
             dormitory_name: this.modal.inputs.dorm.value.trim(),
             room_number: this.modal.inputs.num.value.trim(),
@@ -550,6 +564,9 @@ export const HousingModule = {
             hw_meter_serial: this.modal.inputs.hw.value.trim(),
             cw_meter_serial: this.modal.inputs.cw.value.trim(),
             el_meter_serial: this.modal.inputs.el.value.trim(),
+            // Bug AS
+            is_singles_apartment: !!this.modal.inputs.isSingles?.checked,
+            max_capacity: maxCapVal ? parseInt(maxCapVal) : null,
         };
 
         setLoading(btn, true, 'Сохранение...');

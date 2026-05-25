@@ -208,8 +208,30 @@
                             <input type="number" step="0.1" id="roomArea" required min="0" placeholder="0.0">
                         </div>
                         <div class="form-group">
-                            <label>Макс. мест для проживания</label>
+                            <label>Кол-во проживающих (для деления счёта)</label>
                             <input type="number" id="roomCapacity" required min="1" value="1">
+                        </div>
+                    </div>
+
+                    <!-- Bug AS: настройки холостяцкой квартиры -->
+                    <div style="margin-bottom: 16px; padding: 14px 16px; background: #faf5ff; border: 1px solid #e9d5ff; border-radius: var(--radius-sm);">
+                        <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px; margin-bottom:10px;">
+                            <input type="checkbox" id="roomIsSingles" style="width:16px; height:16px;">
+                            <span style="font-weight:600; color:#6d28d9;">🛏 Холостяцкая квартира</span>
+                        </label>
+                        <p class="hint-text" style="font-size:11px; margin:0 0 12px; color:#5b21b6;">
+                            Если включено — все коммунальные счета этой квартиры делятся поровну
+                            между фактически проживающими (Кол-во проживающих выше). В тарифе
+                            можно отключить статьи, которые не начисляются холостякам
+                            (наём, отопление и т.д.).
+                        </p>
+                        <div class="form-group" style="margin:0;">
+                            <label style="font-size:12px;">Макс. вместимость (предел квартиры)</label>
+                            <input type="number" id="roomMaxCapacity" min="1" placeholder="например 4 (для 4-комнатной)">
+                            <p class="hint-text" style="font-size:11px; margin:4px 0 0;">
+                                Информационное поле — сколько физически вмещает квартира.
+                                Не путать с «Кол-во проживающих» (сейчас в квартире).
+                            </p>
                         </div>
                     </div>
 

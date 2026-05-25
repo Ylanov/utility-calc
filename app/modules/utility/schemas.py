@@ -42,6 +42,9 @@ class RoomCreate(BaseModel):
     # Тариф конкретной комнаты (опциональный). Если задан — у всех её жильцов
     # этот тариф побеждает их персональный (см. tariff_cache.get_effective_tariff).
     tariff_id: Optional[int] = None
+    # Bug AS: холостяцкая квартира — счёт делится поровну между жильцами.
+    is_singles_apartment: bool = False
+    max_capacity: Optional[int] = None
 
 
 class RoomUpdate(BaseModel):
@@ -53,6 +56,8 @@ class RoomUpdate(BaseModel):
     cw_meter_serial: Optional[str] = None
     el_meter_serial: Optional[str] = None
     tariff_id: Optional[int] = None
+    is_singles_apartment: Optional[bool] = None
+    max_capacity: Optional[int] = None
 
 
 class RoomResponse(BaseModel):
@@ -65,6 +70,8 @@ class RoomResponse(BaseModel):
     cw_meter_serial: Optional[str] = None
     el_meter_serial: Optional[str] = None
     tariff_id: Optional[int] = None
+    is_singles_apartment: bool = False
+    max_capacity: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
 
