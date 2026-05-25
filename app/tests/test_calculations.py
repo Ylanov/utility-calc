@@ -18,9 +18,11 @@ from app.modules.utility.services.calculations import (
 # ──────────────────────────────────────────────────────────────
 
 class FakeRoom:
-    def __init__(self, area=50.0, total_residents=2):
+    def __init__(self, area=50.0, total_residents=2, is_singles_apartment=False):
         self.apartment_area = Decimal(str(area))
         self.total_room_residents = total_residents
+        # Bug AS: пометка холостяцкой квартиры (счёт делится поровну).
+        self.is_singles_apartment = is_singles_apartment
 
 
 class FakeUser:
@@ -48,6 +50,10 @@ class FakeTariff:
         hw_norm_per_capita="0.000",
         cw_norm_per_capita="0.000",
         el_norm_per_capita="0.000",
+        singles_skip_maintenance=False,
+        singles_skip_social_rent=False,
+        singles_skip_heating=False,
+        singles_skip_waste=False,
     ):
         self.water_supply      = Decimal(water_supply)
         self.water_heating     = Decimal(water_heating)
@@ -62,6 +68,11 @@ class FakeTariff:
         self.hw_norm_per_capita = Decimal(hw_norm_per_capita)
         self.cw_norm_per_capita = Decimal(cw_norm_per_capita)
         self.el_norm_per_capita = Decimal(el_norm_per_capita)
+        # Bug AS: skip-флаги для холостяцких квартир.
+        self.singles_skip_maintenance = singles_skip_maintenance
+        self.singles_skip_social_rent = singles_skip_social_rent
+        self.singles_skip_heating = singles_skip_heating
+        self.singles_skip_waste = singles_skip_waste
 
 
 # ──────────────────────────────────────────────────────────────
@@ -762,6 +773,81 @@ def test_seasonal_defaults_preserve_legacy_behavior():
         heating_season_active=True, hot_water_heating_active=True,
     )
     assert result_default["total_cost"] == result_explicit["total_cost"]
+
+
+# ──────────────────────────────────────────────────────────────
+# ТЕСТЫ ХОЛОСТЯЦКИХ КВАРТИР (Bug AS)
+# ──────────────────────────────────────────────────────────────
+
+def test_singles_apartment_splits_all_components():
+    """В холостяцкой квартире на N жильцов — каждая статья делится на N."""
+    user = FakeUser(residents=1)
+    room = FakeRoom(area=50.0, total_residents=3, is_singles_apartment=True)
+    tariff = FakeTariff()  # все skip-флаги False по умолчанию
+
+    result = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=Decimal("3.0"),       # 3 × 150 = 450, /3 = 150
+        volume_cold=Decimal("5.0"),      # 5 × 40 = 200, /3 = 66.67
+        volume_sewage=Decimal("8.0"),    # 8 × 35 = 280, /3 = 93.33
+        volume_electricity_share=Decimal("90.0"),  # 90 × 5.50 = 495, /3 = 165
+    )
+    assert result["cost_hot_water"] == Decimal("150.00"), result["cost_hot_water"]
+    assert result["cost_cold_water"] == Decimal("66.67"), result["cost_cold_water"]
+    assert result["cost_sewage"] == Decimal("93.33"), result["cost_sewage"]
+    assert result["cost_electricity"] == Decimal("165.00"), result["cost_electricity"]
+    # Содержание: 50 × 30.50 = 1525, /3 = 508.33
+    assert result["cost_maintenance"] == Decimal("508.33"), result["cost_maintenance"]
+    # Наём: 50 × 5.10 = 255, /3 = 85.00
+    assert result["cost_social_rent"] == Decimal("85.00"), result["cost_social_rent"]
+
+
+def test_singles_apartment_skip_flags_zero_components():
+    """Если у тарифа стоит singles_skip_*, эти статьи не начисляются вообще."""
+    user = FakeUser(residents=1)
+    room = FakeRoom(area=50.0, total_residents=2, is_singles_apartment=True)
+    tariff = FakeTariff(
+        singles_skip_social_rent=True,   # 205 не начисляем
+        singles_skip_heating=True,       # отопление тоже
+    )
+
+    result = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=Decimal("2.0"),
+        volume_cold=Decimal("4.0"),
+        volume_sewage=Decimal("6.0"),
+        volume_electricity_share=Decimal("50.0"),
+    )
+    assert result["cost_social_rent"] == Decimal("0.00"), "наём должен быть 0"
+    # cost_fixed_part: отопление skip, остаётся ОДН-электричество × area / N
+    # 50 × 1.20 = 60, /2 = 30
+    assert result["cost_fixed_part"] == Decimal("30.00"), result["cost_fixed_part"]
+    # Содержание не skip — должно делиться: 50 × 30.50 = 1525, /2 = 762.50
+    assert result["cost_maintenance"] == Decimal("762.50"), result["cost_maintenance"]
+
+
+def test_singles_apartment_off_keeps_legacy_behavior():
+    """Если is_singles_apartment=False — деления и skip-флагов нет."""
+    user = FakeUser(residents=1)
+    room_legacy = FakeRoom(area=50.0, total_residents=3, is_singles_apartment=False)
+    room_singles = FakeRoom(area=50.0, total_residents=3, is_singles_apartment=True)
+    tariff = FakeTariff()
+
+    r_legacy = calculate_utilities(
+        user=user, room=room_legacy, tariff=tariff,
+        volume_hot=Decimal("3.0"), volume_cold=Decimal("5.0"),
+        volume_sewage=Decimal("8.0"), volume_electricity_share=Decimal("90.0"),
+    )
+    r_singles = calculate_utilities(
+        user=user, room=room_singles, tariff=tariff,
+        volume_hot=Decimal("3.0"), volume_cold=Decimal("5.0"),
+        volume_sewage=Decimal("8.0"), volume_electricity_share=Decimal("90.0"),
+    )
+    # legacy — обычная сумма; singles — поровну на 3 → меньше
+    assert r_legacy["total_cost"] > r_singles["total_cost"]
+    # Конкретно ГВС: legacy 450, singles 150 (450/3).
+    assert r_legacy["cost_hot_water"] == Decimal("450.00")
+    assert r_singles["cost_hot_water"] == Decimal("150.00")
 
 
 # ──────────────────────────────────────────────────────────────

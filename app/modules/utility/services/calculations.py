@@ -265,19 +265,59 @@ def calculate_utilities(
     # все фиксированные платежи начисляются на всю площадь помещения.
     # ─────────────────────────────────────────────────
 
+    # Bug AS этап 4: для холостяцких квартир — skip-флаги конкретных
+    # статей тарифа (наём/содержание/отопление/ТКО). Применяются
+    # ПЕРЕД делением на жильцов: «не начисляется» = 0, потом этот 0
+    # делится — всё равно 0.
+    is_singles_apt = bool(getattr(room, "is_singles_apartment", False))
+
     # Содержание и ремонт
-    c_maint = quantize_money(area * t_maint * frac)
+    if is_singles_apt and bool(getattr(tariff, "singles_skip_maintenance", False)):
+        c_maint = ZERO
+    else:
+        c_maint = quantize_money(area * t_maint * frac)
 
     # Социальный наём
-    c_rent = quantize_money(area * t_rent * frac)
+    if is_singles_apt and bool(getattr(tariff, "singles_skip_social_rent", False)):
+        c_rent = ZERO
+    else:
+        c_rent = quantize_money(area * t_rent * frac)
 
     # ТКО (мусор)
-    c_waste = quantize_money(area * t_waste * frac)
+    if is_singles_apt and bool(getattr(tariff, "singles_skip_waste", False)):
+        c_waste = ZERO
+    else:
+        c_waste = quantize_money(area * t_waste * frac)
 
     # Фиксированная часть: отопление + ОДН электроэнергии. ОДН в новых
     # тарифах всегда = 0 (поле скрыто из UI с мая 2026), но формула
     # сохранена для исторических квитанций где ОДН был ненулевой.
-    c_fixed = quantize_money(area * (t_heat + t_el_sqm) * frac)
+    # Для холостяков отопление можно отключить через singles_skip_heating.
+    _t_heat_effective = (
+        ZERO if (is_singles_apt and bool(getattr(tariff, "singles_skip_heating", False)))
+        else t_heat
+    )
+    c_fixed = quantize_money(area * (_t_heat_effective + t_el_sqm) * frac)
+
+    # Bug AS этап 4: деление счёта поровну между фактически проживающими.
+    # В холостяцкой квартире каждый жилец получает 1/N от всех компонент,
+    # включая счётчики (потребление общее по квартире, оплата делится).
+    # N = room.total_room_residents — фактически живущих в квартире.
+    # Электричество УЖЕ делилось через elect_share — для холостяков
+    # дополнительная корректировка: делитель должен быть N, а не
+    # «доля одного жильца» — поэтому делим ещё раз на N. Если в комнате
+    # один жилец — делитель 1, никаких изменений.
+    if is_singles_apt:
+        n_share = D(getattr(room, "total_room_residents", None) or 1)
+        if n_share > 0:
+            c_hot = quantize_money(c_hot / n_share)
+            c_cold = quantize_money(c_cold / n_share)
+            c_sewage = quantize_money(c_sewage / n_share)
+            c_elect = quantize_money(c_elect / n_share)
+            c_maint = quantize_money(c_maint / n_share)
+            c_rent = quantize_money(c_rent / n_share)
+            c_waste = quantize_money(c_waste / n_share)
+            c_fixed = quantize_money(c_fixed / n_share)
 
     # ─────────────────────────────────────────────────
     # ИТОГ
