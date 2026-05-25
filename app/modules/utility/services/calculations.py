@@ -225,21 +225,29 @@ def calculate_utilities(
     # Сезонные переключатели (управляются админом в Операциях → Сезоны).
     # При выключенном отопительном сезоне cost_fixed_part не включает heating
     # для всех жильцов сразу. Аналогично — подогрев ГВС на летнюю
-    # профилактику ТЭЦ: t_w_heat=0 → жилец платит только water_supply
-    # за каждый м³ ГВС, как если бы вода была холодной.
+    # профилактику ТЭЦ: при выключенном hot_water_heating_active
+    # переключаемся на water_supply (см. ниже формулу c_hot).
     # Применяем после FAIL-LOUD-проверки чтобы не падать на тарифе где
     # только heating ненулевой, при выключенном сезоне.
     if not heating_season_active:
         t_heat = ZERO
-    if not hot_water_heating_active:
-        t_w_heat = ZERO
-
     # ─────────────────────────────────────────────────
     # РАСЧЁТ ПО СЧЁТЧИКАМ
     # ─────────────────────────────────────────────────
 
-    # ГВС: объём * (тариф подачи + тариф нагрева)
-    c_hot = quantize_money(v_hot * (t_w_sup + t_w_heat))
+    # ГВС (Bug AP, 2026-05): тариф water_heating уже включает в себя
+    # стоимость воды + подогрева — это единая цена 1 м³ ГВС.
+    # Поэтому НЕ суммируем с water_supply. Раньше формула была
+    # vol × (water_supply + water_heating) — стандарт ЖКХ когда
+    # water_heating означает «только подогрев», но в этом проекте
+    # бизнес-логика другая. См. memory/tariff_hw_pricing.md.
+    #
+    # Летняя профилактика ТЭЦ: при hot_water_heating_active=False
+    # подогрева нет → жилец платит как за ХВС (water_supply).
+    if hot_water_heating_active:
+        c_hot = quantize_money(v_hot * t_w_heat)
+    else:
+        c_hot = quantize_money(v_hot * t_w_sup)
 
     # ХВС: объём * тариф подачи
     c_cold = quantize_money(v_cold * t_w_sup)

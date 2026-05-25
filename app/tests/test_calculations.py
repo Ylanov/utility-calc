@@ -92,8 +92,9 @@ def test_calculation_precision():
     )
 
     # ── РУЧНОЙ РАСЧЁТ ──
-    # ГВС:  3.123 * (40.00 + 150.00) = 3.123 * 190.00 = 593.37
-    assert result["cost_hot_water"] == Decimal("593.37"), f"ГВС: {result['cost_hot_water']}"
+    # ГВС (Bug AP/AQ): 3.123 * 150.00 = 468.45 (только water_heating,
+    # без сложения с water_supply — тариф уже включает воду).
+    assert result["cost_hot_water"] == Decimal("468.45"), f"ГВС: {result['cost_hot_water']}"
 
     # ХВС:  5.789 * 40.00 = 231.560 → 231.56
     assert result["cost_cold_water"] == Decimal("231.56"), f"ХВС: {result['cost_cold_water']}"
@@ -116,8 +117,8 @@ def test_calculation_precision():
     # Фиксированная: 45.50 * (25.00 + 1.20) = 45.50 * 26.20 = 1192.10
     assert result["cost_fixed_part"] == Decimal("1192.10"), f"Фикс: {result['cost_fixed_part']}"
 
-    # ИТОГО: 593.37+231.56+311.92+663.05+1387.75+232.05+295.75+1192.10 = 4907.55
-    expected = Decimal("4907.55")
+    # ИТОГО: 468.45+231.56+311.92+663.05+1387.75+232.05+295.75+1192.10 = 4782.63
+    expected = Decimal("4782.63")
     assert result["total_cost"] == expected, f"ИТОГО: {result['total_cost']} != {expected}"
 
     # total_cost должен совпадать с суммой компонент (нет расхождения копеек)
@@ -558,10 +559,11 @@ def test_missing_hot_meter_uses_norm():
         volume_electricity_share=Decimal("50.0"),
     )
 
-    # Норматив ГВС: 2.5 × 3 = 7.5 м³; ГВС стоит water_supply+water_heating=190 ₽
-    # 7.5 × 190 = 1425.00 ₽
-    assert result["cost_hot_water"] == Decimal("1425.00"), (
-        f"ГВС по нормативу: ожидается 1425.00, получено {result['cost_hot_water']}"
+    # Норматив ГВС: 2.5 × 3 = 7.5 м³; ГВС = только water_heating=150 ₽/м³
+    # (Bug AP/AQ: тариф уже включает воду, не суммируем с water_supply)
+    # 7.5 × 150 = 1125.00 ₽
+    assert result["cost_hot_water"] == Decimal("1125.00"), (
+        f"ГВС по нормативу: ожидается 1125.00, получено {result['cost_hot_water']}"
     )
     # Канализация = (v_hot + v_cold) × sewage = (7.5 + 4) × 35 = 402.50 ₽
     assert result["cost_sewage"] == Decimal("402.50"), (
@@ -631,8 +633,9 @@ def test_present_meter_ignores_norm():
         volume_electricity_share=Decimal("50.0"),
     )
 
-    # ГВС от ФАКТА (3.0), а не норматива: 3.0 × 190 = 570.00 ₽
-    assert result["cost_hot_water"] == Decimal("570.00"), (
+    # ГВС от ФАКТА (3.0), а не норматива: 3.0 × 150 = 450.00 ₽
+    # (Bug AQ: vol × water_heating, без сложения с water_supply)
+    assert result["cost_hot_water"] == Decimal("450.00"), (
         f"При наличии счётчика норматив не применяется: получено {result['cost_hot_water']}"
     )
 
