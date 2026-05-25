@@ -117,6 +117,14 @@ export const TariffsModule = {
                 e.preventDefault();
                 this._applyChargePreset(btn.getAttribute('data-charge-preset'));
             });
+            // Bug AU: любое изменение charge_* / singles_skip_* чекбокса —
+            // мгновенный пересчёт превью внизу страницы.
+            this.dom.form.addEventListener('change', (e) => {
+                const t = e.target;
+                if (!t || t.type !== 'checkbox') return;
+                if (!t.id || !(t.id.startsWith('t_charge_') || t.id.startsWith('t_singles_skip_'))) return;
+                if (typeof this.recalcPreview === 'function') this.recalcPreview();
+            });
         }
         if (this.dom.selector) {
             this.dom.selector.addEventListener('change', (e) => this.handleSelectChange(e));

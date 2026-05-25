@@ -422,6 +422,20 @@ async def preview_calculation(
             hw_heating_active=_bool_field("hw_heating_active", True),
             hw_heating_season_start=_date_field("hw_heating_season_start"),
             hw_heating_season_end=_date_field("hw_heating_season_end"),
+            # Bug AT: charge_* — что начисляет тариф. Default True.
+            charge_hot_water=_bool_field("charge_hot_water", True),
+            charge_cold_water=_bool_field("charge_cold_water", True),
+            charge_sewage=_bool_field("charge_sewage", True),
+            charge_electricity=_bool_field("charge_electricity", True),
+            charge_maintenance=_bool_field("charge_maintenance", True),
+            charge_social_rent=_bool_field("charge_social_rent", True),
+            charge_heating=_bool_field("charge_heating", True),
+            charge_waste=_bool_field("charge_waste", True),
+            # Bug AS: singles_skip_* для холостяцких квартир. Default False.
+            singles_skip_maintenance=_bool_field("singles_skip_maintenance", False),
+            singles_skip_social_rent=_bool_field("singles_skip_social_rent", False),
+            singles_skip_heating=_bool_field("singles_skip_heating", False),
+            singles_skip_waste=_bool_field("singles_skip_waste", False),
         )
     elif data.tariff_id:
         tariff = await db.get(Tariff, data.tariff_id)

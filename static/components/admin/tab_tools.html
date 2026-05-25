@@ -658,79 +658,42 @@
                                  все включены. Снятая галочка → статья не
                                  начисляется НИКОМУ на этом тарифе.
                                  ============================================== -->
-                            <details class="charge-card" open style="border:1px solid var(--border-color); border-radius:12px; padding:0; margin-bottom:14px; background:rgba(16,185,129,0.05); overflow:hidden;">
-                                <summary style="cursor:pointer; padding:12px 16px; display:flex; align-items:center; justify-content:space-between; user-select:none; list-style:none;">
-                                    <span style="display:flex; align-items:center; gap:10px;">
-                                        <span style="width:36px; height:36px; border-radius:50%; background:rgba(16,185,129,0.15); display:flex; align-items:center; justify-content:center; color:#059669;">
-                                            <i class="fa-solid fa-list-check"></i>
-                                        </span>
-                                        <span>
-                                            <strong style="font-size:14px; color:#059669; display:block;">Что начисляет этот тариф</strong>
-                                            <span class="hint-text" style="font-size:11.5px;">
-                                                Снимите галочку — статья не будет начисляться никому на этом тарифе
-                                            </span>
-                                        </span>
-                                    </span>
-                                    <span style="color:var(--text-secondary); font-size:12px;">
-                                        <i class="fa-solid fa-chevron-up"></i>
+                            <!-- Bug AU: упрощённая вёрстка — inline-block для чекбоксов,
+                                 закрыт по умолчанию (раскрывает админ кликом). -->
+                            <details class="charge-card" style="border:1px solid #a7f3d0; border-radius:12px; padding:0; margin-bottom:14px; background:#ecfdf5; overflow:hidden;">
+                                <summary style="cursor:pointer; padding:12px 16px; user-select:none; list-style:none; font-size:14px; color:#059669;">
+                                    <i class="fa-solid fa-list-check" style="margin-right:6px;"></i>
+                                    <strong>Что начисляет этот тариф</strong>
+                                    <span class="hint-text" style="font-size:11.5px; margin-left:8px; color:var(--text-secondary);">
+                                        снимите галочку — статья не начисляется никому на этом тарифе
                                     </span>
                                 </summary>
-                                <div style="padding:14px 16px 16px 16px; border-top:1px dashed var(--border-color);">
+                                <div style="padding:14px 16px 16px 16px; border-top:1px dashed var(--border-color); background:#fff;">
                                     <!-- Пресеты быстрой настройки. -->
-                                    <div style="margin-bottom:12px; display:flex; flex-wrap:wrap; gap:6px;">
-                                        <span style="font-size:11.5px; color:var(--text-secondary); align-self:center; margin-right:4px;">Пресеты:</span>
-                                        <button type="button" data-charge-preset="all" style="padding:4px 10px; font-size:11.5px; background:#fff; color:#059669; border:1px solid #a7f3d0; border-radius:4px; cursor:pointer;">
-                                            ✓ Всё включено (Лидер)
-                                        </button>
-                                        <button type="button" data-charge-preset="rent_only" style="padding:4px 10px; font-size:11.5px; background:#fff; color:#7c3aed; border:1px solid #ddd6fe; border-radius:4px; cursor:pointer;">
-                                            🏠 Только наём (205)
-                                        </button>
-                                        <button type="button" data-charge-preset="no_meters" style="padding:4px 10px; font-size:11.5px; background:#fff; color:#dc2626; border:1px solid #fecaca; border-radius:4px; cursor:pointer;">
-                                            🚫 Без счётчиков
-                                        </button>
+                                    <div style="margin-bottom:14px;">
+                                        <span style="font-size:11.5px; color:var(--text-secondary); margin-right:6px;">Пресеты:</span>
+                                        <button type="button" data-charge-preset="all" style="padding:5px 10px; font-size:11.5px; background:#fff; color:#059669; border:1px solid #a7f3d0; border-radius:4px; cursor:pointer; margin-right:4px;">✓ Всё (Лидер)</button>
+                                        <button type="button" data-charge-preset="rent_only" style="padding:5px 10px; font-size:11.5px; background:#fff; color:#7c3aed; border:1px solid #ddd6fe; border-radius:4px; cursor:pointer; margin-right:4px;">🏠 Только наём</button>
+                                        <button type="button" data-charge-preset="no_meters" style="padding:5px 10px; font-size:11.5px; background:#fff; color:#dc2626; border:1px solid #fecaca; border-radius:4px; cursor:pointer;">🚫 Без счётчиков</button>
                                     </div>
-                                    <!-- 8 чекбоксов в 2 группы: счётчики и площадь. -->
-                                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:14px;">
-                                        <div style="background:#fff; border:1px solid var(--border-color); border-radius:8px; padding:10px 12px;">
-                                            <div style="font-size:11.5px; font-weight:600; color:var(--text-secondary); text-transform:uppercase; margin-bottom:8px;">По счётчикам (потребление)</div>
-                                            <label style="display:flex; align-items:center; gap:8px; padding:5px 0; cursor:pointer; font-size:13px;">
-                                                <input type="checkbox" id="t_charge_hot_water" checked>
-                                                <span><i class="fa-solid fa-fire" style="color:var(--danger-color);"></i> ГВС</span>
-                                            </label>
-                                            <label style="display:flex; align-items:center; gap:8px; padding:5px 0; cursor:pointer; font-size:13px;">
-                                                <input type="checkbox" id="t_charge_cold_water" checked>
-                                                <span><i class="fa-solid fa-snowflake" style="color:var(--primary-color);"></i> ХВС</span>
-                                            </label>
-                                            <label style="display:flex; align-items:center; gap:8px; padding:5px 0; cursor:pointer; font-size:13px;">
-                                                <input type="checkbox" id="t_charge_sewage" checked>
-                                                <span><i class="fa-solid fa-droplet"></i> Водоотведение</span>
-                                            </label>
-                                            <label style="display:flex; align-items:center; gap:8px; padding:5px 0; cursor:pointer; font-size:13px;">
-                                                <input type="checkbox" id="t_charge_electricity" checked>
-                                                <span><i class="fa-solid fa-bolt" style="color:#d97706;"></i> Электричество</span>
-                                            </label>
+                                    <!-- Простой grid 2-колонки. Каждая опция — div c label-чекбокс-text inline. -->
+                                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:18px;">
+                                        <div>
+                                            <div style="font-size:11px; font-weight:600; color:#6b7280; text-transform:uppercase; letter-spacing:.5px; margin-bottom:8px;">По счётчикам (потребление)</div>
+                                            <div style="padding:6px 0;"><input type="checkbox" id="t_charge_hot_water" checked> <label for="t_charge_hot_water" style="cursor:pointer; font-size:13px;"><i class="fa-solid fa-fire" style="color:var(--danger-color); margin-right:4px;"></i>ГВС</label></div>
+                                            <div style="padding:6px 0;"><input type="checkbox" id="t_charge_cold_water" checked> <label for="t_charge_cold_water" style="cursor:pointer; font-size:13px;"><i class="fa-solid fa-snowflake" style="color:var(--primary-color); margin-right:4px;"></i>ХВС</label></div>
+                                            <div style="padding:6px 0;"><input type="checkbox" id="t_charge_sewage" checked> <label for="t_charge_sewage" style="cursor:pointer; font-size:13px;"><i class="fa-solid fa-droplet" style="margin-right:4px;"></i>Водоотведение</label></div>
+                                            <div style="padding:6px 0;"><input type="checkbox" id="t_charge_electricity" checked> <label for="t_charge_electricity" style="cursor:pointer; font-size:13px;"><i class="fa-solid fa-bolt" style="color:#d97706; margin-right:4px;"></i>Электричество</label></div>
                                         </div>
-                                        <div style="background:#fff; border:1px solid var(--border-color); border-radius:8px; padding:10px 12px;">
-                                            <div style="font-size:11.5px; font-weight:600; color:var(--text-secondary); text-transform:uppercase; margin-bottom:8px;">По площади (фикс)</div>
-                                            <label style="display:flex; align-items:center; gap:8px; padding:5px 0; cursor:pointer; font-size:13px;">
-                                                <input type="checkbox" id="t_charge_maintenance" checked>
-                                                <span>Содержание и ремонт</span>
-                                            </label>
-                                            <label style="display:flex; align-items:center; gap:8px; padding:5px 0; cursor:pointer; font-size:13px;">
-                                                <input type="checkbox" id="t_charge_social_rent" checked>
-                                                <span>Соц. наём (205)</span>
-                                            </label>
-                                            <label style="display:flex; align-items:center; gap:8px; padding:5px 0; cursor:pointer; font-size:13px;">
-                                                <input type="checkbox" id="t_charge_heating" checked>
-                                                <span>Отопление</span>
-                                            </label>
-                                            <label style="display:flex; align-items:center; gap:8px; padding:5px 0; cursor:pointer; font-size:13px;">
-                                                <input type="checkbox" id="t_charge_waste" checked>
-                                                <span>ТКО (вывоз мусора)</span>
-                                            </label>
+                                        <div>
+                                            <div style="font-size:11px; font-weight:600; color:#6b7280; text-transform:uppercase; letter-spacing:.5px; margin-bottom:8px;">По площади (фикс)</div>
+                                            <div style="padding:6px 0;"><input type="checkbox" id="t_charge_maintenance" checked> <label for="t_charge_maintenance" style="cursor:pointer; font-size:13px;">Содержание и ремонт</label></div>
+                                            <div style="padding:6px 0;"><input type="checkbox" id="t_charge_social_rent" checked> <label for="t_charge_social_rent" style="cursor:pointer; font-size:13px;">Соц. наём (205)</label></div>
+                                            <div style="padding:6px 0;"><input type="checkbox" id="t_charge_heating" checked> <label for="t_charge_heating" style="cursor:pointer; font-size:13px;">Отопление</label></div>
+                                            <div style="padding:6px 0;"><input type="checkbox" id="t_charge_waste" checked> <label for="t_charge_waste" style="cursor:pointer; font-size:13px;">ТКО (вывоз мусора)</label></div>
                                         </div>
                                     </div>
-                                    <p class="hint-text" style="font-size:11px; margin:10px 0 0; color:var(--text-secondary);">
+                                    <p class="hint-text" style="font-size:11px; margin:12px 0 0; color:var(--text-secondary);">
                                         Если все 4 счётчика сняты — жильцы на этом тарифе не увидят форму подачи показаний в приложении.
                                     </p>
                                 </div>
