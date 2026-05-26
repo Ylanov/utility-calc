@@ -205,6 +205,26 @@ export const ClientReadings = {
         let content;
         const btnText = document.getElementById('submitBtnText');
 
+        // Bug AW3: тариф без счётчиков — клиент НЕ должен видеть форму подачи.
+        // submission_required=false когда у тарифа жильца все 4 charge_*-meter
+        // выключены (например, тариф «Только наём» или «Без счётчиков»).
+        // Сюда же попадают per_capita (койко-место).
+        if (data.submission_required === false) {
+            const isPerCapita = data.billing_mode === 'per_capita';
+            const title = isPerCapita ? '🛏 Койко-место' : '✓ Подача не требуется';
+            const subtitle = isPerCapita
+                ? 'Вы оформлены на тариф «койко-место». Сумма к оплате фиксированная — указана ниже в квитанции. Показания счётчиков подавать не нужно.'
+                : 'На вашем тарифе показания счётчиков не подаются. Начисления делает администрация по фиксированным статьям (см. квитанцию).';
+            content = this.createStatusBox('#ecfdf5', '#10b981', '#065f46', title, subtitle);
+            this.dom.fieldset.disabled = true;
+            if (btnText) btnText.textContent = 'Подача не требуется';
+            this.dom.btnSubmit.style.background = '#9ca3af';
+            this.dom.btnSubmit.style.boxShadow = 'none';
+            this.dom.btnSubmit.disabled = true;
+            this.dom.statusArea.appendChild(content);
+            return;
+        }
+
         if (!data.is_period_open) {
             content = this.createStatusBox('#f3f4f6', '#9ca3af', '#374151', '🔒 Прием закрыт', 'Подача показаний в данный момент недоступна.');
             this.dom.fieldset.disabled = true;
