@@ -68,8 +68,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Создаём пользователя с ограниченными правами для безопасного запуска приложения.
+# Bug AW2 fix-fix-2: явно создаём ВСЕ директории, на которые потом монтируются
+# named volumes. Если не создать в Dockerfile — docker при первом запуске
+# создаст mount-point как root:root, и appuser не сможет писать. Симптом —
+# 500 на POST /api/admin/app/releases (file=app-release.apk).
 RUN useradd --create-home --shell /bin/bash appuser && \
-    mkdir -p /app/static/generated_files && \
+    mkdir -p /app/static/generated_files \
+             /app/static/apps && \
     chown -R appuser:appuser /app
 
 # Копируем подготовленные Python-пакеты из стадии 'builder'.
