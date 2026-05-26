@@ -376,10 +376,13 @@ services:
     volumes:
       - ./nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf:ro
       - ./static:/usr/share/nginx/html/static:ro
-      # Bug AW2: APK раздаётся nginx-ом напрямую через /static/apps/*.apk
-      # (см. app_releases.py). Mount тот же volume что у web_jkh —
-      # тогда web положил, nginx сразу видит.
-      - apk_data:/usr/share/nginx/html/static/apps:ro
+      # Bug AW2: APK теперь хранится в named volume apk_data у web_jkh.
+      # Nginx раздаёт APK через стандартный host-bind ./static — после
+      # каждого deploy CI выполняет `docker cp web_jkh:/app/static/.
+      # /opt/utility_calc/static/` (см. Bug AJ deploy fix). При upload
+      # нового APK admin тоже делает sync через UI «↻ Sync static»
+      # (или вручную команда). Volume apk_data гарантирует что файл
+      # переживёт docker compose up; sync — что nginx его сразу увидит.
       - nginx_cache:/var/cache/nginx
     depends_on:
       - web_jkh
