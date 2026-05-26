@@ -4,6 +4,12 @@ on:
   push:
     branches:
       - main
+  # Ручной запуск из UI Actions / `gh workflow run build.yml`.
+  # Добавлено 26.05.2026 после инцидента когда GitHub Actions был
+  # degraded_performance — push-вебхуки приходили, но workflow_run не
+  # создавался. Ручной триггер закрывает кейс «срочно деплоить, а CI
+  # глючит».
+  workflow_dispatch:
 
 env:
   REGISTRY: ghcr.io
