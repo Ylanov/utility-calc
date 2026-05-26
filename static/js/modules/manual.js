@@ -58,6 +58,19 @@ export const ManualModule = {
             lblPrevCold: document.getElementById('manPrevCold'),
             lblPrevElect: document.getElementById('manPrevElect'),
 
+            // Bug AV: вторая форма «прямой ввод объёмов».
+            directVolumeCard: document.getElementById('directVolumeFormCard'),
+            directVolumeForm: document.getElementById('directVolumeForm'),
+            dvHot: document.getElementById('dvHot'),
+            dvCold: document.getElementById('dvCold'),
+            dvElect: document.getElementById('dvElect'),
+            dvToggleWater: document.getElementById('dvToggleWater'),
+            dvToggleElect: document.getElementById('dvToggleElect'),
+            dvPrevHot: document.getElementById('dvPrevHot'),
+            dvPrevCold: document.getElementById('dvPrevCold'),
+            dvPrevElect: document.getElementById('dvPrevElect'),
+            btnSaveDirectVolume: document.getElementById('btnSaveDirectVolume'),
+
             // Раздельная подача: тоглы и контейнеры групп.
             // См. /api/admin/readings/manual — поля hot/cold/elect стали nullable.
             groupWater: document.getElementById('manGroupWater'),
@@ -181,6 +194,10 @@ export const ManualModule = {
 
         if (this.dom.form) {
             this.dom.form.addEventListener('submit', (e) => this.handleSubmit(e));
+        }
+        // Bug AV: правая форма — прямой ввод объёмов.
+        if (this.dom.directVolumeForm) {
+            this.dom.directVolumeForm.addEventListener('submit', (e) => this.handleDirectVolumeSubmit(e));
         }
 
         // Авто-замена запятой, auto-format 5+3 на blur. Без визуальной имитации
@@ -404,6 +421,16 @@ export const ManualModule = {
             this.dom.lblPrevCold.textContent = state.prev_cold;
             this.dom.lblPrevElect.textContent = state.prev_elect;
 
+            // Bug AV: правая форма «прямой ввод объёмов» получает те же prev.
+            if (this.dom.dvPrevHot) this.dom.dvPrevHot.textContent = state.prev_hot;
+            if (this.dom.dvPrevCold) this.dom.dvPrevCold.textContent = state.prev_cold;
+            if (this.dom.dvPrevElect) this.dom.dvPrevElect.textContent = state.prev_elect;
+            if (this.dom.directVolumeCard) {
+                this.dom.directVolumeCard.style.opacity = '1';
+                this.dom.directVolumeCard.style.pointerEvents = 'auto';
+            }
+            if (this.dom.directVolumeForm) this.dom.directVolumeForm.reset();
+
             // Bug AL: приоритет — approved current (жилец УЖЕ подал),
             // потом draft (черновик в работе), потом пусто.
             if (state.has_approved_current) {
@@ -517,6 +544,71 @@ export const ManualModule = {
         if (this.dom.btnSubmit) {
             this.dom.btnSubmit.innerHTML =
                 '<i class="fa-solid fa-floppy-disk"></i> Сохранить показания (Черновик)';
+        }
+        // Bug AV: правая форма тоже отключается.
+        if (this.dom.directVolumeCard) {
+            this.dom.directVolumeCard.style.opacity = '0.5';
+            this.dom.directVolumeCard.style.pointerEvents = 'none';
+        }
+        if (this.dom.directVolumeForm) this.dom.directVolumeForm.reset();
+    },
+
+    /** Bug AV: handle submit правой формы «прямой ввод объёмов».
+     *  Берёт prev_hot/cold/elect из state, прибавляет введённые объёмы,
+     *  отправляет на тот же /admin/readings/manual endpoint. Backend
+     *  не знает разницы — он получает накопленное показание счётчика. */
+    async handleDirectVolumeSubmit(e) {
+        e.preventDefault();
+        if (!this.state.selectedUserId) {
+            toast('Сначала выберите жильца', 'warning');
+            return;
+        }
+        const prev = this.state.prevReadings || { hot: 0, cold: 0, elect: 0 };
+        const water = !!this.dom.dvToggleWater?.checked;
+        const elec = !!this.dom.dvToggleElect?.checked;
+        const num = (el) => {
+            if (!el) return null;
+            const v = parseFloat(String(el.value).replace(',', '.'));
+            return Number.isFinite(v) ? v : null;
+        };
+        const volHot = water ? num(this.dom.dvHot) : null;
+        const volCold = water ? num(this.dom.dvCold) : null;
+        const volEl = elec ? num(this.dom.dvElect) : null;
+
+        if (!water && !elec) {
+            toast('Включите хотя бы один ресурс (вода или электр.)', 'warning');
+            return;
+        }
+        if (water && (volHot == null || volCold == null)) {
+            toast('Введите объёмы ГВС и ХВС (или снимите галочку «Вода»)', 'warning');
+            return;
+        }
+        if (elec && volEl == null) {
+            toast('Введите объём электричества (или снимите галочку)', 'warning');
+            return;
+        }
+
+        // Накопленные показания = prev + объём за период.
+        const payload = {
+            user_id: this.state.selectedUserId,
+            period_id: this.dom.periodSelect?.value ? Number(this.dom.periodSelect.value) : null,
+            hot_water: water ? Number((prev.hot + volHot).toFixed(3)) : null,
+            cold_water: water ? Number((prev.cold + volCold).toFixed(3)) : null,
+            electricity: elec ? Number((prev.elect + volEl).toFixed(3)) : null,
+        };
+
+        const btn = this.dom.btnSaveDirectVolume;
+        setLoading(btn, true, 'Сохранение...');
+        try {
+            const res = await api.post('/admin/readings/manual', payload);
+            toast('Расход сохранён как ' + (res.updated_kind || 'reading'), 'success');
+            this.dom.directVolumeForm.reset();
+            // Обновляем prev для левой формы — теперь новые показания счётчика.
+            await this.selectUser({ id: this.state.selectedUserId, username: this.dom.lblSelectedUser.textContent });
+        } catch (err) {
+            toast('Ошибка: ' + (err.message || err), 'error');
+        } finally {
+            setLoading(btn, false);
         }
     },
 

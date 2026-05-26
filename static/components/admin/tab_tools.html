@@ -76,10 +76,16 @@
                                 <ul id="manualUserList" class="manual-search-dropdown" role="listbox" hidden></ul>
                             </div>
 
+                            <!-- Bug AV: split-layout — две формы рядом. Поиск общий (выше).
+                                 Слева — накопленные показания счётчика, справа — прямой
+                                 ввод объёмов (для тех у кого счётчиков нет / разовое
+                                 начисление). Обе формы disabled пока не выбран жилец. -->
+                            <div class="manual-split-grid" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(420px, 1fr)); gap:18px; align-items:start;">
+
                             <!-- Карточка формы (disabled пока не выбран жилец) -->
                             <div class="card" id="manualFormCard" style="opacity: 0.5; pointer-events: none; transition: all 0.3s; margin-bottom: 0;">
                                 <div class="card-header">
-                                    <h3>Показания</h3>
+                                    <h3>Показания счётчика</h3>
                                     <span id="manualSelectedUser" class="manual-selected-chip">
                                         <i class="fa-regular fa-user"></i> Жилец не выбран
                                     </span>
@@ -170,6 +176,83 @@
                                     <button type="submit" class="action-btn success-btn full-width" id="btnSaveManual" style="padding: 12px; font-size: 15px; margin-top: 8px;"><i class="fa-solid fa-floppy-disk"></i> Сохранить показания (Черновик)</button>
                                 </form>
                             </div>
+
+                            <!-- Bug AV: правая карточка — прямой ввод объёмов.
+                                 Полезно когда у жильца нет счётчиков, но известен
+                                 расход (выселение, разовое начисление). Под капотом:
+                                 фронт читает prev из manual-state, прибавляет объём
+                                 и отправляет на тот же endpoint /admin/readings/manual.
+                                 Backend не знает разницы — он получает накопленное
+                                 показание как обычно. -->
+                            <div class="card" id="directVolumeFormCard" style="opacity:0.5; pointer-events:none; transition:all 0.3s; margin-bottom:0; border-left:3px solid #7c3aed;">
+                                <div class="card-header">
+                                    <h3 style="color:#5b21b6;">
+                                        <i class="fa-solid fa-flask-vial"></i> Прямой ввод объёмов
+                                    </h3>
+                                    <span style="font-size:11px; color:var(--text-secondary);">
+                                        вводите расход, не показания
+                                    </span>
+                                </div>
+                                <div style="padding:10px 14px; background:#faf5ff; border:1px solid #e9d5ff; border-radius:6px; margin-bottom:16px; font-size:12.5px; color:#5b21b6;">
+                                    Введите <b>объём потребления за период</b> (м³ ГВС, м³ ХВС, кВт·ч электр). Система сама прибавит это к предыдущим показаниям счётчика и сохранит как обычный reading.
+                                </div>
+                                <form id="directVolumeForm" class="styled-form">
+                                    <div class="manual-group">
+                                        <div class="manual-group-head">
+                                            <label class="manual-group-toggle">
+                                                <input type="checkbox" id="dvToggleWater" checked>
+                                                <span><i class="fa-solid fa-droplet" style="color:#2563eb;"></i> Вода (ГВС + ХВС)</span>
+                                            </label>
+                                            <span class="manual-group-hint">объёмы за период</span>
+                                        </div>
+                                        <div class="manual-group-body">
+                                            <div class="form-group mb-3">
+                                                <label style="display:flex; justify-content:space-between; font-size:14px;">
+                                                    <span><span style="color:#dc2626;">🔥</span> ГВС — объём (м³)</span>
+                                                    <span style="color:var(--text-secondary);">Пред: <b id="dvPrevHot">0.000</b></span>
+                                                </label>
+                                                <input type="number" step="0.001" min="0" id="dvHot"
+                                                       placeholder="например 3.000"
+                                                       style="font-size:18px; font-weight:bold; text-align:center; color:#5b21b6;">
+                                            </div>
+                                            <div class="form-group">
+                                                <label style="display:flex; justify-content:space-between; font-size:14px;">
+                                                    <span><span style="color:#2563eb;">💧</span> ХВС — объём (м³)</span>
+                                                    <span style="color:var(--text-secondary);">Пред: <b id="dvPrevCold">0.000</b></span>
+                                                </label>
+                                                <input type="number" step="0.001" min="0" id="dvCold"
+                                                       placeholder="например 5.000"
+                                                       style="font-size:18px; font-weight:bold; text-align:center; color:#5b21b6;">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="manual-group">
+                                        <div class="manual-group-head">
+                                            <label class="manual-group-toggle">
+                                                <input type="checkbox" id="dvToggleElect" checked>
+                                                <span><i class="fa-solid fa-bolt" style="color:#d97706;"></i> Электричество</span>
+                                            </label>
+                                            <span class="manual-group-hint">кВт·ч за период</span>
+                                        </div>
+                                        <div class="manual-group-body">
+                                            <div class="form-group">
+                                                <label style="display:flex; justify-content:space-between; font-size:14px;">
+                                                    <span><span style="color:#d97706;">⚡</span> Электр. — объём (кВт·ч)</span>
+                                                    <span style="color:var(--text-secondary);">Пред: <b id="dvPrevElect">0.000</b></span>
+                                                </label>
+                                                <input type="number" step="0.001" min="0" id="dvElect"
+                                                       placeholder="например 100.000"
+                                                       style="font-size:18px; font-weight:bold; text-align:center; color:#5b21b6;">
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <button type="submit" class="action-btn full-width" id="btnSaveDirectVolume"
+                                            style="padding:12px; font-size:15px; margin-top:8px; background:#7c3aed; color:#fff; border:none;">
+                                        <i class="fa-solid fa-flask-vial"></i> Сохранить расход (Черновик)
+                                    </button>
+                                </form>
+                            </div>
+                            </div><!-- /manual-split-grid -->
                         </div>
                     </div>
                 </div>
