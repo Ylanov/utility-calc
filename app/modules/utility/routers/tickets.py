@@ -93,7 +93,44 @@ async def create_ticket(
     current_user: User = Depends(require_resident),
     db: AsyncSession = Depends(get_db),
 ):
-    """Жилец создаёт новое обращение."""
+    """Жилец создаёт новое обращение.
+
+    Bug AZ: rate limit — не более 5 открытых (status='open') тикетов на жильца
+    одновременно + не более 10 созданий за последние 60 минут. Защита от
+    спама (типичный pattern: жилец/бот отправляет 1000 тикетов).
+    """
+    from datetime import datetime, timezone, timedelta
+
+    # 1. Не больше 5 НЕ-закрытых одновременно — иначе админ-очередь захлёбывается.
+    open_count = (await db.execute(
+        select(func.count(SupportTicket.id)).where(
+            SupportTicket.user_id == current_user.id,
+            SupportTicket.status.in_(["open", "in_progress"]),
+        )
+    )).scalar_one()
+    if open_count >= 5:
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "У вас уже 5 открытых обращений. Дождитесь ответа от "
+                "администратора по существующим, прежде чем создавать новые."
+            ),
+        )
+
+    # 2. Не больше 10 созданий за час (защита от brute-spam).
+    hour_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
+    hour_count = (await db.execute(
+        select(func.count(SupportTicket.id)).where(
+            SupportTicket.user_id == current_user.id,
+            SupportTicket.created_at >= hour_ago,
+        )
+    )).scalar_one()
+    if hour_count >= 10:
+        raise HTTPException(
+            status_code=429,
+            detail="Слишком много обращений за последний час. Попробуйте позже.",
+        )
+
     ticket = SupportTicket(
         user_id=current_user.id,
         subject=body.subject.strip(),
