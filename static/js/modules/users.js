@@ -123,6 +123,25 @@ export const UsersModule = {
                 api.download('/users/export/template', 'Import_Template.xlsx');
             });
         }
+        // Bug BB: запрос актуальных данных у всех + просмотр ответов
+        const btnReqAll = document.getElementById('btnRequestDataRefreshAll');
+        if (btnReqAll) {
+            btnReqAll.addEventListener('click', () => this.requestDataRefreshBulk());
+        }
+        const btnShowSubs = document.getElementById('btnShowDataRefreshSubmissions');
+        if (btnShowSubs) {
+            btnShowSubs.addEventListener('click', () => this.openDataRefreshSubmissions());
+        }
+        document.querySelectorAll('[data-drs-close]').forEach(b =>
+            b.addEventListener('click', () => {
+                document.getElementById('dataRefreshSubmissionsModal')?.classList.remove('open');
+            })
+        );
+        const drsRefresh = document.getElementById('btnDrsRefresh');
+        if (drsRefresh) drsRefresh.addEventListener('click', () => this.loadDataRefreshSubmissions());
+        const drsCheck = document.getElementById('drsOnlyMismatched');
+        if (drsCheck) drsCheck.addEventListener('change', () => this.loadDataRefreshSubmissions());
+
         // Excel-экспорт видимого списка с учётом фильтров
         if (this.dom.btnExport) {
             this.dom.btnExport.addEventListener('click', (e) => {
@@ -328,7 +347,12 @@ export const UsersModule = {
                     el('td', { class: 'text-center' }, modeChip),
                     el('td', {}, address),
                     el('td', {}, area),
-                    el('td', { class: 'text-center text-sm' }, `${user.residents_count} / ${totalResidents}`),
+                    // Bug BB: вместо «N / M» (доля жильца от комнаты) — просто
+                    // число проживающих в комнате. Идею «доли» убираем по
+                    // решению заказчика 26.05.2026: для семейных пар
+                    // residents_count указывает на одно лицо (главу), а
+                    // фактическое кол-во людей хранится в room.total_room_residents.
+                    el('td', { class: 'text-center text-sm' }, String(totalResidents)),
                     el('td', {}, user.workplace || '-'),
                     el('td', { class: 'text-center' },
                         el('button', {
@@ -543,7 +567,8 @@ export const UsersModule = {
         const bm = user.billing_mode === 'per_capita' ? 'койко-место' : 'по счётчикам';
         const area = user.room?.apartment_area
             ? `${Number(user.room.apartment_area).toFixed(1)} м²` : '—';
-        const residents = `${user.residents_count} / ${user.room?.total_room_residents || 1}`;
+        // Bug BB: «доля» убрана — показываем просто число жильцов в комнате.
+        const residents = String(user.room?.total_room_residents || user.residents_count || 1);
         document.getElementById('hubSummary').innerHTML = `
             <div style="display:flex; justify-content:space-between; gap:14px; flex-wrap:wrap;">
                 <div>
@@ -579,6 +604,8 @@ export const UsersModule = {
                 if (action === 'relocate')       openRelocateModal(u, this.rel, this.dormsCache);
                 if (action === 'contracts')      this.openContractsModal(u);
                 if (action === 'reset-password') this.openPasswordResetModal(u);
+                // Bug BB: индивидуальный запрос актуальных данных.
+                if (action === 'request-refresh') this.requestDataRefreshOne(u.id, u.username);
             });
             this._hubBound = true;
         }
@@ -1034,5 +1061,76 @@ export const UsersModule = {
         } finally {
             setLoading(button, false);
         }
-    }
+    },
+
+    // =====================================================================
+    // Bug BB: запрос актуальных данных у жильцов
+    // =====================================================================
+    /** Массово выставить флаг — все активные жильцы увидят popup в моб-приложении. */
+    async requestDataRefreshBulk() {
+        if (!confirm('Запросить актуальные данные (общежитие/комната/число жильцов) у ВСЕХ активных жильцов?\n\nКаждый из них увидит однократный popup в мобильном приложении при следующем входе.')) {
+            return;
+        }
+        try {
+            const res = await api.post('/users/admin/request-data-refresh-bulk', { user_ids: null });
+            toast(`Запрос отправлен. Затронуто жильцов: ${res.affected}`, 'success');
+        } catch (e) {
+            toast('Ошибка: ' + e.message, 'error');
+        }
+    },
+
+    /** Запросить у одного конкретного жильца (вызывается из hub-модалки). */
+    async requestDataRefreshOne(userId, username) {
+        if (!confirm(`Запросить актуальные данные у жильца «${username}»?\n\nОн увидит popup при следующем входе в приложение.`)) {
+            return;
+        }
+        try {
+            await api.post(`/users/admin/${userId}/request-data-refresh`, {});
+            toast('Запрос отправлен', 'success');
+        } catch (e) {
+            toast('Ошибка: ' + e.message, 'error');
+        }
+    },
+
+    /** Открыть модалку списка ответов жильцов. */
+    openDataRefreshSubmissions() {
+        const modal = document.getElementById('dataRefreshSubmissionsModal');
+        if (!modal) return;
+        modal.classList.add('open');
+        this.loadDataRefreshSubmissions();
+    },
+
+    async loadDataRefreshSubmissions() {
+        const tbody = document.getElementById('drsTableBody');
+        if (!tbody) return;
+        const onlyMismatched = document.getElementById('drsOnlyMismatched')?.checked ? '?only_mismatched=true&limit=200' : '?limit=200';
+        tbody.innerHTML = '<tr><td colspan="6" class="text-center" style="padding:30px;"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка…</td></tr>';
+        try {
+            const res = await api.get('/users/admin/data-refresh-submissions' + onlyMismatched);
+            const items = res.items || [];
+            if (!items.length) {
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center" style="padding:30px; color:var(--text-secondary);">Ответов нет</td></tr>';
+                return;
+            }
+            tbody.innerHTML = items.map(s => {
+                const dt = s.submitted_at ? new Date(s.submitted_at).toLocaleString('ru-RU', {dateStyle: 'short', timeStyle: 'short'}) : '—';
+                const mismatchBg = s.mismatched ? 'background:#fef3c7;' : '';
+                const sysDormRoom = (s.system_dorm || '—') + ' / ' + (s.system_room || '—');
+                const subDormRoom = (s.submitted_dorm || '—') + ' / ' + (s.submitted_room || '—');
+                const sysR = s.system_residents == null ? '—' : s.system_residents;
+                return `
+                    <tr style="${mismatchBg}">
+                        <td style="white-space:nowrap;">${dt}</td>
+                        <td><b>${s.username || '#' + s.user_id}</b></td>
+                        <td>${subDormRoom}</td>
+                        <td style="color: var(--text-secondary);">${sysDormRoom}</td>
+                        <td class="text-center"><b>${s.submitted_residents}</b></td>
+                        <td class="text-center" style="color: var(--text-secondary);">${sysR}</td>
+                    </tr>
+                `;
+            }).join('');
+        } catch (e) {
+            tbody.innerHTML = `<tr><td colspan="6" class="text-center" style="padding:30px; color:var(--danger-color);">Ошибка: ${e.message}</td></tr>`;
+        }
+    },
 };

@@ -176,6 +176,14 @@
                 <button id="btnExportUsers" class="action-btn success-btn" title="Экспорт в Excel">
                     <i class="fa-solid fa-file-excel"></i> Excel
                 </button>
+                <!-- Bug BB: запрос актуальных данных у всех активных жильцов.
+                     Они увидят popup в мобильном приложении ОДИН раз. -->
+                <button id="btnRequestDataRefreshAll" class="action-btn secondary-btn" title="Попросить всех жильцов прислать актуальный адрес и число проживающих">
+                    <i class="fa-solid fa-paper-plane"></i> Запросить актуальные данные
+                </button>
+                <button id="btnShowDataRefreshSubmissions" class="action-btn secondary-btn" title="Посмотреть ответы жильцов">
+                    <i class="fa-solid fa-inbox"></i> Ответы
+                </button>
                 <button id="btnRefreshUsers" class="icon-btn" title="Обновить"><i class="fa-solid fa-rotate-right"></i></button>
             </div>
         </div>
@@ -190,7 +198,9 @@
                         <th class="text-center" title="Режим оплаты: по счётчикам / за койко-место">Оплата</th>
                         <th data-sort="dormitory" class="sortable">Общ.</th>
                         <th data-sort="apartment_area" class="sortable">Площ.</th>
-                        <th>Доля</th>
+                        <!-- Bug BB: было «Доля» N/M — заменено на простое
+                             число жильцов комнаты (total_room_residents). -->
+                        <th class="text-center" title="Кол-во проживающих в комнате">Жильцы</th>
                         <th data-sort="workplace" class="sortable">Работа</th>
                         <th class="text-center">Действия</th>
                     </tr>
@@ -283,6 +293,22 @@
                         </div>
                         <div style="font-size:11px; color:var(--text-secondary); line-height:1.4;">
                             Сгенерировать новый временный пароль. Жилец будет обязан сменить его при следующем входе.
+                        </div>
+                    </button>
+
+                    <!-- Bug BB: запросить у этого конкретного жильца актуальные
+                         данные (общежитие/комната/число жильцов). Он увидит
+                         однократный popup в моб-приложении при следующем входе. -->
+                    <button type="button" class="hub-action-btn" data-hub-action="request-refresh"
+                            style="display:flex; flex-direction:column; align-items:flex-start; gap:6px; padding:14px; border:1px solid var(--border-color); border-radius:10px; background:var(--bg-card); cursor:pointer; text-align:left;">
+                        <div style="display:flex; align-items:center; gap:10px; width:100%;">
+                            <div style="width:36px; height:36px; border-radius:8px; background:#fef3c7; color:#92400e; display:flex; align-items:center; justify-content:center;">
+                                <i class="fa-solid fa-paper-plane"></i>
+                            </div>
+                            <strong style="font-size:14px;">Запросить данные</strong>
+                        </div>
+                        <div style="font-size:11px; color:var(--text-secondary); line-height:1.4;">
+                            Попросить жильца через приложение прислать общежитие, комнату и число проживающих.
                         </div>
                     </button>
                 </div>
@@ -658,6 +684,52 @@
                     <button type="submit" class="action-btn primary-btn" id="btnSubmitRelocate">Подтвердить операцию</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- ================================================================ -->
+    <!-- Bug BB: модалка просмотра ответов жильцов на запрос актуализации -->
+    <!-- ================================================================ -->
+    <div id="dataRefreshSubmissionsModal" class="modal-overlay">
+        <div class="modal-window" style="width: min(960px, 96vw); max-height: 88vh;">
+            <div class="modal-header" style="background:#fef3c7; border-bottom:1px solid #fde68a;">
+                <h3 style="color:#92400e;">
+                    <i class="fa-solid fa-inbox"></i>
+                    Ответы жильцов на запрос актуализации
+                </h3>
+                <button class="close-btn close-icon" data-drs-close>&times;</button>
+            </div>
+            <div class="modal-form" style="padding:14px 18px; overflow:auto;">
+                <div style="display:flex; gap:10px; align-items:center; margin-bottom:12px;">
+                    <label style="display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer;">
+                        <input type="checkbox" id="drsOnlyMismatched">
+                        <span>Только расхождения с системой</span>
+                    </label>
+                    <button id="btnDrsRefresh" class="action-btn secondary-btn" style="padding:6px 12px; font-size:12px; margin-left:auto;">
+                        <i class="fa-solid fa-rotate-right"></i> Обновить
+                    </button>
+                </div>
+                <div class="table-responsive">
+                    <table class="sticky-header-table" style="font-size:13px;">
+                        <thead>
+                            <tr>
+                                <th>Когда</th>
+                                <th>Жилец</th>
+                                <th>Прислал: общ./комната</th>
+                                <th>В системе: общ./комната</th>
+                                <th class="text-center">Жильцов&nbsp;прислал</th>
+                                <th class="text-center">Жильцов&nbsp;в&nbsp;системе</th>
+                            </tr>
+                        </thead>
+                        <tbody id="drsTableBody">
+                            <tr><td colspan="6" class="text-center" style="padding:30px; color: var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="action-btn secondary-btn" data-drs-close>Закрыть</button>
+            </div>
         </div>
     </div>
 </div>

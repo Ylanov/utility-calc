@@ -17,7 +17,10 @@ from fastapi_limiter.depends import RateLimiter
 
 from app.core.database import get_db
 from app.core.time_utils import utcnow
-from app.modules.utility.models import User, Room, BillingPeriod, MeterReading, Tariff, DeviceToken
+from app.modules.utility.models import (
+    User, Room, BillingPeriod, MeterReading, Tariff, DeviceToken,
+    DataRefreshSubmission,
+)
 from app.modules.utility.schemas import (
     UserCreate, UserResponse, UserUpdate, PaginatedResponse,
     DeviceTokenCreate, RelocateUserSchema
@@ -884,4 +887,231 @@ async def register_device_token(
         await db.commit()
 
     return {"status": "success", "message": "Токен устройства успешно сохранен"}
+
+
+@router.delete("/device-token", summary="Отвязка устройства от пушей (logout)")
+async def unregister_device_token(
+        token: str,
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db)
+):
+    """Bug BA: удаляем FCM-токен текущего устройства при выходе.
+
+    Сценарий: жилец вышел из приложения → сторонний человек заходит со
+    своим логином на том же устройстве → старые пуши уже не должны
+    долетать «к призраку». Удаляем только тот токен, что приклеен к
+    текущему юзеру — чужие токены не трогаем, чтобы не сломать чужие
+    устройства того же FCM-проекта.
+    """
+    from sqlalchemy import delete as sql_delete
+
+    await db.execute(
+        sql_delete(DeviceToken).where(
+            DeviceToken.token == token,
+            DeviceToken.user_id == current_user.id,
+        )
+    )
+    await db.commit()
+    return {"status": "success", "message": "Токен устройства отвязан"}
+
+
+# =================================================================
+# DATA REFRESH (Bug BB) — запрос актуализации данных у жильца
+# =================================================================
+class DataRefreshSubmitBody(BaseModel):
+    dorm_name: str = Field(..., min_length=1, max_length=200)
+    room_number: str = Field(..., min_length=1, max_length=50)
+    residents_count: int = Field(..., ge=1, le=20)
+
+
+@router.get(
+    "/me/data-refresh",
+    summary="Жилец проверяет: нужно ли отправить актуальные данные",
+)
+async def get_my_data_refresh_status(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Возвращает required:bool — нужно ли показать popup в моб-приложении.
+
+    Если админ выставил флаг (data_refresh_required=True), фронт открывает
+    модалку, жилец заполняет и шлёт POST. Флаг снимается.
+    """
+    return {
+        "required": bool(current_user.data_refresh_required),
+        "requested_at": current_user.data_refresh_requested_at,
+    }
+
+
+@router.post(
+    "/me/data-refresh",
+    summary="Жилец отправляет актуальные данные (Bug BB)",
+)
+async def submit_my_data_refresh(
+    body: DataRefreshSubmitBody,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Жилец из мобильного приложения присылает дом/комнату/число жильцов.
+
+    Сохраняем submission (history) и СБРАСЫВАЕМ флаг — popup больше
+    не появится. Если данные изменились — админ увидит в списке
+    submissions и поправит вручную.
+    """
+    sub = DataRefreshSubmission(
+        user_id=current_user.id,
+        requested_at=current_user.data_refresh_requested_at,
+        dorm_name=body.dorm_name.strip(),
+        room_number=body.room_number.strip(),
+        residents_count=body.residents_count,
+    )
+    db.add(sub)
+    # Сбрасываем флаг — независимо от того, был запрос от админа или жилец
+    # сам инициативно отправил данные.
+    current_user.data_refresh_required = False
+    await db.flush()
+
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action="data_refresh_submit",
+        entity_type="user", entity_id=current_user.id,
+        details={
+            "dorm": sub.dorm_name,
+            "room": sub.room_number,
+            "residents": sub.residents_count,
+        },
+    )
+    await db.commit()
+    return {"status": "success", "message": "Спасибо! Данные приняты."}
+
+
+# ===== ADMIN =====
+@router.post(
+    "/admin/{user_id}/request-data-refresh",
+    summary="Админ запрашивает актуальные данные у одного жильца",
+)
+async def admin_request_data_refresh(
+    user_id: int,
+    current_user: User = Depends(allow_accountant),
+    db: AsyncSession = Depends(get_db),
+):
+    """Выставляет флаг — при следующем входе в моб-приложение жилец
+    увидит popup. Идемпотентно: повторный вызов просто обновит
+    requested_at.
+    """
+    result = await db.execute(select(User).where(User.id == user_id))
+    target = result.scalars().first()
+    if not target:
+        raise HTTPException(404, "Пользователь не найден")
+    if target.role != "user":
+        raise HTTPException(400, "Запрос можно делать только обычным жильцам")
+    target.data_refresh_required = True
+    target.data_refresh_requested_at = utcnow()
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action="data_refresh_request",
+        entity_type="user", entity_id=target.id,
+        details={"target_username": target.username},
+    )
+    await db.commit()
+    return {"status": "success", "user_id": target.id, "username": target.username}
+
+
+class BulkDataRefreshBody(BaseModel):
+    # None / пусто = всем жильцам (role='user', is_deleted=False).
+    user_ids: Optional[list[int]] = None
+
+
+@router.post(
+    "/admin/request-data-refresh-bulk",
+    summary="Массовый запрос актуальных данных",
+)
+async def admin_request_data_refresh_bulk(
+    body: BulkDataRefreshBody,
+    current_user: User = Depends(allow_accountant),
+    db: AsyncSession = Depends(get_db),
+):
+    """Bug BB: массово выставить флаг у выбранных жильцов или у всех
+    активных. Возвращает кол-во затронутых.
+    """
+    from sqlalchemy import update as sql_update
+
+    q = (
+        sql_update(User)
+        .where(User.role == "user", User.is_deleted.is_(False))
+        .values(data_refresh_required=True, data_refresh_requested_at=utcnow())
+    )
+    if body.user_ids:
+        q = q.where(User.id.in_(body.user_ids))
+
+    result = await db.execute(q)
+    affected = result.rowcount or 0
+
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action="data_refresh_request_bulk",
+        entity_type="user", entity_id=None,
+        details={"affected": affected, "explicit_ids": body.user_ids},
+    )
+    await db.commit()
+    return {"status": "success", "affected": affected}
+
+
+@router.get(
+    "/admin/data-refresh-submissions",
+    summary="Список ответов жильцов",
+)
+async def admin_list_data_refresh_submissions(
+    current_user: User = Depends(allow_accountant),
+    db: AsyncSession = Depends(get_db),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    only_mismatched: bool = Query(False, description="Только те, где данные жильца не совпадают с системой"),
+):
+    """Bug BB: что жильцы прислали. Свежие сверху. only_mismatched=True —
+    оставить только submission'ы, где dorm/room/residents отличается от
+    того, что сейчас в системе.
+    """
+    base = (
+        select(DataRefreshSubmission)
+        .options(selectinload(DataRefreshSubmission.user).selectinload(User.room))
+        .order_by(desc(DataRefreshSubmission.submitted_at))
+    )
+    total = (await db.execute(
+        select(func.count(DataRefreshSubmission.id))
+    )).scalar_one()
+
+    rows = (await db.execute(
+        base.offset((page - 1) * limit).limit(limit)
+    )).scalars().all()
+
+    items = []
+    for s in rows:
+        user = s.user
+        room = user.room if user else None
+        sys_dorm = room.dormitory_name if room else None
+        sys_room = room.room_number if room else None
+        sys_residents = room.total_room_residents if room else None
+        mismatched = (
+            (sys_dorm or "").strip().lower() != (s.dorm_name or "").strip().lower()
+            or (sys_room or "").strip().lower() != (s.room_number or "").strip().lower()
+            or (sys_residents != s.residents_count)
+        )
+        if only_mismatched and not mismatched:
+            continue
+        items.append({
+            "id": s.id,
+            "user_id": s.user_id,
+            "username": user.username if user else None,
+            "submitted_dorm": s.dorm_name,
+            "submitted_room": s.room_number,
+            "submitted_residents": s.residents_count,
+            "system_dorm": sys_dorm,
+            "system_room": sys_room,
+            "system_residents": sys_residents,
+            "mismatched": mismatched,
+            "submitted_at": s.submitted_at,
+            "requested_at": s.requested_at,
+        })
+    return {"total": total, "items": items}
 

@@ -24,6 +24,7 @@ from app.core.dependencies import RoleChecker, require_resident
 from app.core.time_utils import utcnow
 from app.modules.utility.models import SupportTicket, User
 from app.modules.utility.routers.admin_dashboard import write_audit_log
+from app.modules.utility.services.notification_service import send_push_to_user
 
 
 allow_management = RoleChecker(["accountant", "admin", "financier"])
@@ -264,6 +265,7 @@ async def respond_to_ticket(
         raise HTTPException(404, "Обращение не найдено")
 
     changed = []
+    pushed_response = False
     if body.admin_response is not None and body.admin_response.strip():
         t.admin_response = body.admin_response.strip()
         t.responded_by_id = current_user.id
@@ -271,6 +273,7 @@ async def respond_to_ticket(
         if not body.status:
             t.status = "answered"
         changed.append("response")
+        pushed_response = True
     if body.status:
         t.status = body.status
         changed.append(f"status={body.status}")
@@ -282,6 +285,23 @@ async def respond_to_ticket(
     )
     await db.commit()
     await db.refresh(t)
+
+    # Bug BA: уведомляем жильца пушем, что админ ответил. Делаем ПОСЛЕ commit
+    # чтобы не блокировать ответ если FCM лежит. Ошибку только логируем.
+    if pushed_response and t.user_id:
+        try:
+            short = t.subject[:50] + ("…" if len(t.subject) > 50 else "")
+            await send_push_to_user(
+                db=db,
+                user_id=t.user_id,
+                title="Ответ на ваше обращение",
+                body=f"«{short}» — администратор ответил, посмотрите в приложении.",
+                data={"type": "ticket_response", "ticket_id": str(t.id)},
+            )
+        except Exception:  # noqa: BLE001
+            # FCM падает — это не повод ломать админу UI. Лог уже в send_push_to_user.
+            pass
+
     return _to_out(
         t,
         user_username=t.user.username if t.user else None,

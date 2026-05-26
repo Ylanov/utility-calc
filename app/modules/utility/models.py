@@ -189,6 +189,15 @@ class User(Base):
     # заполненный FamilyMember).
     lives_alone = Column(Boolean, default=False, nullable=False, server_default="false")
 
+    # Bug BB: запрос на актуализацию данных. Админ выставляет
+    # data_refresh_required=True (например после массового аудита). Жилец
+    # при следующем входе в моб-приложение видит popup один раз, отвечает,
+    # popup отправляет submission в data_refresh_submissions, флаг
+    # сбрасывается. Подробности — миграция data_refresh_001.
+    data_refresh_required = Column(Boolean, default=False, nullable=False,
+                                     server_default="false", index=True)
+    data_refresh_requested_at = Column(DateTime, nullable=True)
+
     # --------------------------------------------------------------
     # Валидаторы консистентности — срабатывают на setattr.
     # Защищают от ситуации когда поля рассыпаются («single» с 5 жильцами
@@ -531,6 +540,36 @@ class DeviceToken(Base):
     device_type = Column(String, nullable=True)
     created_at = Column(DateTime, default=_utcnow)
     user = relationship("User", backref="device_tokens")
+
+
+# ======================================================
+# DATA REFRESH SUBMISSION (Bug BB)
+# ======================================================
+class DataRefreshSubmission(Base):
+    """Ответ жильца на запрос актуализации данных.
+
+    Сценарий: админ выставил User.data_refresh_required=True →
+    жилец в моб-приложении видит popup и отправляет: общежитие, комната,
+    кол-во проживающих. Сохраняем как submission (history) — НЕ применяем
+    автоматически к User/Room (защита от ошибочных ответов).
+
+    Админ смотрит submissions, сравнивает с системой и при расхождении
+    правит вручную через стандартный flow редактирования жильца/комнаты.
+    """
+    __tablename__ = "data_refresh_submissions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                     nullable=False, index=True)
+    # Когда админ запросил данные. NULL если жилец сам отправил без запроса.
+    requested_at = Column(DateTime, nullable=True)
+    # Что прислал жилец — свободные строки (мог переехать в другое общежитие).
+    dorm_name = Column(String(200), nullable=False)
+    room_number = Column(String(50), nullable=False)
+    residents_count = Column(Integer, nullable=False)
+    submitted_at = Column(DateTime, default=_utcnow, nullable=False, index=True)
+
+    user = relationship("User", backref="data_refresh_submissions")
 
 
 # ======================================================
