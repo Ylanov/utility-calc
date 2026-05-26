@@ -458,18 +458,38 @@ async def preview_calculation(
     # Превью отражает СОСТОЯНИЕ сезонных переключателей: глобальный
     # SystemSetting + per-tariff (heating_active + даты).
     from app.modules.utility.routers.settings import _load_seasonal
+    from app.modules.utility.services.calculations import CalculationError
     _seasonal = await _load_seasonal(db)
     _heating = _seasonal.heating_season_active and tariff.is_heating_active_now()
     _hw = _seasonal.hot_water_heating_active and tariff.is_hw_heating_active_now()
-    costs = calculate_utilities(
-        user=fake_user, room=fake_room, tariff=tariff,
-        volume_hot=data.volume_hot,
-        volume_cold=data.volume_cold,
-        volume_sewage=data.volume_hot + data.volume_cold,
-        volume_electricity_share=elect_share,
-        heating_season_active=_heating,
-        hot_water_heating_active=_hw,
-    )
+    try:
+        costs = calculate_utilities(
+            user=fake_user, room=fake_room, tariff=tariff,
+            volume_hot=data.volume_hot,
+            volume_cold=data.volume_cold,
+            volume_sewage=data.volume_hot + data.volume_cold,
+            volume_electricity_share=elect_share,
+            heating_season_active=_heating,
+            hot_water_heating_active=_hw,
+        )
+    except CalculationError as e:
+        # Bug AU followup: превью НЕ должен падать с 500 если тариф пустой
+        # (это норма при редактировании, до ввода значений). Возвращаем
+        # zero-breakdown с пояснением.
+        return {
+            "input": {
+                "apartment_area": float(data.apartment_area),
+                "residents_count": data.residents_count,
+                "volume_hot": float(data.volume_hot),
+                "volume_cold": float(data.volume_cold),
+                "volume_electricity_share": float(elect_share),
+            },
+            "breakdown": {},
+            "total_209": 0.0,
+            "total_205": 0.0,
+            "total_cost": 0.0,
+            "warning": str(e),
+        }
     # Раскладываем по 209/205 как в реальном approve
     cost_205 = costs.get("cost_social_rent", Decimal("0"))
     cost_209 = costs["total_cost"] - cost_205
