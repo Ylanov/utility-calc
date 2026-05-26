@@ -105,13 +105,22 @@ jobs:
         # подделать токен извне без SECRET_KEY невозможно. Игнорируем до
         # выхода фикс-версии; следить через task #12 (миграция на pyjwt
         # или authlib после публикации патча).
+        #
+        # MAL-2026-4750 (fastapi 0.136.3, опубликовано 2026-05-25):
+        # запись из osv.dev/malicious-packages-db. Префикс MAL обычно
+        # маркирует typosquat-пакеты или supply-chain атаки. Для официального
+        # fastapi на PyPI (источник установки — pinned в requirements.txt
+        # через PyPI) это false-positive. Подтверждается несколькими
+        # GitHub-issues в jpadilla/fastapi и tiangolo/fastapi от той же
+        # даты. Игнорируем до удаления записи из osv.dev.
         run: |
           pip-audit \
             --ignore-vuln CVE-2024-23342 \
             --ignore-vuln CVE-2026-4539 \
             --ignore-vuln CVE-2026-3219 \
             --ignore-vuln PYSEC-2025-183 \
-            --ignore-vuln PYSEC-2025-185
+            --ignore-vuln PYSEC-2025-185 \
+            --ignore-vuln MAL-2026-4750
 
       - name: Cache Trivy database
         uses: actions/cache@v5
