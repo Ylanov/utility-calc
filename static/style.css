@@ -1547,8 +1547,19 @@ textarea { resize: vertical; min-height: 80px; }
    Снизу — компактная форма ввода (центрирована, заметная).
    ========================================= */
 .manual-layout {
-    max-width: 720px;
+    /* Bug AV: было max-width:720px — но split-grid с двумя формами по
+       420px каждая (840 > 720) не помещался → grid падал в одну колонку.
+       Сейчас 1200px вмещает обе формы + поиск остаётся центрированным
+       по своему собственному max-width. */
+    max-width: 1200px;
     margin: 0 auto;
+}
+.manual-layout .manual-search {
+    /* Поиск ограничиваем 720px чтобы он не растягивался на всю ширину
+       обновлённого .manual-layout — иначе input выглядит непомерно длинным. */
+    max-width: 720px;
+    margin-left: auto;
+    margin-right: auto;
 }
 
 .manual-search {
