@@ -671,6 +671,69 @@ class MeterReading(Base):
 
 
 # ======================================================
+# ERROR LOG (E3-A, 28.05.2026) — копилка всех ошибок системы.
+#
+# Единая точка для:
+#   - backend 500 (ErrorCaptureMiddleware ловит unhandled exceptions);
+#   - backend 4xx (FastAPI exception_handler, опционально через флаг);
+#   - celery worker failures (task_failure signal);
+#   - frontend JS-ошибок (POST /api/errors/frontend от window.onerror).
+#
+# investigation JSONB — авто-собранный контекст по URL (gsheets-row +
+# user + room + recent readings + recent audit). Админ открывает запись,
+# жмёт «Скопировать в Claude» и вставляет в чат с AI готовый markdown
+# со всем необходимым контекстом для разбора.
+# ======================================================
+class ErrorLog(Base):
+    __tablename__ = "error_log"
+
+    id = Column(Integer, primary_key=True, index=True)
+    occurred_at = Column(
+        DateTime, nullable=False,
+        server_default=func.timezone("utc", func.now()), index=True,
+    )
+
+    # backend / celery / frontend
+    source = Column(String(20), nullable=False, index=True)
+    # error / warning / info
+    level = Column(String(10), nullable=False, default="error",
+                   server_default="error", index=True)
+
+    # HTTP-контекст (только для backend / frontend)
+    http_method = Column(String(10), nullable=True)
+    http_path = Column(String(500), nullable=True, index=True)
+    http_status = Column(Integer, nullable=True, index=True)
+
+    # Исключение
+    exc_type = Column(String(200), nullable=True, index=True)
+    exc_message = Column(Text, nullable=True)
+    traceback = Column(Text, nullable=True)
+
+    # Тело запроса (только полезные fields, без секретов)
+    request_body = Column(JSONB, nullable=True)
+
+    # Кто
+    user_id = Column(Integer, nullable=True, index=True)
+    user_username = Column(String(200), nullable=True)
+    request_id = Column(String(64), nullable=True, index=True)
+
+    # Авто-расследование: связанные сущности
+    investigation = Column(JSONB, nullable=True)
+    # Произвольные доп. поля (celery task name, args; JS file/line)
+    extra = Column(JSONB, nullable=True)
+
+    # Lifecycle админа
+    resolved = Column(Boolean, nullable=False, default=False,
+                      server_default="false", index=True)
+    resolved_at = Column(DateTime, nullable=True)
+    resolved_by_id = Column(Integer, nullable=True)
+    resolved_notes = Column(Text, nullable=True)
+
+    # Сколько раз эту запись копировали — метрика полезности.
+    copied_count = Column(Integer, nullable=False, default=0, server_default="0")
+
+
+# ======================================================
 # SYSTEM SETTINGS
 # ======================================================
 class SystemSetting(Base):

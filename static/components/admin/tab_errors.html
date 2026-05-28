@@ -1,0 +1,152 @@
+<!-- E3-C: вкладка «Копилка ошибок».
+     Таблица с фильтрами, модалка с traceback + investigation + кнопкой
+     «Скопировать в Claude». Бейдж unresolved-ошибок на кнопке вкладки. -->
+<div id="errors" class="tab-content">
+    <div style="display:flex; flex-direction:column; gap:14px;">
+
+        <!-- Заголовок + KPI -->
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap;">
+            <div>
+                <h2 style="margin:0; font-size:20px;"><i class="fa-solid fa-triangle-exclamation" style="color:#ef4444;"></i> Копилка ошибок</h2>
+                <div style="color:var(--text-secondary); font-size:13px; margin-top:4px;">
+                    Все ошибки backend, celery-worker и фронтенда. Открой любую → «Скопировать в Claude»
+                    и пришли мне готовый markdown.
+                </div>
+            </div>
+            <div style="display:flex; gap:8px;">
+                <button id="errorsRefresh" class="action-btn secondary-btn" title="Обновить список">
+                    <i class="fa-solid fa-rotate-right"></i> Обновить
+                </button>
+            </div>
+        </div>
+
+        <!-- KPI-карточки -->
+        <div id="errorsKpi" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px;">
+            <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:8px; padding:12px;">
+                <div style="color:var(--text-secondary); font-size:11px; text-transform:uppercase;">Загрузка…</div>
+            </div>
+        </div>
+
+        <!-- Фильтры -->
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; background:var(--bg-card); border:1px solid var(--border-color); border-radius:8px; padding:10px;">
+            <select id="errorsFilterSource" style="min-width:140px;" title="Источник">
+                <option value="">Все источники</option>
+                <option value="backend">🟦 Backend</option>
+                <option value="celery">🟪 Celery</option>
+                <option value="frontend">🟧 Frontend</option>
+            </select>
+            <select id="errorsFilterStatus" style="min-width:140px;" title="HTTP-статус">
+                <option value="">Все HTTP-статусы</option>
+                <option value="500">500 (server error)</option>
+                <option value="422">422 (validation)</option>
+                <option value="400">400 (bad request)</option>
+                <option value="409">409 (conflict)</option>
+                <option value="404">404 (not found)</option>
+                <option value="403">403 (forbidden)</option>
+            </select>
+            <select id="errorsFilterResolved" style="min-width:140px;" title="Решённые">
+                <option value="false">⏳ Только активные</option>
+                <option value="">🗂 Все</option>
+                <option value="true">✅ Только решённые</option>
+            </select>
+            <select id="errorsFilterSince" style="min-width:140px;" title="Период">
+                <option value="">За всё время</option>
+                <option value="1">За последний час</option>
+                <option value="24" selected>За 24 часа</option>
+                <option value="168">За неделю</option>
+                <option value="720">За 30 дней</option>
+            </select>
+            <input id="errorsFilterPath" type="text" placeholder="URL содержит…"
+                   style="flex:1; min-width:180px; padding:6px 10px;">
+            <input id="errorsFilterExcType" type="text" placeholder="Тип исключения…"
+                   style="min-width:180px; padding:6px 10px;">
+        </div>
+
+        <!-- Таблица -->
+        <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:8px; overflow:hidden;">
+            <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                <thead>
+                    <tr style="background:var(--bg-page); color:var(--text-secondary); font-size:11px; text-transform:uppercase;">
+                        <th style="padding:8px 10px; text-align:left;">Когда</th>
+                        <th style="padding:8px 10px; text-align:left;">Источник</th>
+                        <th style="padding:8px 10px; text-align:left;">HTTP</th>
+                        <th style="padding:8px 10px; text-align:left;">Исключение</th>
+                        <th style="padding:8px 10px; text-align:left;">URL</th>
+                        <th style="padding:8px 10px; text-align:left;">Пользователь</th>
+                        <th style="padding:8px 10px;"></th>
+                    </tr>
+                </thead>
+                <tbody id="errorsTableBody">
+                    <tr><td colspan="7" style="padding:30px; text-align:center; color:var(--text-secondary);">
+                        Загрузка…
+                    </td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Пагинация -->
+        <div style="display:flex; gap:10px; align-items:center; justify-content:flex-end;">
+            <button id="errorsPagePrev" class="icon-btn" title="Назад"><i class="fa-solid fa-chevron-left"></i></button>
+            <span id="errorsPageLabel" style="font-size:13px; color:var(--text-secondary);">1 / 1</span>
+            <button id="errorsPageNext" class="icon-btn" title="Вперёд"><i class="fa-solid fa-chevron-right"></i></button>
+            <span id="errorsPageTotal" style="font-size:12px; color:var(--text-tertiary);">Всего: 0</span>
+        </div>
+    </div>
+
+    <!-- =================== МОДАЛКА ДЕТАЛЕЙ =================== -->
+    <div id="errorDetailModal" class="modal" style="display:none;">
+        <div class="modal-content" style="max-width:1100px; max-height:90vh; overflow:auto;">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
+                <h3 id="errorDetailTitle" style="margin:0;">Ошибка</h3>
+                <button class="modal-close" data-action="error-close">✕</button>
+            </div>
+
+            <div id="errorDetailMeta" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:8px; margin-top:12px; font-size:12px;">
+                <!-- метаданные подставляются JS -->
+            </div>
+
+            <div style="display:flex; gap:8px; margin-top:16px; flex-wrap:wrap;">
+                <button id="errorCopyClaude" class="action-btn primary-btn">
+                    <i class="fa-solid fa-clipboard"></i> Скопировать в Claude (markdown)
+                </button>
+                <button id="errorResolve" class="action-btn success-btn">
+                    <i class="fa-solid fa-check"></i> Пометить решённой
+                </button>
+                <button id="errorReopen" class="action-btn secondary-btn" style="display:none;">
+                    <i class="fa-solid fa-rotate-left"></i> Снять «решено»
+                </button>
+                <button id="errorDelete" class="action-btn danger-btn">
+                    <i class="fa-solid fa-trash"></i> Удалить
+                </button>
+            </div>
+
+            <!-- Исключение + traceback -->
+            <div style="margin-top:18px;">
+                <h4 style="margin:0 0 6px 0;">Исключение</h4>
+                <pre id="errorDetailExc" style="background:#0f172a; color:#fef2f2; padding:12px; border-radius:6px; overflow:auto; font-size:12px; white-space:pre-wrap;"></pre>
+            </div>
+            <div style="margin-top:14px;">
+                <h4 style="margin:0 0 6px 0;">Traceback</h4>
+                <pre id="errorDetailTraceback" style="background:#1e293b; color:#e2e8f0; padding:12px; border-radius:6px; overflow:auto; font-size:11px; max-height:300px;"></pre>
+            </div>
+
+            <!-- Investigation -->
+            <div style="margin-top:14px;">
+                <h4 style="margin:0 0 6px 0;">🔍 Что система знает (auto-investigation)</h4>
+                <pre id="errorDetailInvestigation" style="background:#f8fafc; color:#0f172a; padding:12px; border:1px solid var(--border-color); border-radius:6px; overflow:auto; font-size:11px; max-height:300px;"></pre>
+            </div>
+
+            <!-- Тело запроса -->
+            <div style="margin-top:14px;">
+                <h4 style="margin:0 0 6px 0;">Тело запроса</h4>
+                <pre id="errorDetailRequestBody" style="background:#f8fafc; color:#0f172a; padding:12px; border:1px solid var(--border-color); border-radius:6px; overflow:auto; font-size:11px; max-height:200px;"></pre>
+            </div>
+
+            <!-- Доп. метаданные -->
+            <div style="margin-top:14px;">
+                <h4 style="margin:0 0 6px 0;">Доп. метаданные</h4>
+                <pre id="errorDetailExtra" style="background:#f8fafc; color:#0f172a; padding:12px; border:1px solid var(--border-color); border-radius:6px; overflow:auto; font-size:11px; max-height:200px;"></pre>
+            </div>
+        </div>
+    </div>
+</div>

@@ -52,6 +52,7 @@ from app.modules.utility.routers import (
     admin_notifications,
     tickets,
     admin_certificates,
+    admin_errors,
     app_releases,
     qr,
 )
@@ -74,6 +75,7 @@ from app.modules.arsenal import (
 # =====================================================================
 from app.core.request_context import RequestIdFilter, JsonFormatter
 from app.core.middleware.request_id import RequestIdMiddleware
+from app.core.middleware.error_capture import ErrorCaptureMiddleware
 from app.core.sentry_init import setup_sentry
 
 # JSON-логи в production (агрегация в Loki/CloudWatch/Sentry breadcrumbs),
@@ -300,6 +302,14 @@ async def health_check():
 # во всём остальном middleware-стеке и хендлерах.
 app.add_middleware(RequestIdMiddleware)
 
+# ErrorCaptureMiddleware (E3-A): ловит unhandled exceptions от handler'ов,
+# сохраняет в error_log с traceback + URL + body + user + investigation.
+# Регистрируется ПОСЛЕ RequestIdMiddleware (значит выполняется ВНУТРИ его
+# в нисходящем пути), чтобы request_id уже был установлен. Не ловит 4xx
+# (их FastAPI обрабатывает через exception_handler) — для 4xx есть
+# отдельный хук ниже по флагу analyzer_config.
+app.add_middleware(ErrorCaptureMiddleware)
+
 app.add_middleware(
     TrustedHostMiddleware,
     allowed_hosts=["asy-tk.ru", "www.asy-tk.ru", "localhost", "127.0.0.1"],
@@ -427,6 +437,8 @@ app.include_router(admin_notifications.router)
 app.include_router(tickets.router_client)
 app.include_router(tickets.router_admin)
 app.include_router(admin_certificates.router)
+# E3-B: копилка ошибок — /api/admin/errors/* + /api/errors/frontend.
+app.include_router(admin_errors.router)
 app.include_router(app_releases.router)
 app.include_router(qr.router)
 

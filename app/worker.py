@@ -160,3 +160,75 @@ celery.conf.imports = [
 # админов и небольшом числе фоновых задач Sentry-events достаточно для
 # алертов на падения и медленные задачи. Если в будущем понадобятся точные
 # тайминги — Sentry Performance их пишет автоматически.
+
+# =====================================================
+# КОПИЛКА ОШИБОК (E3-A, 28.05.2026)
+# Каждое падение задачи дополнительно сохраняем в БД error_log, чтобы
+# админ видел в /api/admin/errors без захода в Sentry.
+# =====================================================
+from celery.signals import task_failure  # noqa: E402
+
+
+@task_failure.connect
+def _on_task_failure(sender=None, task_id=None, exception=None,
+                     args=None, kwargs=None, traceback=None,
+                     einfo=None, **_):
+    """Перехват любого failure celery-задачи → error_log."""
+    import asyncio
+    import logging
+    import traceback as _tb
+
+    _log = logging.getLogger("celery.task_failure_hook")
+
+    try:
+        from app.core.database import AsyncSessionLocal
+        from app.core.error_logger import log_error
+
+        task_name = getattr(sender, "name", str(sender)) if sender else "unknown"
+        tb_str = None
+        if einfo is not None and hasattr(einfo, "traceback"):
+            tb_str = str(einfo.traceback)[:50000]
+        elif exception is not None:
+            tb_str = "".join(
+                _tb.format_exception(
+                    type(exception), exception, exception.__traceback__
+                )
+            )[:50000]
+
+        async def _save():
+            async with AsyncSessionLocal() as db:
+                await log_error(
+                    db,
+                    source="celery",
+                    level="error",
+                    exc=exception,
+                    traceback_str=tb_str,
+                    extra={
+                        "task_name": task_name,
+                        "task_id": task_id,
+                        "args": _truncate_repr(args),
+                        "kwargs": _truncate_repr(kwargs),
+                    },
+                    run_investigation=False,  # для celery URL нет
+                )
+
+        # Celery handler — sync; разворачиваем event-loop одноразово.
+        try:
+            loop = asyncio.new_event_loop()
+            loop.run_until_complete(_save())
+            loop.close()
+        except RuntimeError:
+            # Если уже есть running loop (редкий случай для signal-обработчика
+            # внутри test runner'а) — лог через sync-обёртку asyncio.run().
+            asyncio.run(_save())
+    except Exception as e:
+        _log.warning("[task_failure_hook] failed to log: %s", e)
+
+
+def _truncate_repr(value, limit: int = 1000):
+    """repr с обрезкой по длине — args/kwargs могут содержать большие dicts."""
+    try:
+        s = repr(value)
+        return s if len(s) <= limit else s[:limit] + f"...[+{len(s)-limit} chars]"
+    except Exception:
+        return "<unrepr-able>"

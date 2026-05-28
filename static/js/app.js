@@ -15,19 +15,66 @@ if (!Auth.isAuthenticated()) {
 }
 
 // --- 2. Глобальный перехватчик ошибок (Error Boundary) ---
+// E3-B: дополнительно шлём ошибку на бэк в /api/errors/frontend, чтобы
+// она оказалась в админской «Копилке ошибок» рядом с серверными
+// 500/celery-failures. Простой беспроверочный POST без await — UX не
+// должен зависеть от логирования. Дедуп по message за последние 5с —
+// чтобы цикл «while(true){throw}» в багнутом компоненте не залил БД.
+const _frontendErrorRecent = new Map();  // message → timestamp
+function _reportFrontendError(payload) {
+    try {
+        const key = (payload.message || '') + '|' + (payload.source || '');
+        const now = Date.now();
+        const last = _frontendErrorRecent.get(key);
+        if (last && (now - last) < 5000) return;
+        _frontendErrorRecent.set(key, now);
+        // Очистим если карта разрослась.
+        if (_frontendErrorRecent.size > 100) {
+            const cutoff = now - 5000;
+            for (const [k, t] of _frontendErrorRecent) {
+                if (t < cutoff) _frontendErrorRecent.delete(k);
+            }
+        }
+        // Fire-and-forget; не используем api.js обёртку, чтоб не упасть
+        // на её же ошибках (никаких retry, никаких toast).
+        fetch('/api/errors/frontend', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            keepalive: true,  // дойдёт даже если страница закрывается
+        }).catch(() => {});
+    } catch { /* безопасно игнорируем */ }
+}
+
 window.addEventListener('unhandledrejection', (event) => {
     console.error('Unhandled Rejection:', event.reason);
 
     // Игнорируем ошибки отмены запросов (AbortController)
     if (event.reason && event.reason.name === 'AbortError') return;
 
-    const msg = event.reason?.message || 'Неизвестная ошибка сервера';
+    const reason = event.reason || {};
+    const msg = reason.message || String(reason) || 'Неизвестная ошибка сервера';
     toast(`Системная ошибка: ${msg}`, 'error');
+    _reportFrontendError({
+        message: String(msg).slice(0, 5000),
+        stack: (reason.stack || '').slice(0, 20000) || null,
+        url: window.location.href.slice(0, 500),
+        user_agent: (navigator.userAgent || '').slice(0, 500),
+    });
 });
 
 window.addEventListener('error', (event) => {
     console.error('Global Error:', event.error);
     toast(`Ошибка приложения: ${event.message}`, 'error');
+    _reportFrontendError({
+        message: String(event.message || '').slice(0, 5000),
+        source: (event.filename || '').slice(0, 500) || null,
+        lineno: event.lineno || null,
+        colno: event.colno || null,
+        stack: (event.error?.stack || '').slice(0, 20000) || null,
+        url: window.location.href.slice(0, 500),
+        user_agent: (navigator.userAgent || '').slice(0, 500),
+    });
 });
 
 // --- 3. Инициализация приложения ---
@@ -246,7 +293,7 @@ function handleRoute() {
     // для обратной совместимости.
     // ВАЖНО: при добавлении новой вкладки — обязательно добавить её сюда,
     // иначе clickByHash сделает fallback на dashboard.
-    const validTabs = ['dashboard', 'tools', 'housing', 'users', 'debts', 'certs', 'audit', 'tickets'];
+    const validTabs = ['dashboard', 'tools', 'housing', 'users', 'debts', 'certs', 'audit', 'tickets', 'errors'];
     let tabToLoad = validTabs.includes(hash) ? hash : defaultTab;
     if (hash === 'readings') tabToLoad = 'dashboard';
     if (hash === 'manual' || hash === 'tariffs' || hash === 'accountant') tabToLoad = 'tools';
@@ -351,6 +398,15 @@ async function initModule(tabId) {
                     loadedModules.users = UsersModule;
                 }
                 loadedModules.users.init();
+                break;
+            // E3-C: «Копилка ошибок» — список бэк/celery/frontend ошибок
+            // с auto-investigation и кнопкой «Скопировать в Claude».
+            case 'errors':
+                if (!loadedModules.errors) {
+                    const { ErrorsModule } = await import('./modules/errors.js');
+                    loadedModules.errors = ErrorsModule;
+                }
+                loadedModules.errors.init();
                 break;
             case 'debts':
                 if (!loadedModules.debts) {
