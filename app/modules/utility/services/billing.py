@@ -21,65 +21,19 @@ logger = logging.getLogger("billing_service")
 # Хелперы AUTO-стратегий
 # =====================================================================
 
-def _avg_monthly_delta_from_manual_history(
-    manual_history: list,
-    target_period_id: int | None = None,
-) -> tuple[Decimal, Decimal, Decimal]:
-    """Среднемесячная дельта (hot, cold, elect) на основе manual-подач.
+# _avg_monthly_delta_from_manual_history удалён в рефакторе 28.05.2026 (Коммит 2).
+# Раньше использовался для стратегии AUTO_AVG — расчёт средней месячной
+# дельты по manual-подачам, делённой на |Δperiod_id|. Это допущение
+# «period_id ≈ календарный месяц» сломалось когда админ создавал
+# ретроактивные периоды (Калачёв: |Май(88) − Начальный(1)| = 87,
+# avg = 13/87 ≈ 0.149 м³ вместо нормативных 3 м³ ГВС × 4 чел = 12).
+# Теперь всегда NORM-only — см. _growing_norm_volumes ниже.
 
-    Раньше считалось как `sum(pair_delta) / N_пар` — без нормализации на
-    число пропущенных периодов между подачами. Это давало завышенные
-    значения для жильцов, которые подают раз в полгода: pair_delta за
-    6 месяцев трактовалась как «месячная норма» и AUTO_AVG прибавлял
-    шестимесячный объём за один календарный месяц.
 
-    Пример инцидента (Липша, май 2026):
-      manual_history = [Начальный 784/2085, gsheets-2025-XX 770/2060]
-        (между подачами ~6 периодов)
-      pair_delta = 14/25 (за 6 месяцев)
-      old avg = 14/25 / 1 пара = 14 м³/«месяц» (а реально 2.3 м³/мес)
-      Февраль 2026: last + avg = 784 + 14 ≈ 798 (при ожидаемом ~786).
-      В марте жилец подал реальные 794 → дельта отрицательная → счёт = 0.
-      В результате жилец «переплатил» 11 765 ₽.
-
-    Теперь делим pair_delta на |Δperiod_id| и усредняем уже эти
-    нормализованные значения. period_id монотонно растёт (+1 каждый
-    месяц), поэтому |Δperiod_id| ≈ число календарных месяцев.
-
-    manual_history передаётся отсортированным DESC (свежие первые),
-    как в обоих вызывающих местах (close_current_period и
-    auto_fill_period_readings).
-
-    target_period_id — id текущего периода, используется для подсчёта
-    «месячной» дельты для самой свежей подачи (от свежего manual до
-    target). Без него — игнорируется, считаются только пары соседей.
-    """
-    zero = Decimal("0.000")
-    if len(manual_history) < 2:
-        return zero, zero, zero
-
-    d_hot: list[Decimal] = []
-    d_cold: list[Decimal] = []
-    d_el: list[Decimal] = []
-    for j in range(len(manual_history) - 1):
-        curr, prev = manual_history[j], manual_history[j + 1]
-        # Защита: period_id может быть None для legacy readings.
-        if curr.period_id is None or prev.period_id is None:
-            months = Decimal("1")
-        else:
-            months = Decimal(max(1, abs(int(curr.period_id) - int(prev.period_id))))
-        raw_hot = max(zero, D(curr.hot_water) - D(prev.hot_water))
-        raw_cold = max(zero, D(curr.cold_water) - D(prev.cold_water))
-        raw_el = max(zero, D(curr.electricity) - D(prev.electricity))
-        d_hot.append(raw_hot / months)
-        d_cold.append(raw_cold / months)
-        d_el.append(raw_el / months)
-    cnt = Decimal(len(d_hot)) if d_hot else Decimal("1")
-    return (
-        sum(d_hot, zero) / cnt,
-        sum(d_cold, zero) / cnt,
-        sum(d_el, zero) / cnt,
-    )
+# Порог санкции: после N подряд пропусков (miss_count >= NORM_SANCTION_THRESHOLD)
+# норматив умножается на коэффициент. Раньше использовалось значение «3»
+# inline в обеих функциях — теперь как константа модуля.
+NORM_SANCTION_THRESHOLD = 3
 
 
 def _growing_norm_volumes(
@@ -87,22 +41,30 @@ def _growing_norm_volumes(
     residents: Decimal,
     miss_count: int,
 ) -> tuple[Decimal, Decimal, Decimal, Decimal]:
-    """Норматив × residents × растущий коэффициент.
+    """Норматив × residents × пороговый коэффициент.
 
     Возвращает (vol_hot, vol_cold, vol_elect, effective_coef).
 
-    Раньше начислялся ноль (AUTO_NO_HISTORY) или повтор предыдущих значений
-    (AUTO_AVG_FALLBACK, расход 0) до 3-го пропуска подряд, после чего
-    включалась санкция norm × residents × sanction_coefficient (обычно 3).
-    Это давало серию из 3 месяцев почти бесплатных периодов для жильцов
-    без истории — пока санкция не сработает.
+    История эволюции:
+      v1 (до мая 2026): 0 первые 3 месяца (AUTO_NO_HISTORY / AUTO_AVG_FALLBACK
+        повторяли последние значения), потом резкая санкция × коэффициент.
+        Жилец получал почти бесплатные первые 3 месяца молчания.
+      v2 (mid-may 2026): линейно растущий коэф (×1, ×2, ×3, cap). Пытались
+        плавно подталкивать. Но это создавало «лесенку» в квитанции и было
+        непонятно жильцу почему счёт растёт по месяцам если он одинаково
+        не подавал.
+      v3 (28.05.2026, текущая): ПОРОГОВЫЙ. Первые NORM_SANCTION_THRESHOLD
+        пропусков подряд (miss_count = 0..2) — норматив × residents × 1.
+        С NORM_SANCTION_THRESHOLD-го пропуска (miss_count >= 3) — норматив
+        × residents × sanction_coefficient (cap, обычно 3).
 
-    Теперь коэффициент растёт линейно начиная с 1-го пропуска
-    (miss_count=0 → coef=1, miss_count=1 → coef=2, ...) с потолком
-    sanction_coefficient. Это плавно подталкивает жильца к подаче.
+    Это соответствует ПП №354: «средний расход / норматив для месяцев
+    молчания, повышенный коэффициент для злостно молчащих». Жилец видит
+    стабильное начисление 3 месяца, потом резко тройное — это явный
+    сигнал «подай показания».
     """
     cap = D(getattr(user_tariff, "norm_coefficient", 0) or 3)
-    effective = min(cap, Decimal(max(1, miss_count + 1)))
+    effective = cap if miss_count >= NORM_SANCTION_THRESHOLD else D(1)
     vol_hot = D(user_tariff.hw_norm_per_capita or 0) * residents * effective
     vol_cold = D(user_tariff.cw_norm_per_capita or 0) * residents * effective
     vol_el = D(user_tariff.el_norm_per_capita or 0) * residents * effective
@@ -225,7 +187,8 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
             flags = (reading.anomaly_flags or "").upper()
             return any(
                 t in flags for t in
-                ("AUTO_GENERATED", "AUTO_AVG", "AUTO_NORM_SANCTION", "BASELINE")
+                ("AUTO_GENERATED", "AUTO_AVG", "AUTO_NORM", "AUTO_NORM_SANCTION",
+                 "AUTO_AVG_FALLBACK", "AUTO_NO_HISTORY", "BASELINE")
             )
 
         # Расчет внутри чанка
@@ -247,69 +210,34 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
                 else:
                     break
 
-            # Manual history (для расчёта среднего «нормально подавал»).
-            manual_history = [r for r in history if not _is_auto(r)]
-
-            # Решение какую стратегию применить.
-            # Порог санкции: 3 подряд AUTO → следующий (текущий) уже 4-й → норматив × коэф.
-            # До этого — берём среднее по manual_history (если есть) или
-            # baseline+norm (если у жильца вообще нет manual-подач).
-            sanction_threshold = 3
-            apply_sanction = miss_count >= sanction_threshold
+            # NORM-only логика (28.05.2026 рефактор):
+            # Раньше было 3 ветки — AUTO_NORM_SANCTION (miss>=3),
+            # AUTO_AVG (если >=2 manual подач), AUTO_AVG_FALLBACK/
+            # AUTO_NO_HISTORY (1 или 0 manual). AUTO_AVG считал
+            # «среднюю дельту по manual history» — но при ретроактивных
+            # подачах period_id не отражал биллинговую хронологию, и
+            # «среднее» получало мусорные значения (Калачёв: 13/87 ≈ 0.149
+            # м³ ГВС вместо нормативных 3-12). См. инцидент 28.05.2026.
+            #
+            # Сейчас одна формула: норматив × residents × коэф (×1 первые
+            # NORM_SANCTION_THRESHOLD пропусков, ×sanction_coefficient после).
+            # См. _growing_norm_volumes для деталей.
             residents = D(user.residents_count or 1)
-
-            anomaly_flag = "AUTO_GENERATED"
-            new_hot, new_cold, new_elect = zero, zero, zero
-            vol_hot = vol_cold = delta_elect = zero
             last_hot = D(history[0].hot_water) if history else zero
             last_cold = D(history[0].cold_water) if history else zero
             last_elect = D(history[0].electricity) if history else zero
 
-            if apply_sanction:
-                # Жёсткая санкция: 3 пропуска подряд → норматив × residents ×
-                # sanction_coefficient (cap). Сохраняем старое поведение
-                # для обратной совместимости отчётов (AUTO_NORM_SANCTION
-                # сейчас отдельная категория в admin_reports).
-                vol_hot, vol_cold, delta_elect, _coef = _growing_norm_volumes(
-                    user_tariff, residents, miss_count,
-                )
-                new_hot = last_hot + vol_hot
-                new_cold = last_cold + vol_cold
-                new_elect = last_elect + delta_elect
-                anomaly_flag = "AUTO_NORM_SANCTION"
-            elif len(manual_history) >= 2:
-                # AUTO_AVG: среднемесячная дельта нормализованная на число
-                # периодов между подачами (см. _avg_monthly_delta_from_manual_history).
-                avg_hot, avg_cold, avg_el = _avg_monthly_delta_from_manual_history(
-                    manual_history, target_period_id=active_period.id,
-                )
-                vol_hot, vol_cold, delta_elect = avg_hot, avg_cold, avg_el
-                new_hot = last_hot + avg_hot
-                new_cold = last_cold + avg_cold
-                new_elect = last_elect + avg_el
-                anomaly_flag = "AUTO_AVG"
-            else:
-                # 0 или 1 manual подач — нет надёжной истории для среднего.
-                # Раньше:
-                #   1 manual → AUTO_AVG_FALLBACK (повтор последних, расход 0);
-                #   0 manual → AUTO_NO_HISTORY (только фикс-часть).
-                # Оба варианта давали жильцу почти бесплатный период до
-                # момента когда сработает санкция (3 пропуска). Теперь сразу
-                # с 1-го пропуска начисляем норматив × residents × растущий
-                # коэффициент (1, 2, 3, ... до cap = sanction_coefficient).
-                vol_hot, vol_cold, delta_elect, _coef = _growing_norm_volumes(
-                    user_tariff, residents, miss_count,
-                )
-                new_hot = last_hot + vol_hot
-                new_cold = last_cold + vol_cold
-                new_elect = last_elect + delta_elect
-                # Сохраняем флаги AUTO_AVG_FALLBACK / AUTO_NO_HISTORY чтобы
-                # старые отчёты и фильтры продолжали работать. Семантика
-                # обновлена в комментарии.
-                anomaly_flag = (
-                    "AUTO_AVG_FALLBACK" if len(manual_history) == 1
-                    else "AUTO_NO_HISTORY"
-                )
+            vol_hot, vol_cold, delta_elect, _coef = _growing_norm_volumes(
+                user_tariff, residents, miss_count,
+            )
+            new_hot = last_hot + vol_hot
+            new_cold = last_cold + vol_cold
+            new_elect = last_elect + delta_elect
+            anomaly_flag = (
+                "AUTO_NORM_SANCTION"
+                if miss_count >= NORM_SANCTION_THRESHOLD
+                else "AUTO_NORM"
+            )
 
             total_residents = D(
                 user.room.total_room_residents
@@ -371,23 +299,22 @@ async def auto_fill_period_readings(
     period_id: int,
     dry_run: bool = False,
 ) -> dict:
-    """Bug AN: применить логику авто-генерации reading'ов (норматив /
-    среднее / × коэффициент) к УКАЗАННОМУ периоду — не только активному.
+    """Применить NORM-only авто-генерацию reading'ов к УКАЗАННОМУ периоду.
 
-    Используется когда админ видит «пустые» исторические месяцы (жилец
-    не подал, система ничего не начислила) и хочет добить их по
-    нормативу. Та же стратегия что в close_current_period:
+    Используется когда админ видит «пустой» исторический месяц (жилец
+    не подал, система ничего не начислила — например свежесозданный
+    ретроактивный период «Март 2026») и хочет добить его по нормативу.
+    Та же стратегия что в close_current_period (NORM-only, 28.05.2026):
 
-      * miss_count >= 3 (3 подряд AUTO в истории) → 4-й AUTO применяет
-        AUTO_NORM_SANCTION (норматив × residents × norm_coefficient).
-      * 2+ manual подачи в истории → AUTO_AVG (среднее по дельтам).
-      * 1 manual подача → AUTO_AVG_FALLBACK (повтор последних = расход 0).
-      * 0 manual → AUTO_NO_HISTORY (только фикс-часть).
+      * miss_count < NORM_SANCTION_THRESHOLD (0..2 пропусков подряд)
+        → AUTO_NORM (норматив × residents × 1).
+      * miss_count >= NORM_SANCTION_THRESHOLD (3+ подряд)
+        → AUTO_NORM_SANCTION (норматив × residents × коэф санкции).
 
     Жильцы, у кого УЖЕ есть approved reading в этом периоде, пропускаются.
 
     Returns dict с stats: {processed, created, skipped_has_reading,
-    by_strategy: {AUTO_NORM_SANCTION: N, AUTO_AVG: M, ...}, dry_run}.
+    by_strategy: {AUTO_NORM: N, AUTO_NORM_SANCTION: M}, dry_run}.
     """
     target_period = await db.get(BillingPeriod, period_id)
     if not target_period:
@@ -438,7 +365,8 @@ async def auto_fill_period_readings(
     def _is_auto(reading) -> bool:
         flags = (reading.anomaly_flags or "").upper()
         return any(t in flags for t in
-                   ("AUTO_GENERATED", "AUTO_AVG", "AUTO_NORM_SANCTION", "BASELINE"))
+                   ("AUTO_GENERATED", "AUTO_AVG", "AUTO_NORM", "AUTO_NORM_SANCTION",
+                 "AUTO_AVG_FALLBACK", "AUTO_NO_HISTORY", "BASELINE"))
 
     for user in users_to_process:
         from app.modules.utility.services.tariff_cache import tariff_cache
@@ -453,9 +381,8 @@ async def auto_fill_period_readings(
         # .name), а не по period_id. period_id ≠ хронология когда админ создаёт
         # ретроактивные периоды — например «Февраль 2026» с id=90 после «Май
         # 2026» с id=88. См. длинный комментарий в skip_recalc.py:118-130.
-        # Возвращаем DESC (свежие первые), как было раньше — caller
-        # (miss_count loop, _avg_monthly_delta_from_manual_history) ожидает
-        # именно этот порядок.
+        # Возвращаем DESC (свежие первые) — miss_count loop ниже считает
+        # подряд auto'ы от свежего к старому.
         rows = (await db.execute(
             select(MeterReading, BillingPeriod)
             .join(BillingPeriod, MeterReading.period_id == BillingPeriod.id)
@@ -475,47 +402,27 @@ async def auto_fill_period_readings(
                 miss_count += 1
             else:
                 break
-        manual_history = [r for r in history if not _is_auto(r)]
-        apply_sanction = miss_count >= 3
-        residents = D(user.residents_count or 1)
 
-        anomaly_flag = "AUTO_NO_HISTORY"
-        new_hot = new_cold = new_elect = zero
-        vol_hot = vol_cold = delta_elect = zero
+        # NORM-only логика (28.05.2026 рефактор). Одна формула:
+        # норматив × residents × (1 если miss<3, иначе sanction_coefficient).
+        # Подробности и история эволюции — в close_current_period выше и
+        # docstring _growing_norm_volumes.
+        residents = D(user.residents_count or 1)
         last_hot = D(history[0].hot_water) if history else zero
         last_cold = D(history[0].cold_water) if history else zero
         last_elect = D(history[0].electricity) if history else zero
 
-        if apply_sanction:
-            vol_hot, vol_cold, delta_elect, _coef = _growing_norm_volumes(
-                user_tariff, residents, miss_count,
-            )
-            new_hot = last_hot + vol_hot
-            new_cold = last_cold + vol_cold
-            new_elect = last_elect + delta_elect
-            anomaly_flag = "AUTO_NORM_SANCTION"
-        elif len(manual_history) >= 2:
-            avg_hot, avg_cold, avg_el = _avg_monthly_delta_from_manual_history(
-                manual_history, target_period_id=target_period.id,
-            )
-            vol_hot, vol_cold, delta_elect = avg_hot, avg_cold, avg_el
-            new_hot = last_hot + avg_hot
-            new_cold = last_cold + avg_cold
-            new_elect = last_elect + avg_el
-            anomaly_flag = "AUTO_AVG"
-        else:
-            # 0 или 1 manual подач — растущий норматив с первого пропуска.
-            # См. подробный комментарий в close_current_period.
-            vol_hot, vol_cold, delta_elect, _coef = _growing_norm_volumes(
-                user_tariff, residents, miss_count,
-            )
-            new_hot = last_hot + vol_hot
-            new_cold = last_cold + vol_cold
-            new_elect = last_elect + delta_elect
-            anomaly_flag = (
-                "AUTO_AVG_FALLBACK" if len(manual_history) == 1
-                else "AUTO_NO_HISTORY"
-            )
+        vol_hot, vol_cold, delta_elect, _coef = _growing_norm_volumes(
+            user_tariff, residents, miss_count,
+        )
+        new_hot = last_hot + vol_hot
+        new_cold = last_cold + vol_cold
+        new_elect = last_elect + delta_elect
+        anomaly_flag = (
+            "AUTO_NORM_SANCTION"
+            if miss_count >= NORM_SANCTION_THRESHOLD
+            else "AUTO_NORM"
+        )
 
         total_residents = D(
             user.room.total_room_residents

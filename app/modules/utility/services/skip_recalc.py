@@ -58,12 +58,17 @@ ZERO = Decimal("0.00")
 
 # Эти флаги означают «начислено системой, не подал жилец». Подлежат
 # ретроактивному пересчёту при возврате жильца к factual-подаче.
+# AUTO_NORM/AUTO_NORM_SANCTION — текущие (NORM-only, 28.05.2026).
+# Остальные — legacy от старой логики (AUTO_AVG до 28.05.2026).
+# Все распознаются как auto чтобы skip_recalc корректно работал на
+# старых reading'ах, которые ещё не пересчитаны.
 _AUTO_FLAGS = (
-    "AUTO_AVG",
-    "AUTO_NORM_SANCTION",
-    "AUTO_AVG_FALLBACK",
-    "AUTO_NO_HISTORY",
-    "AUTO_GENERATED",  # legacy
+    "AUTO_NORM",            # текущий: норматив × residents × 1
+    "AUTO_NORM_SANCTION",   # текущий: норматив × residents × коэф
+    "AUTO_AVG",             # legacy (до 28.05.2026): среднее по подачам
+    "AUTO_AVG_FALLBACK",    # legacy: повтор последних или растущий норматив
+    "AUTO_NO_HISTORY",      # legacy: только фикс-часть
+    "AUTO_GENERATED",       # legacy: ранние авто-генерации
 )
 
 
