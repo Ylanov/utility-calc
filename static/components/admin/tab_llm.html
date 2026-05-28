@@ -37,8 +37,18 @@
                     </div>
                 </div>
                 <div>
-                    <label style="font-size:11px; color:var(--text-secondary); text-transform:uppercase;">Бюджет, ₽ в день</label>
+                    <label style="font-size:11px; color:var(--text-secondary); text-transform:uppercase;">Бюджет ₽/день <span style="color:var(--text-tertiary);">(если не Freemium)</span></label>
                     <input id="llmBudget" type="number" min="0" max="100000" step="10" style="width:100%; padding:6px 10px;">
+                </div>
+                <div>
+                    <label style="font-size:11px; color:var(--text-secondary); text-transform:uppercase;">Токенов в месяц (Freemium)</label>
+                    <input id="llmTokensBudget" type="number" min="0" max="100000000" step="1000" style="width:100%; padding:6px 10px;" placeholder="0 = не Freemium">
+                    <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">Lite 248807 · Pro 38057 · Max 50000</div>
+                </div>
+                <div>
+                    <label style="font-size:11px; color:var(--text-secondary); text-transform:uppercase;">Начало периода</label>
+                    <input id="llmPeriodStart" type="date" style="width:100%; padding:6px 10px;">
+                    <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">Когда обновился лимит у Сбера</div>
                 </div>
                 <div style="display:flex; align-items:flex-end;">
                     <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">

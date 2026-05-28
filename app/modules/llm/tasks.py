@@ -38,9 +38,10 @@ logger = logging.getLogger(__name__)
 
 # Не разбираем ошибки старше N дней — там уже неактуально.
 _ERROR_ANALYSIS_MAX_AGE_DAYS = 7
-# Не делаем больше N ошибок за один тик (защита от взрыва бюджета,
-# даже если у нас сразу 1000 свежих ошибок — обработаем по 10 в час).
-_ERROR_ANALYSIS_BATCH = 10
+# Не делаем больше N ошибок за один тик. L8: понижено с 10 до 3
+# для соответствия Freemium-лимиту GigaChat Lite (248k токенов/мес).
+# Один анализ ≈ 1500-2500 токенов → 3 × 4 запуска/день = ~30k/мес.
+_ERROR_ANALYSIS_BATCH = 3
 
 
 async def _analyze_errors_run() -> dict:
@@ -104,7 +105,10 @@ async def _analyze_errors_run() -> dict:
 
 
 def _error_to_prompt_payload(err: ErrorLog) -> dict:
-    """Срезаем error_log в компактный JSON-payload для LLM."""
+    """Срезаем error_log в компактный JSON-payload для LLM.
+    L8: для Freemium-токенов агрессивно режем — traceback 30 строк
+    вместо 100, exc_message 800 символов вместо 1500.
+    """
     return {
         "id": err.id,
         "occurred_at": str(err.occurred_at),
@@ -113,9 +117,8 @@ def _error_to_prompt_payload(err: ErrorLog) -> dict:
         "http_path": err.http_path,
         "http_status": err.http_status,
         "exc_type": err.exc_type,
-        "exc_message": (err.exc_message or "")[:1500],
-        # Урезаем traceback до 100 строк — на 90% достаточно для root cause.
-        "traceback_tail": "\n".join((err.traceback or "").split("\n")[-100:]),
+        "exc_message": (err.exc_message or "")[:800],
+        "traceback_tail": "\n".join((err.traceback or "").split("\n")[-30:]),
         "request_body": err.request_body,
         "investigation": err.investigation,
         "extra": err.extra,

@@ -145,13 +145,14 @@ celery.conf.beat_schedule = {
         "task": "auto_fill_missing_readings_task",
         "schedule": crontab(minute=45, hour=3),
     },
-    # L5: AI-анализ свежих error_log — каждый час обходит N свежих
-    # необработанных ошибок и просит LLM написать root_cause/severity/
-    # suggested_action. Дешёво (GigaChat Lite ~30-50 коп на ошибку,
-    # cap _ERROR_ANALYSIS_BATCH=10 в час = ~5 ₽/час максимум).
-    "llm-analyze-errors-hourly": {
+    # L5+L8: AI-анализ свежих error_log. Для Freemium-подписки GigaChat
+    # (фикс. пакет токенов в месяц) уменьшили частоту: каждые 6 часов
+    # вместо часа, batch 3 вместо 10 → максимум ~12 анализов в день
+    # = ~30k токенов/мес для Lite (12% от 248k) — оставляем запас на
+    # user-summary и тесты.
+    "llm-analyze-errors-6h": {
         "task": "llm_analyze_errors_task",
-        "schedule": crontab(minute=15),  # каждый час в HH:15
+        "schedule": crontab(minute=15, hour="*/6"),  # 00:15, 06:15, 12:15, 18:15
     },
     # L7: Daily admin briefing — каждое утро 06:00 UTC (= 09:00 МСК).
     "llm-daily-briefing": {

@@ -1,22 +1,25 @@
-"""service.py — высокоуровневая обёртка ask() для LLM (L3).
+"""service.py — высокоуровневая обёртка ask() для LLM (L3 + L8).
 
 Каждый вызов:
   1. Проверяет enabled + не превышен ли disabled_until.
-  2. Проверяет дневной бюджет (сумма cost_rub за сегодня).
-  3. Делает запрос через client.LLMClient.
-  4. Считает приблизительную стоимость по тарифу провайдера.
-  5. Сохраняет audit-запись в llm_calls.
-  6. При превышении бюджета — disabled_until = next midnight UTC.
+  2. Бюджет:
+     - если monthly_budget_tokens > 0 → Freemium-режим: считаем токены
+       за месяц (с даты monthly_period_start);
+     - иначе → старый рубль/день (cost_rub за сегодня vs daily_budget_rub).
+  3. Берёт Redis-lock (1 поток для Freemium — иначе 429 от GigaChat).
+  4. Делает запрос через client.LLMClient.
+  5. Считает приблизительную стоимость + использованные токены.
+  6. Сохраняет audit-запись в llm_calls.
+  7. При превышении бюджета — disabled_until до конца периода.
 
-Цены ниже — ориентировочные на май 2026. Админ может скорректировать
-prices_per_1k_tokens в коде или в analyzer_settings.
+Цены ниже — ориентировочные на май 2026.
 """
 from __future__ import annotations
 
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime, time as dtime, timedelta
+from datetime import date, datetime, time as dtime, timedelta
 from decimal import Decimal
 from typing import Optional
 
@@ -30,6 +33,54 @@ from app.modules.utility.models import LLMCall, LLMSetting
 
 
 logger = logging.getLogger(__name__)
+
+# Redis-lock для соблюдения «1 параллельный поток» (Freemium-ограничение
+# GigaChat). Ключ shared между web и celery — критично, чтобы admin'ский
+# тест-запрос не пересекался с фоновым analyze_errors.
+_REDIS_LOCK_KEY = "llm:single_thread"
+_REDIS_LOCK_TIMEOUT_SEC = 90  # длиннее самого долгого chat-запроса (60с)
+
+_redis_client = None
+
+
+def _get_redis():
+    """Lazy-init redis-клиента. Возвращает None при сбое."""
+    global _redis_client
+    if _redis_client is not None:
+        return _redis_client
+    try:
+        from redis.asyncio import Redis
+        from app.core.config import settings as _cfg
+        _redis_client = Redis.from_url(_cfg.REDIS_URL, decode_responses=True)
+        return _redis_client
+    except Exception as e:
+        logger.warning("[llm.service] Redis init failed: %s", e)
+        return None
+
+
+async def _try_acquire_lock() -> bool:
+    """Пытается взять lock. True = взяли, False = занят."""
+    r = _get_redis()
+    if r is None:
+        # Если Redis недоступен — не блокируем, но логируем (production-risk).
+        logger.warning("[llm.service] Redis unavailable — running WITHOUT lock")
+        return True
+    try:
+        return bool(await r.set(_REDIS_LOCK_KEY, "1",
+                                 nx=True, ex=_REDIS_LOCK_TIMEOUT_SEC))
+    except Exception as e:
+        logger.warning("[llm.service] Lock acquire failed: %s", e)
+        return True  # graceful: пускаем без lock'а
+
+
+async def _release_lock() -> None:
+    r = _get_redis()
+    if r is None:
+        return
+    try:
+        await r.delete(_REDIS_LOCK_KEY)
+    except Exception:
+        pass
 
 
 # Цены за 1000 токенов в рублях (ориентир, май 2026).
@@ -82,7 +133,7 @@ async def is_available(db: AsyncSession) -> tuple[bool, Optional[str]]:
 
 
 async def _today_spent_rub(db: AsyncSession) -> Decimal:
-    """Сколько уже потрачено за сегодня по UTC."""
+    """Сколько уже потрачено за сегодня по UTC (рубль-режим)."""
     today_start = datetime.combine(utcnow().date(), dtime.min)
     spent = (await db.execute(
         select(func.coalesce(func.sum(LLMCall.cost_rub), 0))
@@ -90,6 +141,29 @@ async def _today_spent_rub(db: AsyncSession) -> Decimal:
         .where(LLMCall.success.is_(True))
     )).scalar_one()
     return Decimal(spent or 0)
+
+
+async def _month_spent_tokens(db: AsyncSession, period_start: date) -> int:
+    """Сколько токенов потрачено с даты period_start (Freemium-режим).
+
+    Считаем сумму (prompt_tokens + response_tokens) по успешным вызовам.
+    """
+    pstart = datetime.combine(period_start, dtime.min)
+    spent = (await db.execute(
+        select(
+            func.coalesce(func.sum(LLMCall.prompt_tokens), 0)
+            + func.coalesce(func.sum(LLMCall.response_tokens), 0)
+        )
+        .where(LLMCall.occurred_at >= pstart)
+        .where(LLMCall.success.is_(True))
+    )).scalar_one()
+    return int(spent or 0)
+
+
+def _default_period_start() -> date:
+    """1-е число текущего месяца — fallback если monthly_period_start не задан."""
+    today = utcnow().date()
+    return today.replace(day=1)
 
 
 def _estimate_cost(model_name: str, prompt_tokens: int, response_tokens: int) -> Decimal:
@@ -141,52 +215,88 @@ async def ask(
             error=f"LLM disabled until {s.disabled_until} ({s.disabled_reason})",
         )
 
-    # Бюджет.
-    spent_today = await _today_spent_rub(db)
-    budget = Decimal(s.daily_budget_rub or 50)
-    if spent_today >= budget:
-        s.disabled_until = _next_midnight_utc()
-        s.disabled_reason = f"daily_budget_exceeded: {spent_today}/{budget} ₽"
-        await db.commit()
-        return LLMServiceResult(
-            ok=False,
-            error=f"Daily budget exceeded: {spent_today} >= {budget} ₽",
-            disabled_after=True,
-        )
+    # ─────── БЮДЖЕТ: 2 режима ───────
+    # Если monthly_budget_tokens > 0 → Freemium (приоритетный).
+    # Иначе → старый рубль/день.
+    is_freemium = (s.monthly_budget_tokens or 0) > 0
+    if is_freemium:
+        period_start = s.monthly_period_start or _default_period_start()
+        spent_tokens = await _month_spent_tokens(db, period_start)
+        token_budget = int(s.monthly_budget_tokens)
+        if spent_tokens >= token_budget:
+            # Блокируем до следующего месяца (приблизительно).
+            s.disabled_until = _next_month_start_utc()
+            s.disabled_reason = (
+                f"monthly_token_budget_exceeded: {spent_tokens}/{token_budget} токенов "
+                f"(с {period_start})"
+            )
+            await db.commit()
+            return LLMServiceResult(
+                ok=False,
+                error=(
+                    f"Месячный токен-бюджет исчерпан: {spent_tokens}/{token_budget}. "
+                    f"Сбер обновит лимиты в начале следующего месяца, либо купи доп. пакет."
+                ),
+                disabled_after=True,
+            )
+    else:
+        spent_today = await _today_spent_rub(db)
+        budget = Decimal(s.daily_budget_rub or 50)
+        if spent_today >= budget:
+            s.disabled_until = _next_midnight_utc()
+            s.disabled_reason = f"daily_budget_exceeded: {spent_today}/{budget} ₽"
+            await db.commit()
+            return LLMServiceResult(
+                ok=False,
+                error=f"Daily budget exceeded: {spent_today} >= {budget} ₽",
+                disabled_after=True,
+            )
 
     token = decrypt_token(s.token_encrypted)
     if not token:
         return LLMServiceResult(ok=False, error="Failed to decrypt token (wrong key?)")
 
+    # ─────── REDIS LOCK: 1 параллельный поток ───────
+    if not await _try_acquire_lock():
+        return LLMServiceResult(
+            ok=False,
+            error=(
+                "LLM сейчас занят другим запросом (Freemium = 1 поток). "
+                "Попробуй через 30-60 секунд."
+            ),
+        )
+
     client = make_client(s.provider, token, base_url=s.base_url)
-
     prompt_chars = sum(len(m.get("content", "")) for m in messages)
-
     started = time.monotonic()
-    try:
-        resp: LLMResponse = await client.chat(
-            messages,
-            model=s.model_name,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            timeout=timeout,
-        )
-        elapsed_ms = int((time.monotonic() - started) * 1000)
-    except LLMClientError as e:
-        elapsed_ms = int((time.monotonic() - started) * 1000)
-        # Сохраняем failed-вызов (не учитываем в бюджете success-only).
-        call = LLMCall(
-            purpose=purpose, provider=s.provider, model_name=s.model_name,
-            prompt_chars=prompt_chars, response_chars=None,
-            success=False, error=str(e)[:5000],
-            latency_ms=elapsed_ms,
-            related_type=related_type, related_id=related_id,
-        )
-        db.add(call)
-        await db.commit()
-        return LLMServiceResult(ok=False, error=str(e), latency_ms=elapsed_ms)
 
-    # Считаем стоимость.
+    try:
+        try:
+            resp: LLMResponse = await client.chat(
+                messages,
+                model=s.model_name,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                timeout=timeout,
+            )
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+        except LLMClientError as e:
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            # Сохраняем failed-вызов (не учитываем в бюджете success-only).
+            call = LLMCall(
+                purpose=purpose, provider=s.provider, model_name=s.model_name,
+                prompt_chars=prompt_chars, response_chars=None,
+                success=False, error=str(e)[:5000],
+                latency_ms=elapsed_ms,
+                related_type=related_type, related_id=related_id,
+            )
+            db.add(call)
+            await db.commit()
+            return LLMServiceResult(ok=False, error=str(e), latency_ms=elapsed_ms)
+    finally:
+        await _release_lock()
+
+    # Считаем токены и стоимость.
     prompt_tokens = resp.prompt_tokens or _approx_tokens_from_chars(prompt_chars)
     response_tokens = resp.response_tokens or _approx_tokens_from_chars(len(resp.text))
     cost = _estimate_cost(s.model_name, prompt_tokens, response_tokens)
@@ -201,14 +311,24 @@ async def ask(
     )
     db.add(call)
 
-    # Проверяем после этого вызова — превысили ли бюджет?
+    # Проверяем превышение после этого вызова — для авто-блокировки.
     disabled_after = False
-    if (spent_today + cost) >= budget:
-        s.disabled_until = _next_midnight_utc()
-        s.disabled_reason = (
-            f"daily_budget_exceeded_after_call: {spent_today + cost}/{budget} ₽"
-        )
-        disabled_after = True
+    used_tokens_this = prompt_tokens + response_tokens
+    if is_freemium:
+        if (spent_tokens + used_tokens_this) >= token_budget:
+            s.disabled_until = _next_month_start_utc()
+            s.disabled_reason = (
+                f"monthly_token_budget_exceeded_after_call: "
+                f"{spent_tokens + used_tokens_this}/{token_budget} токенов"
+            )
+            disabled_after = True
+    else:
+        if (spent_today + cost) >= budget:
+            s.disabled_until = _next_midnight_utc()
+            s.disabled_reason = (
+                f"daily_budget_exceeded_after_call: {spent_today + cost}/{budget} ₽"
+            )
+            disabled_after = True
 
     await db.commit()
 
@@ -216,6 +336,14 @@ async def ask(
         ok=True, text=resp.text, cost_rub=cost,
         latency_ms=elapsed_ms, disabled_after=disabled_after,
     )
+
+
+def _next_month_start_utc() -> datetime:
+    """1-е число СЛЕДУЮЩЕГО месяца, 00:00 UTC."""
+    today = utcnow().date()
+    if today.month == 12:
+        return datetime.combine(date(today.year + 1, 1, 1), dtime.min)
+    return datetime.combine(date(today.year, today.month + 1, 1), dtime.min)
 
 
 __all__ = ["ask", "is_available", "get_settings", "LLMServiceResult"]

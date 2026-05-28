@@ -763,9 +763,18 @@ class LLMSetting(Base):
     # Главный выключатель.
     enabled = Column(Boolean, nullable=False, default=False,
                      server_default="false")
-    # Дневной бюджет в рублях.
+    # Дневной бюджет в рублях. Используется когда monthly_budget_tokens=0
+    # (т.е. платная подписка с pay-per-request).
     daily_budget_rub = Column(Numeric(10, 2), nullable=False,
                               default=50, server_default="50")
+    # L8 (28.05.2026): Freemium-режим — фиксированный пакет токенов в
+    # месяц от Сбера (Lite=248k, Pro=38k, Max=50k). Если > 0 — это
+    # приоритетный лимит, daily_budget_rub игнорируется.
+    monthly_budget_tokens = Column(Integer, nullable=False,
+                                    default=0, server_default="0")
+    # Дата старта текущего периода подписки (когда обновятся токены).
+    # Используется для подсчёта потраченных токенов в этом периоде.
+    monthly_period_start = Column(Date, nullable=True)
     # Авто-блок при превышении бюджета или hard error.
     disabled_until = Column(DateTime, nullable=True)
     disabled_reason = Column(String(200), nullable=True)

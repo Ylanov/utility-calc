@@ -47,6 +47,12 @@ class SettingsUpdate(BaseModel):
     model_name: Optional[str] = Field(None, max_length=64)
     enabled: Optional[bool] = None
     daily_budget_rub: Optional[float] = Field(None, ge=0, le=100000)
+    # L8 Freemium: лимит токенов в месяц. Если > 0 — приоритетный
+    # (рубль-бюджет игнорируется). По дефолту 0.
+    monthly_budget_tokens: Optional[int] = Field(None, ge=0, le=100_000_000)
+    monthly_period_start: Optional[str] = Field(
+        None, description="ISO-дата начала текущего периода (YYYY-MM-DD)",
+    )
     base_url: Optional[str] = Field(None, max_length=256)
 
 
@@ -97,6 +103,10 @@ async def get_settings(
         "base_url": s.base_url,
         "enabled": s.enabled,
         "daily_budget_rub": float(s.daily_budget_rub or 0),
+        # L8 Freemium:
+        "monthly_budget_tokens": int(s.monthly_budget_tokens or 0),
+        "monthly_period_start": s.monthly_period_start.isoformat() if s.monthly_period_start else None,
+        "budget_mode": "tokens" if (s.monthly_budget_tokens or 0) > 0 else "rub",
         "disabled_until": s.disabled_until.isoformat() if s.disabled_until else None,
         "disabled_reason": s.disabled_reason,
         "updated_at": s.updated_at.isoformat() if s.updated_at else None,
@@ -118,6 +128,17 @@ async def update_settings(
     if body.model_name is not None: s.model_name = body.model_name
     if body.enabled is not None: s.enabled = body.enabled
     if body.daily_budget_rub is not None: s.daily_budget_rub = body.daily_budget_rub
+    if body.monthly_budget_tokens is not None:
+        s.monthly_budget_tokens = body.monthly_budget_tokens
+    if body.monthly_period_start is not None:
+        if body.monthly_period_start == "":
+            s.monthly_period_start = None
+        else:
+            from datetime import date as _date
+            try:
+                s.monthly_period_start = _date.fromisoformat(body.monthly_period_start)
+            except ValueError:
+                raise HTTPException(400, "monthly_period_start: ожидаю YYYY-MM-DD")
     if body.base_url is not None: s.base_url = body.base_url or None
     s.updated_at = utcnow()
     s.updated_by_id = current_user.id
@@ -248,6 +269,21 @@ async def usage(
     s = await llm_service.get_settings(db)
     budget = float(s.daily_budget_rub) if s else 50.0
 
+    # L8: токен-статистика для Freemium.
+    token_stats = None
+    if s and (s.monthly_budget_tokens or 0) > 0:
+        from datetime import date as _date
+        pstart = s.monthly_period_start or _date.today().replace(day=1)
+        spent_tokens = await llm_service._month_spent_tokens(db, pstart)
+        budget_tokens = int(s.monthly_budget_tokens)
+        token_stats = {
+            "period_start": pstart.isoformat(),
+            "tokens_used": spent_tokens,
+            "tokens_budget": budget_tokens,
+            "tokens_remaining": max(0, budget_tokens - spent_tokens),
+            "used_pct": (spent_tokens / budget_tokens * 100) if budget_tokens > 0 else 0,
+        }
+
     return {
         "period_days": days,
         "total_calls": total_calls,
@@ -258,6 +294,8 @@ async def usage(
         "today_calls": today_calls,
         "today_budget_rub": budget,
         "today_used_pct": (float(today_cost) / budget * 100) if budget > 0 else 0,
+        "budget_mode": "tokens" if token_stats else "rub",
+        "token_stats": token_stats,
         "by_purpose": [
             {"purpose": p, "calls": int(cnt), "cost_rub": float(cost)}
             for p, cnt, cost in by_purpose

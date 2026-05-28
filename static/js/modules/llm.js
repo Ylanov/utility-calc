@@ -45,6 +45,8 @@ export const LLMModule = {
             provider:     document.getElementById('llmProvider'),
             model:        document.getElementById('llmModel'),
             budget:       document.getElementById('llmBudget'),
+            tokensBudget: document.getElementById('llmTokensBudget'),
+            periodStart:  document.getElementById('llmPeriodStart'),
             enabled:      document.getElementById('llmEnabled'),
             tokenInput:   document.getElementById('llmTokenInput'),
             tokenHint:    document.getElementById('llmTokenHint'),
@@ -104,6 +106,8 @@ export const LLMModule = {
             this.dom.provider.value = s.provider || 'disabled';
             this.dom.model.value    = s.model_name || 'GigaChat';
             this.dom.budget.value   = s.daily_budget_rub || 50;
+            this.dom.tokensBudget.value = s.monthly_budget_tokens || 0;
+            this.dom.periodStart.value  = s.monthly_period_start || '';
             this.dom.enabled.checked = !!s.enabled;
             if (s.token_set) {
                 this.dom.tokenHint.innerHTML = `<i class="fa-solid fa-check" style="color:#10b981;"></i> Токен сохранён: <code>${escapeHtml(s.token_hint)}</code>`;
@@ -127,6 +131,8 @@ export const LLMModule = {
             model_name: this.dom.model.value.trim() || 'GigaChat',
             enabled: this.dom.enabled.checked,
             daily_budget_rub: Number(this.dom.budget.value) || 50,
+            monthly_budget_tokens: Number(this.dom.tokensBudget.value) || 0,
+            monthly_period_start: this.dom.periodStart.value || '',
         };
         try {
             await api.put('/admin/llm/settings', body);
@@ -204,19 +210,41 @@ export const LLMModule = {
     async loadUsage() {
         try {
             const u = await api.get('/admin/llm/usage?days=30');
-            const cards = [
-                { label: 'Сегодня потрачено',
-                  value: `${Number(u.today_cost_rub || 0).toFixed(2)} ₽`,
-                  sub: `из ${u.today_budget_rub} ₽ (${u.today_used_pct.toFixed(0)}%)`,
-                  color: u.today_used_pct > 80 ? '#f59e0b' : '#10b981' },
-                { label: 'Вызовов сегодня', value: u.today_calls || 0,
-                  sub: '', color: '#3b82f6' },
-                { label: 'За 30 дней', value: u.total_calls,
-                  sub: `${u.total_success} ok / ${u.total_failed} err`, color: '#6b7280' },
-                { label: 'Сумма за 30 дней',
-                  value: `${Number(u.total_cost_rub || 0).toFixed(2)} ₽`,
-                  sub: '', color: '#8b5cf6' },
-            ];
+            let cards;
+            if (u.budget_mode === 'tokens' && u.token_stats) {
+                // L8 Freemium: KPI в токенах.
+                const t = u.token_stats;
+                cards = [
+                    { label: 'Токенов потрачено за месяц',
+                      value: t.tokens_used.toLocaleString('ru-RU'),
+                      sub: `из ${t.tokens_budget.toLocaleString('ru-RU')} (${t.used_pct.toFixed(1)}%)`,
+                      color: t.used_pct > 80 ? '#ef4444'
+                            : t.used_pct > 50 ? '#f59e0b' : '#10b981' },
+                    { label: 'Осталось токенов',
+                      value: t.tokens_remaining.toLocaleString('ru-RU'),
+                      sub: `с ${t.period_start}`, color: '#3b82f6' },
+                    { label: 'Вызовов сегодня', value: u.today_calls || 0,
+                      sub: '', color: '#6b7280' },
+                    { label: 'За 30 дней (вызовов)', value: u.total_calls,
+                      sub: `${u.total_success} ok / ${u.total_failed} err`,
+                      color: '#8b5cf6' },
+                ];
+            } else {
+                // Рубль-режим.
+                cards = [
+                    { label: 'Сегодня потрачено',
+                      value: `${Number(u.today_cost_rub || 0).toFixed(2)} ₽`,
+                      sub: `из ${u.today_budget_rub} ₽ (${u.today_used_pct.toFixed(0)}%)`,
+                      color: u.today_used_pct > 80 ? '#f59e0b' : '#10b981' },
+                    { label: 'Вызовов сегодня', value: u.today_calls || 0,
+                      sub: '', color: '#3b82f6' },
+                    { label: 'За 30 дней', value: u.total_calls,
+                      sub: `${u.total_success} ok / ${u.total_failed} err`, color: '#6b7280' },
+                    { label: 'Сумма за 30 дней',
+                      value: `${Number(u.total_cost_rub || 0).toFixed(2)} ₽`,
+                      sub: '', color: '#8b5cf6' },
+                ];
+            }
             this.dom.usageKpi.innerHTML = cards.map(c => `
                 <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:8px; padding:12px;">
                     <div style="color:var(--text-secondary); font-size:11px; text-transform:uppercase;">${escapeHtml(c.label)}</div>
