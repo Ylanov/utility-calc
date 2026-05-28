@@ -1455,6 +1455,17 @@
                                         title="Создать MeterReading для всех зависших auto_approved строк (без reading_id)">
                                     <i class="fa-solid fa-arrow-up-right-from-square"></i> Промоутить авто-утв.
                                 </button>
+                                <!-- recalc-bulk: массовая пересборка ВСЕХ жильцов с
+                                     GSheets-подачами за указанный год. Удалит
+                                     AUTO_AVG/AUTO_NORM-readings, пересоздаст реальные
+                                     из таблицы. Закрывает кейс «у Липши и др. в БД висит
+                                     старый AUTO_AVG с кривыми числами после первого
+                                     расчёта (до фикса нормализации на |Δperiod_id|)». -->
+                                <button id="btnGsheetsRebuildAll" class="action-btn"
+                                        style="background:#7c3aed; color:#fff; border:1px solid #7c3aed;"
+                                        title="Пересобрать ВСЕХ жильцов с GSheets-подачами за указанный год. Удалит AUTO-readings, пересоздаст реальные из таблицы.">
+                                    <i class="fa-solid fa-wand-magic-sparkles"></i> Пересобрать всех за год
+                                </button>
                                 <button id="btnGsheetsRefresh" class="icon-btn" title="Обновить список">
                                     <i class="fa-solid fa-rotate-right"></i>
                                 </button>

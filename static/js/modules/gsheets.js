@@ -118,6 +118,8 @@ export const GSheetsModule = {
             selectAll: document.getElementById('gsheetsSelectAll'),
             btnSync: document.getElementById('btnGsheetsSync'),
             btnPromote: document.getElementById('btnGsheetsPromote'),
+            // recalc-bulk: массовая пересборка всех жильцов за год.
+            btnRebuildAll: document.getElementById('btnGsheetsRebuildAll'),
             btnRefresh: document.getElementById('btnGsheetsRefresh'),
             btnBulkApprove: document.getElementById('btnBulkApprove'),
             tbody: document.getElementById('gsheetsTableBody'),
@@ -137,6 +139,7 @@ export const GSheetsModule = {
     bindEvents() {
         this.dom.btnSync?.addEventListener('click', () => this.triggerSync());
         this.dom.btnPromote?.addEventListener('click', () => this.triggerPromote());
+        this.dom.btnRebuildAll?.addEventListener('click', () => this.rebuildAllResidents());
         this.dom.btnRefresh?.addEventListener('click', () => this.refresh());
         this.dom.btnBulkApprove?.addEventListener('click', () => this.bulkApprove());
 
@@ -905,6 +908,65 @@ export const GSheetsModule = {
             this.refresh();
         } catch (e) {
             toast('Промоушн не удался: ' + e.message, 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = originalHTML;
+        }
+    },
+
+    // recalc-bulk: массовая пересборка всех жильцов за год.
+    // Вызов /admin/gsheets/auto-rebuild/apply без user_id — для всех
+    // жильцов с GSheets-подачами за указанный год. Удалит AUTO-readings
+    // (AUTO_AVG / AUTO_NORM_SANCTION / AUTO_AVG_FALLBACK), пересоздаст
+    // обычные reading'и + baseline из реальных GSheets-подач.
+    // Закрывает кейс «у Липши и других в БД висит старый AUTO_AVG с
+    // кривыми числами после старого (до фикса нормализации) расчёта».
+    async rebuildAllResidents() {
+        const btn = this.dom.btnRebuildAll;
+        if (!btn) return;
+        const year = Number(prompt(
+            'За какой год пересобрать всех жильцов?\n\n' +
+            'Это удалит ВСЕ AUTO_AVG/AUTO_NORM/AUTO_AVG_FALLBACK reading\'и за\n' +
+            'указанный год и пересоздаст их из реальных подач Google Sheets.\n\n' +
+            'Ручные правки и approved-readings из mobile/admin-форм НЕ затрагиваются\n' +
+            '(они помечены как PROTECTED).',
+            String(new Date().getFullYear())
+        ));
+        if (!year || isNaN(year) || year < 2020 || year > 2100) {
+            return;
+        }
+        if (!confirm(
+            `Пересобрать ВСЕХ жильцов с GSheets-подачами за ${year} год?\n\n` +
+            `Это может занять 1-5 минут в зависимости от объёма.\n\n` +
+            `OK — запустить, Отмена — отказаться.`
+        )) return;
+
+        btn.disabled = true;
+        const originalHTML = btn.innerHTML;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Пересборка…';
+        try {
+            const res = await api.post(
+                `/admin/gsheets/auto-rebuild/apply?year=${year}&confirm=YES_REBUILD_FROM_GSHEETS`,
+                {}
+            );
+            const created = res.baselines_created || 0;
+            const readings = res.readings_created || 0;
+            const deleted = res.readings_deleted || 0;
+            const skipped = res.skipped_users || 0;
+            const protected_ = res.protected_users || 0;
+            const errors = res.errors_count || 0;
+            const summary =
+                `Baseline'ов создано: ${created}, reading'ов: ${readings}, ` +
+                `удалено старых: ${deleted}, пропущено жильцов: ${skipped}` +
+                (protected_ ? `, защищённых: ${protected_}` : '') +
+                (errors ? `, ошибок: ${errors}` : '');
+            toast(`Готово. ${summary}`, errors > 0 ? 'warning' : 'success');
+            if (errors > 0 && res.errors) {
+                console.warn('[rebuild-all errors]', res.errors);
+            }
+            this.refresh();
+        } catch (e) {
+            toast('Пересборка не удалась: ' + (e.message || e), 'error');
         } finally {
             btn.disabled = false;
             btn.innerHTML = originalHTML;
