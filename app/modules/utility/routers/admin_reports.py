@@ -406,6 +406,16 @@ async def get_accountant_summary_v2(
     only_anomaly: bool = Query(False),
     only_missing: bool = Query(False),
     search: Optional[str] = Query(None),
+    # housing_001/E2-C: фильтры по типу помещения. Когда админ хочет
+    # увидеть финотчёт ТОЛЬКО по домам/общагам или по конкретной улице.
+    # На начислении не отражается — это только сужение выборки.
+    place_type: Optional[str] = Query(
+        None, pattern="^(dormitory|house)$",
+        description="dormitory | house — фильтр по типу помещения",
+    ),
+    street: Optional[str] = Query(
+        None, description="Точное название улицы (для домов)",
+    ),
     history_periods: int = Query(
         12,
         ge=1,
@@ -446,6 +456,12 @@ async def get_accountant_summary_v2(
         )
         .order_by(Room.dormitory_name, Room.room_number, User.username)
     )
+    # housing_001/E2-C: фильтры по типу помещения сужают выборку
+    # ДО группировки по домам.
+    if place_type:
+        stmt = stmt.where(Room.place_type == place_type)
+    if street:
+        stmt = stmt.where(Room.street == street)
     rows = (await db.execute(stmt)).all()
 
     # 3) История за N предыдущих периодов — для sparkline и Δ.

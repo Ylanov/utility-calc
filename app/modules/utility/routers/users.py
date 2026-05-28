@@ -271,6 +271,17 @@ async def get_users(
         resident_type: Optional[str] = Query(None, pattern="^(family|single)$"),
         billing_mode: Optional[str] = Query(None, pattern="^(by_meter|per_capita)$"),
         dormitory: Optional[str] = Query(None),
+        # housing_001/E2-C: фильтр по типу помещения (общага vs дом)
+        # и точному названию улицы (для домов). Парный с rooms.py-фильтрами,
+        # позволяет админу быстро вывести «жильцов всех домов» или «всех
+        # на улице Ленина».
+        place_type: Optional[str] = Query(
+            None, pattern="^(dormitory|house)$",
+            description="dormitory | house — тип помещения жильца",
+        ),
+        street: Optional[str] = Query(
+            None, description="Точное название улицы (только для place_type=house)",
+        ),
         tariff_id: Optional[int] = Query(None),
         db: AsyncSession = Depends(get_db)
 ):
@@ -282,8 +293,12 @@ async def get_users(
     items_query = select(User).options(selectinload(User.room)).where(User.is_deleted.is_(False))
     count_query = select(func.count(User.id)).where(User.is_deleted.is_(False))
 
-    # Нужен ли JOIN к Room: если ищем по dormitory / сортируем по нему / ищем текстом.
-    needs_room_join = bool(search or dormitory or sort_by in ("dormitory", "apartment_area"))
+    # Нужен ли JOIN к Room: если ищем по dormitory / сортируем по нему / ищем текстом
+    # / фильтруем по place_type / street.
+    needs_room_join = bool(
+        search or dormitory or place_type or street
+        or sort_by in ("dormitory", "apartment_area")
+    )
 
     if search:
         search_filter = f"%{search}%"
@@ -311,6 +326,12 @@ async def get_users(
     if dormitory:
         items_query = items_query.where(Room.dormitory_name == dormitory)
         count_query = count_query.where(Room.dormitory_name == dormitory)
+    if place_type:
+        items_query = items_query.where(Room.place_type == place_type)
+        count_query = count_query.where(Room.place_type == place_type)
+    if street:
+        items_query = items_query.where(Room.street == street)
+        count_query = count_query.where(Room.street == street)
 
     total = (await db.execute(count_query)).scalar_one()
 
@@ -333,6 +354,7 @@ async def get_users(
     # автоматически OFFSET.
     use_keyset = (sort_by == "id") and not any([
         search, resident_type, billing_mode, dormitory, tariff_id,
+        place_type, street,
     ])
 
     if use_keyset and cursor_id is not None:
@@ -503,6 +525,9 @@ async def export_users_list(
         resident_type: Optional[str] = Query(None, pattern="^(family|single)$"),
         billing_mode: Optional[str] = Query(None, pattern="^(by_meter|per_capita)$"),
         dormitory: Optional[str] = Query(None),
+        # housing_001/E2-C: парные фильтры с get_users.
+        place_type: Optional[str] = Query(None, pattern="^(dormitory|house)$"),
+        street: Optional[str] = Query(None),
         tariff_id: Optional[int] = Query(None),
         db: AsyncSession = Depends(get_db),
 ):
@@ -512,7 +537,7 @@ async def export_users_list(
         .options(selectinload(User.room), selectinload(User.tariff))
         .where(User.is_deleted.is_(False), User.role == "user")
     )
-    if search or dormitory:
+    if search or dormitory or place_type or street:
         q = q.outerjoin(Room, User.room_id == Room.id)
     if search:
         p = f"%{search}%"
@@ -528,6 +553,10 @@ async def export_users_list(
         q = q.where(User.billing_mode == billing_mode)
     if dormitory:
         q = q.where(Room.dormitory_name == dormitory)
+    if place_type:
+        q = q.where(Room.place_type == place_type)
+    if street:
+        q = q.where(Room.street == street)
     if tariff_id:
         q = q.where(User.tariff_id == tariff_id)
     q = q.order_by(User.id)
@@ -539,8 +568,8 @@ async def export_users_list(
     ws.title = "Жильцы"
     headers = [
         "ID", "Логин / ФИО", "Роль", "Тип жильца", "Режим оплаты",
-        "Общежитие", "Комната", "Площадь м²", "Проживающих", "Тариф",
-        "Место работы",
+        "Тип помещения", "Общежитие / Улица", "Комната / Квартира",
+        "Площадь м²", "Проживающих", "Тариф", "Место работы",
     ]
     for i, h in enumerate(headers, 1):
         c = ws.cell(row=1, column=i, value=h)
@@ -552,14 +581,29 @@ async def export_users_list(
         ws.cell(row=i, column=3, value=u.role)
         ws.cell(row=i, column=4, value="Семейный" if u.resident_type == "family" else "Холостяк")
         ws.cell(row=i, column=5, value="По счётчикам" if u.billing_mode == "by_meter" else "За койко-место")
-        ws.cell(row=i, column=6, value=u.room.dormitory_name if u.room else "")
-        ws.cell(row=i, column=7, value=u.room.room_number if u.room else "")
-        ws.cell(row=i, column=8, value=float(u.room.apartment_area) if (u.room and u.room.apartment_area) else 0)
-        ws.cell(row=i, column=9, value=u.residents_count or 1)
-        ws.cell(row=i, column=10, value=u.tariff.name if u.tariff else "")
-        ws.cell(row=i, column=11, value=u.workplace or "")
+        # housing_001/E2-C: новые колонки 6-8 — тип + адрес. Для дома кладём
+        # ул+дом в "Общежитие/Улица", квартиру в "Комната/Квартира".
+        if u.room and u.room.place_type == "house":
+            ws.cell(row=i, column=6, value="Дом / квартира")
+            _addr = ", ".join(filter(None, [
+                f"ул. {u.room.street}" if u.room.street else None,
+                f"д. {u.room.house_number}" if u.room.house_number else None,
+            ])) or ""
+            ws.cell(row=i, column=7, value=_addr)
+            ws.cell(row=i, column=8, value=(f"кв. {u.room.apartment_number}" if u.room.apartment_number else ""))
+        else:
+            ws.cell(row=i, column=6, value="Общежитие" if u.room else "")
+            ws.cell(row=i, column=7, value=u.room.dormitory_name if u.room else "")
+            ws.cell(row=i, column=8, value=u.room.room_number if u.room else "")
+        ws.cell(row=i, column=9, value=float(u.room.apartment_area) if (u.room and u.room.apartment_area) else 0)
+        ws.cell(row=i, column=10, value=u.residents_count or 1)
+        ws.cell(row=i, column=11, value=u.tariff.name if u.tariff else "")
+        ws.cell(row=i, column=12, value=u.workplace or "")
+    # 12 колонок (раньше было 11): A..L. Ширины перенумерованы:
+    # F → "Тип помещения", G → "Общежитие/Улица", H → "Комната/Квартира".
     for col, width in [("A", 6), ("B", 32), ("C", 10), ("D", 14), ("E", 18),
-                       ("F", 22), ("G", 8), ("H", 10), ("I", 12), ("J", 22), ("K", 24)]:
+                       ("F", 16), ("G", 22), ("H", 14), ("I", 10), ("J", 12),
+                       ("K", 22), ("L", 24)]:
         ws.column_dimensions[col].width = width
 
     buf = io.BytesIO()

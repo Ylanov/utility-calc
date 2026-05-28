@@ -57,6 +57,8 @@ export const UsersModule = {
             filterResidentType: document.getElementById('filterResidentType'),
             filterBillingMode: document.getElementById('filterBillingMode'),
             filterDormitory: document.getElementById('filterDormitory'),
+            // housing_001/E2-C: фильтр по типу помещения.
+            filterPlaceType: document.getElementById('filterPlaceType'),
             // KPI + распределение
             statsHost: document.getElementById('usersStats'),
             distributionHost: document.getElementById('usersDistribution'),
@@ -152,6 +154,7 @@ export const UsersModule = {
                 if (this.dom.filterResidentType?.value) qs.set('resident_type', this.dom.filterResidentType.value);
                 if (this.dom.filterBillingMode?.value) qs.set('billing_mode', this.dom.filterBillingMode.value);
                 if (this.dom.filterDormitory?.value) qs.set('dormitory', this.dom.filterDormitory.value);
+                if (this.dom.filterPlaceType?.value) qs.set('place_type', this.dom.filterPlaceType.value);
                 api.download('/users/export/list?' + qs.toString(), 'residents_export.xlsx');
             });
         }
@@ -171,7 +174,7 @@ export const UsersModule = {
         }
 
         // Фильтры таблицы: резидент тип / режим / общежитие
-        [this.dom.filterResidentType, this.dom.filterBillingMode, this.dom.filterDormitory].forEach(el => {
+        [this.dom.filterResidentType, this.dom.filterBillingMode, this.dom.filterDormitory, this.dom.filterPlaceType].forEach(el => {
             el?.addEventListener('change', () => this.table?.refresh());
         });
 
@@ -292,14 +295,29 @@ export const UsersModule = {
                 const rt = self.dom.filterResidentType?.value;
                 const bm = self.dom.filterBillingMode?.value;
                 const dn = self.dom.filterDormitory?.value;
+                // housing_001/E2-C: фильтр по типу помещения.
+                const pt = self.dom.filterPlaceType?.value;
                 if (rt) p.resident_type = rt;
                 if (bm) p.billing_mode = bm;
                 if (dn) p.dormitory = dn;
+                if (pt) p.place_type = pt;
                 return p;
             },
 
             renderRow: (user) => {
-                const address = user.room ? `${user.room.dormitory_name} / ком. ${user.room.room_number}` : '-';
+                // housing_001/E2-A: универсальный адрес (общага / дом).
+                const address = user.room
+                    ? (() => {
+                        if (user.room.place_type === 'house') {
+                            const p = [];
+                            if (user.room.street) p.push(`ул. ${user.room.street}`);
+                            if (user.room.house_number) p.push(`д. ${user.room.house_number}`);
+                            if (user.room.apartment_number) p.push(`кв. ${user.room.apartment_number}`);
+                            return '🏠 ' + (p.join(', ') || '—');
+                        }
+                        return `🏢 ${user.room.dormitory_name} / ком. ${user.room.room_number}`;
+                    })()
+                    : '-';
                 const area = user.room && user.room.apartment_area ? Number(user.room.apartment_area).toFixed(1) : '-';
                 const totalResidents = user.room ? user.room.total_room_residents : 1;
 

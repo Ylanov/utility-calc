@@ -173,6 +173,13 @@
                 <select id="filterDormitory" style="min-width:160px;" title="Фильтр по общежитию">
                     <option value="">Все общежития</option>
                 </select>
+                <!-- housing_001/E2-C: фильтр по типу помещения. Не требует
+                     отдельной загрузки опций — два статичных значения. -->
+                <select id="filterPlaceType" style="min-width:170px;" title="Тип помещения">
+                    <option value="">🏢🏠 Все помещения</option>
+                    <option value="dormitory">🏢 Только общежития</option>
+                    <option value="house">🏠 Только дома</option>
+                </select>
                 <button id="btnExportUsers" class="action-btn success-btn" title="Экспорт в Excel">
                     <i class="fa-solid fa-file-excel"></i> Excel
                 </button>
