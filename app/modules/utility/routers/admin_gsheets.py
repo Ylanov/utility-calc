@@ -911,6 +911,20 @@ async def _apply_approve(
             ),
         )
 
+    # housing_001/E2-B: жилец в доме (place_type='house') не подаёт
+    # показания. Если админ всё-таки тыкнул «Утвердить» — отдаём 400
+    # и предлагаем «Отклонить» или «Переназначить».
+    from app.modules.utility.services.room_validators import is_house as _is_house
+    if user.room and _is_house(user.room):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Жилец «{user.username}» живёт в доме/квартире — "
+                "счётчиков нет, показания не принимаются. "
+                "Используйте «Отклонить» либо «Переназначить» на жильца общежития."
+            ),
+        )
+
     # Период, к которому привяжем показание.
     # ИСПРАВЛЕНИЕ (apr 2026): раньше брался активный период (одинаковый для
     # всех approvals). Это ломало bulk-approve исторических подач — например,

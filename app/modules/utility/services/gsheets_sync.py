@@ -258,6 +258,9 @@ def build_users_index(db: Session) -> tuple[dict[str, dict], list[str], dict[int
             "username": user.username,
             "room_id": room.id if room else None,
             "room_number": room.room_number if room else None,
+            # housing_001/E2-B: фронт sync помечает совпавшие строки
+            # с домом-помещением как conflict — гасит лишний import.
+            "place_type": (room.place_type if room else None),
         }
         by_id[user.id] = info
         full = normalize_fio(user.username)
@@ -595,6 +598,20 @@ def sync_gsheets(
                 value_overflow.append(f"hot={hot}>{MAX_WATER_METER_VALUE}")
             if cold is not None and cold > MAX_WATER_METER_VALUE:
                 value_overflow.append(f"cold={cold}>{MAX_WATER_METER_VALUE}")
+
+            # housing_001/E2-B: если матченный жилец живёт в доме
+            # (place_type='house'), счётчиков у него нет — любая
+            # gsheets-подача от его имени должна быть помечена как
+            # conflict с понятным reason, а не идти в auto_approved.
+            # Это защита от ситуации «жилец дома по ошибке заполнил
+            # таблицу как общажный».
+            if user_info is not None and user_info.get("place_type") == "house":
+                conflict = (
+                    "house_place_type_no_meters: жилец живёт в "
+                    "доме/квартире, счётчиков нет — подача показаний "
+                    "не требуется. Отклоните эту строку либо "
+                    "переназначьте на жильца общежития."
+                )
 
             # Определяем статус (порог из конфига).
             if user_info is None:
@@ -945,6 +962,27 @@ def promote_auto_approved_rows(db: Session) -> dict:
         user = users_by_id_local.get(uid)
         if not user or user.is_deleted or not user.room_id:
             _skip(uid, "user_missing_or_no_room", user_rows)
+            continue
+
+        # housing_001/E2-B: дом → счётчиков нет → reading не создаём.
+        # Помечаем все строки этого жильца как обработанные с понятным
+        # reason. Без этого auto_approved-строки висели бы вечно (promote
+        # пытается их продвинуть, но reading не имеет смысла).
+        _user_room = db.query(Room).filter(Room.id == user.room_id).first()
+        if _user_room and _user_room.place_type == "house":
+            from sqlalchemy import update as _sa_update_house
+            from app.modules.utility.models import GSheetsImportRow as _GR_house
+            _reason = (
+                "house_place_type_no_meters: жилец живёт в доме/квартире, "
+                "счётчиков нет — подача показаний не требуется."
+            )
+            db.execute(
+                _sa_update_house(_GR_house)
+                .where(_GR_house.id.in_([r.id for r in user_rows]))
+                .values(status="rejected", conflict_reason=_reason,
+                        processed_at=utcnow())
+            )
+            _skip(uid, _reason, user_rows)
             continue
 
         # Холостяк (per_capita) не подаёт показания счётчика — все его строки

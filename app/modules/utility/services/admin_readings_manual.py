@@ -65,6 +65,15 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
     room = user.room
     if not room: raise HTTPException(status_code=400, detail="Жилец не привязан к помещению")
 
+    # housing_001/E2-B: для дома (place_type='house') счётчиков нет —
+    # ручной ввод показаний бессмыслен. UI скрывает раздел подачи для
+    # домовых жильцов, но дублируем на API чтобы и через curl нельзя
+    # было создать MeterReading для дома.
+    from app.modules.utility.services.room_validators import (
+        require_room_has_meters,
+    )
+    require_room_has_meters(room)
+
     # Через единый кеш — Room.tariff_id побеждает User.tariff_id (см. tariff_cache.py).
     from app.modules.utility.services.tariff_cache import tariff_cache
     t = tariff_cache.get_effective_tariff(user=user, room=room) or \

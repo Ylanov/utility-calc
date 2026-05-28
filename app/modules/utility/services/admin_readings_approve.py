@@ -333,6 +333,14 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
     if not room:
         raise HTTPException(status_code=400, detail="Жилец не привязан к помещению")
 
+    # housing_001/E2-B: дом не подаёт показания. Если каким-то путём
+    # reading-draft создался для дома (legacy-данные / руками в БД),
+    # утверждать его нельзя — расчёт по счётчикам бессмыслен.
+    from app.modules.utility.services.room_validators import (
+        require_room_has_meters,
+    )
+    require_room_has_meters(room)
+
     # Через единый кеш с приоритетом Room → User → default.
     from app.modules.utility.services.tariff_cache import tariff_cache
     t = tariff_cache.get_effective_tariff(user=user, room=room) or \

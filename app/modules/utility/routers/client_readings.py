@@ -229,6 +229,17 @@ async def save_reading(
         select(User).options(selectinload(User.room)).where(User.id == current_user.id)
     )).scalars().first()
 
+    # housing_001/E2-B: жильцы домов (place_type='house') не имеют
+    # счётчиков. Защита на API-уровне дублирует UI (мобильный/веб-клиент
+    # не должны показывать кнопку «Подать показания» для дома), но
+    # отдельно блокирует случаи когда клиент устарел или запрос пришёл
+    # напрямую (curl).
+    from app.modules.utility.services.room_validators import (
+        require_room_has_meters,
+    )
+    if user and user.room:
+        require_room_has_meters(user.room)
+
     # Холостяк (per_capita) платит фикс. сумму, счётчики не передаются — отвергаем POST
     # с понятным сообщением. Иначе клиент будет «отправлять впустую» — данные не сохранятся.
     if user and getattr(user, "billing_mode", "by_meter") == "per_capita":
