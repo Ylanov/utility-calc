@@ -1228,8 +1228,9 @@ async def _apply_approve(
                         "last_manual_period_id": recalc_result["last_manual_period_id"],
                         "real_delta_hot": str(recalc_result["real_delta_hot"]),
                         "real_delta_cold": str(recalc_result["real_delta_cold"]),
-                        "avg_per_month_hot": str(recalc_result["avg_delta_hot"]),
-                        "avg_per_month_cold": str(recalc_result["avg_delta_cold"]),
+                        "voided_virtual_volume_cost": str(
+                            recalc_result.get("voided_virtual_volume_cost", "0")
+                        ),
                         "owner": user.username,
                         "gsheets_row_id": row.id,
                     },

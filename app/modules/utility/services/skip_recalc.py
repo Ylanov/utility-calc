@@ -193,82 +193,94 @@ async def recalc_skip_chain(
         )
         return None
 
-    # 4. Делим равномерно. N = len(auto_chain) + 1 (включая current).
-    N = D(len(auto_chain) + 1)
-    avg_dh = real_dh / N
-    avg_dc = real_dc / N
-    avg_de = real_de / N
-
-    # 5. Перезаписываем каждый AUTO-reading. Накапливаем от last_manual.
-    running_hot = D(last_manual.hot_water)
-    running_cold = D(last_manual.cold_water)
-    running_elect = D(last_manual.electricity or 0)
+    # 4. NORM-only сторно-логика (28.05.2026 рефактор, Коммит 3).
+    #
+    #    Раньше: размазывали реальную дельту равномерно по N+1 периодам
+    #    (auto_chain + current). Жилец видел «лесенку» в квитанциях —
+    #    помесячно одинаковый объём, что не соответствует факту (он не
+    #    пользовался в месяцы молчания, а потом разово потратил весь
+    #    объём в текущем).
+    #
+    #    Сейчас: ПП №354 — приоритет счётчика. На auto-цепочке сторнируем
+    #    ТОЛЬКО переменные cost (вода/электричество/сточные) — там жилец
+    #    реально ничего не тратил по своим словам (счётчик не двигался,
+    #    показания возвращаем к last_manual). Area-based (содержание,
+    #    отопление, наём, ТКО) — НЕ трогаем: это ежемесячные постоянные,
+    #    жилец должен их платить независимо от подачи показаний.
+    #
+    #    Текущий reading получает ПОЛНУЮ реальную дельту от last_manual.
+    #    Жилец видит большой счёт в текущем периоде (потому что реально
+    #    потратил воду за все месяцы молчания), и нулевой volume-cost
+    #    на прошлых auto-месяцах. Долг/переплата в балансе считается
+    #    автоматически: virtual_accrued − real_accrued ушёл в сторно.
 
     residents = D(user.residents_count or 1)
     total_room = D(room.total_room_residents or 1)
     if total_room <= 0:
         total_room = D(1)
 
+    today = _date.today().isoformat()
+    voided_volume_total = ZERO  # для аудита — сколько virtual cost снято
+
+    # 5. Сторнируем virtual volume-cost на каждом auto-reading.
     recalced_count = 0
-    for i, auto in enumerate(auto_chain, start=1):
-        # На i-м auto-month прибавляем одну долю.
-        new_hot = running_hot + avg_dh
-        new_cold = running_cold + avg_dc
-        new_elect = running_elect + avg_de
+    for auto in auto_chain:
+        # Сумма virtual volume-cost до сторно — для audit-логирования.
+        voided_volume_total += (
+            D(auto.cost_hot_water or 0)
+            + D(auto.cost_cold_water or 0)
+            + D(auto.cost_sewage or 0)
+            + D(auto.cost_electricity or 0)
+        )
 
-        # Считаем cost этого периода с актуальным тарифом и avg-дельтой.
-        elect_share = (residents / total_room) * avg_de
-        try:
-            costs = calculate_utilities(
-                user=user, room=room, tariff=tariff,
-                volume_hot=avg_dh, volume_cold=avg_dc,
-                volume_sewage=avg_dh + avg_dc,
-                volume_electricity_share=elect_share,
-                heating_season_active=heating_season_active,
-                hot_water_heating_active=hot_water_heating_active,
-            )
-        except Exception as e:
-            logger.exception(
-                "[SKIP-RECALC] не удалось пересчитать reading id=%s: %s",
-                auto.id, e,
-            )
-            continue
+        # Volume-cost обнуляем (жилец не пользовался в этот месяц).
+        auto.cost_hot_water = ZERO
+        auto.cost_cold_water = ZERO
+        auto.cost_sewage = ZERO
+        auto.cost_electricity = ZERO
 
-        cost_205 = costs["cost_social_rent"]
-        cost_209 = costs["total_cost"] - cost_205
+        # Area-based (cost_maintenance / cost_fixed_part / cost_social_rent /
+        # cost_waste) — НЕ ТРОГАЕМ. Они начисляются ежемесячно по площади
+        # и числу жильцов, независимо от volume.
 
-        # Накопленные показания счётчика обновляем.
-        auto.hot_water = new_hot
-        auto.cold_water = new_cold
-        auto.electricity = new_elect
-        # Cost-компоненты обновляются полностью.
-        for k, v in costs_for_model_fields(costs).items():
-            setattr(auto, k, v)
-        auto.total_209 = cost_209
-        auto.total_205 = cost_205
-        auto.total_cost = costs["total_cost"]
+        # Показания счётчика возвращаем к last_manual: счётчик «не двигался»
+        # эти месяцы. Это упрощает meter_decreased-валидацию на будущих
+        # подачах: следующий реальный показатель всегда > last_manual.
+        auto.hot_water = D(last_manual.hot_water)
+        auto.cold_water = D(last_manual.cold_water)
+        auto.electricity = D(last_manual.electricity or 0)
 
-        # Помечаем в flag, что reading прошёл retroactive recalc.
-        # Сохраняем «генезис» (AUTO_AVG или AUTO_NORM_SANCTION) для аудита.
+        # Пересчёт totals: только area-based (без volume-cost).
+        auto.total_205 = D(auto.cost_social_rent or 0)
+        auto.total_209 = (
+            D(auto.cost_maintenance or 0)
+            + D(auto.cost_fixed_part or 0)
+            + D(auto.cost_waste or 0)
+        )
+        # Триггер integrity_002 сам синхронизирует total_cost, но выставим
+        # явно для надёжности (и для in-memory consistency до flush).
+        auto.total_cost = auto.total_209 + auto.total_205
+
+        # Помечаем сторно-маркером. Сохраняем оригинальный AUTO_* флаг
+        # для аудита (видно что было до сторно).
         orig_flag = (auto.anomaly_flags or "AUTO").upper()
-        today = _date.today().isoformat()
-        auto.anomaly_flags = f"{orig_flag}|RECALCED_{today}"[:200]  # лимит для column
+        marker = f"VOID_VOL_{today}"
+        if marker not in orig_flag:
+            auto.anomaly_flags = f"{orig_flag}|{marker}"[:200]
 
         db.add(auto)
         recalced_count += 1
-        running_hot = new_hot
-        running_cold = new_cold
-        running_elect = new_elect
 
-    # 6. Текущий reading тоже обновляем — он получает одну avg-долю
-    #    (а не «всё что было пропущено»). Без этого жилец увидел бы
-    #    весь долг пропусков в текущей квитанции.
-    elect_share = (residents / total_room) * avg_de
+    # 6. Текущий reading: cost_* пересчитываем на ПОЛНУЮ реальную дельту
+    #    от last_manual. Это даёт правильный «доплатный» счёт за весь
+    #    период молчания + текущий месяц.
+    elect_share = (residents / total_room) * real_de
     try:
         costs_cur = calculate_utilities(
             user=user, room=room, tariff=tariff,
-            volume_hot=avg_dh, volume_cold=avg_dc,
-            volume_sewage=avg_dh + avg_dc,
+            volume_hot=real_dh,
+            volume_cold=real_dc,
+            volume_sewage=real_dh + real_dc,
             volume_electricity_share=elect_share,
             heating_season_active=heating_season_active,
             hot_water_heating_active=hot_water_heating_active,
@@ -279,10 +291,8 @@ async def recalc_skip_chain(
             setattr(current_reading, k, v)
         current_reading.total_209 = cost_209
         current_reading.total_205 = cost_205
-        # total_cost у current может включать долги/корректировки —
-        # caller сам решит. Тут только base.
         current_reading.total_cost = costs_cur["total_cost"]
-        # Помечаем что текущий reading прошёл коррекцию.
+        # Помечаем что текущий reading прошёл сторно-коррекцию.
         cur_flag = (current_reading.anomaly_flags or "").upper()
         marker = "POST_SKIP_RECALC"
         if marker not in cur_flag:
@@ -299,10 +309,11 @@ async def recalc_skip_chain(
     await db.flush()
 
     logger.info(
-        "[SKIP-RECALC] user=%s room=%s last_manual=%s recalced=%d auto_chain, "
-        "real_dh=%s real_dc=%s real_de=%s avg per month: %s/%s/%s",
+        "[SKIP-RECALC] user=%s room=%s last_manual=%s voided=%d auto_chain, "
+        "voided_virtual_volume_cost=%s, real_delta hot/cold/elect=%s/%s/%s",
         user.id, room.id, last_manual.id, recalced_count,
-        real_dh, real_dc, real_de, avg_dh, avg_dc, avg_de,
+        voided_volume_total,
+        real_dh, real_dc, real_de,
     )
 
     return {
@@ -311,9 +322,7 @@ async def recalc_skip_chain(
         "real_delta_hot": real_dh,
         "real_delta_cold": real_dc,
         "real_delta_elect": real_de,
-        "avg_delta_hot": avg_dh,
-        "avg_delta_cold": avg_dc,
-        "avg_delta_elect": avg_de,
+        "voided_virtual_volume_cost": voided_volume_total,
         "applied": True,
     }
 
