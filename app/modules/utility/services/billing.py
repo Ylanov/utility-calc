@@ -100,7 +100,6 @@ def _growing_norm_volumes(
     (miss_count=0 → coef=1, miss_count=1 → coef=2, ...) с потолком
     sanction_coefficient. Это плавно подталкивает жильца к подаче.
     """
-    zero = Decimal("0.000")
     cap = D(getattr(user_tariff, "norm_coefficient", 0) or 3)
     effective = min(cap, Decimal(max(1, miss_count + 1)))
     vol_hot = D(user_tariff.hw_norm_per_capita or 0) * residents * effective
