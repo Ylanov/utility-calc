@@ -914,16 +914,22 @@ async def _apply_approve(
     # housing_001/E2-B: жилец в доме (place_type='house') не подаёт
     # показания. Если админ всё-таки тыкнул «Утвердить» — отдаём 400
     # и предлагаем «Отклонить» или «Переназначить».
+    # ВАЖНО: user загружен через `db.get(User, ...)` БЕЗ selectinload,
+    # поэтому user.room — это lazy relationship, и в async-режиме его
+    # обращение валит `MissingGreenlet` (инцидент 28.05.2026, Вастаев).
+    # Подгружаем room явным запросом по user.room_id (это просто column).
     from app.modules.utility.services.room_validators import is_house as _is_house
-    if user.room and _is_house(user.room):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Жилец «{user.username}» живёт в доме/квартире — "
-                "счётчиков нет, показания не принимаются. "
-                "Используйте «Отклонить» либо «Переназначить» на жильца общежития."
-            ),
-        )
+    if user.room_id:
+        _user_room_for_check = await db.get(Room, user.room_id)
+        if _user_room_for_check and _is_house(_user_room_for_check):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Жилец «{user.username}» живёт в доме/квартире — "
+                    "счётчиков нет, показания не принимаются. "
+                    "Используйте «Отклонить» либо «Переназначить» на жильца общежития."
+                ),
+            )
 
     # Период, к которому привяжем показание.
     # ИСПРАВЛЕНИЕ (apr 2026): раньше брался активный период (одинаковый для
