@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     Date,
     Text,
+    Enum as SAEnum,
     func
 )
 from sqlalchemy.types import Numeric
@@ -18,6 +19,33 @@ from datetime import datetime, timezone
 
 from app.core.database import Base
 from sqlalchemy.dialects.postgresql import JSONB
+from enum import Enum as PyEnum
+
+
+# =====================================================================
+# Native PG ENUM-типы (см. миграцию housing_001_place_type).
+#
+# Использование Python Enum (а не голых строк) критично для корректного
+# каста параметров в SQL. С чистым `SAEnum("dormitory", "house", ...)`
+# asyncpg шлёт WHERE-параметр как VARCHAR без cast'а, и Postgres ругается
+# `operator does not exist: place_type_enum = varchar` — это валило
+# /api/rooms/dormitories и /api/rooms/streets на проде после E1-деплоя
+# (28.05.2026).
+#
+# Python Enum-классы наследуют `str` чтобы значения сохранялись в
+# человекочитаемом виде ('dormitory', 'house') как в БД, и литералы
+# в коде (`Room.place_type == "dormitory"`) продолжали работать.
+# =====================================================================
+
+class PlaceType(str, PyEnum):
+    DORMITORY = "dormitory"
+    HOUSE = "house"
+
+
+class TariffApplicableTo(str, PyEnum):
+    DORMITORY = "dormitory"
+    HOUSE = "house"
+    BOTH = "both"
 
 
 def _utcnow():
@@ -49,9 +77,24 @@ class Room(Base):
     # но «комната 101» в общаге и «квартира 101» в доме на одной улице
     # могут сосуществовать.
     # ─────────────────────────────────────────────────────────────────
+    # Native PG ENUM (создаётся миграцией housing_001_place_type как
+    # `CREATE TYPE place_type_enum AS ENUM ('dormitory', 'house')`).
+    # ВАЖНО: используем Python Enum-класс (PlaceType), а не голые строки.
+    # С голыми строками asyncpg шлёт параметр как VARCHAR без явного
+    # cast'а, и PG падает с `operator does not exist: place_type_enum =
+    # varchar` (инцидент на проде 28.05.2026 после E1-деплоя).
+    # values_callable=lambda e: [v.value for v in e] — кладёт в БД
+    # value ('dormitory'), а не name ('DORMITORY').
     place_type = Column(
-        String(16), default="dormitory", nullable=False,
-        server_default="dormitory", index=True,
+        SAEnum(
+            PlaceType,
+            name="place_type_enum",
+            native_enum=True,
+            create_type=False,
+            values_callable=lambda e: [v.value for v in e],
+        ),
+        default=PlaceType.DORMITORY, nullable=False,
+        server_default=PlaceType.DORMITORY.value, index=True,
     )
 
     # Адресные поля «общажного» типа. Для place_type='house' — None.
@@ -328,9 +371,19 @@ class Tariff(Base):
     # На начислении напрямую НЕ влияет (это делают charge_*-флаги),
     # фильтрует только селектор тарифа в UI Жилфонда. См. миграцию
     # housing_001_place_type.
+    # Native PG ENUM (`tariff_applicable_to_enum`) — то же что и для
+    # Room.place_type, см. подробный комментарий там. Python Enum-класс
+    # необходим для корректного каста asyncpg-параметров.
     applicable_to = Column(
-        String(16), default="both", nullable=False,
-        server_default="both", index=True,
+        SAEnum(
+            TariffApplicableTo,
+            name="tariff_applicable_to_enum",
+            native_enum=True,
+            create_type=False,
+            values_callable=lambda e: [v.value for v in e],
+        ),
+        default=TariffApplicableTo.BOTH, nullable=False,
+        server_default=TariffApplicableTo.BOTH.value, index=True,
     )
 
     # Дата вступления в силу. Если задана в будущем — тариф "запланирован" (is_active=False)
