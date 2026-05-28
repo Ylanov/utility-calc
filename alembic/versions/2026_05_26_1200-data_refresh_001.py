@@ -73,7 +73,13 @@ def upgrade() -> None:
             "submitted_at",
             sa.DateTime(),
             nullable=False,
-            server_default=sa.text("now() AT TIME ZONE 'utc'"),
+            # ВАЖНО: скобки обязательны — `AT TIME ZONE` это оператор,
+            # без скобок PG не принимает его как DEFAULT-выражение
+            # (`syntax error at or near "AT"`). На проде миграция была
+            # применена в более раннем релизе, где этот баг ещё не ловил
+            # asyncpg-парсер; новый CI с alembic upgrade head с нуля
+            # падал.
+            server_default=sa.text("(now() AT TIME ZONE 'utc')"),
         ),
     )
     op.create_index(
