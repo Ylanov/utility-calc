@@ -219,7 +219,13 @@ def validate_meter_reading(
     # 4. Монотонность: счётчик не может уменьшаться.
     # Обходим, если is_baseline — там сравнивать не с чем (предыдущие
     # значения могут быть «грязные» от прошлых жильцов).
-    if not is_baseline:
+    # Bug E2-D (28.05.2026, Вастаев): ТАКЖЕ обходим если prev_is_synth=True.
+    # Synth-prev — это AUTO_AVG / AUTO_NORM_SANCTION / DATA_OVERFLOW_RESET,
+    # которые насчитала сама система. Если жилец потом подаёт реальные
+    # показания за БОЛЕЕ РАННИЙ месяц и они меньше synth — это значит
+    # «AUTO переоценил», НЕ «счётчик упал». Caller (admin_gsheets._apply_approve
+    # → recalc_skip_chain) ретроактивно пересчитает synth-цепочку.
+    if not is_baseline and not prev_is_synth:
         for name, value, prev in [
             ("hot_water", hot, prev_hot),
             ("cold_water", cold, prev_cold),

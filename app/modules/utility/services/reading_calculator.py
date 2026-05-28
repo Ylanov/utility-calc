@@ -254,6 +254,20 @@ PREV_SKIP_FLAGS = frozenset({
     "AUTO_GENERATED",      # initial setup / fill, значения 0
     "DATA_OVERFLOW_RESET", # обнулено cleanup_anomaly_readings
     "AUTO_NO_HISTORY",     # фоновое начисление при пропуске, значения 0
+    # Bug E2-D (28.05.2026, инцидент с Вастаевым):
+    # AUTO_AVG / AUTO_AVG_FALLBACK / AUTO_NORM_SANCTION — это значения,
+    # которые насчитала САМА система (last_real + средняя дельта или
+    # норматив). Когда жилец потом подаёт реальные показания за более
+    # ранний месяц (Февраль/Март после уже созданного Апрельского
+    # AUTO_AVG из-за прыгающих period_id), валидатор сравнивал новое
+    # реальное (138) с синтетическим Апрельским AUTO_AVG (142) и валил
+    # с «счётчик упал». Хотя физически жилец прав — это AUTO_AVG
+    # переоценил. Теперь AUTO_AVG не считается meaningful prev, новый
+    # reading проходит валидацию, а skip_recalc ретроактивно
+    # пересчитывает Апрельский AUTO_AVG.
+    "AUTO_AVG",
+    "AUTO_AVG_FALLBACK",
+    "AUTO_NORM_SANCTION",
     "MANUAL_RECEIPT",      # квитанция без показаний (только сальдо)
     "ONE_TIME_CHARGE_BASELINE",  # выселение с baseline-flag
 })
