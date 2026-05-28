@@ -145,11 +145,26 @@ celery.conf.beat_schedule = {
         "task": "auto_fill_missing_readings_task",
         "schedule": crontab(minute=45, hour=3),
     },
+    # L5: AI-анализ свежих error_log — каждый час обходит N свежих
+    # необработанных ошибок и просит LLM написать root_cause/severity/
+    # suggested_action. Дешёво (GigaChat Lite ~30-50 коп на ошибку,
+    # cap _ERROR_ANALYSIS_BATCH=10 в час = ~5 ₽/час максимум).
+    "llm-analyze-errors-hourly": {
+        "task": "llm_analyze_errors_task",
+        "schedule": crontab(minute=15),  # каждый час в HH:15
+    },
+    # L7: Daily admin briefing — каждое утро 06:00 UTC (= 09:00 МСК).
+    "llm-daily-briefing": {
+        "task": "llm_daily_briefing_task",
+        "schedule": crontab(minute=0, hour=6),
+    },
 }
 
 # ИМПОРТЫ ЗАДАЧ
 celery.conf.imports = [
     "app.modules.utility.tasks",
+    # L5/L7: ИИ-пилот.
+    "app.modules.llm.celery_tasks",
     # Если в будущем появятся фоновые задачи у Арсенала, нужно создать
     # tasks.py и раскомментировать строку ниже:
     # "app.modules.arsenal.tasks",

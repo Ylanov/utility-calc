@@ -732,6 +732,78 @@ class ErrorLog(Base):
     # Сколько раз эту запись копировали — метрика полезности.
     copied_count = Column(Integer, nullable=False, default=0, server_default="0")
 
+    # L5 (28.05.2026): фоновый AI-анализ ошибки (root_cause / severity /
+    # suggested_action). Заполняется celery-задачей llm_analyze_errors
+    # для записей где ai_analysis IS NULL И not resolved И свежие.
+    ai_analysis = Column(JSONB, nullable=True)
+    ai_analyzed_at = Column(DateTime, nullable=True)
+    ai_model = Column(String(64), nullable=True)
+
+
+# ======================================================
+# LLM SETTINGS (L1, 28.05.2026) — singleton конфиг ИИ-провайдера.
+#
+# Сейчас GigaChat Lite/Pro/Max через REST API, в будущем — vLLM/ollama
+# локально (тот же OpenAI-compat интерфейс, меняется только base_url).
+# Доступ к /api/admin/llm/* только для role='admin'. Токен зашифрован
+# Fernet с ключом из env LLM_SECRET_KEY.
+# ======================================================
+class LLMSetting(Base):
+    __tablename__ = "llm_settings"
+
+    id = Column(Integer, primary_key=True, default=1)
+    provider = Column(String(32), nullable=False, default="disabled",
+                      server_default="disabled")
+    model_name = Column(String(64), nullable=False, default="GigaChat",
+                        server_default="GigaChat")
+    # Fernet-зашифрованный токен (NULL = не настроен).
+    token_encrypted = Column(Text, nullable=True)
+    # Доп. URL для local_vllm / ollama.
+    base_url = Column(String(256), nullable=True)
+    # Главный выключатель.
+    enabled = Column(Boolean, nullable=False, default=False,
+                     server_default="false")
+    # Дневной бюджет в рублях.
+    daily_budget_rub = Column(Numeric(10, 2), nullable=False,
+                              default=50, server_default="50")
+    # Авто-блок при превышении бюджета или hard error.
+    disabled_until = Column(DateTime, nullable=True)
+    disabled_reason = Column(String(200), nullable=True)
+    updated_at = Column(DateTime, nullable=True, onupdate=_utcnow)
+    updated_by_id = Column(Integer, nullable=True)
+
+
+# ======================================================
+# LLM CALL — audit каждого вызова LLM (для бюджетного контроля и debug)
+# ======================================================
+class LLMCall(Base):
+    __tablename__ = "llm_calls"
+
+    id = Column(Integer, primary_key=True)
+    occurred_at = Column(
+        DateTime, nullable=False,
+        server_default=func.timezone("utc", func.now()), index=True,
+    )
+    # error_analysis | user_summary | daily_briefing | ticket_classify | test
+    purpose = Column(String(64), nullable=False, index=True)
+    provider = Column(String(32), nullable=False)
+    model_name = Column(String(64), nullable=False)
+
+    prompt_chars = Column(Integer, nullable=False)
+    response_chars = Column(Integer, nullable=True)
+    prompt_tokens = Column(Integer, nullable=True)
+    response_tokens = Column(Integer, nullable=True)
+
+    cost_rub = Column(Numeric(10, 4), nullable=True, index=True)
+    latency_ms = Column(Integer, nullable=True)
+    success = Column(Boolean, nullable=False, default=False,
+                     server_default="false")
+    error = Column(Text, nullable=True)
+
+    # Связанная сущность (error_log/user/ticket) — для линковки UI.
+    related_type = Column(String(32), nullable=True, index=True)
+    related_id = Column(Integer, nullable=True, index=True)
+
 
 # ======================================================
 # SYSTEM SETTINGS

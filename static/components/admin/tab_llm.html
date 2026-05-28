@@ -1,0 +1,126 @@
+<!-- L4: вкладка «🤖 ИИ-помощник». Настройки провайдера (токен/модель/
+     бюджет), тест-кнопка, статистика расходов, последние вызовы. -->
+<div id="llm" class="tab-content">
+    <div style="display:flex; flex-direction:column; gap:14px;">
+
+        <div>
+            <h2 style="margin:0; font-size:20px;"><i class="fa-solid fa-robot" style="color:#8b5cf6;"></i> ИИ-помощник админа</h2>
+            <div style="color:var(--text-secondary); font-size:13px; margin-top:4px;">
+                Пилот GigaChat Lite. ИИ помогает <b>только админу</b>: анализирует ошибки в Копилке,
+                делает резюме жильцов, утреннюю сводку. Жильцам ИИ ничего не отвечает.
+            </div>
+        </div>
+
+        <!-- Плашка статуса crypto-ключа -->
+        <div id="llmCryptoStatus" style="display:none;"></div>
+
+        <!-- Настройки провайдера -->
+        <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:8px; padding:16px;">
+            <h3 style="margin:0 0 12px 0; font-size:15px;">⚙ Провайдер и токен</h3>
+
+            <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:12px;">
+                <div>
+                    <label style="font-size:11px; color:var(--text-secondary); text-transform:uppercase;">Провайдер</label>
+                    <select id="llmProvider" style="width:100%; padding:6px 10px;">
+                        <option value="disabled">— Отключено —</option>
+                        <option value="gigachat_lite">🟢 GigaChat Lite (~0.20 ₽/1k токенов)</option>
+                        <option value="gigachat_pro">🟡 GigaChat Pro (~1.5 ₽/1k)</option>
+                        <option value="gigachat_max">🔴 GigaChat Max (~2 ₽/1k)</option>
+                        <option value="local_vllm" disabled>⚪ Local vLLM (скоро)</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="font-size:11px; color:var(--text-secondary); text-transform:uppercase;">Модель (имя в API)</label>
+                    <input id="llmModel" type="text" placeholder="GigaChat" style="width:100%; padding:6px 10px;">
+                    <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">
+                        GigaChat / GigaChat-Pro / GigaChat-Max
+                    </div>
+                </div>
+                <div>
+                    <label style="font-size:11px; color:var(--text-secondary); text-transform:uppercase;">Бюджет, ₽ в день</label>
+                    <input id="llmBudget" type="number" min="0" max="100000" step="10" style="width:100%; padding:6px 10px;">
+                </div>
+                <div style="display:flex; align-items:flex-end;">
+                    <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+                        <input id="llmEnabled" type="checkbox">
+                        <span><b>Включён</b></span>
+                    </label>
+                </div>
+            </div>
+
+            <div style="margin-top:14px; padding:12px; background:var(--bg-page); border-radius:6px;">
+                <label style="font-size:11px; color:var(--text-secondary); text-transform:uppercase;">
+                    Authorization Key (из личного кабинета Сбер)
+                </label>
+                <div style="display:flex; gap:8px; align-items:center; margin-top:4px;">
+                    <input id="llmTokenInput" type="password"
+                           placeholder="Y2xpZW50X2lkOnNlY3JldA== (base64)"
+                           style="flex:1; padding:6px 10px; font-family:monospace;">
+                    <button id="llmSaveToken" class="action-btn primary-btn">
+                        <i class="fa-solid fa-key"></i> Сохранить токен
+                    </button>
+                    <button id="llmDeleteToken" class="action-btn danger-btn"
+                            title="Стереть текущий токен из БД">
+                        <i class="fa-solid fa-trash"></i>
+                    </button>
+                </div>
+                <div id="llmTokenHint" style="margin-top:6px; font-size:11px; color:var(--text-secondary);"></div>
+            </div>
+
+            <!-- Авто-блокировка -->
+            <div id="llmDisabledBanner" style="display:none; margin-top:12px; padding:10px; background:#fef3c7; border:1px solid #f59e0b; border-radius:6px; font-size:12px;">
+                <i class="fa-solid fa-triangle-exclamation" style="color:#f59e0b;"></i>
+                <span id="llmDisabledText"></span>
+                <button id="llmResetDisabled" class="action-btn" style="margin-left:8px; padding:3px 8px; font-size:11px;">
+                    Снять блокировку
+                </button>
+            </div>
+
+            <div style="display:flex; gap:8px; margin-top:14px;">
+                <button id="llmSaveSettings" class="action-btn success-btn">
+                    <i class="fa-solid fa-floppy-disk"></i> Сохранить настройки
+                </button>
+                <button id="llmTest" class="action-btn" style="background:#8b5cf6; color:#fff; border:1px solid #8b5cf6;">
+                    <i class="fa-solid fa-vial"></i> Тест-запрос
+                </button>
+            </div>
+
+            <!-- Результат теста -->
+            <div id="llmTestResult" style="display:none; margin-top:12px; padding:10px; background:var(--bg-page); border-radius:6px; font-size:12px;"></div>
+        </div>
+
+        <!-- KPI расходов -->
+        <div>
+            <h3 style="margin:0 0 8px 0; font-size:14px;">📊 Расход</h3>
+            <div id="llmUsageKpi" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:10px;">
+                <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:8px; padding:12px;">
+                    <div style="color:var(--text-secondary); font-size:11px;">Загрузка…</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Последние вызовы -->
+        <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:8px; overflow:hidden;">
+            <div style="padding:10px 14px; border-bottom:1px solid var(--border-color); display:flex; justify-content:space-between; align-items:center;">
+                <h3 style="margin:0; font-size:14px;">Последние 50 вызовов</h3>
+                <button id="llmRefreshCalls" class="icon-btn" title="Обновить"><i class="fa-solid fa-rotate-right"></i></button>
+            </div>
+            <table style="width:100%; border-collapse:collapse; font-size:12px;">
+                <thead>
+                    <tr style="background:var(--bg-page); color:var(--text-secondary); font-size:11px; text-transform:uppercase;">
+                        <th style="padding:6px 10px; text-align:left;">Когда</th>
+                        <th style="padding:6px 10px; text-align:left;">Цель</th>
+                        <th style="padding:6px 10px; text-align:left;">Модель</th>
+                        <th style="padding:6px 10px; text-align:right;">Токены</th>
+                        <th style="padding:6px 10px; text-align:right;">₽</th>
+                        <th style="padding:6px 10px; text-align:right;">мс</th>
+                        <th style="padding:6px 10px; text-align:left;">OK/Err</th>
+                    </tr>
+                </thead>
+                <tbody id="llmCallsBody">
+                    <tr><td colspan="7" style="padding:20px; text-align:center; color:var(--text-secondary);">Загрузка…</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>

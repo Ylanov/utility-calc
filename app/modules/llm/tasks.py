@@ -1,0 +1,256 @@
+"""tasks.py — celery-задачи для ИИ-помощника (L5, L7).
+
+L5: каждый час обходим свежие необработанные error_log и просим ИИ
+    оценить root_cause/severity/suggested_action. Результат пишем в
+    error_log.ai_analysis (JSONB).
+
+L7: каждое утро 09:00 МСК — daily admin briefing: метрики за вчера
+    через LLM → markdown → создаём notification.
+"""
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+from datetime import datetime, timedelta
+
+from sqlalchemy import desc, func, select
+
+from app.core.database import AsyncSessionLocal
+from app.core.time_utils import utcnow
+from app.modules.llm import service as llm_service
+from app.modules.llm.prompts import (
+    build_daily_briefing_prompt,
+    build_error_analysis_prompt,
+)
+from app.modules.utility.models import (
+    ErrorLog,
+    GSheetsImportRow,
+    MeterReading,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# =====================================================================
+# L5: AI-анализ свежих ошибок
+# =====================================================================
+
+# Не разбираем ошибки старше N дней — там уже неактуально.
+_ERROR_ANALYSIS_MAX_AGE_DAYS = 7
+# Не делаем больше N ошибок за один тик (защита от взрыва бюджета,
+# даже если у нас сразу 1000 свежих ошибок — обработаем по 10 в час).
+_ERROR_ANALYSIS_BATCH = 10
+
+
+async def _analyze_errors_run() -> dict:
+    """Async-версия. Возвращает stats для celery-логов."""
+    async with AsyncSessionLocal() as db:
+        ok, reason = await llm_service.is_available(db)
+        if not ok:
+            return {"skipped": True, "reason": reason}
+
+        cutoff = utcnow() - timedelta(days=_ERROR_ANALYSIS_MAX_AGE_DAYS)
+        rows = (await db.execute(
+            select(ErrorLog)
+            .where(
+                ErrorLog.ai_analysis.is_(None),
+                ErrorLog.resolved.is_(False),
+                ErrorLog.occurred_at >= cutoff,
+            )
+            .order_by(desc(ErrorLog.occurred_at))
+            .limit(_ERROR_ANALYSIS_BATCH)
+        )).scalars().all()
+
+        if not rows:
+            return {"analyzed": 0, "skipped_no_rows": True}
+
+        analyzed = 0
+        failed = 0
+        for err in rows:
+            payload = _error_to_prompt_payload(err)
+            messages = build_error_analysis_prompt(payload)
+            try:
+                res = await llm_service.ask(
+                    db, messages,
+                    purpose="error_analysis",
+                    related_type="error_log",
+                    related_id=err.id,
+                    temperature=0.1,
+                    max_tokens=600,
+                )
+            except Exception as e:
+                logger.warning("[llm.tasks] error_analysis failed for err=%s: %s",
+                               err.id, e)
+                failed += 1
+                continue
+            if not res.ok:
+                logger.info("[llm.tasks] error_analysis NOT ok for err=%s: %s",
+                            err.id, res.error)
+                failed += 1
+                if "Daily budget exceeded" in (res.error or ""):
+                    # Бюджет на сегодня кончился — выходим.
+                    break
+                continue
+            ai = _parse_llm_json(res.text)
+            ai["_raw_text"] = res.text
+            err.ai_analysis = ai
+            err.ai_analyzed_at = utcnow()
+            err.ai_model = "llm-pilot"  # service-слой определит реальную модель
+            analyzed += 1
+
+        await db.commit()
+        return {"analyzed": analyzed, "failed": failed, "total_batch": len(rows)}
+
+
+def _error_to_prompt_payload(err: ErrorLog) -> dict:
+    """Срезаем error_log в компактный JSON-payload для LLM."""
+    return {
+        "id": err.id,
+        "occurred_at": str(err.occurred_at),
+        "source": err.source,
+        "http_method": err.http_method,
+        "http_path": err.http_path,
+        "http_status": err.http_status,
+        "exc_type": err.exc_type,
+        "exc_message": (err.exc_message or "")[:1500],
+        # Урезаем traceback до 100 строк — на 90% достаточно для root cause.
+        "traceback_tail": "\n".join((err.traceback or "").split("\n")[-100:]),
+        "request_body": err.request_body,
+        "investigation": err.investigation,
+        "extra": err.extra,
+    }
+
+
+def _parse_llm_json(text: str) -> dict:
+    """LLM иногда оборачивает JSON в ```json…``` или добавляет преамбулу.
+    Достаём первый {…} блок и пытаемся распарсить.
+    """
+    s = (text or "").strip()
+    # Убираем code-fence если есть.
+    if s.startswith("```"):
+        # ```json\n{...}\n```
+        try:
+            s = s.split("```", 2)[1]
+            if s.startswith("json"):
+                s = s[4:]
+            s = s.strip().rstrip("`").strip()
+        except Exception:
+            pass
+    # Берём первое {...}.
+    start = s.find("{")
+    end = s.rfind("}")
+    if start >= 0 and end > start:
+        s = s[start:end + 1]
+    try:
+        return json.loads(s)
+    except Exception:
+        # Не распарсилось — возвращаем raw как root_cause.
+        return {
+            "root_cause": (text or "")[:500],
+            "severity": "unknown",
+            "suggested_action": None,
+            "is_known_pattern": None,
+            "confidence": None,
+            "_parse_error": "LLM returned non-JSON; saved raw text",
+        }
+
+
+# =====================================================================
+# L7: Daily admin briefing
+# =====================================================================
+
+async def _daily_briefing_run() -> dict:
+    async with AsyncSessionLocal() as db:
+        ok, reason = await llm_service.is_available(db)
+        if not ok:
+            return {"skipped": True, "reason": reason}
+
+        # Метрики за вчера.
+        now = utcnow()
+        yesterday_start = datetime.combine(
+            (now - timedelta(days=1)).date(), datetime.min.time(),
+        )
+        yesterday_end = datetime.combine(now.date(), datetime.min.time())
+
+        new_errors = (await db.execute(
+            select(func.count(ErrorLog.id)).where(
+                ErrorLog.occurred_at >= yesterday_start,
+                ErrorLog.occurred_at < yesterday_end,
+            )
+        )).scalar_one()
+        errors_by_source = dict((await db.execute(
+            select(ErrorLog.source, func.count(ErrorLog.id))
+            .where(
+                ErrorLog.occurred_at >= yesterday_start,
+                ErrorLog.occurred_at < yesterday_end,
+            )
+            .group_by(ErrorLog.source)
+        )).all())
+        open_gsheets_conflicts = (await db.execute(
+            select(func.count(GSheetsImportRow.id)).where(
+                GSheetsImportRow.status == "conflict"
+            )
+        )).scalar_one()
+        new_readings = (await db.execute(
+            select(func.count(MeterReading.id)).where(
+                MeterReading.created_at >= yesterday_start,
+                MeterReading.created_at < yesterday_end,
+            )
+        )).scalar_one()
+
+        metrics = {
+            "period": yesterday_start.date().isoformat(),
+            "new_errors": new_errors,
+            "new_errors_by_source": errors_by_source,
+            "open_gsheets_conflicts": open_gsheets_conflicts,
+            "new_readings_created": new_readings,
+        }
+
+        messages = build_daily_briefing_prompt(metrics)
+        res = await llm_service.ask(
+            db, messages,
+            purpose="daily_briefing",
+            temperature=0.3,
+            max_tokens=800,
+        )
+        if not res.ok:
+            logger.warning("[llm.tasks] daily_briefing failed: %s", res.error)
+            return {"ok": False, "error": res.error}
+
+        # Кладём результат в admin_notifications, если такая таблица есть.
+        # На пилоте — просто логируем; полноценный notification — позже.
+        logger.info(
+            "[llm.tasks] daily_briefing OK (%d chars, %s ₽):\n%s",
+            len(res.text or ""), res.cost_rub, (res.text or "")[:500],
+        )
+        return {
+            "ok": True,
+            "briefing_chars": len(res.text or ""),
+            "cost_rub": float(res.cost_rub or 0),
+            "briefing_preview": (res.text or "")[:500],
+        }
+
+
+# =====================================================================
+# Celery sync wrappers (worker — sync процесс)
+# =====================================================================
+
+def run_analyze_errors_sync() -> dict:
+    """Sync-обёртка для celery task. Открывает event-loop одноразово."""
+    try:
+        return asyncio.run(_analyze_errors_run())
+    except Exception as e:
+        logger.exception("[llm.tasks] analyze_errors crashed")
+        return {"crashed": True, "error": str(e)}
+
+
+def run_daily_briefing_sync() -> dict:
+    try:
+        return asyncio.run(_daily_briefing_run())
+    except Exception as e:
+        logger.exception("[llm.tasks] daily_briefing crashed")
+        return {"crashed": True, "error": str(e)}
+
+
+__all__ = ["run_analyze_errors_sync", "run_daily_briefing_sync"]

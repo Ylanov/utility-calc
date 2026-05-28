@@ -293,7 +293,7 @@ function handleRoute() {
     // для обратной совместимости.
     // ВАЖНО: при добавлении новой вкладки — обязательно добавить её сюда,
     // иначе clickByHash сделает fallback на dashboard.
-    const validTabs = ['dashboard', 'tools', 'housing', 'users', 'debts', 'certs', 'audit', 'tickets', 'errors'];
+    const validTabs = ['dashboard', 'tools', 'housing', 'users', 'debts', 'certs', 'audit', 'tickets', 'errors', 'llm'];
     let tabToLoad = validTabs.includes(hash) ? hash : defaultTab;
     if (hash === 'readings') tabToLoad = 'dashboard';
     if (hash === 'manual' || hash === 'tariffs' || hash === 'accountant') tabToLoad = 'tools';
@@ -407,6 +407,15 @@ async function initModule(tabId) {
                     loadedModules.errors = ErrorsModule;
                 }
                 loadedModules.errors.init();
+                break;
+            // L4: «ИИ-помощник» — настройки GigaChat-провайдера, тест,
+            // статистика расходов, последние вызовы LLM.
+            case 'llm':
+                if (!loadedModules.llm) {
+                    const { LLMModule } = await import('./modules/llm.js');
+                    loadedModules.llm = LLMModule;
+                }
+                loadedModules.llm.init();
                 break;
             case 'debts':
                 if (!loadedModules.debts) {

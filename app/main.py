@@ -439,6 +439,9 @@ app.include_router(tickets.router_admin)
 app.include_router(admin_certificates.router)
 # E3-B: копилка ошибок — /api/admin/errors/* + /api/errors/frontend.
 app.include_router(admin_errors.router)
+# L4: ИИ-помощник админа — /api/admin/llm/*.
+from app.modules.llm.router import router as _llm_router
+app.include_router(_llm_router)
 app.include_router(app_releases.router)
 app.include_router(qr.router)
 
