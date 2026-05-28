@@ -1039,6 +1039,113 @@ async def _apply_approve(
         except CalculationError:
             breakdown = None
 
+    # =====================================================================
+    # ЗАЩИТНЫЕ ГВАРДЫ (бэйджу bug «зацикленный конфликт», май 2026):
+    # раньше _apply_approve проверял ТОЛЬКО MAX_WATER_METER_VALUE. high_delta,
+    # meter_decreased и total_cost_too_high пропускались — reading создавался
+    # с гигантским total_cost, потом cleanup_outlier_readings_task (раз в
+    # сутки) сбрасывал его в is_approved=False и помечал GSheets-row
+    # обратно как conflict с reason='auto_cleanup_data_overflow'. Админ
+    # снова жал «Утвердить» — цикл бесконечный.
+    #
+    # Теперь те же три гварда что в promote_auto_approved_rows: при их
+    # срабатывании reading НЕ создаётся, row остаётся в conflict с СВОИМ
+    # reason 'manual_approve_blocked: ...'. cleanup_outlier_readings_task
+    # такие строки не трогает (он сбрасывает только связанные с outlier
+    # reading'ами), и каждое следующее нажатие «Утвердить» снова отдаст
+    # 422 с понятной подсказкой — пока админ не выберет правильное
+    # действие (make-baseline / swap / fix-decimal / reject).
+    # =====================================================================
+    from app.modules.utility.services.reading_validators import (
+        validate_meter_reading as _validate_mr,
+        validate_total_cost as _validate_tc,
+    )
+
+    # Готовим prev_* для validate_meter_reading. Три ветки:
+    #   1. prev_meaningful есть → обычный prev.
+    #   2. prev_meaningful нет, но prev_candidates не пуст → synth-prev
+    #      (AUTO_GENERATED 0/0/0, DATA_OVERFLOW_RESET и т.п.). validate_mr
+    #      применяет строгий MAX_FIRST_SUBMISSION_VALUE-порог дельты.
+    #   3. Истории вообще нет → is_baseline (порог тот же).
+    if prev_meaningful is not None:
+        _val_prev_hot = prev_meaningful.hot_water or Decimal("0")
+        _val_prev_cold = prev_meaningful.cold_water or Decimal("0")
+        _val_prev_elect = prev_meaningful.electricity or Decimal("0")
+        _prev_is_synth = False
+        _is_baseline = False
+    elif prev_candidates:
+        _synth = prev_candidates[0]
+        _val_prev_hot = _synth.hot_water or Decimal("0")
+        _val_prev_cold = _synth.cold_water or Decimal("0")
+        _val_prev_elect = _synth.electricity or Decimal("0")
+        _prev_is_synth = True
+        _is_baseline = False
+    else:
+        _val_prev_hot = _val_prev_cold = _val_prev_elect = None
+        _prev_is_synth = False
+        _is_baseline = True
+
+    async def _block_with_conflict(reason: str, status_code: int = 422) -> None:
+        """Помечает row как conflict с указанным reason и raise'ит HTTPException.
+
+        commit здесь явный — иначе при raise транзакция откатится и UI
+        не увидит обновлённый conflict_reason (продолжит показывать старый
+        auto_cleanup_data_overflow).
+        """
+        row.status = "conflict"
+        row.conflict_reason = reason
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+        raise HTTPException(status_code=status_code, detail=reason)
+
+    # Guard 1: high_delta / baseline overflow.
+    _vmr = _validate_mr(
+        hot=row.hot_water,
+        cold=row.cold_water,
+        elect=electricity_value,
+        prev_hot=_val_prev_hot,
+        prev_cold=_val_prev_cold,
+        prev_elect=_val_prev_elect,
+        is_baseline=_is_baseline,
+        prev_is_synth=_prev_is_synth,
+    )
+    if not _vmr.ok:
+        await _block_with_conflict(
+            "manual_approve_blocked: high_delta_or_baseline_overflow: "
+            + "; ".join(_vmr.errors)
+            + ". Используйте «Сделать baseline» (для первого реального "
+            "накопленного показания), «Поменять ГВС/ХВС» (если жилец "
+            "перепутал столбцы) или «Отклонить»."
+        )
+
+    # Guard 2: meter_decreased — счётчик «упал».
+    if breakdown and breakdown.get("meter_decreased") and prev_meaningful is not None:
+        await _block_with_conflict(
+            "manual_approve_blocked: meter_decreased: счётчик 'упал' — "
+            f"hot {prev_meaningful.hot_water}→{row.hot_water}, "
+            f"cold {prev_meaningful.cold_water}→{row.cold_water}. "
+            "Возможные причины: смена счётчика без оформления, ошибка ввода "
+            "жильца, или сменился жилец в комнате. Используйте «Поменять "
+            "ГВС/ХВС», «Сделать baseline» или «Отклонить»."
+        )
+
+    # Guard 3: total_cost_too_high — финальный sanity на расчётный итог.
+    # Это главная защита от цикла: cleanup_outlier_readings_task ровно по
+    # этому критерию сбрасывал reading'и обратно в conflict с тегом
+    # auto_cleanup_data_overflow.
+    if breakdown:
+        _tc = _validate_tc(breakdown.get("total_cost"))
+        if not _tc.ok:
+            await _block_with_conflict(
+                f"manual_approve_blocked: total_cost_too_high: расчётный итог "
+                f"{breakdown.get('total_cost')} ₽ превышает санитарный потолок. "
+                + "; ".join(_tc.errors)
+                + " Используйте «Сделать baseline» (если это первое накопленное "
+                "показание счётчика) или «Отклонить»."
+            )
+
     reading = MeterReading(
         user_id=user.id,
         room_id=user.room_id,
@@ -1063,6 +1170,53 @@ async def _apply_approve(
     row.reading_id = reading.id
     row.processed_at = utcnow()
     row.processed_by_id = current_user.id
+
+    # ─────────────────────────────────────────────────────────────
+    # RETROACTIVE RECALC (см. skip_recalc.py).
+    # Если перед этим reading-ом была цепочка AUTO_AVG / AUTO_NORM_SANCTION
+    # (жилец пропустил 1+ месяцев), пересчитываем эти прошлые auto-readings
+    # равномерно по реальной дельте. Раньше recalc вызывался ТОЛЬКО из
+    # admin_readings_approve — gsheets-flow его не подключал, и кейс
+    # «жилец пропустил, AUTO_AVG переоценил, потом подал реальные через
+    # GSheets» давал «лесенку» в квитанции и переплату 11k+₽ (Липша,
+    # май 2026).
+    # ─────────────────────────────────────────────────────────────
+    if breakdown and not breakdown.get("is_baseline") and eff_tariff is not None and room_obj is not None:
+        try:
+            from app.modules.utility.services.skip_recalc import recalc_skip_chain
+            _seas = await _load_seasonal(db)
+            _heat_now = _seas.heating_season_active and eff_tariff.is_heating_active_now()
+            _hw_now = _seas.hot_water_heating_active and eff_tariff.is_hw_heating_active_now()
+            recalc_result = await recalc_skip_chain(
+                db=db, user=user, room=room_obj,
+                current_reading=reading, tariff=eff_tariff,
+                heating_season_active=_heat_now,
+                hot_water_heating_active=_hw_now,
+            )
+            if recalc_result and recalc_result.get("applied"):
+                await write_audit_log(
+                    db, current_user.id, current_user.username,
+                    action="gsheets_skip_recalc",
+                    entity_type="reading", entity_id=reading.id,
+                    details={
+                        "auto_readings_recalced": recalc_result["auto_readings_recalced"],
+                        "last_manual_period_id": recalc_result["last_manual_period_id"],
+                        "real_delta_hot": str(recalc_result["real_delta_hot"]),
+                        "real_delta_cold": str(recalc_result["real_delta_cold"]),
+                        "avg_per_month_hot": str(recalc_result["avg_delta_hot"]),
+                        "avg_per_month_cold": str(recalc_result["avg_delta_cold"]),
+                        "owner": user.username,
+                        "gsheets_row_id": row.id,
+                    },
+                )
+        except Exception as e:
+            # Recalc — bonus best-effort. Если упал, основной reading
+            # уже создан корректно. Логируем и идём дальше.
+            import logging as _log_skip
+            _log_skip.getLogger(__name__).warning(
+                "[GSHEETS-APPROVE] skip_recalc failed for reading=%s: %s",
+                reading.id, e,
+            )
 
     await write_audit_log(
         db, current_user.id, current_user.username,
