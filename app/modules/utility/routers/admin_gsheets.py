@@ -1189,6 +1189,12 @@ async def _apply_approve(
     row.reading_id = reading.id
     row.processed_at = utcnow()
     row.processed_by_id = current_user.id
+    # E3-D fix: чистим conflict_reason после успешного approve. Иначе
+    # в БД остаётся артефакт прошлой неуспешной попытки (см. Липша
+    # id=2296: status='approved' но conflict_reason всё ещё про
+    # «hot=794 меньше 805» — это был старый reason до фикса). UI
+    # может показывать тёмный «info-tooltip» с устаревшей причиной.
+    row.conflict_reason = None
 
     # ─────────────────────────────────────────────────────────────
     # RETROACTIVE RECALC (см. skip_recalc.py).
