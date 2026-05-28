@@ -276,7 +276,24 @@ jobs:
 
       - name: Pull latest images
         working-directory: /opt/utility_calc
-        run: docker compose pull
+        # GHCR периодически отвечает 502 Bad Gateway на manifest GET для
+        # свежезалитого образа (catalog ещё не пропагировался по всем
+        # nodes). docker compose pull в этот момент валит весь deploy.
+        # Простой retry-loop с прогрессивной задержкой устраняет 95%
+        # таких флапов без правки кода (наблюдалось 28.05.2026).
+        run: |
+          set -e
+          for attempt in 1 2 3 4 5; do
+            if docker compose pull; then
+              echo "[pull] OK on attempt $attempt"
+              exit 0
+            fi
+            sleep_for=$((attempt * 15))
+            echo "[pull] attempt $attempt failed; sleeping ${sleep_for}s before retry"
+            sleep $sleep_for
+          done
+          echo "[pull] all 5 attempts failed — registry likely down"
+          exit 1
 
       - name: Start containers
         working-directory: /opt/utility_calc
