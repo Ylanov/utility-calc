@@ -45,11 +45,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.utility.models import (
-    MeterReading, Tariff, User, Room,
+    MeterReading, Tariff, User, Room, BillingPeriod,
 )
 from app.modules.utility.services.calculations import (
     calculate_utilities, costs_for_model_fields, D,
 )
+from app.modules.utility.services.period_helpers import period_chron_key
 
 logger = logging.getLogger(__name__)
 
@@ -116,16 +117,33 @@ async def recalc_skip_chain(
       }
     """
     # 1. Тянем всю историю в этой паре (user_id, room_id), отсортированно
-    #    по period_id ASC. period_id монотонен по времени (см. инцидент
-    #    мая 2026 — почему по period_id, а не created_at).
-    history = (await db.execute(
-        select(MeterReading).where(
+    #    по БИЛЛИНГОВОЙ ХРОНОЛОГИИ (period_chron_key из BillingPeriod.name).
+    #
+    #    Раньше сортировали по `period_id ASC`, предполагая что period_id
+    #    монотонен по биллинговому месяцу. Это допущение СЛОМАЛОСЬ когда
+    #    админ задним числом создал период «Февраль 2026» с id=90 уже после
+    #    «Май 2026» (id=88). По period_id ASC получалось Апрель(id=2) →
+    #    Май(id=88) → Февраль(id=90) — Февраль ставился ПОСЛЕ Мая.
+    #    Размазывание дельты в шаге 5 ставило бо́льшее показание Февралю,
+    #    чем Апрелю → счётчик «упал» (-4.33 у Калачёва, инцидент 28.05.2026).
+    #
+    #    Биллинговая хронология парсится из имени периода через
+    #    period_chron_key (period_helpers.py). «Начальный период» → (0,0),
+    #    обычные «Май 2026» → (2026, 5). После сортировки итерируемся в
+    #    правильном хронологическом порядке независимо от порядка создания.
+    rows = (await db.execute(
+        select(MeterReading, BillingPeriod)
+        .join(BillingPeriod, MeterReading.period_id == BillingPeriod.id)
+        .where(
             MeterReading.user_id == user.id,
             MeterReading.room_id == room.id,
             MeterReading.is_approved.is_(True),
             MeterReading.id != current_reading.id,
-        ).order_by(MeterReading.period_id.asc())
-    )).scalars().all()
+        )
+    )).all()
+    history = [r for r, _p in sorted(
+        rows, key=lambda row: period_chron_key(row[1].name)
+    )]
 
     if not history:
         return None  # некомпенсировать нечего

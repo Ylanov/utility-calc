@@ -12,6 +12,7 @@ from collections import defaultdict
 
 from app.modules.utility.models import User, MeterReading, BillingPeriod, Tariff
 from app.modules.utility.services.calculations import calculate_utilities, D
+from app.modules.utility.services.period_helpers import period_chron_key
 
 logger = logging.getLogger("billing_service")
 
@@ -445,18 +446,28 @@ async def auto_fill_period_readings(
             tariff_cache.get_effective_tariff(user=user, room=user.room)
             or default_tariff
         )
-        # История по этому жильцу: 6 последних approved до target_period (включая).
+        # История по этому жильцу: 6 последних approved до target_period.
         # Берём по user_id, не room_id (Bug AG: долги/показания per-user).
-        history = (await db.execute(
-            select(MeterReading)
+        #
+        # Сортируем по БИЛЛИНГОВОЙ ХРОНОЛОГИИ (period_chron_key из BillingPeriod
+        # .name), а не по period_id. period_id ≠ хронология когда админ создаёт
+        # ретроактивные периоды — например «Февраль 2026» с id=90 после «Май
+        # 2026» с id=88. См. длинный комментарий в skip_recalc.py:118-130.
+        # Возвращаем DESC (свежие первые), как было раньше — caller
+        # (miss_count loop, _avg_monthly_delta_from_manual_history) ожидает
+        # именно этот порядок.
+        rows = (await db.execute(
+            select(MeterReading, BillingPeriod)
+            .join(BillingPeriod, MeterReading.period_id == BillingPeriod.id)
             .where(
                 MeterReading.user_id == user.id,
                 MeterReading.is_approved.is_(True),
                 MeterReading.period_id != target_period.id,
             )
-            .order_by(MeterReading.period_id.desc())
-            .limit(6)
-        )).scalars().all()
+        )).all()
+        history = [r for r, _p in sorted(
+            rows, key=lambda row: period_chron_key(row[1].name), reverse=True
+        )][:6]
 
         miss_count = 0
         for r in history:
