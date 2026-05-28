@@ -5,13 +5,12 @@ from app.core.time_utils import utcnow
 from decimal import Decimal
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func, update, text
 from sqlalchemy.orm import selectinload
-from fastapi_cache.decorator import cache
 from fastapi_cache import FastAPICache
 
 from app.core.database import get_db
@@ -53,15 +52,37 @@ async def _safe_clear_cache(namespace: str = "tariffs"):
 # GET /api/tariffs — Список активных тарифов (кэшированный)
 # =====================================================
 @router.get("", response_model=List[TariffSchema])
-@cache(expire=3600, namespace="tariffs")
 async def get_tariffs(
+        applicable_to: Optional[str] = Query(
+            None, pattern="^(dormitory|house|both)$",
+            description=(
+                "Фильтр по применимости тарифа к типу помещения. "
+                "Если задан 'dormitory' или 'house' — отдаём тарифы с этим "
+                "значением + 'both' (универсальные). Если не задан — все. "
+                "Используется UI Жилфонда в селекторе тарифа."
+            ),
+        ),
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
 ):
-    """Получить список всех активных тарифов, отсортированных по ID."""
-    result = await db.execute(
-        select(Tariff).where(Tariff.is_active).order_by(Tariff.id)
-    )
+    """Получить список всех активных тарифов, отсортированных по ID.
+
+    Опциональный фильтр applicable_to: при выборе типа помещения
+    UI запрашивает только подходящие. 'both' всегда отдаются вместе
+    с запрошенным типом — это удобная категория тарифов «универсальный».
+
+    Cache: без @cache decorator (раньше был expire=3600), потому что
+    добавление query-параметра меняет ключ кеша при каждом значении
+    applicable_to. Тариф меняется редко, селектор отвечает быстро
+    из горячего кеша Postgres — кешировать на 5+ минут не нужно.
+    """
+    stmt = select(Tariff).where(Tariff.is_active)
+    if applicable_to in ("dormitory", "house"):
+        # Тарифы с applicable_to=='both' видны для любого типа.
+        stmt = stmt.where(Tariff.applicable_to.in_([applicable_to, "both"]))
+    elif applicable_to == "both":
+        stmt = stmt.where(Tariff.applicable_to == "both")
+    result = await db.execute(stmt.order_by(Tariff.id))
     return result.scalars().all()
 
 

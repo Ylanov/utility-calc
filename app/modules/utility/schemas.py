@@ -1,9 +1,13 @@
 # app/modules/utility/schemas.py
 
-from pydantic import BaseModel, condecimal, Field, ConfigDict
+from pydantic import BaseModel, condecimal, Field, ConfigDict, model_validator
 from typing import Optional, List, Generic, TypeVar, Literal
 from datetime import datetime, date
 from decimal import Decimal
+
+# Bug AS+: тип помещения. См. models.Room.place_type и housing_001 миграцию.
+PlaceType = Literal["dormitory", "house"]
+TariffApplicableTo = Literal["dormitory", "house", "both"]
 
 # ======================================================
 # DECIMAL TYPES
@@ -31,9 +35,84 @@ class PaginatedResponse(BaseModel, Generic[M]):
 # ROOM SCHEMAS
 # ======================================================
 
+def _normalize_room_address_fields(values: dict) -> dict:
+    """Общая нормализация полей адреса в RoomCreate/Update.
+
+    Для place_type='dormitory':
+      * dormitory_name + room_number обязательны (после strip).
+      * street/house_number/apartment_number принудительно None.
+      * is_singles_apartment допустим (default False).
+
+    Для place_type='house':
+      * street + house_number + apartment_number обязательны (после strip).
+      * dormitory_name/room_number принудительно None.
+      * is_singles_apartment запрещён True (холостяки только в общагах).
+      * Серийники счётчиков (hw/cw/el) обнуляются — для домов они не нужны.
+
+    Эти правила дублирующе валидируются CHECK-constraint'ом в БД
+    (ck_rooms_address_matches_place_type), но в schema даём
+    человекочитаемые сообщения вместо PG-ошибки.
+    """
+    pt = values.get("place_type")
+    if pt is None:
+        # RoomUpdate без явного place_type — нормализация на стороне
+        # рутера (он знает текущий тип из БД и применяет правильные
+        # дефолты). Здесь ничего не трогаем.
+        return values
+
+    def _empty(x):
+        if x is None:
+            return True
+        if isinstance(x, str) and not x.strip():
+            return True
+        return False
+
+    if pt == "dormitory":
+        if _empty(values.get("dormitory_name")):
+            raise ValueError("dormitory_name обязателен для place_type='dormitory'")
+        if _empty(values.get("room_number")):
+            raise ValueError("room_number обязателен для place_type='dormitory'")
+        # «домовые» поля молча обнуляем чтобы случайно не записать их в БД.
+        values["street"] = None
+        values["house_number"] = None
+        values["apartment_number"] = None
+    elif pt == "house":
+        if _empty(values.get("street")):
+            raise ValueError("street обязателен для place_type='house'")
+        if _empty(values.get("house_number")):
+            raise ValueError("house_number обязателен для place_type='house'")
+        if _empty(values.get("apartment_number")):
+            raise ValueError("apartment_number обязателен для place_type='house'")
+        if values.get("is_singles_apartment"):
+            raise ValueError(
+                "is_singles_apartment недопустим для place_type='house' — "
+                "холостяцкие квартиры существуют только в общагах"
+            )
+        # Общажные поля обнуляем.
+        values["dormitory_name"] = None
+        values["room_number"] = None
+        # Серийники счётчиков — у домов не используются.
+        values["hw_meter_serial"] = None
+        values["cw_meter_serial"] = None
+        values["el_meter_serial"] = None
+    return values
+
+
 class RoomCreate(BaseModel):
-    dormitory_name: str
-    room_number: str
+    # Тип помещения. По умолчанию 'dormitory' для обратной совместимости
+    # с существующими интеграциями (mobile/gsheets/импорт), где payload
+    # этого поля раньше не содержал.
+    place_type: PlaceType = "dormitory"
+
+    # Общежитие
+    dormitory_name: Optional[str] = None
+    room_number: Optional[str] = None
+
+    # Дом/квартира
+    street: Optional[str] = None
+    house_number: Optional[str] = None
+    apartment_number: Optional[str] = None
+
     apartment_area: DecimalAmount
     total_room_residents: int = 1
     hw_meter_serial: Optional[str] = None
@@ -43,13 +122,31 @@ class RoomCreate(BaseModel):
     # этот тариф побеждает их персональный (см. tariff_cache.get_effective_tariff).
     tariff_id: Optional[int] = None
     # Bug AS: холостяцкая квартира — счёт делится поровну между жильцами.
+    # Для place_type='house' принудительно False (валидируется).
     is_singles_apartment: bool = False
     max_capacity: Optional[int] = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_address(cls, values):
+        if isinstance(values, dict):
+            return _normalize_room_address_fields(dict(values))
+        return values
+
 
 class RoomUpdate(BaseModel):
+    # В Update place_type Optional. Если админ его не передал — рутер
+    # подставит текущий из БД перед валидацией. Если передал — сменим
+    # тип, и все адресные поля должны соответствовать новому типу.
+    place_type: Optional[PlaceType] = None
+
     dormitory_name: Optional[str] = None
     room_number: Optional[str] = None
+
+    street: Optional[str] = None
+    house_number: Optional[str] = None
+    apartment_number: Optional[str] = None
+
     apartment_area: Optional[DecimalAmount] = None
     total_room_residents: Optional[int] = None
     hw_meter_serial: Optional[str] = None
@@ -59,11 +156,29 @@ class RoomUpdate(BaseModel):
     is_singles_apartment: Optional[bool] = None
     max_capacity: Optional[int] = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_address(cls, values):
+        # В Update нельзя строго требовать поля — рутер сам подставляет
+        # дефолты. Запускаем нормализацию ТОЛЬКО если в payload явно
+        # есть place_type (значит админ меняет тип и должен сразу
+        # передать корректный новый адрес).
+        if isinstance(values, dict) and values.get("place_type"):
+            return _normalize_room_address_fields(dict(values))
+        return values
+
 
 class RoomResponse(BaseModel):
     id: int
-    dormitory_name: str
-    room_number: str
+    place_type: PlaceType = "dormitory"
+
+    dormitory_name: Optional[str] = None
+    room_number: Optional[str] = None
+
+    street: Optional[str] = None
+    house_number: Optional[str] = None
+    apartment_number: Optional[str] = None
+
     apartment_area: DecimalAmount
     total_room_residents: int
     hw_meter_serial: Optional[str] = None

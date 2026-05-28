@@ -190,15 +190,57 @@
                 <div class="modal-form">
                     <input type="hidden" id="roomEditId">
 
-                    <div class="form-grid-2" style="margin-bottom: 16px;">
+                    <!-- housing_001: переключатель типа помещения.
+                         JS показывает/скрывает «общажные» либо «домовые» поля
+                         в зависимости от выбора. По умолчанию dormitory —
+                         обратная совместимость со старой формой. -->
+                    <div style="margin-bottom: 16px; padding: 12px 14px; background: var(--bg-page); border: 1px solid var(--border-color); border-radius: var(--radius-sm);">
+                        <div style="font-size: 12px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 8px;">Тип помещения</div>
+                        <div style="display: flex; gap: 16px;">
+                            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 14px;">
+                                <input type="radio" name="roomPlaceType" id="roomPlaceTypeDormitory" value="dormitory" checked>
+                                <span><i class="fa-solid fa-building"></i> Общежитие</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 14px;">
+                                <input type="radio" name="roomPlaceType" id="roomPlaceTypeHouse" value="house">
+                                <span><i class="fa-solid fa-house"></i> Дом / квартира</span>
+                            </label>
+                        </div>
+                        <p class="hint-text" style="font-size:11px; margin:8px 0 0; color:var(--text-secondary);">
+                            «Дом / квартира»: только семейные жильцы, без счётчиков,
+                            начисляется обычно только найм (через тариф).
+                        </p>
+                    </div>
+
+                    <!-- ОБЩАЖНЫЕ ПОЛЯ -->
+                    <div id="dormFields" class="form-grid-2" style="margin-bottom: 16px;">
                         <div class="form-group">
                             <label>Название Общежития</label>
-                            <input type="text" id="roomDormitory" required list="dormList" placeholder="Например: Общежитие №1">
+                            <input type="text" id="roomDormitory" list="dormList" placeholder="Например: Общежитие №1">
                             <datalist id="dormList"></datalist>
                         </div>
                         <div class="form-group">
                             <label>Номер комнаты / квартиры</label>
-                            <input type="text" id="roomNumber" required placeholder="Например: 101А">
+                            <input type="text" id="roomNumber" placeholder="Например: 101А">
+                        </div>
+                    </div>
+
+                    <!-- ДОМОВЫЕ ПОЛЯ (по умолчанию скрыты) -->
+                    <div id="houseFields" style="display: none; margin-bottom: 16px;">
+                        <div class="form-group" style="margin-bottom: 12px;">
+                            <label>Улица</label>
+                            <input type="text" id="roomStreet" list="streetList" placeholder="Например: Ленина">
+                            <datalist id="streetList"></datalist>
+                        </div>
+                        <div class="form-grid-2">
+                            <div class="form-group">
+                                <label>Дом</label>
+                                <input type="text" id="roomHouseNumber" placeholder="Например: 5 или 5к1">
+                            </div>
+                            <div class="form-group">
+                                <label>Квартира</label>
+                                <input type="text" id="roomApartmentNumber" placeholder="Например: 12">
+                            </div>
                         </div>
                     </div>
 
@@ -213,8 +255,8 @@
                         </div>
                     </div>
 
-                    <!-- Bug AS: настройки холостяцкой квартиры -->
-                    <div style="margin-bottom: 16px; padding: 14px 16px; background: #faf5ff; border: 1px solid #e9d5ff; border-radius: var(--radius-sm);">
+                    <!-- Bug AS: настройки холостяцкой квартиры. Для дома прячется -->
+                    <div id="singlesFields" style="margin-bottom: 16px; padding: 14px 16px; background: #faf5ff; border: 1px solid #e9d5ff; border-radius: var(--radius-sm);">
                         <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px; margin-bottom:10px;">
                             <input type="checkbox" id="roomIsSingles" style="width:16px; height:16px;">
                             <span style="font-weight:600; color:#6d28d9;">🛏 Холостяцкая квартира</span>
@@ -242,22 +284,26 @@
                         </select>
                         <p class="hint-text" style="font-size:11px; margin:4px 0 0; color:var(--text-secondary);">
                             Если задан — приоритет над тарифом жильца (Room.tariff_id &gt; User.tariff_id &gt; default).
+                            Для «дом/квартира» — обычно тариф «только найм» (charge_social_rent=true, остальные false).
                         </p>
                     </div>
 
-                    <h4 style="margin-bottom: 12px; font-size: 14px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">Серийные номера счетчиков (Опционально)</h4>
-                    <div class="grid-3-col" style="background: var(--bg-page); padding: 16px; border-radius: var(--radius-sm);">
-                        <div class="form-group" style="margin: 0;">
-                            <label style="color: var(--danger-color);"><i class="fa-solid fa-fire"></i> № ГВС</label>
-                            <input type="text" id="roomHwSerial">
-                        </div>
-                        <div class="form-group" style="margin: 0;">
-                            <label style="color: var(--primary-color);"><i class="fa-solid fa-snowflake"></i> № ХВС</label>
-                            <input type="text" id="roomCwSerial">
-                        </div>
-                        <div class="form-group" style="margin: 0;">
-                            <label style="color: #d97706;"><i class="fa-solid fa-bolt"></i> № Электр.</label>
-                            <input type="text" id="roomElSerial">
+                    <!-- СЧЁТЧИКИ — только для общежития -->
+                    <div id="meterFields">
+                        <h4 style="margin-bottom: 12px; font-size: 14px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">Серийные номера счетчиков (Опционально)</h4>
+                        <div class="grid-3-col" style="background: var(--bg-page); padding: 16px; border-radius: var(--radius-sm);">
+                            <div class="form-group" style="margin: 0;">
+                                <label style="color: var(--danger-color);"><i class="fa-solid fa-fire"></i> № ГВС</label>
+                                <input type="text" id="roomHwSerial">
+                            </div>
+                            <div class="form-group" style="margin: 0;">
+                                <label style="color: var(--primary-color);"><i class="fa-solid fa-snowflake"></i> № ХВС</label>
+                                <input type="text" id="roomCwSerial">
+                            </div>
+                            <div class="form-group" style="margin: 0;">
+                                <label style="color: #d97706;"><i class="fa-solid fa-bolt"></i> № Электр.</label>
+                                <input type="text" id="roomElSerial">
+                            </div>
                         </div>
                     </div>
                 </div>

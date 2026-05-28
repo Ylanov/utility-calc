@@ -26,6 +26,7 @@ export const HousingModule = {
 
         await Promise.all([
             this.loadDormitories(),
+            this.loadStreets(),
             this.loadTariffs(),
         ]);
         this.initTable();
@@ -62,10 +63,26 @@ export const HousingModule = {
             form: document.getElementById('roomForm'),
             btnClose: document.querySelector('#roomModal .close-btn'),
             btnCancel: document.querySelector('#roomModal .secondary-btn'),
+            // housing_001: секции для скрытия/показа в зависимости от типа.
+            sections: {
+                dorm: document.getElementById('dormFields'),
+                house: document.getElementById('houseFields'),
+                meters: document.getElementById('meterFields'),
+                singles: document.getElementById('singlesFields'),
+            },
+            // housing_001: datalist для автокомплита улиц.
+            streetList: document.getElementById('streetList'),
             inputs: {
                 id: document.getElementById('roomEditId'),
+                // housing_001: radio тип помещения.
+                placeTypeDorm: document.getElementById('roomPlaceTypeDormitory'),
+                placeTypeHouse: document.getElementById('roomPlaceTypeHouse'),
                 dorm: document.getElementById('roomDormitory'),
                 num: document.getElementById('roomNumber'),
+                // housing_001: новые «домовые» адресные поля.
+                street: document.getElementById('roomStreet'),
+                houseNumber: document.getElementById('roomHouseNumber'),
+                apartmentNumber: document.getElementById('roomApartmentNumber'),
                 area: document.getElementById('roomArea'),
                 cap: document.getElementById('roomCapacity'),
                 tariff: document.getElementById('roomTariffId'),
@@ -136,6 +153,13 @@ export const HousingModule = {
         if (this.modal.form) {
             this.modal.form.addEventListener('submit', (e) => this.handleSave(e));
         }
+
+        // housing_001: переключение типа помещения в форме.
+        // При смене типа — перестраиваем секции и перезагружаем тарифы
+        // отфильтрованные по applicable_to.
+        [this.modal.inputs.placeTypeDorm, this.modal.inputs.placeTypeHouse].forEach(rad => {
+            if (rad) rad.addEventListener('change', () => this._applyPlaceTypeUI());
+        });
 
         [this.modal.btnClose, this.modal.btnCancel].forEach(btn => {
             if (btn) btn.addEventListener('click', () => {
@@ -229,7 +253,10 @@ export const HousingModule = {
         // не получаем (их видно через expand), поэтому в таблице даём подсказку
         // через tint фона и чип с кол-вом мест.
         const cap = Number(room.total_room_residents || 0);
-        const missing = !room.hw_meter_serial || !room.cw_meter_serial || !room.el_meter_serial;
+        const isHouse = room.place_type === 'house';
+        // У домов счётчиков нет — отсутствие серийников НЕ повод подсвечивать.
+        const missing = !isHouse
+            && (!room.hw_meter_serial || !room.cw_meter_serial || !room.el_meter_serial);
 
         const bgTint = missing ? 'background: #fffbeb;' : '';
 
@@ -241,15 +268,21 @@ export const HousingModule = {
             onclick: (e) => { e.stopPropagation(); this.toggleExpand(room); },
         }, isOpen ? '▼' : '▶');
 
-        // Кликабельный номер комнаты — открывает Hub-модалку с действиями
-        // (редактирование / начальные показания / замена счётчика).
-        // Раньше эти три действия были отдельными иконками в каждой строке,
-        // и при 300+ комнатах таблица была перегружена. Удаление остаётся
-        // отдельной иконкой, чтобы не удалить случайно из «хаба».
+        // housing_001: адрес отображается по-разному в зависимости от типа.
+        //   dormitory:  «4дв.стр.9» / «203»
+        //   house:      «ул. Ленина, 5» / «кв. 12»
+        const placeLabel = isHouse
+            ? `ул. ${room.street || '—'}, д. ${room.house_number || '—'}`
+            : (room.dormitory_name || '—');
+        const numberLabel = isHouse
+            ? `кв. ${room.apartment_number || '—'}`
+            : (room.room_number || '—');
+
+        // Кликабельный номер — открывает Hub-модалку с действиями.
         const numberCell = el('td', {},
             el('button', {
                 class: 'link-btn',
-                title: 'Действия по комнате',
+                title: 'Действия по помещению',
                 onclick: () => this.openActionsHub(room),
                 style: {
                     background: 'transparent',
@@ -260,8 +293,26 @@ export const HousingModule = {
                     cursor: 'pointer',
                     fontSize: '14px',
                 },
-            }, room.room_number)
+            }, numberLabel)
         );
+
+        // Для дома вместо серийников показываем компактный плейсхолдер
+        // (счётчики не нужны), плюс рядом с адресом — иконка типа.
+        const typeIcon = isHouse
+            ? el('span', {
+                title: 'Дом / квартира',
+                style: { color: '#9333ea', marginRight: '6px', fontSize: '11px' },
+              }, '🏠')
+            : el('span', {
+                title: 'Общежитие',
+                style: { color: '#2563eb', marginRight: '6px', fontSize: '11px' },
+              }, '🏢');
+
+        const dashCell = (color) => el('td', {
+            class: 'text-sm font-mono',
+            style: { color: color, textAlign: 'center' },
+            title: 'Не применимо для домов/квартир',
+        }, '—');
 
         const row = el('tr', {
             class: 'hover:bg-gray-50 transition-colors',
@@ -270,13 +321,19 @@ export const HousingModule = {
         },
             el('td', { class: 'text-center' }, chevron),
             el('td', { class: 'text-gray-500 text-sm' }, `#${room.id}`),
-            el('td', { style: { fontWeight: 'bold', color: '#1f2937' } }, room.dormitory_name),
+            el('td', { style: { fontWeight: 'bold', color: '#1f2937' } }, typeIcon, placeLabel),
             numberCell,
             el('td', {}, `${Number(room.apartment_area).toFixed(1)} м²`),
             el('td', { class: 'text-center' }, String(cap)),
-            el('td', { class: 'text-sm font-mono', style: { color: room.hw_meter_serial ? '#dc2626' : '#9ca3af' } }, room.hw_meter_serial || '—'),
-            el('td', { class: 'text-sm font-mono', style: { color: room.cw_meter_serial ? '#2563eb' : '#9ca3af' } }, room.cw_meter_serial || '—'),
-            el('td', { class: 'text-sm font-mono', style: { color: room.el_meter_serial ? '#d97706' : '#9ca3af' } }, room.el_meter_serial || '—'),
+            isHouse
+                ? dashCell('#d1d5db')
+                : el('td', { class: 'text-sm font-mono', style: { color: room.hw_meter_serial ? '#dc2626' : '#9ca3af' } }, room.hw_meter_serial || '—'),
+            isHouse
+                ? dashCell('#d1d5db')
+                : el('td', { class: 'text-sm font-mono', style: { color: room.cw_meter_serial ? '#2563eb' : '#9ca3af' } }, room.cw_meter_serial || '—'),
+            isHouse
+                ? dashCell('#d1d5db')
+                : el('td', { class: 'text-sm font-mono', style: { color: room.el_meter_serial ? '#d97706' : '#9ca3af' } }, room.el_meter_serial || '—'),
             el('td', { class: 'text-center' },
                 el('button', {
                     class: 'btn-icon btn-delete', title: 'Удалить',
@@ -477,11 +534,40 @@ export const HousingModule = {
         ].join('');
     },
 
-    async loadTariffs() {
+    /**
+     * housing_001: загрузка тарифов с фильтром по applicable_to.
+     *   applicable_to='dormitory' → тарифы для общаг + универсальные ('both').
+     *   applicable_to='house'     → тарифы для домов + универсальные.
+     *   без параметра             → все активные (для первичной загрузки).
+     */
+    async loadTariffs(applicableTo = null) {
         try {
-            this.tariffs = await api.getCached('/tariffs', { ttlSeconds: 300 });
+            const q = applicableTo ? `?applicable_to=${encodeURIComponent(applicableTo)}` : '';
+            // Без getCached: ключ зависит от applicable_to, кеширование
+            // на 5 минут даёт промахи при каждом переключении радио.
+            this.tariffs = await api.get(`/tariffs${q}`);
         } catch {
             this.tariffs = [];
+        }
+    },
+
+    /**
+     * housing_001: список улиц для автокомплита формы «Дом / квартира».
+     * Аналог loadDormitories. Заполняет datalist#streetList.
+     */
+    async loadStreets() {
+        try {
+            const streets = await api.get('/rooms/streets');
+            const list = this.modal.streetList;
+            if (!list) return;
+            list.innerHTML = '';
+            streets.forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = String(s);
+                list.appendChild(opt);
+            });
+        } catch {
+            // Тихо — улицы не критичны для работы формы.
         }
     },
 
@@ -515,13 +601,78 @@ export const HousingModule = {
         }
     },
 
+    /**
+     * housing_001: Перестраивает форму под выбранный тип помещения.
+     *   — dormitory: показывает dormFields, meterFields, singlesFields.
+     *   — house: скрывает счётчики и singles, показывает houseFields.
+     *
+     * Также управляет required-атрибутами полей (HTML5-валидация формы),
+     * чтобы pristine-форма не валилась на required-полях другого типа,
+     * и перезагружает список тарифов с фильтром applicable_to.
+     */
+    _applyPlaceTypeUI() {
+        const isHouse = !!this.modal.inputs.placeTypeHouse?.checked;
+        const sec = this.modal.sections;
+        if (sec.dorm)    sec.dorm.style.display    = isHouse ? 'none' : '';
+        if (sec.house)   sec.house.style.display   = isHouse ? '' : 'none';
+        if (sec.meters)  sec.meters.style.display  = isHouse ? 'none' : '';
+        if (sec.singles) sec.singles.style.display = isHouse ? 'none' : '';
+
+        // Required-атрибуты — браузер сам не пускает submit пустых полей.
+        const setReq = (el, req) => {
+            if (!el) return;
+            if (req) el.setAttribute('required', '');
+            else el.removeAttribute('required');
+        };
+        setReq(this.modal.inputs.dorm, !isHouse);
+        setReq(this.modal.inputs.num, !isHouse);
+        setReq(this.modal.inputs.street, isHouse);
+        setReq(this.modal.inputs.houseNumber, isHouse);
+        setReq(this.modal.inputs.apartmentNumber, isHouse);
+
+        // Когда переключаемся на дом — обнуляем «общажные» значения
+        // (если до этого что-то ввели). Аналогично в обратную сторону.
+        if (isHouse) {
+            if (this.modal.inputs.dorm) this.modal.inputs.dorm.value = '';
+            if (this.modal.inputs.num) this.modal.inputs.num.value = '';
+            if (this.modal.inputs.hw) this.modal.inputs.hw.value = '';
+            if (this.modal.inputs.cw) this.modal.inputs.cw.value = '';
+            if (this.modal.inputs.el) this.modal.inputs.el.value = '';
+            if (this.modal.inputs.isSingles) this.modal.inputs.isSingles.checked = false;
+        } else {
+            if (this.modal.inputs.street) this.modal.inputs.street.value = '';
+            if (this.modal.inputs.houseNumber) this.modal.inputs.houseNumber.value = '';
+            if (this.modal.inputs.apartmentNumber) this.modal.inputs.apartmentNumber.value = '';
+        }
+
+        // Перезагружаем тарифы с фильтром applicable_to. Сохраняем
+        // currently-selected tariff_id если он подходит обоим типам.
+        const currentTariff = this.modal.inputs.tariff?.value || null;
+        this.loadTariffs(isHouse ? 'house' : 'dormitory')
+            .then(() => this.fillTariffSelect(currentTariff));
+    },
+
     openModal(room = null) {
         this.modal.form.reset();
+        const isHouse = !!(room && room.place_type === 'house');
+
+        // Выставляем radio до показа модалки, чтобы _applyPlaceTypeUI
+        // увидел правильный тип.
+        if (this.modal.inputs.placeTypeHouse) this.modal.inputs.placeTypeHouse.checked = isHouse;
+        if (this.modal.inputs.placeTypeDorm)  this.modal.inputs.placeTypeDorm.checked = !isHouse;
+        this._applyPlaceTypeUI();
+
         if (room) {
             this.modal.title.textContent = 'Редактировать помещение';
             this.modal.inputs.id.value = room.id;
-            this.modal.inputs.dorm.value = room.dormitory_name;
-            this.modal.inputs.num.value = room.room_number;
+            // Общажные поля (заполнятся только если place_type='dormitory').
+            this.modal.inputs.dorm.value = room.dormitory_name || '';
+            this.modal.inputs.num.value = room.room_number || '';
+            // Домовые поля (заполнятся только если place_type='house').
+            if (this.modal.inputs.street) this.modal.inputs.street.value = room.street || '';
+            if (this.modal.inputs.houseNumber) this.modal.inputs.houseNumber.value = room.house_number || '';
+            if (this.modal.inputs.apartmentNumber) this.modal.inputs.apartmentNumber.value = room.apartment_number || '';
+
             this.modal.inputs.area.value = room.apartment_area;
             this.modal.inputs.cap.value = room.total_room_residents;
             this.modal.inputs.hw.value = room.hw_meter_serial || '';
@@ -541,7 +692,9 @@ export const HousingModule = {
             // Bug AS: дефолты для нового помещения.
             if (this.modal.inputs.isSingles) this.modal.inputs.isSingles.checked = false;
             if (this.modal.inputs.maxCapacity) this.modal.inputs.maxCapacity.value = '';
-            if (this.dom.dormFilterSelect.value) {
+            // Префилл названия общаги из активного фильтра (для удобства массового
+            // создания комнат в одном общежитии). Применимо только если тип = dormitory.
+            if (!isHouse && this.dom.dormFilterSelect && this.dom.dormFilterSelect.value) {
                 this.modal.inputs.dorm.value = this.dom.dormFilterSelect.value;
             }
             this.fillTariffSelect(null);
@@ -555,19 +708,39 @@ export const HousingModule = {
         const id = this.modal.inputs.id.value;
         const tariffVal = this.modal.inputs.tariff?.value;
         const maxCapVal = this.modal.inputs.maxCapacity?.value;
+        const isHouse = !!this.modal.inputs.placeTypeHouse?.checked;
+
+        // housing_001: payload зависит от типа помещения. Backend
+        // схема RoomCreate проверит обязательность нужных полей и
+        // вернёт человечную ошибку при пробелах/null.
         const data = {
-            dormitory_name: this.modal.inputs.dorm.value.trim(),
-            room_number: this.modal.inputs.num.value.trim(),
+            place_type: isHouse ? 'house' : 'dormitory',
             apartment_area: parseFloat(this.modal.inputs.area.value),
             total_room_residents: parseInt(this.modal.inputs.cap.value),
             tariff_id: tariffVal ? parseInt(tariffVal) : null,
-            hw_meter_serial: this.modal.inputs.hw.value.trim(),
-            cw_meter_serial: this.modal.inputs.cw.value.trim(),
-            el_meter_serial: this.modal.inputs.el.value.trim(),
-            // Bug AS
-            is_singles_apartment: !!this.modal.inputs.isSingles?.checked,
-            max_capacity: maxCapVal ? parseInt(maxCapVal) : null,
         };
+
+        if (isHouse) {
+            data.street = (this.modal.inputs.street?.value || '').trim();
+            data.house_number = (this.modal.inputs.houseNumber?.value || '').trim();
+            data.apartment_number = (this.modal.inputs.apartmentNumber?.value || '').trim();
+            // Серийники счётчиков и is_singles — не для домов. Шлём null/false
+            // явно, чтобы при редактировании старая комната-общага сбросила
+            // эти значения после смены типа.
+            data.hw_meter_serial = null;
+            data.cw_meter_serial = null;
+            data.el_meter_serial = null;
+            data.is_singles_apartment = false;
+            data.max_capacity = maxCapVal ? parseInt(maxCapVal) : null;
+        } else {
+            data.dormitory_name = (this.modal.inputs.dorm.value || '').trim();
+            data.room_number = (this.modal.inputs.num.value || '').trim();
+            data.hw_meter_serial = (this.modal.inputs.hw.value || '').trim() || null;
+            data.cw_meter_serial = (this.modal.inputs.cw.value || '').trim() || null;
+            data.el_meter_serial = (this.modal.inputs.el.value || '').trim() || null;
+            data.is_singles_apartment = !!this.modal.inputs.isSingles?.checked;
+            data.max_capacity = maxCapVal ? parseInt(maxCapVal) : null;
+        }
 
         setLoading(btn, true, 'Сохранение...');
         try {
@@ -576,11 +749,12 @@ export const HousingModule = {
                 toast('Помещение обновлено', 'success');
             } else {
                 await api.post('/rooms', data);
-                toast('Помещение добавлено', 'success');
+                toast(isHouse ? 'Дом / квартира добавлена' : 'Помещение добавлено', 'success');
             }
             this.modal.window.classList.remove('open');
             this.table.refresh();
             this.loadDormitories();
+            this.loadStreets();
             this.loadStats();
         } catch (err) {
             toast(err.message, 'error');

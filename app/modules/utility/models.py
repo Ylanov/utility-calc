@@ -36,12 +36,41 @@ class Room(Base):
 
     id = Column(Integer, primary_key=True, index=True)
 
-    dormitory_name = Column(String, index=True)
-    room_number = Column(String, index=True)
+    # ─────────────────────────────────────────────────────────────────
+    # Тип помещения. Решает форму адреса, правила начисления, наличие
+    # счётчиков, разрешён ли per_capita-жилец и т.д.
+    #   'dormitory' — общежитие (dormitory_name + room_number, счётчики,
+    #                  семейные + холостяки).
+    #   'house'     — дом / квартира (street + house_number + apartment_number,
+    #                  без счётчиков, только семейные, тариф начисляет
+    #                  обычно только найм через charge_* флаги).
+    # Партиц-индекс уникальности (миграция housing_001_place_type)
+    # обеспечивает что одинаковые адреса в рамках одного типа запрещены,
+    # но «комната 101» в общаге и «квартира 101» в доме на одной улице
+    # могут сосуществовать.
+    # ─────────────────────────────────────────────────────────────────
+    place_type = Column(
+        String(16), default="dormitory", nullable=False,
+        server_default="dormitory", index=True,
+    )
+
+    # Адресные поля «общажного» типа. Для place_type='house' — None.
+    dormitory_name = Column(String, index=True, nullable=True)
+    room_number = Column(String, index=True, nullable=True)
+
+    # Адресные поля «домового» типа. Для place_type='dormitory' — None.
+    # Обязательность тройки гарантирует CHECK-constraint
+    # ck_rooms_address_matches_place_type (см. housing_001 миграцию).
+    street = Column(String(200), nullable=True, index=True)
+    house_number = Column(String(50), nullable=True)
+    apartment_number = Column(String(50), nullable=True)
 
     apartment_area = Column(Numeric(10, 2), default=0.00)
     total_room_residents = Column(Integer, default=1)
 
+    # Серийники счётчиков. Используются только для общаг (для домов —
+    # начислений по счётчикам нет, серийники не задаются). UI скрывает
+    # эти поля для place_type='house', schemas-валидатор игнорирует.
     hw_meter_serial = Column(String, nullable=True)
     cw_meter_serial = Column(String, nullable=True)
     el_meter_serial = Column(String, nullable=True)
@@ -79,14 +108,11 @@ class Room(Base):
     # валидации «нельзя зарегистрировать больше людей чем вмещает».
     max_capacity = Column(Integer, nullable=True)
 
-    __table_args__ = (
-        Index(
-            "uq_room_dormitory_number",
-            "dormitory_name",
-            "room_number",
-            unique=True
-        ),
-    )
+    # Уникальность адресов внутри типа обеспечивается partial unique
+    # индексами в миграции housing_001_place_type (uq_room_dorm_addr /
+    # uq_room_house_addr) — здесь декларативно не описываем, потому что
+    # SQLAlchemy partial-index с WHERE без хака труднее читается. Источник
+    # правды — миграция.
 
 
 # ======================================================
@@ -293,6 +319,19 @@ class Tariff(Base):
     # На расчёт НЕ влияет — расчёт смотрит на user.billing_mode + tariff.per_capita_amount.
     # См. миграцию tariffs_type_001_family_singles.
     tariff_type = Column(String(20), default="family", nullable=False, server_default="family")
+
+    # Bug AS+: фильтрация тарифов по типу помещения.
+    # 'dormitory' — только для Room.place_type='dormitory' (общаги).
+    # 'house'     — только для Room.place_type='house' (дома/квартиры,
+    #               обычно с charge_*=False за исключением social_rent).
+    # 'both'      — обратная совместимость / универсальный тариф.
+    # На начислении напрямую НЕ влияет (это делают charge_*-флаги),
+    # фильтрует только селектор тарифа в UI Жилфонда. См. миграцию
+    # housing_001_place_type.
+    applicable_to = Column(
+        String(16), default="both", nullable=False,
+        server_default="both", index=True,
+    )
 
     # Дата вступления в силу. Если задана в будущем — тариф "запланирован" (is_active=False)
     # и автоматически активируется Celery-задачей в эту дату.

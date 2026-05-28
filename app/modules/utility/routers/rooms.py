@@ -109,9 +109,33 @@ async def analyze_housing(db: AsyncSession = Depends(get_db)):
 
 @router.get("/dormitories", response_model=List[str], dependencies=[Depends(get_current_user)])
 async def get_dormitories(db: AsyncSession = Depends(get_db)):
-    """Получает список всех уникальных названий общежитий."""
-    result = await db.execute(select(Room.dormitory_name).distinct().order_by(Room.dormitory_name))
-    return result.scalars().all()
+    """Список уникальных названий общежитий (только place_type='dormitory')."""
+    result = await db.execute(
+        select(Room.dormitory_name)
+        .where(
+            Room.place_type == "dormitory",
+            Room.dormitory_name.is_not(None),
+        )
+        .distinct()
+        .order_by(Room.dormitory_name)
+    )
+    return [v for v in result.scalars().all() if v]
+
+
+@router.get("/streets", response_model=List[str], dependencies=[Depends(get_current_user)])
+async def get_streets(db: AsyncSession = Depends(get_db)):
+    """Список уникальных улиц для домов/квартир (place_type='house').
+
+    Используется фронтом Жилфонда для автокомплита поля «Улица» в форме
+    добавления дома, аналогично /dormitories для общаг.
+    """
+    result = await db.execute(
+        select(Room.street)
+        .where(Room.place_type == "house", Room.street.is_not(None))
+        .distinct()
+        .order_by(Room.street)
+    )
+    return [v for v in result.scalars().all() if v]
 
 
 @router.get("", response_model=PaginatedResponse[RoomResponse], dependencies=[Depends(allow_management)])
@@ -120,6 +144,15 @@ async def get_rooms(
         limit: int = Query(50, ge=1, le=1000),
         search: Optional[str] = Query(None),
         dormitory: Optional[str] = Query(None),
+        # housing_001 (рефакторинг Жилфонда): фильтр по типу помещения.
+        # Если задан — отдаём только этот тип, иначе всё подряд.
+        place_type: Optional[str] = Query(
+            None, pattern="^(dormitory|house)$",
+            description="Фильтр по типу помещения: dormitory|house",
+        ),
+        street: Optional[str] = Query(
+            None, description="Точное название улицы (для домов)",
+        ),
         # Новые фильтры — без них невозможно сделать быстрый drill-down
         # по состоянию комнаты. У админа в проекте на 2000+ комнат без
         # фильтров работать нельзя.
@@ -138,17 +171,33 @@ async def get_rooms(
 
     if search:
         search_filter = f"%{search}%"
+        # Поиск работает по полям ОБОИХ типов адреса — общага и дом —
+        # чтобы админ в едином поиске мог найти и «комн. 405» и
+        # «ул. Ленина 5 кв.12». Серийники счётчиков тоже сохраняем
+        # (для общаг это удобный способ найти комнату по серийнику).
         condition = or_(
             Room.room_number.ilike(search_filter),
+            Room.dormitory_name.ilike(search_filter),
+            Room.street.ilike(search_filter),
+            Room.house_number.ilike(search_filter),
+            Room.apartment_number.ilike(search_filter),
             Room.hw_meter_serial.ilike(search_filter),
-            Room.cw_meter_serial.ilike(search_filter)
+            Room.cw_meter_serial.ilike(search_filter),
         )
         query = query.where(condition)
         count_query = count_query.where(condition)
 
+    if place_type:
+        query = query.where(Room.place_type == place_type)
+        count_query = count_query.where(Room.place_type == place_type)
+
     if dormitory:
         query = query.where(Room.dormitory_name == dormitory)
         count_query = count_query.where(Room.dormitory_name == dormitory)
+
+    if street:
+        query = query.where(Room.street == street)
+        count_query = count_query.where(Room.street == street)
 
     # Фильтр по заполненности: коррелируем через subquery количества жильцов
     if occupancy:
@@ -419,16 +468,40 @@ async def export_rooms(
 
 @router.post("", response_model=RoomResponse, dependencies=[Depends(allow_management)])
 async def create_room(data: RoomCreate, db: AsyncSession = Depends(get_db)):
-    """Создает новую комнату."""
-    # Проверка на дубликат
-    exist = await db.execute(select(Room).where(
-        Room.dormitory_name == data.dormitory_name,
-        Room.room_number == data.room_number
-    ))
-    if exist.scalars().first():
-        raise HTTPException(status_code=400, detail="Такая комната в этом общежитии уже существует")
+    """Создаёт новое помещение (общежитие или дом/квартира).
 
-    room = Room(**data.dict())
+    Тип определяет схема валидации: RoomCreate@model_validator уже
+    обнулил поля «не своего» типа и проверил обязательные. Здесь
+    проверяем только бизнес-уникальность адреса по нужным колонкам.
+    """
+    if data.place_type == "dormitory":
+        exist = await db.execute(select(Room).where(
+            Room.place_type == "dormitory",
+            Room.dormitory_name == data.dormitory_name,
+            Room.room_number == data.room_number,
+        ))
+        if exist.scalars().first():
+            raise HTTPException(
+                status_code=400,
+                detail="Такая комната в этом общежитии уже существует",
+            )
+    else:  # 'house'
+        exist = await db.execute(select(Room).where(
+            Room.place_type == "house",
+            Room.street == data.street,
+            Room.house_number == data.house_number,
+            Room.apartment_number == data.apartment_number,
+        ))
+        if exist.scalars().first():
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Квартира {data.apartment_number} в доме "
+                    f"{data.house_number} на улице {data.street} уже есть"
+                ),
+            )
+
+    room = Room(**data.model_dump())
     db.add(room)
     await db.commit()
     await db.refresh(room)
@@ -502,18 +575,84 @@ async def get_room(room_id: int, db: AsyncSession = Depends(get_db)):
 @router.put("/{room_id}", response_model=RoomResponse, dependencies=[Depends(allow_management)])
 async def update_room(room_id: int, data: RoomUpdate, db: AsyncSession = Depends(get_db)):
     room = await db.get(Room, room_id)
-    if not room: raise HTTPException(status_code=404, detail="Комната не найдена")
+    if not room:
+        raise HTTPException(status_code=404, detail="Комната не найдена")
 
-    update_data = data.dict(exclude_unset=True)
+    update_data = data.model_dump(exclude_unset=True)
 
-    # Защита от дублей при переименовании
-    if "dormitory_name" in update_data or "room_number" in update_data:
-        new_dorm = update_data.get("dormitory_name", room.dormitory_name)
-        new_num = update_data.get("room_number", room.room_number)
-        if new_dorm != room.dormitory_name or new_num != room.room_number:
-            exist = await db.execute(select(Room).where(Room.dormitory_name == new_dorm, Room.room_number == new_num))
-            if exist.scalars().first():
-                raise HTTPException(status_code=400, detail="Комната с таким номером уже есть в этом общежитии")
+    # Эффективный тип после апдейта (если меняется — берём новый, иначе
+    # текущий). Используется ниже для проверки соответствующего адреса.
+    effective_pt = update_data.get("place_type", room.place_type)
+
+    # Если в payload явно сменили place_type, RoomUpdate уже прогнал
+    # нормализацию (см. _normalize_room_address_fields) и обнулил
+    # «чужие» поля. Если place_type не меняется — нормализатор НЕ
+    # сработал, но мы должны не дать менять «чужие» поля (например
+    # для дома нельзя ставить hw_meter_serial). Делаем мягкий strip.
+    if effective_pt == "house":
+        for k in (
+            "dormitory_name", "room_number",
+            "hw_meter_serial", "cw_meter_serial", "el_meter_serial",
+        ):
+            if update_data.get(k) is not None:
+                # Просто игнорируем — для дома эти поля бессмысленны.
+                update_data[k] = None
+        if update_data.get("is_singles_apartment") is True:
+            raise HTTPException(
+                status_code=400,
+                detail="is_singles_apartment недопустим для place_type='house'",
+            )
+    elif effective_pt == "dormitory":
+        for k in ("street", "house_number", "apartment_number"):
+            if update_data.get(k) is not None:
+                update_data[k] = None
+
+    # Защита от дублей при переименовании. Логика разная для типов.
+    if effective_pt == "dormitory":
+        if (
+            "dormitory_name" in update_data
+            or "room_number" in update_data
+            or "place_type" in update_data
+        ):
+            new_dorm = update_data.get("dormitory_name", room.dormitory_name)
+            new_num = update_data.get("room_number", room.room_number)
+            if new_dorm != room.dormitory_name or new_num != room.room_number \
+                    or effective_pt != room.place_type:
+                exist = await db.execute(select(Room).where(
+                    Room.place_type == "dormitory",
+                    Room.dormitory_name == new_dorm,
+                    Room.room_number == new_num,
+                    Room.id != room_id,
+                ))
+                if exist.scalars().first():
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Комната с таким номером уже есть в этом общежитии",
+                    )
+    elif effective_pt == "house":
+        if (
+            "street" in update_data
+            or "house_number" in update_data
+            or "apartment_number" in update_data
+            or "place_type" in update_data
+        ):
+            new_st = update_data.get("street", room.street)
+            new_hn = update_data.get("house_number", room.house_number)
+            new_apt = update_data.get("apartment_number", room.apartment_number)
+            if (new_st, new_hn, new_apt) != (room.street, room.house_number, room.apartment_number) \
+                    or effective_pt != room.place_type:
+                exist = await db.execute(select(Room).where(
+                    Room.place_type == "house",
+                    Room.street == new_st,
+                    Room.house_number == new_hn,
+                    Room.apartment_number == new_apt,
+                    Room.id != room_id,
+                ))
+                if exist.scalars().first():
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Квартира с таким адресом уже есть",
+                    )
 
     # Если меняется tariff_id комнаты — валидируем и инвалидируем кеш расчётов
     tariff_changed = "tariff_id" in update_data and update_data["tariff_id"] != room.tariff_id
