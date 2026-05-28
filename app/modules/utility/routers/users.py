@@ -614,7 +614,7 @@ async def get_residence_history(user_id: int, db: AsyncSession = Depends(get_db)
                 "id": h.id,
                 "room_id": h.room_id,
                 "room": (
-                    f"{rooms_map[h.room_id].dormitory_name}, ком. {rooms_map[h.room_id].room_number}"
+                    rooms_map[h.room_id].format_address
                     if h.room_id in rooms_map else None
                 ),
                 "moved_in_at": h.moved_in_at.isoformat() if h.moved_in_at else None,
@@ -756,8 +756,8 @@ async def relocate_user(
         if not new_room:
             raise HTTPException(status_code=404, detail="Новая комната не найдена")
         await move_user_to_room(db, user=user, new_room_id=new_room.id,
-                                note=f"relocate to {new_room.dormitory_name}/{new_room.room_number}")
-        message = f"Финальная квитанция сформирована. Жилец переведен в {new_room.dormitory_name}, ком. {new_room.room_number}."
+                                note=f"relocate to {new_room.format_address}")
+        message = f"Финальная квитанция сформирована. Жилец переведен в {new_room.format_address}."
 
     # ЗАПИСЬ В ЖУРНАЛ: Переселение/Выселение
     await write_audit_log(

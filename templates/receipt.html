@@ -45,8 +45,9 @@ td { text-align: right; }
         <h3>Плательщик</h3>
         <div class="row"><span class="label">ФИО:</span><span>{{ user.username }}</span></div>
         <div class="row"><span class="label">Лицевой счет:</span><span>{{ user.id }}</span></div>
-        <!-- ИСПРАВЛЕНИЕ: Берем адрес из объекта room -->
-        <div class="row"><span class="label">Адрес:</span><span>{{ room.dormitory_name }}, ком. {{ room.room_number }}</span></div>
+        <!-- housing_001/E2-A: для дома формат адреса другой — используем
+             универсальный helper Room.format_address. -->
+        <div class="row"><span class="label">Адрес:</span><span>{{ room.format_address }}</span></div>
         <!-- ИСПРАВЛЕНИЕ: Берем площадь из объекта room -->
         <div class="row"><span class="label">Площадь:</span><span>{{ room.apartment_area }} м²</span></div>
         <div class="row"><span class="label">Проживающих:</span><span>{{ user.residents_count }}</span></div>

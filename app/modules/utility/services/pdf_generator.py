@@ -76,8 +76,9 @@ def generate_qr_base64(kbk: str, total_sum: Decimal, user: User, room: Room, pur
     first = fio[1] if len(fio) > 1 else ""
     middle = fio[2] if len(fio) > 2 else ""
 
-    # ИЗМЕНЕНИЕ: Адрес берется из комнаты
-    address = f"{room.dormitory_name}, {room.room_number}" if room else "Адрес не указан"
+    # housing_001/E2-A: формат адреса зависит от Room.place_type
+    # (общага → "<dorm>, ком. <N>", дом → "ул. X, д. Y, кв. Z").
+    address = room.format_address if room else "Адрес не указан"
 
     qr_data = (
         f"ST00012|Name={ORG_DETAILS['name']}|PersonalAcc={ORG_DETAILS['account']}|"

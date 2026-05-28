@@ -271,7 +271,7 @@ async def export_report(
         total_205 += t_205
 
         worksheet.append([
-            f"{room.dormitory_name} / {room.room_number}",
+            room.format_address,
             user.username.split("_deleted_")[0] if user.is_deleted else user.username,
             room.apartment_area,
             f"{user.residents_count}/{room.total_room_residents}",

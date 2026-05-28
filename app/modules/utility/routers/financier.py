@@ -757,8 +757,19 @@ async def debts_export(
         u, room = r[0], r[1]
         ws.cell(row=i, column=1, value=u.id)
         ws.cell(row=i, column=2, value=u.username)
-        ws.cell(row=i, column=3, value=(room.dormitory_name if room else ""))
-        ws.cell(row=i, column=4, value=(room.room_number if room else ""))
+        # housing_001/E2-A: для дома колонка "Общежитие" заполняется
+        # улицей+номером дома, "Комната" — номером квартиры. Для общаги
+        # сохраняем старое поведение (dormitory_name + room_number).
+        if room and room.place_type == "house":
+            _addr = ", ".join(filter(None, [
+                f"ул. {room.street}" if room.street else None,
+                f"д. {room.house_number}" if room.house_number else None,
+            ])) or ""
+            ws.cell(row=i, column=3, value=_addr)
+            ws.cell(row=i, column=4, value=(f"кв. {room.apartment_number}" if room.apartment_number else ""))
+        else:
+            ws.cell(row=i, column=3, value=(room.dormitory_name if room else ""))
+            ws.cell(row=i, column=4, value=(room.room_number if room else ""))
         ws.cell(row=i, column=5, value=float(r[2] or 0))
         ws.cell(row=i, column=6, value=float(r[3] or 0))
         ws.cell(row=i, column=7, value=float(r[4] or 0))
@@ -2008,7 +2019,7 @@ async def debts_integrity_check(
             "user_id": r.user_id,
             "reading_id": r.id,
             "username": u.username if u else None,
-            "room_label": (f"{rm.dormitory_name} / {rm.room_number}" if rm else None),
+            "room_label": (rm.format_address if rm else None),
             "actual": {
                 "debt_209": float(r.debt_209 or 0),
                 "overpayment_209": float(r.overpayment_209 or 0),
@@ -2268,8 +2279,7 @@ async def debts_zombie_readings(
             "username": user.username if user else None,
             "room_id": r.room_id,
             "room_label": (
-                f"{room.dormitory_name} / {room.room_number}"
-                if room else None
+                room.format_address if room else None
             ),
             "debt_209": float(r.debt_209 or 0),
             "overpayment_209": float(r.overpayment_209 or 0),
@@ -2415,7 +2425,7 @@ async def debts_orphan_readings(
         if rid is None:
             return None
         r = rooms_map.get(rid)
-        return f"{r.dormitory_name} / {r.room_number}" if r else f"id={rid}"
+        return r.format_address if r else f"id={rid}"
 
     by_user: dict[int, list] = {}
     for r in readings:
@@ -2709,8 +2719,7 @@ async def debts_find_candidates(
         candidates = []
         for u in users_raw:
             room_label = (
-                f"{u.room.dormitory_name} / {u.room.room_number}"
-                if u.room else "без комнаты"
+                u.room.format_address if u.room else "без комнаты"
             )
             candidates.append({
                 "id": u.id,
@@ -2785,8 +2794,7 @@ async def debts_find_candidates(
     candidates = []
     for u, score, reason in matches:
         room_label = (
-            f"{u.room.dormitory_name} / {u.room.room_number}"
-            if u.room else "без комнаты"
+            u.room.format_address if u.room else "без комнаты"
         )
         candidates.append({
             "id": u.id,

@@ -979,8 +979,7 @@ async def get_duplicate_readings(
                 "user_id": user.id,
                 "username": user.username,
                 "room_label": (
-                    f"{room.dormitory_name} / {room.room_number}"
-                    if room else "без комнаты"
+                    room.format_address if room else "без комнаты"
                 ),
                 "readings": [],
             }

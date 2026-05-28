@@ -356,7 +356,7 @@ async def get_dashboard(
         "matched_user_id": r.matched_user_id,
         "matched_username": r.matched_user.username if r.matched_user else None,
         "matched_room": (
-            f"{r.matched_user.room.dormitory_name}, ком. {r.matched_user.room.room_number}"
+            r.matched_user.room.format_address
             if r.matched_user and r.matched_user.room else None
         ),
         "match_score": r.match_score or 0,
@@ -609,9 +609,8 @@ async def diagnose_roster(
             "user_id": user.id if user else (users_for_fio[0].id if users_for_fio else None),
             "username": user.username if user else (users_for_fio[0].username if users_for_fio else None),
             "matched_room": (
-                f"{room.dormitory_name}, ком. {room.room_number}"
-                if room else (
-                    f"{users_for_fio[0].room.dormitory_name}, ком. {users_for_fio[0].room.room_number}"
+                room.format_address if room else (
+                    users_for_fio[0].room.format_address
                     if (users_for_fio and users_for_fio[0].room) else None
                 )
             ),
@@ -697,7 +696,7 @@ async def list_rows(
             "matched_user_id": r.matched_user_id,
             "matched_username": r.matched_user.username if r.matched_user else None,
             "matched_room": (
-                f"{r.matched_user.room.dormitory_name}, ком. {r.matched_user.room.room_number}"
+                r.matched_user.room.format_address
                 if r.matched_user and r.matched_user.room else None
             ),
             "match_score": r.match_score or 0,
@@ -1921,10 +1920,7 @@ async def search_users(
             {
                 "id": u.id,
                 "username": u.username,
-                "room": (
-                    f"{u.room.dormitory_name}, ком. {u.room.room_number}"
-                    if u.room else None
-                ),
+                "room": (u.room.format_address if u.room else None),
                 "residents_count": u.residents_count,
             }
             for u in rows
@@ -2025,10 +2021,7 @@ async def relative_candidates(
         candidates[user.id] = {
             "id": user.id,
             "username": user.username,
-            "room": (
-                f"{user.room.dormitory_name}, ком. {user.room.room_number}"
-                if user.room else None
-            ),
+            "room": (user.room.format_address if user.room else None),
             "residents_count": user.residents_count,
             "reason": reason,
             "score": score,
@@ -2356,10 +2349,7 @@ async def user_history(
         "user": {
             "id": user.id,
             "username": user.username,
-            "room": (
-                f"{user.room.dormitory_name}, ком. {user.room.room_number}"
-                if user.room else None
-            ),
+            "room": (user.room.format_address if user.room else None),
             "residents_count": user.residents_count,
         },
         "last_gsheet_submission": last_gsheet,

@@ -621,10 +621,7 @@ async def tariff_usage(
                 {
                     "id": u.id,
                     "username": u.username,
-                    "room": (
-                        f"{u.room.dormitory_name}, ком. {u.room.room_number}"
-                        if u.room else None
-                    ),
+                    "room": (u.room.format_address if u.room else None),
                 }
                 for u in users_direct[:50]
             ],

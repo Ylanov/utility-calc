@@ -2,6 +2,7 @@
 import { api } from '../core/api.js';
 import { el, toast, setLoading } from '../core/dom.js';
 import { TableController } from '../core/table-controller.js';
+import { formatRoomAddress } from '../core/format-address.js';
 
 function escapeHtml(str) {
     if (str === null || str === undefined) return '';
@@ -358,9 +359,8 @@ export const HousingModule = {
         if (!modal) return;
         this._roomHubCurrent = room;
 
-        // Шапка
-        const title = `${room.dormitory_name}, ком. ${room.room_number}`;
-        document.getElementById('roomHubTitle').textContent = title;
+        // Шапка — formatRoomAddress справится с обоими типами (общага/дом).
+        document.getElementById('roomHubTitle').textContent = formatRoomAddress(room);
 
         // Сводка по комнате
         const area = Number(room.apartment_area || 0).toFixed(1);
@@ -782,7 +782,7 @@ export const HousingModule = {
         if (!this.meter.modal) return;
         this.meter.form.reset();
         this.meter.roomId.value = room.id;
-        this.meter.roomName.textContent = `${room.dormitory_name}, ком. ${room.room_number}`;
+        this.meter.roomName.textContent = formatRoomAddress(room);
         this.meter.initialNew.value = "0";
         this.meter.modal.classList.add('open');
     },
@@ -819,7 +819,7 @@ export const HousingModule = {
         if (!this.initial.modal) return;
         this.initial.form.reset();
         this.initial.roomId.value = room.id;
-        this.initial.roomName.textContent = `${room.dormitory_name}, ком. ${room.room_number}`;
+        this.initial.roomName.textContent = formatRoomAddress(room);
 
         // Загружаем текущие показания комнаты
         try {

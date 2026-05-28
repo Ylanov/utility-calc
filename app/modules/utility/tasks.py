@@ -1263,7 +1263,7 @@ def _recalc_run(job_id: int, apply: bool):
                             "reading_id": r.id,
                             "user_id": user.id,
                             "username": user.username,
-                            "room": f"{room.dormitory_name}, {room.room_number}" if room else "",
+                            "room": room.format_address if room else "",
                             "old_total": str(old_total),
                             "new_total": str(new_total),
                             "delta": str(delta),

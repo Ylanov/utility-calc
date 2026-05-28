@@ -59,7 +59,8 @@ async def analyze_housing(db: AsyncSession = Depends(get_db)):
     }
 
     for room in rooms:
-        r_name = f"{room.dormitory_name}, ком. {room.room_number}"
+        # housing_001/E2-A: универсальный адрес (общага / дом).
+        r_name = room.format_address
         r_id = room.id
 
         # Ошибка: нулевая площадь

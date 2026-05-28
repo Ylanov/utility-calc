@@ -157,6 +157,67 @@ class Room(Base):
     # SQLAlchemy partial-index с WHERE без хака труднее читается. Источник
     # правды — миграция.
 
+    # =====================================================================
+    # Адресные helper'ы (housing_001 / E2-A).
+    #
+    # До рефакторинга 16 мест в Python и 1 шаблон + JS склеивали адрес
+    # вручную как f"{dormitory_name}, ком. {room_number}". С появлением
+    # place_type='house' (адрес = street/house_number/apartment_number)
+    # эти формулы стали выдавать None/пустоту для домов.
+    #
+    # Используй .format_address — это «канонический» долгий формат для
+    # квитанций/PDF/отчётов. .short_address — для компактных списков
+    # (без префикса корпуса). Логика инкапсулирована здесь, чтобы новые
+    # типы помещений в будущем не требовали гонять find-and-replace.
+    # =====================================================================
+    @property
+    def format_address(self) -> str:
+        """Канонический полный адрес для отчётов/PDF/квитанций.
+
+        dormitory → "<dorm>, ком. <room>" (исторический формат).
+        house     → "ул. <street>, д. <house_number>, кв. <apartment_number>".
+        Пустые поля корректно обходим (для legacy-данных без place_type
+        тоже отработает — fallback на dormitory-формат).
+        """
+        if self.place_type == PlaceType.HOUSE.value:
+            parts: list[str] = []
+            if self.street:
+                parts.append(f"ул. {self.street}")
+            if self.house_number:
+                parts.append(f"д. {self.house_number}")
+            if self.apartment_number:
+                parts.append(f"кв. {self.apartment_number}")
+            return ", ".join(parts) if parts else "Адрес дома не указан"
+        # dormitory (default)
+        dorm = self.dormitory_name or "Общежитие не указано"
+        room = self.room_number or "?"
+        return f"{dorm}, ком. {room}"
+
+    @property
+    def short_address(self) -> str:
+        """Короткий вариант адреса — без префикса дома/общаги.
+
+        dormitory → "ком. <room>" (только номер комнаты, корпус опущен).
+        house     → "кв. <apartment_number>" (только номер квартиры).
+        Используется в местах где корпус/улица уже выведены отдельно.
+        """
+        if self.place_type == PlaceType.HOUSE.value:
+            return f"кв. {self.apartment_number}" if self.apartment_number else "—"
+        return f"ком. {self.room_number}" if self.room_number else "—"
+
+    @property
+    def address_dedup_key(self) -> str:
+        """Стабильный ключ для словарей-дедупликаторов адресов.
+
+        Раньше excel_service строил ключи вида
+        `f"{r.dormitory_name}_{r.room_number}"` — для дома это давало
+        "None_None". Этот property возвращает уникальный детерминированный
+        ключ независимо от типа помещения.
+        """
+        if self.place_type == PlaceType.HOUSE.value:
+            return f"H::{self.street}|{self.house_number}|{self.apartment_number}"
+        return f"D::{self.dormitory_name}|{self.room_number}"
+
 
 # ======================================================
 # USER (ЖИЛЕЦ)

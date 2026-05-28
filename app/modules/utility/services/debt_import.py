@@ -962,8 +962,7 @@ def sync_import_debts_process(
                     "username": user.username if user else None,
                     "room_id": r.room_id,
                     "room_label": (
-                        f"{room.dormitory_name} / {room.room_number}"
-                        if room else None
+                        room.format_address if room else None
                     ),
                 }
         import_log.applied_state = applied_state

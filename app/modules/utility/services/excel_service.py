@@ -32,9 +32,11 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
         users_result = await db.execute(select(User).where(User.is_deleted.is_(False)))
         existing_users: Dict[str, User] = {normalize_name(u.username): u for u in users_result.scalars().all()}
 
-        # Загружаем существующие комнаты
+        # Загружаем существующие комнаты. Ключ должен быть уникален для
+        # обоих типов помещений (общага / дом) — используем стабильный
+        # address_dedup_key (housing_001/E2-A).
         rooms_result = await db.execute(select(Room))
-        existing_rooms: Dict[str, Room] = {f"{r.dormitory_name}_{r.room_number}": r for r in
+        existing_rooms: Dict[str, Room] = {r.address_dedup_key: r for r in
                                            rooms_result.scalars().all()}
 
         # Загружаем существующие тарифные профили
@@ -284,7 +286,7 @@ async def generate_billing_report_xlsx(db: AsyncSession, period_id: int) -> Tupl
         total_209_sum += t_209
         total_205_sum += t_205
 
-        room_display = f"{room.dormitory_name} / {room.room_number}" if room else "-"
+        room_display = room.format_address if room else "-"
         area = room.apartment_area if room else "-"
         residents = f"{user.residents_count}/{room.total_room_residents}" if room else "-"
 
