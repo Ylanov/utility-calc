@@ -856,34 +856,36 @@
                                     <p class="hint-text" style="margin:0 0 12px 0; font-size:12px;">
                                         <b>Когда используется:</b><br>
                                         1) Жилец у которого счётчик отмечен как «отсутствует» — потребление считается как
-                                        <code>норматив × количество жильцов</code>.<br>
+                                        <code>норматив</code> (на квартиру в месяц, независимо от числа жильцов).<br>
                                         2) Жилец не подал показания <b>4-й месяц подряд</b> — система применяет
-                                        <code>норматив × жильцов × коэффициент</code> (санкция за длительное игнорирование).
-                                        Первые 3 месяца берётся «среднее» за прошлые подачи.
+                                        <code>норматив × коэффициент</code> (санкция за длительное игнорирование).
+                                        Первые 3 месяца — обычный норматив.
                                     </p>
 
-                                    <!-- Нормативы (3 поля) -->
+                                    <!-- Нормативы (3 поля). С 28.05.2026 — норматив указывается
+                                         НА КВАРТИРУ В МЕСЯЦ, БЕЗ умножения на количество жильцов
+                                         (см. v4 в _growing_norm_volumes). -->
                                     <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:12px;">
                                         <div class="form-group" style="margin: 0;">
-                                            <label style="color: var(--danger-color);" title="Норматив ГВС, м³ на 1 человека в месяц.">
-                                                <i class="fa-solid fa-fire"></i> ГВС, м³/чел
+                                            <label style="color: var(--danger-color);" title="Норматив ГВС, м³ на квартиру в месяц.">
+                                                <i class="fa-solid fa-fire"></i> ГВС, м³/мес
                                             </label>
                                             <input type="number" step="0.001" min="0" id="t_hw_norm" value="0">
-                                            <small class="hint-text" style="font-size:10px;">Типовой норматив: 3.93 м³</small>
+                                            <small class="hint-text" style="font-size:10px;">На квартиру, без умножения на жильцов</small>
                                         </div>
                                         <div class="form-group" style="margin: 0;">
-                                            <label style="color: var(--primary-color);" title="Норматив ХВС, м³ на 1 человека в месяц.">
-                                                <i class="fa-solid fa-droplet"></i> ХВС, м³/чел
+                                            <label style="color: var(--primary-color);" title="Норматив ХВС, м³ на квартиру в месяц.">
+                                                <i class="fa-solid fa-droplet"></i> ХВС, м³/мес
                                             </label>
                                             <input type="number" step="0.001" min="0" id="t_cw_norm" value="0">
-                                            <small class="hint-text" style="font-size:10px;">Типовой норматив: 5.95 м³</small>
+                                            <small class="hint-text" style="font-size:10px;">На квартиру, без умножения на жильцов</small>
                                         </div>
                                         <div class="form-group" style="margin: 0;">
-                                            <label style="color: #d97706;" title="Норматив электричества, кВт·ч на 1 человека в месяц.">
-                                                <i class="fa-solid fa-bolt"></i> Свет, кВт·ч/чел
+                                            <label style="color: #d97706;" title="Норматив электричества, кВт·ч на квартиру в месяц.">
+                                                <i class="fa-solid fa-bolt"></i> Свет, кВт·ч/мес
                                             </label>
                                             <input type="number" step="0.001" min="0" id="t_el_norm" value="0">
-                                            <small class="hint-text" style="font-size:10px;">Типовой норматив: 120-180</small>
+                                            <small class="hint-text" style="font-size:10px;">На квартиру, без умножения на жильцов</small>
                                         </div>
                                     </div>
 

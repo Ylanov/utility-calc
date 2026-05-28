@@ -41,33 +41,34 @@ def _growing_norm_volumes(
     residents: Decimal,
     miss_count: int,
 ) -> tuple[Decimal, Decimal, Decimal, Decimal]:
-    """Норматив × residents × пороговый коэффициент.
+    """Норматив × пороговый коэффициент. БЕЗ умножения на residents.
 
     Возвращает (vol_hot, vol_cold, vol_elect, effective_coef).
 
     История эволюции:
       v1 (до мая 2026): 0 первые 3 месяца (AUTO_NO_HISTORY / AUTO_AVG_FALLBACK
         повторяли последние значения), потом резкая санкция × коэффициент.
-        Жилец получал почти бесплатные первые 3 месяца молчания.
-      v2 (mid-may 2026): линейно растущий коэф (×1, ×2, ×3, cap). Пытались
-        плавно подталкивать. Но это создавало «лесенку» в квитанции и было
-        непонятно жильцу почему счёт растёт по месяцам если он одинаково
-        не подавал.
-      v3 (28.05.2026, текущая): ПОРОГОВЫЙ. Первые NORM_SANCTION_THRESHOLD
-        пропусков подряд (miss_count = 0..2) — норматив × residents × 1.
-        С NORM_SANCTION_THRESHOLD-го пропуска (miss_count >= 3) — норматив
-        × residents × sanction_coefficient (cap, обычно 3).
+      v2 (mid-may 2026): линейно растущий коэф (×1, ×2, ×3, cap).
+      v3 (28.05.2026 утро): ПОРОГОВЫЙ + норматив × residents (per-capita по ПП №354).
+      v4 (28.05.2026 вечер, текущая): ПОРОГОВЫЙ, БЕЗ residents — норматив
+        применяется как «м³ на квартиру в месяц», независимо от числа жильцов.
+        Юзер захотел простую местную логику: 3 м³ ГВС из тарифа = 3 м³ на
+        всю квартиру, и точка. Не стандарт ПП №354, но устраивает юзера.
 
-    Это соответствует ПП №354: «средний расход / норматив для месяцев
-    молчания, повышенный коэффициент для злостно молчащих». Жилец видит
-    стабильное начисление 3 месяца, потом резко тройное — это явный
-    сигнал «подай показания».
+    Поведение по miss_count:
+      * miss_count < NORM_SANCTION_THRESHOLD (0..2 пропусков подряд) → ×1
+      * miss_count >= NORM_SANCTION_THRESHOLD (3+ подряд) → ×sanction_coefficient
+
+    Параметр `residents` оставлен для backward-compat сигнатуры (caller'ы
+    его передают), но не используется. Если когда-нибудь захотим вернуть
+    per-capita по ПП №354 — добавим обратно `* residents`.
     """
+    _ = residents  # явно отмечаем что параметр не используется (см. v4)
     cap = D(getattr(user_tariff, "norm_coefficient", 0) or 3)
     effective = cap if miss_count >= NORM_SANCTION_THRESHOLD else D(1)
-    vol_hot = D(user_tariff.hw_norm_per_capita or 0) * residents * effective
-    vol_cold = D(user_tariff.cw_norm_per_capita or 0) * residents * effective
-    vol_el = D(user_tariff.el_norm_per_capita or 0) * residents * effective
+    vol_hot = D(user_tariff.hw_norm_per_capita or 0) * effective
+    vol_cold = D(user_tariff.cw_norm_per_capita or 0) * effective
+    vol_el = D(user_tariff.el_norm_per_capita or 0) * effective
     return vol_hot, vol_cold, vol_el, effective
 
 
