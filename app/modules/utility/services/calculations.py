@@ -279,7 +279,20 @@ def calculate_utilities(
     # делится — всё равно 0.
     # Bug AT этап 3: ПЕРЕД skip — проверяем глобальный charge-флаг.
     # charge_X=False → c_X=0 для всех (не только холостяков).
-    is_singles_apt = bool(getattr(room, "is_singles_apartment", False))
+    #
+    # Bug 29.05.2026 (Коммит 15): singles-режим теперь триггерится
+    # ДВУМЯ способами:
+    #   1. `room.is_singles_apartment=True` — legacy флаг на комнате
+    #      (Bug AS этап 4). Оставлен для обратной совместимости.
+    #   2. `tariff.tariff_type == 'singles'` — новый способ (UI рефактор
+    #      29.05.2026). Юзер выбирает в форме тарифа кнопку «Холостяки»,
+    #      и ВСЕ жильцы на этом тарифе автоматически получают singles-
+    #      расчёт: cost_* делится на residents_count квартиры.
+    # Любой из двух условий → is_singles_apt=True.
+    is_singles_apt = (
+        bool(getattr(room, "is_singles_apartment", False))
+        or bool(getattr(tariff, "tariff_type", "family") == "singles")
+    )
 
     # Содержание и ремонт
     if not _charge("charge_maintenance"):
