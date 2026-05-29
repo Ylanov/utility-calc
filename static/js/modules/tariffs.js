@@ -109,6 +109,30 @@ export const TariffsModule = {
     },
 
     bindEvents() {
+        // Bug 29.05.2026 (Коммит 21): переключение 3 вкладок внутри формы
+        // тарифа (Ставки / Нормативы / Применение). Делегируем клик на
+        // form чтобы не дублировать listener на каждой кнопке.
+        if (this.dom.form) {
+            this.dom.form.addEventListener('click', (e) => {
+                const btn = e.target.closest('button[data-tariff-tab]');
+                if (!btn) return;
+                e.preventDefault();
+                const targetTab = btn.getAttribute('data-tariff-tab');
+                // Снимаем active со всех кнопок и контентов
+                this.dom.form.querySelectorAll('button[data-tariff-tab]').forEach(b => {
+                    b.classList.remove('active');
+                    b.style.color = 'var(--text-secondary)';
+                });
+                this.dom.form.querySelectorAll('[data-tariff-tab-content]').forEach(c => {
+                    c.classList.remove('active');
+                });
+                // Активируем целевые
+                btn.classList.add('active');
+                btn.style.color = 'var(--text-main)';
+                const content = this.dom.form.querySelector(`[data-tariff-tab-content="${targetTab}"]`);
+                if (content) content.classList.add('active');
+            });
+        }
         if (this.dom.form) {
             this.dom.form.addEventListener('submit', (e) => this.handleSubmit(e));
             // Bug AT: пресеты charge-флагов. Делегируем клик по data-charge-preset.

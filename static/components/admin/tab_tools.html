@@ -562,9 +562,41 @@
                                 }
                             </style>
 
-                            <h4 style="margin: 18px 0 14px 0; font-size: 13px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; font-weight: 700;">
-                                <i class="fa-solid fa-coins"></i> Ставки тарифа
-                            </h4>
+                            <!-- Bug 29.05.2026 (Коммит 21): 3 вкладки внутри формы
+                                 тарифа для уменьшения прокрутки. JS-обработчик в
+                                 tariffs.js:_setupTariffFormTabs. -->
+                            <div class="tariff-form-tabs" style="display:flex; gap:4px; margin: 18px 0 14px 0; border-bottom:2px solid var(--border-color);">
+                                <button type="button" class="tariff-tab-btn active" data-tariff-tab="rates" style="padding:10px 18px; background:none; border:none; border-bottom:3px solid transparent; cursor:pointer; font-weight:600; font-size:13.5px; color:var(--text-main); margin-bottom:-2px; transition:.15s;">
+                                    <i class="fa-solid fa-coins" style="margin-right:6px;"></i>Ставки
+                                </button>
+                                <button type="button" class="tariff-tab-btn" data-tariff-tab="norms" style="padding:10px 18px; background:none; border:none; border-bottom:3px solid transparent; cursor:pointer; font-weight:600; font-size:13.5px; color:var(--text-secondary); margin-bottom:-2px; transition:.15s;">
+                                    <i class="fa-solid fa-gauge-simple-high" style="margin-right:6px;"></i>Нормативы
+                                </button>
+                                <button type="button" class="tariff-tab-btn" data-tariff-tab="usage" style="padding:10px 18px; background:none; border:none; border-bottom:3px solid transparent; cursor:pointer; font-weight:600; font-size:13.5px; color:var(--text-secondary); margin-bottom:-2px; transition:.15s;">
+                                    <i class="fa-solid fa-sitemap" style="margin-right:6px;"></i>Применение
+                                </button>
+                            </div>
+                            <style>
+                                .tariff-tab-btn.active {
+                                    border-bottom-color: #2563eb !important;
+                                    color: var(--text-main) !important;
+                                }
+                                .tariff-tab-btn:hover:not(.active) {
+                                    color: var(--text-main);
+                                    border-bottom-color: rgba(37,99,235,0.3);
+                                }
+                                .tariff-tab-content[data-tariff-tab-content] {
+                                    display: none;
+                                }
+                                .tariff-tab-content[data-tariff-tab-content].active {
+                                    display: block;
+                                }
+                            </style>
+
+                            <!-- ==============================================
+                                 ВКЛАДКА 1: СТАВКИ
+                                 ============================================== -->
+                            <div class="tariff-tab-content active" data-tariff-tab-content="rates">
 
                             <!-- ==============================================
                                  СЕКЦИЯ 1: ВОДА (по счётчику, ₽/м³)
@@ -778,12 +810,20 @@
                                 </div>
                             </details>
 
+                            </div>
+                            <!-- /Конец вкладки «Ставки» -->
+
+                            <!-- ==============================================
+                                 ВКЛАДКА 2: НОРМАТИВЫ
+                                 ============================================== -->
+                            <div class="tariff-tab-content" data-tariff-tab-content="norms">
+
                             <!-- ==============================================
                                  НОРМАТИВЫ — раскрывающаяся «кнопка» с тремя
                                  нормативами + коэффициент-санкция для
                                  жильцов не подающих 4+ месяцев подряд.
                                  ============================================== -->
-                            <details id="t_norms_section" class="norms-card" style="border:1px solid var(--border-color); border-radius:12px; padding:0; margin-bottom:14px; background:rgba(124,58,237,0.05); overflow:hidden;">
+                            <details id="t_norms_section" class="norms-card" open style="border:1px solid var(--border-color); border-radius:12px; padding:0; margin-bottom:14px; background:rgba(124,58,237,0.05); overflow:hidden;">
                                 <summary style="cursor:pointer; padding:12px 16px; display:flex; align-items:center; justify-content:space-between; user-select:none; list-style:none;">
                                     <span style="display:flex; align-items:center; gap:10px;">
                                         <span style="width:36px; height:36px; border-radius:50%; background:rgba(124,58,237,0.15); display:flex; align-items:center; justify-content:center; color:#7c3aed;">
@@ -854,6 +894,16 @@
                                     </div>
                                 </div>
                             </details>
+
+                            </div>
+                            <!-- /Конец вкладки «Нормативы» -->
+
+                            <!-- ==============================================
+                                 ВКЛАДКА 3: ПРИМЕНЕНИЕ
+                                 (калькулятор-превью + где применяется +
+                                 массовая привязка)
+                                 ============================================== -->
+                            <div class="tariff-tab-content" data-tariff-tab-content="usage">
 
                             <!-- ==============================================
                                  КАЛЬКУЛЯТОР-ПРЕВЬЮ
@@ -942,6 +992,9 @@
                                     </div>
                                 </div>
                             </div>
+
+                            </div>
+                            <!-- /Конец вкладки «Применение» -->
 
                             <!-- STICKY SAVE BAR — приклеивается к низу при прокрутке формы.
                                  Раньше «Сохранить» был в самом низу и админ при длинной форме
