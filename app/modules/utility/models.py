@@ -267,6 +267,14 @@ class User(Base):
 
     totp_secret = Column(String, nullable=True)
 
+    @property
+    def is_2fa_enabled(self) -> bool:
+        """2FA включена ⟺ задан totp_secret. Вычисляемое поле (нет отдельной
+        колонки): используется в UserResponse и экспорте ПДн /api/me/data-export.
+        Раньше прямой доступ u.is_2fa_enabled падал AttributeError (error_log #3),
+        а UserResponse.from_attributes тихо отдавал default False."""
+        return bool(self.totp_secret)
+
     is_deleted = Column(Boolean, default=False, index=True)
     is_initial_setup_done = Column(Boolean, default=False)
 
