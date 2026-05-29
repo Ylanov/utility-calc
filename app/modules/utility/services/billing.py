@@ -321,6 +321,22 @@ async def auto_fill_period_readings(
     if not target_period:
         raise ValueError(f"Период id={period_id} не найден")
 
+    # Защита: «Начальный период» — это baseline (исходные показания счётчика
+    # до первого биллингового месяца), а не месяц для авто-генерации. Если
+    # admin запустит auto_fill для Начального — система увидит ВСЕ остальные
+    # месяцы как «прошлые auto» (по биллинговой хронологии Начальный=(0,0)
+    # самый ранний), применит санкцию × коэф и засрёт baseline лишними
+    # начислениями. Случилось 29.05.2026 с Нежведиловым:
+    # Начальный auto-сгенерировался как AUTO_NORM_SANCTION 27/63/900,
+    # стало 4 «прошлых auto» в истории → sanction × 3 от показаний Мая.
+    if period_chron_key(target_period.name) == (0, 0):
+        raise ValueError(
+            f"Период id={period_id} ('{target_period.name}') — baseline, "
+            "не предназначен для auto-генерации. Reading'и за «Начальный "
+            "период» создаются только через GSheets-импорт (INITIAL_FROM_GSHEETS) "
+            "или ручной ввод (admin)."
+        )
+
     tariffs_result = await db.execute(select(Tariff).where(Tariff.is_active))
     active_tariffs = tariffs_result.scalars().all()
     if not active_tariffs:
