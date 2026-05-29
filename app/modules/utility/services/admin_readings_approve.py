@@ -484,37 +484,12 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
 
     db.add(room)
 
-    # RETROACTIVE RECALC ВОССТАНОВЛЕН (Коммит 8, 29.05.2026).
+    # RETROACTIVE RECALC ОТКЛЮЧЁН (финал, Коммит 9, 29.05.2026).
     # См. подробный комментарий в admin_gsheets.py._apply_approve.
-    # Коротко: сторно volume-cost на auto-цепочке + полная дельта на
-    # current — соответствует ПП №354 (приоритет счётчика).
-    if not is_baseline:
-        from app.modules.utility.services.skip_recalc import recalc_skip_chain
-        from app.modules.utility.routers.settings import _load_seasonal
-        _seas = await _load_seasonal(db)
-        _heat_now = _seas.heating_season_active and t.is_heating_active_now()
-        _hw_now = _seas.hot_water_heating_active and t.is_hw_heating_active_now()
-        recalc_result = await recalc_skip_chain(
-            db=db, user=user, room=room, current_reading=reading, tariff=t,
-            heating_season_active=_heat_now,
-            hot_water_heating_active=_hw_now,
-        )
-        if recalc_result and recalc_result.get("applied"):
-            await write_audit_log(
-                db, user_id=current_user.id if current_user else None,
-                username=current_user.username if current_user else "system",
-                action="skip_recalc", entity_type="reading", entity_id=reading.id,
-                details={
-                    "auto_readings_recalced": recalc_result["auto_readings_recalced"],
-                    "last_manual_period_id": recalc_result["last_manual_period_id"],
-                    "real_delta_hot": str(recalc_result["real_delta_hot"]),
-                    "real_delta_cold": str(recalc_result["real_delta_cold"]),
-                    "voided_virtual_volume_cost": str(
-                        recalc_result.get("voided_virtual_volume_cost", "0")
-                    ),
-                    "owner": user.username,
-                },
-            )
+    # Коротко: auto_fill создаёт AUTO_NORM с volume и cost_water=norm×tariff,
+    # `compute_reading_breakdown` для current автоматически берёт
+    # prev_meaningful = последний AUTO_NORM (он не в PREV_SKIP_FLAGS),
+    # delta получается правильная (3 м³, не 12), сторно не нужен.
 
     # ЗАПИСЬ В ЖУРНАЛ: Ручное утверждение бухгалтером
     uid = current_user.id if current_user else None

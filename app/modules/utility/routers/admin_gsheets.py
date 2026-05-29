@@ -1196,59 +1196,36 @@ async def _apply_approve(
     # может показывать тёмный «info-tooltip» с устаревшей причиной.
     row.conflict_reason = None
 
-    # RETROACTIVE RECALC ВОССТАНОВЛЕН (Коммит 8, 29.05.2026 — revert Hotfix
-    # 426afe6). Hotfix отключал recalc_skip_chain потому что юзер захотел
-    # «прибавлять норматив к virtual». Но это создало бардак: у жильцов
-    # с manual подачей Май получались double-charges (норматив на
-    # Февраль/Март/Апрель + полная дельта от Начального на Май),
-    # отрицательные дельты («счётчик упал» когда жилец потратил меньше
-    # норматива), разные cost_water на одинаковых reading'ах.
+    # RETROACTIVE RECALC ОТКЛЮЧЁН (финал, Коммит 9, 29.05.2026 — revert
+    # Коммита 8). История качелей:
+    #   * Коммит 3 (56df3bb): добавили сторно volume-cost на auto-цепочке.
+    #   * Hotfix 426afe6: отключили — юзер хотел чтобы virtual месяцы
+    #     показывали норматив.
+    #   * Коммит 8 (f55e2ba): вернули сторно — увидели double-charges и
+    #     отрицательные дельты у Капранова.
+    #   * Коммит 9 (этот): окончательно отключаем сторно.
     #
-    # Возвращаем сторно-логику Коммита 3 (`56df3bb`):
-    #   * На auto-цепочке между last_manual и current — volume-cost
-    #     зануляется (cost_hot_water/cold_water/sewage/electricity = 0),
-    #     area-based (maintenance/fixed_part/social_rent/waste) остаются.
-    #   * Показания счётчика возвращаются к last_manual («счётчик не
-    #     двигался» во время молчания).
-    #   * На current reading — полная дельта от last_manual.
-    #   * Это соответствует ПП №354 (приоритет счётчика над нормативом).
-    if breakdown and not breakdown.get("is_baseline") and eff_tariff is not None and room_obj is not None:
-        try:
-            from app.modules.utility.services.skip_recalc import recalc_skip_chain
-            _seas = await _load_seasonal(db)
-            _heat_now = _seas.heating_season_active and eff_tariff.is_heating_active_now()
-            _hw_now = _seas.hot_water_heating_active and eff_tariff.is_hw_heating_active_now()
-            recalc_result = await recalc_skip_chain(
-                db=db, user=user, room=room_obj,
-                current_reading=reading, tariff=eff_tariff,
-                heating_season_active=_heat_now,
-                hot_water_heating_active=_hw_now,
-            )
-            if recalc_result and recalc_result.get("applied"):
-                await write_audit_log(
-                    db, current_user.id, current_user.username,
-                    action="gsheets_skip_recalc",
-                    entity_type="reading", entity_id=reading.id,
-                    details={
-                        "auto_readings_recalced": recalc_result["auto_readings_recalced"],
-                        "last_manual_period_id": recalc_result["last_manual_period_id"],
-                        "real_delta_hot": str(recalc_result["real_delta_hot"]),
-                        "real_delta_cold": str(recalc_result["real_delta_cold"]),
-                        "voided_virtual_volume_cost": str(
-                            recalc_result.get("voided_virtual_volume_cost", "0")
-                        ),
-                        "owner": user.username,
-                        "gsheets_row_id": row.id,
-                    },
-                )
-        except Exception as e:
-            # Recalc — bonus best-effort. Если упал, основной reading
-            # уже создан корректно. Логируем и идём дальше.
-            import logging as _log_skip
-            _log_skip.getLogger(__name__).warning(
-                "[GSHEETS-APPROVE] skip_recalc failed for reading=%s: %s",
-                reading.id, e,
-            )
+    # Почему сторно НЕ нужен (правильное решение):
+    #   * auto_fill создаёт AUTO_NORM на virtual с volume = последнее +
+    #     норматив и cost_water = норматив × тариф. Жилец видит
+    #     «расчёт по нормативу» в каждом пропущенном месяце.
+    #   * При manual подаче `compute_reading_breakdown` берёт
+    #     `prev_meaningful` = последний reading где is_meaningful_prev=True.
+    #     AUTO_NORM НЕ в PREV_SKIP_FLAGS (см. reading_calculator.py:253),
+    #     значит он MEANINGFUL.
+    #   * Тогда delta для current = current - последний AUTO_NORM
+    #     (например 1468 - 1465 = 3), а не от last_manual (1468 - 1456 = 12).
+    #   * Cost_water на current = 3 × tariff = ~732 ₽. Сумма cost_water
+    #     по всем 4 месяцам = 4 × 732 = 2928 ₽ ≈ реальный расход 12 ×
+    #     244 = 2928 ₽. Без сторно, без double-charges.
+    #
+    # Edge case: если жилец РЕАЛЬНО подал меньше суммарного норматива
+    # (current < последний AUTO_NORM), `meter_decreased` сработает и
+    # заблокирует подачу. Админ корректирует вручную («Сделать baseline»
+    # или «Поменять ГВС/ХВС»).
+    #
+    # skip_recalc.py остаётся в коде для legacy (старые VOID_VOL reading'и
+    # в БД). Окончательно убрать — отдельный cleanup-коммит.
 
     await write_audit_log(
         db, current_user.id, current_user.username,
