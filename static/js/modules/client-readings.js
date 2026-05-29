@@ -12,9 +12,10 @@ export const ClientReadings = {
 
     init() {
         this.cacheDOM();
+        this.buildMeters();
         this.bindEvents();
-        this.checkSchedule();
         this.loadState();
+        this.checkDataRefresh();
     },
 
     cacheDOM() {
@@ -52,109 +53,146 @@ export const ClientReadings = {
         if (this.dom.form) {
             this.dom.form.addEventListener('submit', (e) => this.handleSubmit(e));
         }
-
-        // Автозамена запятой на точку, валидация на лету, auto-format на blur.
-        // + sync визуального табло (8 ячеек: 5 чёрных + 3 красных).
-        const syncDisplay = (inputEl) => {
-            const display = document.querySelector(
-                `.meter-display[data-display-for="${inputEl.id}"]`
-            );
-            if (!display) return;
-            // Канонизируем значение в 8-цифровое представление для отображения.
-            // Алгоритм: убираем не-цифры/точку, разбиваем по точке, обрезаем
-            // до 5 целых + 3 дробных, padStart/padEnd для отображения.
-            const raw = (inputEl.value || '').replace(',', '.');
-            const m = raw.match(/^(\d{0,5})(?:\.(\d{0,3}))?/);
-            const intPart = (m && m[1] ? m[1] : '').padStart(5, '0').slice(-5);
-            const fracPart = (m && m[2] ? m[2] : '').padEnd(3, '0').slice(0, 3);
-            const all = intPart + fracPart;  // 8 chars
-            display.querySelectorAll('.meter-cell').forEach((cell, i) => {
-                const newChar = all[i] || '0';
-                if (cell.textContent !== newChar) {
-                    cell.textContent = newChar;
-                    // Анимация «прокрутки барабана» — добавляем класс,
-                    // снимаем после завершения keyframes (.25s).
-                    cell.classList.remove('changed');
-                    // force reflow для перезапуска анимации
-                    void cell.offsetWidth;
-                    cell.classList.add('changed');
-                }
-            });
-        };
-
-        ['hot', 'cold', 'elect'].forEach(key => {
-            const input = this.dom.inputs[key];
-            if (input) {
-                input.addEventListener('input', (e) => {
-                    let v = e.target.value.replace(',', '.');
-                    v = v.replace(/[^\d.]/g, '');
-                    const firstDot = v.indexOf('.');
-                    if (firstDot !== -1) {
-                        v = v.slice(0, firstDot + 1) + v.slice(firstDot + 1).replace(/\./g, '');
-                    }
-                    e.target.value = v;
-                    syncDisplay(e.target);
-                    this.validate();
-                });
-
-                input.addEventListener('blur', (e) => {
-                    if (e.target.dataset.strictFormat !== '5_3') return;
-                    const raw = (e.target.value || '').trim();
-                    if (!raw) {
-                        syncDisplay(e.target);  // обнулим табло до 00000.000
-                        return;
-                    }
-                    const m = raw.match(/^(\d{1,5})(?:\.(\d{0,3}))?$/);
-                    if (!m) return;
-                    const intPart = m[1].padStart(5, '0');
-                    const fracPart = (m[2] || '').padEnd(3, '0');
-                    e.target.value = `${intPart}.${fracPart}`;
-                    syncDisplay(e.target);
-                    this.validate();
-                });
-
-                // Первичная инициализация при загрузке (если уже есть значение
-                // от draft или fill из state).
-                syncDisplay(input);
-            }
-        });
     },
 
-    async checkSchedule() {
+    // ── Интерактивный механический счётчик ──────────────────────────────
+    // Барабан строится из data-display-for (=id скрытого input). Каждая
+    // цифра — ячейка со стрелками ▲▼ + клавиатурный ввод (0-9, ↑↓←→,
+    // Backspace, колесо мыши). Значение собирается в скрытый input
+    // (5 целых + 3 дробных), который читают validate()/handleSubmit().
+    buildMeters() {
+        ['hot', 'cold', 'elect'].forEach(key => this.buildMeter(key));
+    },
+
+    buildMeter(key) {
+        const input = this.dom.inputs[key];
+        if (!input) return;
+        const display = document.querySelector(`.meter-display[data-display-for="${input.id}"]`);
+        if (!display) return;
+        display.innerHTML = '';
+        for (let pos = 0; pos < 8; pos++) {
+            if (pos === 5) display.appendChild(el('span', { class: 'meter-dot' }, ','));
+            const isFrac = pos >= 5;
+            const cell = el('span', {
+                class: `meter-cell${isFrac ? ' frac' : ''}`,
+                'data-pos': String(pos), tabindex: '0',
+                role: 'spinbutton', 'aria-label': `Разряд ${pos + 1}`,
+            }, '0');
+            const up = el('button', { type: 'button', class: 'meter-step up', tabindex: '-1', 'aria-label': '+1' }, '▲');
+            const down = el('button', { type: 'button', class: 'meter-step down', tabindex: '-1', 'aria-label': '−1' }, '▼');
+            up.addEventListener('click', () => this.stepCell(key, cell, +1));
+            down.addEventListener('click', () => this.stepCell(key, cell, -1));
+            cell.addEventListener('keydown', (e) => this.onCellKey(key, cell, e));
+            cell.addEventListener('wheel', (e) => { e.preventDefault(); this.stepCell(key, cell, e.deltaY < 0 ? +1 : -1); }, { passive: false });
+            cell.addEventListener('focus', () => cell.classList.add('active'));
+            cell.addEventListener('blur', () => cell.classList.remove('active'));
+            display.appendChild(el('span', { class: 'meter-digit' }, up, cell, down));
+        }
+    },
+
+    _cells(key) {
+        const input = this.dom.inputs[key];
+        if (!input) return [];
+        const display = document.querySelector(`.meter-display[data-display-for="${input.id}"]`);
+        return display ? Array.from(display.querySelectorAll('.meter-cell')) : [];
+    },
+
+    _focusSibling(key, cell, dir) {
+        const cells = this._cells(key);
+        const next = cells[cells.indexOf(cell) + dir];
+        if (next) next.focus();
+    },
+
+    stepCell(key, cell, delta) {
+        let d = (parseInt(cell.textContent, 10) || 0) + delta;
+        d = ((d % 10) + 10) % 10;
+        cell.textContent = String(d);
+        cell.classList.remove('changed'); void cell.offsetWidth; cell.classList.add('changed');
+        this.syncInputFromCells(key);
+    },
+
+    onCellKey(key, cell, e) {
+        if (e.key >= '0' && e.key <= '9') {
+            cell.textContent = e.key;
+            cell.classList.remove('changed'); void cell.offsetWidth; cell.classList.add('changed');
+            this.syncInputFromCells(key);
+            this._focusSibling(key, cell, +1);
+            e.preventDefault();
+        } else if (e.key === 'ArrowUp') { this.stepCell(key, cell, +1); e.preventDefault(); }
+        else if (e.key === 'ArrowDown') { this.stepCell(key, cell, -1); e.preventDefault(); }
+        else if (e.key === 'ArrowLeft') { this._focusSibling(key, cell, -1); e.preventDefault(); }
+        else if (e.key === 'ArrowRight') { this._focusSibling(key, cell, +1); e.preventDefault(); }
+        else if (e.key === 'Backspace' || e.key === 'Delete') {
+            cell.textContent = '0';
+            this.syncInputFromCells(key);
+            if (e.key === 'Backspace') this._focusSibling(key, cell, -1);
+            e.preventDefault();
+        }
+    },
+
+    syncInputFromCells(key) {
+        const cells = this._cells(key);
+        if (cells.length !== 8) return;
+        const all = cells.map(c => (c.textContent || '0').replace(/\D/g, '') || '0').join('');
+        this.dom.inputs[key].value = `${all.slice(0, 5)}.${all.slice(5, 8)}`;
+        this.validate();
+    },
+
+    setCellsFromValue(key, value) {
+        const cells = this._cells(key);
+        if (cells.length !== 8) return;
+        const fixed = (Number(value) || 0).toFixed(3);
+        const [i, f] = fixed.split('.');
+        const all = i.padStart(5, '0').slice(-5) + (f || '').padEnd(3, '0').slice(0, 3);
+        cells.forEach((c, idx) => { c.textContent = all[idx] || '0'; });
+        this.dom.inputs[key].value = `${all.slice(0, 5)}.${all.slice(5, 8)}`;
+    },
+
+    // ── Data-refresh (Bug BB): админ запросил актуальные данные ──────────
+    // GET /me/data-refresh → {required}. Если true — показываем модалку;
+    // жилец подтверждает общагу/комнату/число жильцов → POST /me/data-refresh,
+    // флаг на сервере снимается. Раньше эта фича вообще не вызывалась с фронта.
+    async checkDataRefresh() {
         try {
-            const settings = await api.get('/settings/submission-period');
-            const now = new Date();
-            const day = now.getDate();
+            const st = await api.get('/me/data-refresh');
+            if (st && st.required) this.openDataRefreshModal();
+        } catch (e) { /* не критично — не блокируем портал */ }
+    },
 
-            const alertBox = document.getElementById('submissionAlert');
-            const title = document.getElementById('subAlertTitle');
-            const text = document.getElementById('subAlertText');
+    openDataRefreshModal() {
+        const modal = document.getElementById('dataRefreshModal');
+        if (!modal) return;
+        modal.classList.add('open');
+        const form = document.getElementById('dataRefreshForm');
+        if (form && !form._bound) {
+            form._bound = true;
+            form.addEventListener('submit', (e) => this.submitDataRefresh(e));
+            modal.querySelectorAll('[data-dr-close]').forEach(b =>
+                b.addEventListener('click', () => modal.classList.remove('open')));
+        }
+    },
 
-            if (!alertBox || !title || !text) return;
-
-            alertBox.style.display = 'flex';
-
-            if (day >= settings.start_day && day <= settings.end_day) {
-                alertBox.style.background = '#ecfdf5';
-                alertBox.style.border = '1px solid #a7f3d0';
-                title.textContent = 'Прием показаний открыт!';
-                title.style.color = '#065f46';
-                text.textContent = `Пожалуйста, внесите данные до ${settings.end_day}-го числа. Осталось дней: ${settings.end_day - day}.`;
-            } else if (day < settings.start_day) {
-                alertBox.style.background = '#eff6ff';
-                alertBox.style.border = '1px solid #bfdbfe';
-                title.textContent = 'Прием показаний скоро начнется';
-                title.style.color = '#1e40af';
-                text.textContent = `Ввод данных будет доступен с ${settings.start_day}-го числа (через ${settings.start_day - day} дн).`;
-            } else {
-                alertBox.style.background = '#fef2f2';
-                alertBox.style.border = '1px solid #fecaca';
-                title.textContent = 'Прием показаний завершен';
-                title.style.color = '#991b1b';
-                text.textContent = `В этом месяце прием закрыт. Следующий период начнется ${settings.start_day}-го числа.`;
-            }
-        } catch (e) {
-            console.warn('Ошибка загрузки графика', e);
+    async submitDataRefresh(e) {
+        e.preventDefault();
+        const btn = e.target.querySelector('button[type="submit"]');
+        const body = {
+            dorm_name: (document.getElementById('drDorm').value || '').trim(),
+            room_number: (document.getElementById('drRoom').value || '').trim(),
+            residents_count: parseInt(document.getElementById('drResidents').value) || 1,
+        };
+        if (!body.dorm_name || !body.room_number) {
+            toast('Укажите общежитие и комнату', 'error');
+            return;
+        }
+        setLoading(btn, true, 'Отправка...');
+        try {
+            await api.post('/me/data-refresh', body);
+            toast('Спасибо! Данные отправлены администратору.', 'success');
+            document.getElementById('dataRefreshModal').classList.remove('open');
+        } catch (err) {
+            toast(err.message, 'error');
+        } finally {
+            setLoading(btn, false);
         }
     },
 
@@ -284,20 +322,19 @@ export const ClientReadings = {
         this.state.hasMeters = { hot: hasHw, cold: hasCw, elect: hasEl };
 
         if (data.is_draft || data.is_already_approved) {
-            // Скрытые поля (нет счётчика) НЕ перезаписываем current_X — у них
-            // уже стоит 0 от _applyMeterVisibility. Перезатирать саппортит
-            // прошлые значения, что вводит в заблуждение.
-            if (hasHw && this.dom.inputs.hot) this.dom.inputs.hot.value = data.current_hot;
-            if (hasCw && this.dom.inputs.cold) this.dom.inputs.cold.value = data.current_cold;
-            if (hasEl && this.dom.inputs.elect) this.dom.inputs.elect.value = data.current_elect;
-            // Триггерим input-event чтобы пере-syncнулось табло счётчиков
-            // (5 чёрных + 3 красных ячейки под каждым input).
-            ['hot', 'cold', 'elect'].forEach(k => {
-                const inp = this.dom.inputs[k];
-                if (inp && inp.value) inp.dispatchEvent(new Event('input', { bubbles: true }));
-            });
-            this.validate();
+            // Уже поданное значение — заполняем барабан текущими показаниями.
+            if (hasHw) this.setCellsFromValue('hot', data.current_hot);
+            if (hasCw) this.setCellsFromValue('cold', data.current_cold);
+            if (hasEl) this.setCellsFromValue('elect', data.current_elect);
+        } else {
+            // Новая подача — стартуем барабан с ПРЕДЫДУЩЕГО показания, жильцу
+            // остаётся «докрутить» стрелками до текущего (так удобнее и
+            // меньше ошибок, чем вводить с нуля).
+            if (hasHw) this.setCellsFromValue('hot', data.prev_hot);
+            if (hasCw) this.setCellsFromValue('cold', data.prev_cold);
+            if (hasEl) this.setCellsFromValue('elect', data.prev_elect);
         }
+        this.validate();
     },
 
     /**

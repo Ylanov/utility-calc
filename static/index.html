@@ -62,18 +62,9 @@
     <!-- ============================================== -->
     <div id="tab-home" class="tab-content active">
 
-        <!-- Инфо-баннер о сроках -->
-        <div id="submissionAlert" class="period-state open" style="display:none; margin-bottom: 24px;">
-            <div style="display: flex; align-items: center; gap: 15px;">
-                <span class="state-icon"><i class="fa-regular fa-calendar-check" style="color: var(--success-color);"></i></span>
-                <div class="state-info">
-                    <h2 id="subAlertTitle">Прием показаний</h2>
-                    <p id="subAlertText">...</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- СТАТУС ПЕРИОДА (Черновик / Утверждено) -->
+        <!-- СТАТУС ПЕРИОДА — единый блок (источник правды: сервер /readings/state).
+             Раньше над ним был ещё #submissionAlert (по дате браузера) — это
+             дублировало статус и иногда противоречило серверу. Убран. -->
         <div id="statusArea" style="margin-bottom: 24px;"></div>
 
         <!-- ФОРМА ВВОДА ПОКАЗАНИЙ -->
@@ -109,27 +100,17 @@
                             </div>
                         </div>
                         <div class="meter-prev">Предыдущее: <span id="prevHot">0.000</span> м³</div>
-                        <div class="meter-input-wrapper">
-                            <input id="hotWater" type="text" inputmode="decimal" pattern="\d{1,5}\.\d{3}" required class="meter-input" placeholder="00000.000" data-strict-format="5_3" autocomplete="off">
-                            <span class="meter-unit">м³</span>
-                        </div>
-                        <!-- Имитация настоящего механического счётчика -->
+                        <!-- Скрытое поле — собранное значение барабана (для submit/валидации). -->
+                        <input id="hotWater" type="hidden" value="">
+                        <!-- Интерактивный механический счётчик: JS строит ячейки со
+                             стрелками ▲▼ + клавиатурный ввод (см. data-display-for). -->
                         <div class="meter-display-wrap">
-                            <div class="meter-display" data-display-for="hotWater" aria-hidden="true">
-                                <span class="meter-cell" data-pos="0">0</span>
-                                <span class="meter-cell" data-pos="1">0</span>
-                                <span class="meter-cell" data-pos="2">0</span>
-                                <span class="meter-cell" data-pos="3">0</span>
-                                <span class="meter-cell" data-pos="4">0</span>
-                                <span class="meter-dot">,</span>
-                                <span class="meter-cell frac" data-pos="5">0</span>
-                                <span class="meter-cell frac" data-pos="6">0</span>
-                                <span class="meter-cell frac" data-pos="7">0</span>
-                            </div>
+                            <div class="meter-display interactive" data-display-for="hotWater"></div>
                             <div class="meter-legend">
-                                <span>5 чёрных цифр (целая часть)</span>
+                                <span>5 чёрных (целая часть)</span>
                                 <span class="legend-frac">3 красных (дробная)</span>
                             </div>
+                            <div class="meter-keys-hint">Жмите ▲▼ или печатайте цифры на ячейке</div>
                         </div>
                         <div class="error-msg" id="hotError"></div>
                     </div>
@@ -144,26 +125,14 @@
                             </div>
                         </div>
                         <div class="meter-prev">Предыдущее: <span id="prevCold">0.000</span> м³</div>
-                        <div class="meter-input-wrapper">
-                            <input id="coldWater" type="text" inputmode="decimal" pattern="\d{1,5}\.\d{3}" required class="meter-input" placeholder="00000.000" data-strict-format="5_3" autocomplete="off">
-                            <span class="meter-unit">м³</span>
-                        </div>
+                        <input id="coldWater" type="hidden" value="">
                         <div class="meter-display-wrap">
-                            <div class="meter-display" data-display-for="coldWater" aria-hidden="true">
-                                <span class="meter-cell" data-pos="0">0</span>
-                                <span class="meter-cell" data-pos="1">0</span>
-                                <span class="meter-cell" data-pos="2">0</span>
-                                <span class="meter-cell" data-pos="3">0</span>
-                                <span class="meter-cell" data-pos="4">0</span>
-                                <span class="meter-dot">,</span>
-                                <span class="meter-cell frac" data-pos="5">0</span>
-                                <span class="meter-cell frac" data-pos="6">0</span>
-                                <span class="meter-cell frac" data-pos="7">0</span>
-                            </div>
+                            <div class="meter-display interactive" data-display-for="coldWater"></div>
                             <div class="meter-legend">
-                                <span>5 чёрных цифр (целая часть)</span>
+                                <span>5 чёрных (целая часть)</span>
                                 <span class="legend-frac">3 красных (дробная)</span>
                             </div>
+                            <div class="meter-keys-hint">Жмите ▲▼ или печатайте цифры на ячейке</div>
                         </div>
                         <div class="error-msg" id="coldError"></div>
                     </div>
@@ -178,26 +147,14 @@
                             </div>
                         </div>
                         <div class="meter-prev">Предыдущее: <span id="prevElect">0.000</span> кВт⋅ч</div>
-                        <div class="meter-input-wrapper">
-                            <input id="electricity" type="text" inputmode="decimal" pattern="\d{1,5}\.\d{3}" required class="meter-input" placeholder="00000.000" data-strict-format="5_3" autocomplete="off">
-                            <span class="meter-unit">кВт⋅ч</span>
-                        </div>
+                        <input id="electricity" type="hidden" value="">
                         <div class="meter-display-wrap">
-                            <div class="meter-display" data-display-for="electricity" aria-hidden="true">
-                                <span class="meter-cell" data-pos="0">0</span>
-                                <span class="meter-cell" data-pos="1">0</span>
-                                <span class="meter-cell" data-pos="2">0</span>
-                                <span class="meter-cell" data-pos="3">0</span>
-                                <span class="meter-cell" data-pos="4">0</span>
-                                <span class="meter-dot">,</span>
-                                <span class="meter-cell frac" data-pos="5">0</span>
-                                <span class="meter-cell frac" data-pos="6">0</span>
-                                <span class="meter-cell frac" data-pos="7">0</span>
-                            </div>
+                            <div class="meter-display interactive" data-display-for="electricity"></div>
                             <div class="meter-legend">
-                                <span>5 чёрных цифр (целая часть)</span>
+                                <span>5 чёрных (целая часть)</span>
                                 <span class="legend-frac">3 красных (дробная)</span>
                             </div>
+                            <div class="meter-keys-hint">Жмите ▲▼ или печатайте цифры на ячейке</div>
                         </div>
                         <div class="error-msg" id="electError"></div>
                     </div>
@@ -697,13 +654,66 @@
                 60%  { transform: translateY(2px); opacity: 1; }
                 100% { transform: translateY(0); opacity: 1; }
             }
+            /* ─── Интерактивный счётчик: стрелки ▲▼ + фокус для клавиатуры ─── */
+            .meter-display.interactive { gap: 4px; flex-wrap: nowrap; }
+            .meter-digit { display: inline-flex; flex-direction: column; align-items: center; gap: 3px; }
+            .meter-step {
+                width: 32px; height: 16px; border: none; padding: 0; cursor: pointer;
+                background: rgba(255,255,255,0.18); color: #fff; border-radius: 4px;
+                font-size: 10px; line-height: 1; display: flex; align-items: center;
+                justify-content: center; transition: background .12s;
+                -webkit-tap-highlight-color: transparent; user-select: none;
+            }
+            .meter-step:hover { background: rgba(255,255,255,0.4); }
+            .meter-step:active { background: rgba(255,255,255,0.6); transform: scale(0.94); }
+            .meter-display.interactive .meter-cell { cursor: ns-resize; outline: none; }
+            .meter-display.interactive .meter-cell:focus,
+            .meter-display.interactive .meter-cell.active {
+                box-shadow: 0 0 0 2px #fbbf24, inset 0 2px 3px rgba(255,255,255,0.9), inset 0 -3px 4px rgba(0,0,0,0.15);
+            }
+            .meter-keys-hint { font-size: 11px; color: var(--text-secondary); margin-top: 6px; text-align: center; }
             @media (max-width: 480px) {
+                .meter-step { width: 28px; }
                 .meter-cell { width: 28px; height: 40px; font-size: 19px; }
                 .meter-dot { font-size: 24px; }
                 .meter-display { padding: 10px 16px; }
                 .meter-display::before, .meter-display::after { width: 5px; height: 5px; }
             }
         </style>
+
+        <!-- Модалка: админ запросил актуальные данные (Bug BB).
+             Открывается автоматически, если GET /me/data-refresh → required=true. -->
+        <div id="dataRefreshModal" class="modal-overlay">
+            <div class="modal-window" style="width: 460px; max-width: 94vw;">
+                <div class="modal-header" style="background:#fef3c7; border-bottom:1px solid #fde68a;">
+                    <h3 style="color:#92400e;"><i class="fa-solid fa-address-card"></i> Подтвердите ваши данные</h3>
+                </div>
+                <form id="dataRefreshForm" class="styled-form">
+                    <div class="modal-form" style="padding:18px 20px;">
+                        <p style="margin:0 0 16px; font-size:13px; color:var(--text-secondary); line-height:1.5;">
+                            Администрация просит подтвердить актуальные данные о проживании —
+                            это нужно для правильного начисления платежей.
+                        </p>
+                        <div class="form-group">
+                            <label>Общежитие / адрес</label>
+                            <input type="text" id="drDorm" placeholder="Например: 4дв.стр.8" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Комната / квартира</label>
+                            <input type="text" id="drRoom" placeholder="Например: 219" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Сколько человек проживает</label>
+                            <input type="number" id="drResidents" min="1" value="1" required>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="action-btn secondary-btn" data-dr-close>Позже</button>
+                        <button type="submit" class="action-btn primary-btn"><i class="fa-solid fa-paper-plane"></i> Отправить</button>
+                    </div>
+                </form>
+            </div>
+        </div>
     </div>
 
     <!-- ============================================== -->
