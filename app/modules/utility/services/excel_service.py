@@ -146,6 +146,12 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
                 # ======================================================
                 # 2. ОБРАБАТЫВАЕМ ПОЛЬЗОВАТЕЛЯ (Если логин заполнен)
                 # ======================================================
+                # Sync resident_type c флагом холостяцкой квартиры: если комната
+                # помечена singles, что бы ни лежало в Excel — жилец становится single.
+                if bool(getattr(room, "is_singles_apartment", False)):
+                    resident_type = "single"
+                    billing_mode = "by_meter"
+
                 if username:
                     normalized_username = normalize_name(username)
 

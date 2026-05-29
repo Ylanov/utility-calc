@@ -1302,6 +1302,22 @@ async def _build_explain_response(reading_id: int, db: AsyncSession) -> dict:
 
     components = []
     if not is_baseline and calc_result:
+        # Холостяцкая квартира: счётчики (ГВС/ХВС/канализация) делятся на факт.
+        # число жильцов, а area-based статьи считаются от «проектного места»
+        # area / max_capacity. Здесь готовим текст-объяснение; сами суммы —
+        # из calc_result (= calculate_utilities). См. её docstring.
+        _is_singles = bool(getattr(room, "is_singles_apartment", False))
+        if _is_singles:
+            _cap = room.max_capacity if (room.max_capacity and int(room.max_capacity) > 0) else (room.total_room_residents or 1)
+            _area_base = area / Decimal(str(_cap or 1))
+            _area_expr = f"({f(area)} / {_cap})"
+            _meter_div = f" ÷ {total_room}" if (total_room and int(total_room) > 1) else ""
+            _meter_note = " ÷ жильцов" if _meter_div else ""
+        else:
+            _area_base = area
+            _area_expr = f(area)
+            _meter_div = ""
+            _meter_note = ""
         # ГВС (Bug AQ/AR): формула обновлена под новую бизнес-логику —
         # water_heating уже включает в себя стоимость воды + подогрева,
         # поэтому НЕ суммируем с water_supply. Летняя профилактика
@@ -1309,11 +1325,11 @@ async def _build_explain_response(reading_id: int, db: AsyncSession) -> dict:
         t_w_sup = _dec_or_zero(tariff.water_supply)
         t_w_heat = _dec_or_zero(tariff.water_heating)
         if _hw:
-            hot_formula = "v_hot × water_heating"
-            hot_calc = f"{f3(d_hot)} × {f(t_w_heat)}"
+            hot_formula = "v_hot × water_heating" + _meter_note
+            hot_calc = f"{f3(d_hot)} × {f(t_w_heat)}{_meter_div}"
         else:
-            hot_formula = "v_hot × water_supply (профилактика ГВС)"
-            hot_calc = f"{f3(d_hot)} × {f(t_w_sup)}"
+            hot_formula = "v_hot × water_supply (профилактика ГВС)" + _meter_note
+            hot_calc = f"{f3(d_hot)} × {f(t_w_sup)}{_meter_div}"
         components.append({
             "label": "Горячая вода",
             "kbk": "209",
@@ -1325,8 +1341,8 @@ async def _build_explain_response(reading_id: int, db: AsyncSession) -> dict:
         components.append({
             "label": "Холодная вода",
             "kbk": "209",
-            "formula": "v_cold × water_supply",
-            "calculation": f"{f3(d_cold)} × {f(t_w_sup)}",
+            "formula": "v_cold × water_supply" + _meter_note,
+            "calculation": f"{f3(d_cold)} × {f(t_w_sup)}{_meter_div}",
             "result": f(calc_result["cost_cold_water"]) + " ₽",
         })
         # Канализация
@@ -1334,8 +1350,8 @@ async def _build_explain_response(reading_id: int, db: AsyncSession) -> dict:
         components.append({
             "label": "Водоотведение",
             "kbk": "209",
-            "formula": "(v_hot + v_cold) × sewage_rate",
-            "calculation": f"{f3(d_sewage)} × {f(t_sewage)}",
+            "formula": "(v_hot + v_cold) × sewage_rate" + _meter_note,
+            "calculation": f"{f3(d_sewage)} × {f(t_sewage)}{_meter_div}",
             "result": f(calc_result["cost_sewage"]) + " ₽",
         })
         # Электро
@@ -1350,13 +1366,15 @@ async def _build_explain_response(reading_id: int, db: AsyncSession) -> dict:
             ),
             "result": f(calc_result["cost_electricity"]) + " ₽",
         })
+        # area-based статьи: для семьи база = вся площадь, для холостяка =
+        # area / max_capacity («проектное место»), НЕ делится на жильцов.
         # Содержание
         t_maint = _dec_or_zero(tariff.maintenance_repair)
         components.append({
             "label": "Содержание и ремонт",
             "kbk": "205",
-            "formula": "area × maintenance_repair",
-            "calculation": f"{f(area)} × {f(t_maint)}",
+            "formula": "area_base × maintenance_repair",
+            "calculation": f"{_area_expr} × {f(t_maint)}",
             "result": f(calc_result["cost_maintenance"]) + " ₽",
         })
         # Наём
@@ -1364,8 +1382,8 @@ async def _build_explain_response(reading_id: int, db: AsyncSession) -> dict:
         components.append({
             "label": "Социальный найм",
             "kbk": "205",
-            "formula": "area × social_rent",
-            "calculation": f"{f(area)} × {f(t_rent)}",
+            "formula": "area_base × social_rent",
+            "calculation": f"{_area_expr} × {f(t_rent)}",
             "result": f(calc_result["cost_social_rent"]) + " ₽",
         })
         # ТКО
@@ -1373,34 +1391,20 @@ async def _build_explain_response(reading_id: int, db: AsyncSession) -> dict:
         components.append({
             "label": "Вывоз ТКО",
             "kbk": "205",
-            "formula": "area × waste_disposal",
-            "calculation": f"{f(area)} × {f(t_waste)}",
+            "formula": "area_base × waste_disposal",
+            "calculation": f"{_area_expr} × {f(t_waste)}",
             "result": f(calc_result["cost_waste"]) + " ₽",
         })
-        # Фиксированная часть. ОДН (electricity_per_sqm) убран из UI с мая 2026.
-        # Для новых тарифов label = «Отопление», формула = area × heating.
-        # Для исторических тарифов (где el_sqm > 0) сохраняем расширенный label.
+        # Отопление. ОДН (electricity_per_sqm) удалён из системы 29.05.2026 —
+        # фиксированная часть = только отопление.
         t_h = _dec_or_zero(tariff.heating)
-        t_e_sqm = _dec_or_zero(tariff.electricity_per_sqm)
-        if t_e_sqm > 0:
-            components.append({
-                "label": "Отопление + ОДН электро",
-                "kbk": "205",
-                "formula": "area × (heating + electricity_per_sqm)",
-                "calculation": (
-                    f"{f(area)} × ({f(t_h)} + {f(t_e_sqm)}) = "
-                    f"{f(area)} × {f(t_h + t_e_sqm)}"
-                ),
-                "result": f(calc_result["cost_fixed_part"]) + " ₽",
-            })
-        else:
-            components.append({
-                "label": "Отопление",
-                "kbk": "205",
-                "formula": "area × heating",
-                "calculation": f"{f(area)} × {f(t_h)}",
-                "result": f(calc_result["cost_fixed_part"]) + " ₽",
-            })
+        components.append({
+            "label": "Отопление",
+            "kbk": "205",
+            "formula": "area_base × heating",
+            "calculation": f"{_area_expr} × {f(t_h)}",
+            "result": f(calc_result["cost_fixed_part"]) + " ₽",
+        })
 
     # 8. Сравнение пересчитанного с тем что в БД.
     #
@@ -1475,7 +1479,6 @@ async def _build_explain_response(reading_id: int, db: AsyncSession) -> dict:
                 "social_rent": f(tariff.social_rent),
                 "waste_disposal": f(tariff.waste_disposal),
                 "heating": f(tariff.heating),
-                "electricity_per_sqm": f(tariff.electricity_per_sqm),
             },
         },
         "previous_reading": (

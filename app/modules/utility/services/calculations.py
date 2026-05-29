@@ -128,21 +128,29 @@ def calculate_utilities(
     4. total_cost = сумма Decimal-компонент — нет накопления float-ошибки.
 
     Формулы:
-      ГВС      = объём_горячей * (тариф_подачи + тариф_нагрева)
+      ГВС      = объём_горячей * тариф_нагрева
       ХВС      = объём_холодной * тариф_подачи
       Канализ. = (ГВС + ХВС) объём * тариф_водоотведения
       Электро  = доля_кВт * тариф_электроэнергии
-      Содержание = площадь * тариф * доля_дней
-      Наём       = площадь * тариф * доля_дней
-      ТКО        = площадь * тариф * доля_дней
-      Фиксир.    = площадь * (тариф_отопления + ОДН_электро) * доля_дней
+      Содержание = площадь_базовая * тариф * доля_дней
+      Наём       = площадь_базовая * тариф * доля_дней
+      ТКО        = площадь_базовая * тариф * доля_дней
+      Отопление  = площадь_базовая * тариф_отопления * доля_дней
 
-    История ОДН (electricity_per_sqm): поле осталось в формуле как 0
-    (явно скрыто из UI в мае 2026, в форме админа отсутствует). При
-    создании/редактировании тарифа значение всегда = 0, поэтому
-    cost_fixed_part фактически = area * t_heat * frac. Поле в модели
-    оставлено для совместимости со старыми квитанциями и историческими
-    тарифами где оно ненулевое; убрать совсем — отдельной миграцией.
+    площадь_базовая:
+      family  — вся площадь помещения (один счёт на семью);
+      singles — площадь / макс. вместимость квартиры (доля «проектного
+                места»). Каждому холостяку начисляется ПОЛНОСТЬЮ, сколько
+                бы фактически их ни жило. Пример: 43.1 м², макс. 4 →
+                каждый платит за 10.775 м² × тариф.
+
+    Счётчики у холостяков (singles) дополнительно делятся на ФАКТИЧЕСКОЕ
+    число проживающих (room.total_room_residents, авто = COUNT жильцов).
+    Электричество приходит уже как доля одного жильца (elect_share в
+    обёртках billing) и повторно НЕ делится.
+
+    ОДН (electricity_per_sqm) удалён из системы 29.05.2026 — поле в модели
+    Tariff осталось для исторических квитанций, но в расчёте не участвует.
     """
 
     # ─────────────────────────────────────────────────
@@ -207,7 +215,6 @@ def calculate_utilities(
     t_rent   = D(tariff.social_rent)      # социальный наём
     t_waste  = D(tariff.waste_disposal)   # ТКО (мусор)
     t_heat   = D(tariff.heating)          # отопление (на м²)
-    t_el_sqm = D(tariff.electricity_per_sqm)  # ОДН электроэнергия (на м²)
 
     # FAIL-LOUD: если ВСЕ тарифные поля = 0, расчёт лишён смысла. Это
     # либо отсутствующий тариф, либо некорректно созданный/неактивный.
@@ -215,7 +222,7 @@ def calculate_utilities(
     # квитанцию» на 0 руб, а бухгалтерия только через месяц обнаруживала
     # что начислений нет. Теперь явная ошибка на ранней стадии.
     all_rates = (t_w_sup, t_w_heat, t_sewage, t_el, t_maint, t_rent,
-                 t_waste, t_heat, t_el_sqm)
+                 t_waste, t_heat)
     if all(rate == ZERO for rate in all_rates):
         raise CalculationError(
             "Тариф полностью пустой (все ставки = 0). Создайте/активируйте "
@@ -273,21 +280,34 @@ def calculate_utilities(
     # все фиксированные платежи начисляются на всю площадь помещения.
     # ─────────────────────────────────────────────────
 
-    # Bug AS этап 4: для холостяцких квартир — skip-флаги конкретных
-    # статей тарифа (наём/содержание/отопление/ТКО). Применяются
-    # ПЕРЕД делением на жильцов: «не начисляется» = 0, потом этот 0
-    # делится — всё равно 0.
+    # singles-режим триггерится ТОЛЬКО через `room.is_singles_apartment=True`
+    # — статус «холостяцкой квартиры» это атрибут КОМНАТЫ, не тарифа.
     # Bug AT этап 3: ПЕРЕД skip — проверяем глобальный charge-флаг.
     # charge_X=False → c_X=0 для всех (не только холостяков).
-    #
-    # Bug 29.05.2026 (Коммит 22 — revert Коммита 15): singles-режим
-    # триггерится ТОЛЬКО через `room.is_singles_apartment=True` (Bug AS
-    # этап 4). Юзер уточнил архитектуру: 1 тариф = одна цена для всех,
-    # статус «холостяцкой квартиры» — это атрибут КОМНАТЫ, не тарифа.
-    # В Коммите 15 был добавлен альтернативный триггер через
-    # tariff.tariff_type='singles' — отменён, чтобы не было двух источников
-    # правды (если room=family но tariff=singles, что приоритетнее?).
     is_singles_apt = bool(getattr(room, "is_singles_apartment", False))
+
+    # База площади для area-based статей (содержание/наём/ТКО/отопление).
+    #
+    # family:  вся площадь помещения — один счёт на семью.
+    # singles: «проектное место» = площадь / макс. вместимость квартиры.
+    #          Каждый холостяк платит за свою долю площади ПОЛНОСТЬЮ — эти
+    #          статьи НЕ делятся между фактически живущими (в отличие от
+    #          счётчиков ниже). Пример: 43.1 м², макс. вместимость 4 →
+    #          каждый платит за 10.775 м² × тариф, сколько бы их ни жило.
+    #          max_capacity обязателен для холостяцкой квартиры (валидируется
+    #          при сохранении комнаты); fallback на факт. число жильцов —
+    #          защита от старых данных без проставленной вместимости.
+    if is_singles_apt:
+        _max_cap = getattr(room, "max_capacity", None)
+        if _max_cap and int(_max_cap) > 0:
+            cap = D(_max_cap)
+        else:
+            cap = D(getattr(room, "total_room_residents", None) or 1)
+        if cap <= ZERO:
+            cap = Decimal("1")
+        area_base = area / cap
+    else:
+        area_base = area
 
     # Содержание и ремонт
     if not _charge("charge_maintenance"):
@@ -295,7 +315,7 @@ def calculate_utilities(
     elif is_singles_apt and bool(getattr(tariff, "singles_skip_maintenance", False)):
         c_maint = ZERO
     else:
-        c_maint = quantize_money(area * t_maint * frac)
+        c_maint = quantize_money(area_base * t_maint * frac)
 
     # Социальный наём
     if not _charge("charge_social_rent"):
@@ -303,7 +323,7 @@ def calculate_utilities(
     elif is_singles_apt and bool(getattr(tariff, "singles_skip_social_rent", False)):
         c_rent = ZERO
     else:
-        c_rent = quantize_money(area * t_rent * frac)
+        c_rent = quantize_money(area_base * t_rent * frac)
 
     # ТКО (мусор)
     if not _charge("charge_waste"):
@@ -311,12 +331,11 @@ def calculate_utilities(
     elif is_singles_apt and bool(getattr(tariff, "singles_skip_waste", False)):
         c_waste = ZERO
     else:
-        c_waste = quantize_money(area * t_waste * frac)
+        c_waste = quantize_money(area_base * t_waste * frac)
 
-    # Фиксированная часть: отопление + ОДН электроэнергии. ОДН в новых
-    # тарифах всегда = 0 (поле скрыто из UI с мая 2026), но формула
-    # сохранена для исторических квитанций где ОДН был ненулевой.
-    # Для холостяков отопление можно отключить через singles_skip_heating;
+    # Отопление (фиксированная часть). ОДН удалён из системы 29.05.2026 —
+    # раньше было area × (heating + electricity_per_sqm), теперь только
+    # отопление. Для холостяков отключается через singles_skip_heating;
     # глобально — через charge_heating.
     if not _charge("charge_heating"):
         _t_heat_effective = ZERO
@@ -324,27 +343,21 @@ def calculate_utilities(
         _t_heat_effective = ZERO
     else:
         _t_heat_effective = t_heat
-    c_fixed = quantize_money(area * (_t_heat_effective + t_el_sqm) * frac)
+    c_fixed = quantize_money(area_base * _t_heat_effective * frac)
 
-    # Bug AS этап 4: деление счёта поровну между фактически проживающими.
-    # В холостяцкой квартире каждый жилец получает 1/N от всех компонент,
-    # включая счётчики (потребление общее по квартире, оплата делится).
-    # N = room.total_room_residents — фактически живущих в квартире.
-    # Электричество УЖЕ делилось через elect_share — для холостяков
-    # дополнительная корректировка: делитель должен быть N, а не
-    # «доля одного жильца» — поэтому делим ещё раз на N. Если в комнате
-    # один жилец — делитель 1, никаких изменений.
+    # Деление СЧЁТЧИКОВ между фактически проживающими холостяками.
+    # ГВС/ХВС/канализация приходят полным объёмом по квартире → делим на
+    # факт. число жильцов (room.total_room_residents, авто = COUNT жильцов).
+    # Электричество НЕ делим: оно уже пришло как доля одного жильца
+    # (elect_share = объём / total_room_residents в обёртках billing) —
+    # повторное деление дало бы /N². area-based статьи (выше) тоже НЕ
+    # делятся — они уже посчитаны по «проектному месту».
     if is_singles_apt:
-        n_share = D(getattr(room, "total_room_residents", None) or 1)
-        if n_share > 0:
-            c_hot = quantize_money(c_hot / n_share)
-            c_cold = quantize_money(c_cold / n_share)
-            c_sewage = quantize_money(c_sewage / n_share)
-            c_elect = quantize_money(c_elect / n_share)
-            c_maint = quantize_money(c_maint / n_share)
-            c_rent = quantize_money(c_rent / n_share)
-            c_waste = quantize_money(c_waste / n_share)
-            c_fixed = quantize_money(c_fixed / n_share)
+        n_fact = D(getattr(room, "total_room_residents", None) or 1)
+        if n_fact > ZERO:
+            c_hot = quantize_money(c_hot / n_fact)
+            c_cold = quantize_money(c_cold / n_fact)
+            c_sewage = quantize_money(c_sewage / n_fact)
 
     # ─────────────────────────────────────────────────
     # ИТОГ

@@ -502,6 +502,17 @@ async def create_room(data: RoomCreate, db: AsyncSession = Depends(get_db)):
                 ),
             )
 
+    if getattr(data, "is_singles_apartment", False) and (
+        data.max_capacity is None or int(data.max_capacity) < 1
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Для холостяцкой квартиры укажите «Макс. вместимость» (≥ 1) — "
+                "по ней делится площадь для найма / ТКО / отопления / содержания."
+            ),
+        )
+
     room = Room(**data.model_dump())
     db.add(room)
     await db.commit()
@@ -674,6 +685,19 @@ async def update_room(room_id: int, data: RoomUpdate, db: AsyncSession = Depends
     )
     new_is_singles = update_data.get("is_singles_apartment", room.is_singles_apartment)
 
+    # Холостяцкая квартира обязана иметь макс. вместимость — это делитель
+    # площади для найма/ТКО/отопления/содержания в billing (area / max_capacity).
+    # Без неё расчёт area-based статей неоднозначен.
+    eff_max_cap = update_data.get("max_capacity", room.max_capacity)
+    if new_is_singles and (eff_max_cap is None or int(eff_max_cap) < 1):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Для холостяцкой квартиры укажите «Макс. вместимость» (≥ 1) — "
+                "по ней делится площадь для найма / ТКО / отопления / содержания."
+            ),
+        )
+
     for key, value in update_data.items():
         setattr(room, key, value)
 
@@ -689,6 +713,14 @@ async def update_room(room_id: int, data: RoomUpdate, db: AsyncSession = Depends
             .where(User.room_id == room_id, User.is_deleted.is_(False))
             .values(resident_type=new_resident_type)
         )
+
+    # При включённом холостяцком режиме делитель счётчиков = факт. число
+    # жильцов. Проставляем сразу (и при первом включении, и при любом апдейте
+    # комнаты) — чтобы billing всегда делил на актуальное число.
+    if new_is_singles:
+        await db.flush()
+        from app.modules.utility.services.room_assignment import recount_singles_residents
+        await recount_singles_residents(db, room_id)
 
     await db.commit()
     await db.refresh(room)

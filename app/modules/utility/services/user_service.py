@@ -17,9 +17,15 @@ async def delete_user_service(user_id: int, db: AsyncSession):
 
     # Помечаем как удаленного
     user.is_deleted = True
+    room_id = user.room_id
 
     # Меняем логин, чтобы в будущем можно было зарегистрировать нового жильца с таким же ФИО/логином
     user.username = f"{user.username}_deleted_{user.id}"
 
     db.add(user)
+    await db.flush()
+
+    # Холостяцкая комната: пересчитать делитель счётчиков (жилец выбыл).
+    from app.modules.utility.services.room_assignment import recount_singles_residents
+    await recount_singles_residents(db, room_id)
     # db.commit() будет вызван в роутере

@@ -21,10 +21,35 @@ from datetime import datetime
 from app.core.time_utils import utcnow
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.modules.utility.models import RoomAssignment, User
+
+
+async def recount_singles_residents(db: AsyncSession, room_id: Optional[int]) -> None:
+    """Пересчитывает total_room_residents для ХОЛОСТЯЦКОЙ комнаты = число
+    активных жильцов (в singles 1 аккаунт = 1 человек).
+
+    total_room_residents — делитель счётчиков (ГВС/ХВС/электр) в billing.
+    Для family-комнат НЕ трогаем: там это число ЛЮДЕЙ (один аккаунт может
+    представлять семью из N), его ведёт админ вручную в форме комнаты.
+    Вызывающий делает commit.
+    """
+    if room_id is None:
+        return
+    from app.modules.utility.models import Room as _Room
+    room = await db.get(_Room, room_id)
+    if room is None or not bool(getattr(room, "is_singles_apartment", False)):
+        return
+    cnt = (await db.execute(
+        select(func.count(User.id)).where(
+            User.room_id == room_id,
+            User.is_deleted.is_(False),
+            User.role == "user",
+        )
+    )).scalar_one()
+    room.total_room_residents = int(cnt) if cnt and cnt > 0 else 1
 
 
 async def get_active_assignment(
@@ -110,6 +135,24 @@ async def move_user_to_room(
         new_room = await db.get(_Room, new_room_id)
         if new_room and new_room.is_vacant:
             new_room.is_vacant = False
+
+    # Шаг 6: sync resident_type с флагом холостяцкой квартиры.
+    # Если новая комната — singles → resident_type='single'. Иначе 'family'.
+    # billing_mode не трогаем (singles платят by_meter, делёж — в billing).
+    if new_room_id is not None:
+        target_room = await db.get(_Room, new_room_id)
+        if target_room is not None:
+            expected_rt = "single" if bool(getattr(target_room, "is_singles_apartment", False)) else "family"
+            if user.resident_type != expected_rt:
+                user.resident_type = expected_rt
+
+    # Шаг 7: пересчёт делителя счётчиков для холостяцких комнат (старая и новая).
+    # Делаем ПОСЛЕ смены room_id и flush — COUNT должен видеть актуальное
+    # расселение. recount сам пропускает не-singles комнаты.
+    await db.flush()
+    await recount_singles_residents(db, old_room_id)
+    if new_room_id != old_room_id:
+        await recount_singles_residents(db, new_room_id)
 
     return closed, opened
 

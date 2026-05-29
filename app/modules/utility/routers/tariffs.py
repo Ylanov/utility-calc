@@ -152,7 +152,6 @@ async def get_tariffs_with_stats(
             "water_supply": t.water_supply,
             "sewage": t.sewage,
             "waste_disposal": t.waste_disposal,
-            "electricity_per_sqm": t.electricity_per_sqm,
             "electricity_rate": t.electricity_rate,
             "per_capita_amount": t.per_capita_amount,
         })
@@ -188,7 +187,6 @@ async def get_scheduled_tariffs(
             "water_supply": t.water_supply,
             "sewage": t.sewage,
             "waste_disposal": t.waste_disposal,
-            "electricity_per_sqm": t.electricity_per_sqm,
             "electricity_rate": t.electricity_rate,
             "per_capita_amount": t.per_capita_amount,
         }
@@ -448,7 +446,6 @@ async def preview_calculation(
             water_supply=cleaned.get("water_supply", Decimal("0")),
             sewage=cleaned.get("sewage", Decimal("0")),
             waste_disposal=cleaned.get("waste_disposal", Decimal("0")),
-            electricity_per_sqm=cleaned.get("electricity_per_sqm", Decimal("0")),
             electricity_rate=cleaned.get("electricity_rate", Decimal("0")),
             per_capita_amount=cleaned.get("per_capita_amount", Decimal("0")),
             # Bug AP: сезонные флаги — без них калькулятор «убивал» ГВС-подогрев.

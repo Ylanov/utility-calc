@@ -200,11 +200,11 @@ async def create_user(
 
     await _validate_tariff_id(new_user.tariff_id, db)
 
-    # Если переданы resident_type=single без явного billing_mode — авто-вывод.
-    rt = getattr(new_user, "resident_type", "family")
-    bm = getattr(new_user, "billing_mode", None) or (
-        "per_capita" if rt == "single" else "by_meter"
-    )
+    # resident_type/billing_mode: если жилец сразу селится в комнату,
+    # фактический resident_type пересчитает move_user_to_room по флагу комнаты.
+    # До переезда — оставляем то что пришло (или дефолты).
+    rt = getattr(new_user, "resident_type", "family") or "family"
+    bm = getattr(new_user, "billing_mode", None) or "by_meter"
 
     db_user = User(
         username=new_user.username,
@@ -705,14 +705,8 @@ async def update_user(
             note="reassigned via update_user",
         )
 
-    # Согласованность типа жильца и режима оплаты:
-    # 'single' → автоматически 'per_capita', 'family' → 'by_meter'.
-    # Если админ хочет нестандартное (single+by_meter), он явно передаст оба поля.
-    if "resident_type" in update_dict and "billing_mode" not in update_dict:
-        update_dict["billing_mode"] = (
-            "per_capita" if update_dict["resident_type"] == "single" else "by_meter"
-        )
-
+    # billing_mode из resident_type больше не выводим: singles тоже by_meter
+    # (счётчики на квартиру делятся в billing). per_capita — legacy.
     for key, value in update_dict.items():
         setattr(db_user, key, value)
 

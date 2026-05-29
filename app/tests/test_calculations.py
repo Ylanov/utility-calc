@@ -18,11 +18,16 @@ from app.modules.utility.services.calculations import (
 # ──────────────────────────────────────────────────────────────
 
 class FakeRoom:
-    def __init__(self, area=50.0, total_residents=2, is_singles_apartment=False):
+    def __init__(self, area=50.0, total_residents=2, is_singles_apartment=False,
+                 max_capacity=None):
         self.apartment_area = Decimal(str(area))
         self.total_room_residents = total_residents
-        # Bug AS: пометка холостяцкой квартиры (счёт делится поровну).
+        # Bug AS: пометка холостяцкой квартиры (счётчики делятся на факт.
+        # число жильцов; area-based статьи — по max_capacity).
         self.is_singles_apartment = is_singles_apartment
+        # Макс. вместимость — делитель площади для area-based статей
+        # холостяков (area / max_capacity). None → fallback на факт. жильцов.
+        self.max_capacity = max_capacity
 
 
 class FakeUser:
@@ -46,7 +51,7 @@ class FakeTariff:
         social_rent="5.10",
         waste_disposal="6.50",
         heating="25.00",
-        electricity_per_sqm="1.20",
+        electricity_per_sqm="0.00",  # DEPRECATED: ОДН удалён 29.05.2026, в расчёте не участвует
         hw_norm_per_capita="0.000",
         cw_norm_per_capita="0.000",
         el_norm_per_capita="0.000",
@@ -143,11 +148,11 @@ def test_calculation_precision():
     # ТКО: 45.50 * 6.50 = 295.75
     assert result["cost_waste"] == Decimal("295.75"), f"ТКО: {result['cost_waste']}"
 
-    # Фиксированная: 45.50 * (25.00 + 1.20) = 45.50 * 26.20 = 1192.10
-    assert result["cost_fixed_part"] == Decimal("1192.10"), f"Фикс: {result['cost_fixed_part']}"
+    # Фиксированная (только отопление, ОДН удалён): 45.50 * 25.00 = 1137.50
+    assert result["cost_fixed_part"] == Decimal("1137.50"), f"Фикс: {result['cost_fixed_part']}"
 
-    # ИТОГО: 468.45+231.56+311.92+663.05+1387.75+232.05+295.75+1192.10 = 4782.63
-    expected = Decimal("4782.63")
+    # ИТОГО: 468.45+231.56+311.92+663.05+1387.75+232.05+295.75+1137.50 = 4728.03
+    expected = Decimal("4728.03")
     assert result["total_cost"] == expected, f"ИТОГО: {result['total_cost']} != {expected}"
 
     # total_cost должен совпадать с суммой компонент (нет расхождения копеек)
@@ -245,7 +250,7 @@ def test_zero_consumption():
         water_supply="40.00", water_heating="150.00",
         sewage="35.00", electricity_rate="5.50",
         maintenance_repair="30.50", social_rent="5.10",
-        waste_disposal="6.50", heating="25.00", electricity_per_sqm="1.20",
+        waste_disposal="6.50", heating="25.00",
     )
 
     result = calculate_utilities(
@@ -267,10 +272,10 @@ def test_zero_consumption():
     assert result["cost_social_rent"] == Decimal("102.00")
     # ТКО: 20.0 * 6.50 = 130.00
     assert result["cost_waste"]       == Decimal("130.00")
-    # Фикс: 20.0 * (25.00 + 1.20) = 20.0 * 26.20 = 524.00
-    assert result["cost_fixed_part"]  == Decimal("524.00")
+    # Фикс (только отопление, ОДН удалён): 20.0 * 25.00 = 500.00
+    assert result["cost_fixed_part"]  == Decimal("500.00")
 
-    expected_total = Decimal("1366.00")
+    expected_total = Decimal("1342.00")
     assert result["total_cost"] == expected_total, f"ИТОГО: {result['total_cost']}"
 
     print("✅ test_zero_consumption ПРОЙДЕН")
@@ -677,11 +682,11 @@ def test_present_meter_ignores_norm():
 # ──────────────────────────────────────────────────────────────
 
 def test_seasonal_heating_off_zeroes_fixed_part_heating():
-    """heating_season_active=False → cost_fixed_part не включает heating.
-    Остаётся только electricity_per_sqm (ОДН свет)."""
+    """heating_season_active=False → cost_fixed_part = 0 (ОДН удалён из
+    системы, в фикс. части осталось только отопление)."""
     user = FakeUser(residents=2)
     room = FakeRoom(area=50.0)
-    tariff = FakeTariff()  # heating=25.00, electricity_per_sqm=1.20
+    tariff = FakeTariff()  # heating=25.00
 
     result = calculate_utilities(
         user=user, room=room, tariff=tariff,
@@ -691,10 +696,9 @@ def test_seasonal_heating_off_zeroes_fixed_part_heating():
         volume_electricity_share=Decimal("100.0"),
         heating_season_active=False,
     )
-    # cost_fixed_part = 50.00 × (0 + 1.20) = 60.00 (без heating)
-    assert result["cost_fixed_part"] == Decimal("60.00"), (
-        f"При выключенном отоплении ожидался только ОДН-электр.: 60.00, "
-        f"получили {result['cost_fixed_part']}"
+    # cost_fixed_part = 50.00 × 0 = 0.00 (отопление off, ОДН удалён)
+    assert result["cost_fixed_part"] == Decimal("0.00"), (
+        f"При выключенном отоплении фикс. часть = 0, получили {result['cost_fixed_part']}"
     )
 
 
@@ -739,8 +743,8 @@ def test_seasonal_both_off_still_calculates_rest():
     )
     # ГВС без подогрева, отопление 0, остальное по-обычному
     assert result["cost_hot_water"] == Decimal("120.00")
-    # fixed_part = только ОДН (1.20 × 50)
-    assert result["cost_fixed_part"] == Decimal("60.00")
+    # fixed_part = 0 (отопление off, ОДН удалён из системы)
+    assert result["cost_fixed_part"] == Decimal("0.00")
     # cost_electricity не затронут
     assert result["cost_electricity"] == Decimal("550.00")  # 100 × 5.50
 
@@ -797,33 +801,65 @@ def test_seasonal_defaults_preserve_legacy_behavior():
 # ТЕСТЫ ХОЛОСТЯЦКИХ КВАРТИР (Bug AS)
 # ──────────────────────────────────────────────────────────────
 
-def test_singles_apartment_splits_all_components():
-    """В холостяцкой квартире на N жильцов — каждая статья делится на N."""
+def test_singles_apartment_meters_split_by_actual_residents():
+    """Холостяцкая квартира: счётчики (ГВС/ХВС/канализация) делятся на
+    ФАКТ. число жильцов; электричество приходит уже долей и НЕ делится
+    повторно. area-based статьи считаются по max_capacity (не по факту)."""
     user = FakeUser(residents=1)
-    room = FakeRoom(area=50.0, total_residents=3, is_singles_apartment=True)
+    # факт. жильцов = 3, макс. вместимость квартиры = 4 (разные числа!)
+    room = FakeRoom(area=50.0, total_residents=3, is_singles_apartment=True, max_capacity=4)
     tariff = FakeTariff()  # все skip-флаги False по умолчанию
 
     result = calculate_utilities(
         user=user, room=room, tariff=tariff,
-        volume_hot=Decimal("3.0"),       # 3 × 150 = 450, /3 = 150
+        volume_hot=Decimal("3.0"),       # 3 × 150 = 450, /3 факт = 150
         volume_cold=Decimal("5.0"),      # 5 × 40 = 200, /3 = 66.67
         volume_sewage=Decimal("8.0"),    # 8 × 35 = 280, /3 = 93.33
-        volume_electricity_share=Decimal("90.0"),  # 90 × 5.50 = 495, /3 = 165
+        volume_electricity_share=Decimal("90.0"),  # уже доля → 90 × 5.50 = 495, НЕ делим
     )
     assert result["cost_hot_water"] == Decimal("150.00"), result["cost_hot_water"]
     assert result["cost_cold_water"] == Decimal("66.67"), result["cost_cold_water"]
     assert result["cost_sewage"] == Decimal("93.33"), result["cost_sewage"]
-    assert result["cost_electricity"] == Decimal("165.00"), result["cost_electricity"]
-    # Содержание: 50 × 30.50 = 1525, /3 = 508.33
-    assert result["cost_maintenance"] == Decimal("508.33"), result["cost_maintenance"]
-    # Наём: 50 × 5.10 = 255, /3 = 85.00
-    assert result["cost_social_rent"] == Decimal("85.00"), result["cost_social_rent"]
+    # Электричество НЕ делится повторно (иначе было бы /N²): 90 × 5.50 = 495.00
+    assert result["cost_electricity"] == Decimal("495.00"), result["cost_electricity"]
+    # area-based по max_capacity=4: Содержание 50/4 × 30.50 = 12.5 × 30.50 = 381.25
+    assert result["cost_maintenance"] == Decimal("381.25"), result["cost_maintenance"]
+    # Наём: 50/4 × 5.10 = 12.5 × 5.10 = 63.75
+    assert result["cost_social_rent"] == Decimal("63.75"), result["cost_social_rent"]
+
+
+def test_singles_area_based_uses_max_capacity_not_actual():
+    """area-based статьи холостяка считаются от max_capacity и НЕ зависят
+    от того, сколько фактически живёт. И Умнову, и Меликову (живут вдвоём,
+    вместимость 4) начисляется одна и та же сумма за наём/ТКО/отопление."""
+    tariff = FakeTariff()
+    # Та же квартира, та же вместимость 4, но факт. жильцов 2 vs 4 — наём
+    # обязан совпасть (зависит только от max_capacity).
+    room_two = FakeRoom(area=43.10, total_residents=2, is_singles_apartment=True, max_capacity=4)
+    room_full = FakeRoom(area=43.10, total_residents=4, is_singles_apartment=True, max_capacity=4)
+
+    common = dict(
+        volume_hot=Decimal("0"), volume_cold=Decimal("0"),
+        volume_sewage=Decimal("0"), volume_electricity_share=Decimal("0"),
+    )
+    r_two = calculate_utilities(user=FakeUser(residents=1), room=room_two, tariff=tariff, **common)
+    r_full = calculate_utilities(user=FakeUser(residents=1), room=room_full, tariff=tariff, **common)
+
+    # Наём: 43.10 / 4 × 5.10 = 10.775 × 5.10 = 54.9525 → 54.95
+    assert r_two["cost_social_rent"] == Decimal("54.95"), r_two["cost_social_rent"]
+    assert r_two["cost_social_rent"] == r_full["cost_social_rent"], (
+        "Наём холостяка не должен зависеть от фактического числа жильцов"
+    )
+    # ТКО: 10.775 × 6.50 = 70.0375 → 70.04
+    assert r_two["cost_waste"] == Decimal("70.04"), r_two["cost_waste"]
+    # Отопление: 10.775 × 25.00 = 269.375 → 269.38
+    assert r_two["cost_fixed_part"] == Decimal("269.38"), r_two["cost_fixed_part"]
 
 
 def test_singles_apartment_skip_flags_zero_components():
     """Если у тарифа стоит singles_skip_*, эти статьи не начисляются вообще."""
     user = FakeUser(residents=1)
-    room = FakeRoom(area=50.0, total_residents=2, is_singles_apartment=True)
+    room = FakeRoom(area=50.0, total_residents=2, is_singles_apartment=True, max_capacity=2)
     tariff = FakeTariff(
         singles_skip_social_rent=True,   # 205 не начисляем
         singles_skip_heating=True,       # отопление тоже
@@ -837,10 +873,9 @@ def test_singles_apartment_skip_flags_zero_components():
         volume_electricity_share=Decimal("50.0"),
     )
     assert result["cost_social_rent"] == Decimal("0.00"), "наём должен быть 0"
-    # cost_fixed_part: отопление skip, остаётся ОДН-электричество × area / N
-    # 50 × 1.20 = 60, /2 = 30
-    assert result["cost_fixed_part"] == Decimal("30.00"), result["cost_fixed_part"]
-    # Содержание не skip — должно делиться: 50 × 30.50 = 1525, /2 = 762.50
+    # cost_fixed_part: отопление skip + ОДН удалён из системы → 0.00
+    assert result["cost_fixed_part"] == Decimal("0.00"), result["cost_fixed_part"]
+    # Содержание не skip — area-based по max_capacity=2: 50/2 × 30.50 = 762.50
     assert result["cost_maintenance"] == Decimal("762.50"), result["cost_maintenance"]
 
 
@@ -891,13 +926,10 @@ def test_charge_flags_default_true_legacy_behavior():
 
 def test_charge_rent_only_preset():
     """Пресет «Только наём»: только cost_social_rent ненулевой.
-    electricity_per_sqm=0 — ОДН-электричество (на площадь) отдельная
-    статья от charge_electricity (счётчик). В новых тарифах оно
-    всегда 0 (см. Bug AM), но в FakeTariff default 1.20 — обнулим явно."""
+    Фикс. часть = 0 (heating off; ОДН удалён из системы 29.05.2026)."""
     user = FakeUser()
     room = FakeRoom(area=50.0)
     tariff = FakeTariff(
-        electricity_per_sqm="0",  # ОДН-электр. отдельно от charge_electricity
         charge_hot_water=False, charge_cold_water=False,
         charge_sewage=False, charge_electricity=False,
         charge_maintenance=False, charge_social_rent=True,

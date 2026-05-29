@@ -1109,12 +1109,7 @@ export const SummaryModule = {
                             ['Социальный найм (₽/м²)', rates.social_rent],
                             ['ТКО (₽/м²)', rates.waste_disposal],
                             ['Отопление (₽/м²)', rates.heating],
-                            // ОДН электро (electricity_per_sqm) — скрыт из UI с мая 2026.
-                            // В новых тарифах всегда 0; показываем только если ненулевой
-                            // (исторические тарифы где он был задан).
-                            ...((Number(rates.electricity_per_sqm) || 0) > 0
-                                ? [['ОДН электро (₽/м²)', rates.electricity_per_sqm]]
-                                : []),
+                            // ОДН (electricity_per_sqm) удалён из системы 29.05.2026.
                         ].map(([label, val]) => `
                             <tr style="border-bottom:1px solid #f1f5f9;">
                                 <td style="padding:5px 10px; color:var(--text-secondary);">${esc(label)}</td>

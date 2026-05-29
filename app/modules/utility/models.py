@@ -346,16 +346,10 @@ class User(Base):
 
     @validates("resident_type")
     def _v_resident_type(self, key, value):
-        # При смене на single сбрасываем count до 1 и billing_mode на per_capita.
-        if value == "single":
-            if getattr(self, "residents_count", None) not in (None, 1):
-                self.residents_count = 1
-            if getattr(self, "billing_mode", None) != "per_capita":
-                self.billing_mode = "per_capita"
-        elif value == "family":
-            # Смена на family: авто-установка by_meter (но только если был per_capita).
-            if getattr(self, "billing_mode", None) == "per_capita":
-                self.billing_mode = "by_meter"
+        # Singles живут на общих счётчиках квартиры; делёж счёта — в billing.
+        # billing_mode мы НЕ трогаем (по умолчанию by_meter), per_capita — legacy.
+        if value == "single" and getattr(self, "residents_count", None) not in (None, 1):
+            self.residents_count = 1
         return value
 
     __table_args__ = (
