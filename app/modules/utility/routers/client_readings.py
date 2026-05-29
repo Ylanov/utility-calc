@@ -27,6 +27,39 @@ router = APIRouter(tags=["Client Readings"])
 logger = logging.getLogger(__name__)
 
 
+async def _is_submission_day_open(db: AsyncSession) -> tuple[bool, int, int, int]:
+    """Возвращает (is_open, today_day, start_day, end_day).
+
+    Окно подачи показаний — это диапазон дней месяца, заданный в
+    SystemSetting (submission_start_day / submission_end_day). По
+    умолчанию 20-25 (стандарт РФ). Если today.day НЕ в [start, end] —
+    подача закрыта, даже если BillingPeriod.is_active=True.
+
+    Bug 29.05.2026: раньше проверялся только `is_active` периода, без
+    окна дней. Жильцы могли подавать в любой день месяца. Юзер настроил
+    окно 1-28, но 29-го система всё равно писала «приём открыт» и
+    принимала подачи через мобильное приложение. Фикс: добавлена эта
+    функция и вызвана в /readings/state + /api/calculate.
+    """
+    from app.modules.utility.models import SystemSetting
+    from datetime import date as _date
+
+    start_row = await db.get(SystemSetting, "submission_start_day")
+    end_row = await db.get(SystemSetting, "submission_end_day")
+
+    def _safe_int(v, default: int) -> int:
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return default
+
+    start_day = _safe_int(start_row.value if start_row else None, 20)
+    end_day = _safe_int(end_row.value if end_row else None, 25)
+    today_day = _date.today().day
+    is_open = start_day <= today_day <= end_day
+    return is_open, today_day, start_day, end_day
+
+
 # =========================
 # SERVICE LAYER
 # =========================
@@ -93,7 +126,10 @@ async def get_reading_state(
         select(BillingPeriod).where(BillingPeriod.is_active)
     )).scalars().first()
 
-    is_period_open = period is not None
+    # Период открыт = есть активный BillingPeriod И today.day в окне подачи.
+    # См. _is_submission_day_open для контекста бага 29.05.2026.
+    _day_open, _today_day, _start_day, _end_day = await _is_submission_day_open(db)
+    is_period_open = (period is not None) and _day_open
 
     # История показаний комнаты
     readings = (await db.execute(
@@ -303,6 +339,22 @@ async def save_reading(
     )).scalars().first()
     if not period:
         raise HTTPException(400, "Расчетный период закрыт")
+
+    # Окно подачи показаний (бухгалтерская настройка submission_start_day /
+    # submission_end_day). Если сегодня вне окна — отказываем с понятным
+    # сообщением. Bug 29.05.2026: ранее проверки не было, жильцы подавали
+    # 29-30 числа когда окно уже закрыто (1-28).
+    _day_open, _today_day, _start_day, _end_day = await _is_submission_day_open(db)
+    if not _day_open:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Приём показаний за этот период закрыт. "
+                f"Сегодня {_today_day} число, окно подачи: с {_start_day} "
+                f"по {_end_day} число месяца. Подайте показания в "
+                f"следующем расчётном периоде."
+            ),
+        )
     tariff = tariff_cache.get_effective_tariff(user=user, room=room)
     if not tariff:
         # Кеш пуст / БД ещё не сидирована — fallback на любой активный тариф.
