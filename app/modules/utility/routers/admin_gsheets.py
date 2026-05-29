@@ -1196,25 +1196,59 @@ async def _apply_approve(
     # может показывать тёмный «info-tooltip» с устаревшей причиной.
     row.conflict_reason = None
 
-    # RETROACTIVE RECALC ОТКЛЮЧЁН (Hotfix Коммита 3, 28.05.2026).
-    # Раньше тут вызывался recalc_skip_chain — он зануливал volume-cost
-    # на virtual auto-readings и возвращал показания счётчика к last_manual
-    # (сторно). Юзер захотел простую логику: auto-readings СОХРАНЯЮТ
-    # норматив × residents, при manual подаче delta считается обычным
-    # образом от prev (любого, включая virtual). См. дискуссию в чате
-    # 28.05.2026 после Коммита 3 (`56df3bb`).
+    # RETROACTIVE RECALC ВОССТАНОВЛЕН (Коммит 8, 29.05.2026 — revert Hotfix
+    # 426afe6). Hotfix отключал recalc_skip_chain потому что юзер захотел
+    # «прибавлять норматив к virtual». Но это создало бардак: у жильцов
+    # с manual подачей Май получались double-charges (норматив на
+    # Февраль/Март/Апрель + полная дельта от Начального на Май),
+    # отрицательные дельты («счётчик упал» когда жилец потратил меньше
+    # норматива), разные cost_water на одинаковых reading'ах.
     #
-    # Финансово: жилец видит volume-cost на каждом месяце (норматив на
-    # virtual + реальная дельта на manual). Сумма = реальный расход за
-    # период (норматив погашается реальной подачей через delta).
-    #
-    # Edge case: если жилец подал МЕНЬШЕ суммарного норматива —
-    # `meter_decreased` сработает (delta < 0) и заблокирует подачу.
-    # Админ может пересоздать reading вручную через UI.
-    #
-    # skip_recalc.py пока остаётся в коде для legacy (старые reading'и
-    # с VOID_VOL флагом). Если решим окончательно убрать — отдельный
-    # cleanup-коммит.
+    # Возвращаем сторно-логику Коммита 3 (`56df3bb`):
+    #   * На auto-цепочке между last_manual и current — volume-cost
+    #     зануляется (cost_hot_water/cold_water/sewage/electricity = 0),
+    #     area-based (maintenance/fixed_part/social_rent/waste) остаются.
+    #   * Показания счётчика возвращаются к last_manual («счётчик не
+    #     двигался» во время молчания).
+    #   * На current reading — полная дельта от last_manual.
+    #   * Это соответствует ПП №354 (приоритет счётчика над нормативом).
+    if breakdown and not breakdown.get("is_baseline") and eff_tariff is not None and room_obj is not None:
+        try:
+            from app.modules.utility.services.skip_recalc import recalc_skip_chain
+            _seas = await _load_seasonal(db)
+            _heat_now = _seas.heating_season_active and eff_tariff.is_heating_active_now()
+            _hw_now = _seas.hot_water_heating_active and eff_tariff.is_hw_heating_active_now()
+            recalc_result = await recalc_skip_chain(
+                db=db, user=user, room=room_obj,
+                current_reading=reading, tariff=eff_tariff,
+                heating_season_active=_heat_now,
+                hot_water_heating_active=_hw_now,
+            )
+            if recalc_result and recalc_result.get("applied"):
+                await write_audit_log(
+                    db, current_user.id, current_user.username,
+                    action="gsheets_skip_recalc",
+                    entity_type="reading", entity_id=reading.id,
+                    details={
+                        "auto_readings_recalced": recalc_result["auto_readings_recalced"],
+                        "last_manual_period_id": recalc_result["last_manual_period_id"],
+                        "real_delta_hot": str(recalc_result["real_delta_hot"]),
+                        "real_delta_cold": str(recalc_result["real_delta_cold"]),
+                        "voided_virtual_volume_cost": str(
+                            recalc_result.get("voided_virtual_volume_cost", "0")
+                        ),
+                        "owner": user.username,
+                        "gsheets_row_id": row.id,
+                    },
+                )
+        except Exception as e:
+            # Recalc — bonus best-effort. Если упал, основной reading
+            # уже создан корректно. Логируем и идём дальше.
+            import logging as _log_skip
+            _log_skip.getLogger(__name__).warning(
+                "[GSHEETS-APPROVE] skip_recalc failed for reading=%s: %s",
+                reading.id, e,
+            )
 
     await write_audit_log(
         db, current_user.id, current_user.username,
