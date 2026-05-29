@@ -662,8 +662,33 @@ async def update_room(room_id: int, data: RoomUpdate, db: AsyncSession = Depends
         if not t or not t.is_active:
             raise HTTPException(400, "Активный тариф с таким id не найден")
 
+    # Bug 29.05.2026 (Коммит 24): синхронизация resident_type у жильцов
+    # при изменении is_singles_apartment. UI в админке (Жильцы → дашборд
+    # с цифрами «Семейных/Холостяков») использует user.resident_type
+    # ('family'/'single'), а флаг is_singles_apartment — атрибут комнаты.
+    # Юзер ставил холостяк на комнате — в админке Жильцы показывалось
+    # «Семья». Теперь sync автоматический.
+    singles_changed = (
+        "is_singles_apartment" in update_data
+        and update_data["is_singles_apartment"] != room.is_singles_apartment
+    )
+    new_is_singles = update_data.get("is_singles_apartment", room.is_singles_apartment)
+
     for key, value in update_data.items():
         setattr(room, key, value)
+
+    if singles_changed:
+        # Обновляем resident_type у всех ЖИВУЩИХ жильцов этой комнаты.
+        # billing_mode оставляем by_meter (общие счётчики на квартиру,
+        # cost делится на N через Bug AS этап 4). per_capita (койко-место)
+        # больше не используется.
+        new_resident_type = "single" if new_is_singles else "family"
+        from sqlalchemy import update as _sa_update
+        await db.execute(
+            _sa_update(User)
+            .where(User.room_id == room_id, User.is_deleted.is_(False))
+            .values(resident_type=new_resident_type)
+        )
 
     await db.commit()
     await db.refresh(room)
