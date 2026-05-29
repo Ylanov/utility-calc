@@ -150,9 +150,24 @@ export const ReadingsModule = {
     },
 
     async loadActivePeriod() {
+        // Bug 29.05.2026: раньше «Прием открыт» показывался при наличии
+        // любого активного BillingPeriod, без учёта окна подачи (1-28
+        // число). Жильцы в личном кабинете видели «закрыт» правильно
+        // (Коммит 11), а админ-дашборд — «открыт». Теперь учитываем
+        // окно: открыт = period активен И today.day в [start, end].
         try {
-            const data = await api.get('/admin/periods/active');
-            if (data && data.name) {
+            const [data, submission] = await Promise.all([
+                api.get('/admin/periods/active'),
+                api.get('/settings/submission-period').catch(() => null),
+            ]);
+            const periodActive = !!(data && data.name);
+            // По умолчанию 20-25 если settings не загрузились
+            const startDay = submission?.start_day ?? 20;
+            const endDay = submission?.end_day ?? 25;
+            const todayDay = new Date().getDate();
+            const dayInWindow = todayDay >= startDay && todayDay <= endDay;
+            const isOpen = periodActive && dayInWindow;
+            if (isOpen) {
                 if (this.dom.periodActive) this.dom.periodActive.style.display = 'flex';
                 if (this.dom.periodClosed) this.dom.periodClosed.style.display = 'none';
                 if (this.dom.periodLabel) this.dom.periodLabel.textContent = data.name;
