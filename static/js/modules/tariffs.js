@@ -125,6 +125,14 @@ export const TariffsModule = {
                 if (!t.id || !(t.id.startsWith('t_charge_') || t.id.startsWith('t_singles_skip_'))) return;
                 if (typeof this.recalcPreview === 'function') this.recalcPreview();
             });
+            // Bug 29.05.2026: переключение типа тарифа family/singles —
+            // показать/скрыть секцию нормативов. Холостяки счётчики не
+            // подают, норматив не нужен.
+            this.dom.form.addEventListener('change', (e) => {
+                if (e.target && e.target.name === 't_type') {
+                    this._toggleNormsSection(e.target.value === 'family');
+                }
+            });
         }
         if (this.dom.selector) {
             this.dom.selector.addEventListener('change', (e) => this.handleSelectChange(e));
@@ -401,6 +409,11 @@ export const TariffsModule = {
         const radioSng = document.getElementById('t_type_singles');
         if (radioFam) radioFam.checked = (ttype === 'family');
         if (radioSng) radioSng.checked = (ttype === 'singles');
+        // Bug 29.05.2026: секция «Нормативы потребления» нужна ТОЛЬКО для
+        // семейных тарифов (по счётчикам). Холостяки (койко-место) платят
+        // фиксированную сумму, счётчики не подаются — норматив не нужен.
+        // Скрываем секцию при типе 'singles' чтобы не путать админа.
+        this._toggleNormsSection(ttype === 'family');
 
         // Сезонность per-tariff (heating + hw_heating). См. миграцию
         // tariffs_seasonal_002_per_tariff. heating_active=true + даты=null →
@@ -611,6 +624,14 @@ export const TariffsModule = {
             cost_electricity: 'Электр.', cost_maintenance: 'Содержание', cost_social_rent: 'Наём',
             cost_waste: 'ТКО', cost_fixed_part: 'Отопление',
         })[key] || key;
+    },
+
+    // Bug 29.05.2026: показывать секцию «Нормативы потребления» только
+    // для семейных тарифов (по счётчикам). Для холостяков (фикс. сумма
+    // за койко-место) счётчики не подаются — норматив не нужен.
+    _toggleNormsSection(show) {
+        const section = document.getElementById('t_norms_section');
+        if (section) section.style.display = show ? '' : 'none';
     },
 
     // ====================================================================
