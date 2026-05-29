@@ -523,44 +523,23 @@
                                  Стили — .tariff-type-row в style.css (активный
                                  chip подсвечивается через :has(input:checked)).
                                  ============================================= -->
-                            <!-- ============================================
-                                 КАТЕГОРИЯ ТАРИФА — 2 крупные кнопки
-                                 (заменяет radio-chips, юзер выбирает кого
-                                 этим тарифом обслуживать). Bug 29.05.2026:
-                                 ранее были маленькие radio + поле «сумма
-                                 за койко-место», теперь — крупные кнопки
-                                 family/singles, койко-место удалено.
-                                 ============================================ -->
-                            <div class="tariff-category-row" style="display:flex; gap:14px; margin: 4px 0 18px 0;">
-                                <label class="tariff-category-btn" style="flex:1; cursor:pointer; padding:18px; border:2px solid var(--border-color); border-radius:12px; display:flex; flex-direction:column; align-items:center; gap:8px; transition:all .15s; background:var(--bg-secondary, #fff);">
-                                    <input type="radio" name="t_type" id="t_type_family" value="family" checked style="display:none;">
-                                    <i class="fa-solid fa-people-roof" style="font-size:32px; color:#2563eb;"></i>
-                                    <strong style="font-size:15px; color:var(--text-main);">Семейные</strong>
-                                    <span style="font-size:12px; color:var(--text-secondary); text-align:center;">Квартиры со счётчиками, обычный расчёт по показаниям</span>
-                                </label>
-                                <label class="tariff-category-btn" style="flex:1; cursor:pointer; padding:18px; border:2px solid var(--border-color); border-radius:12px; display:flex; flex-direction:column; align-items:center; gap:8px; transition:all .15s; background:var(--bg-secondary, #fff);">
-                                    <input type="radio" name="t_type" id="t_type_singles" value="singles" style="display:none;">
-                                    <i class="fa-solid fa-user-group" style="font-size:32px; color:#7c3aed;"></i>
-                                    <strong style="font-size:15px; color:var(--text-main);">Холостяки</strong>
-                                    <span style="font-size:12px; color:var(--text-secondary); text-align:center;">Квартиры с несколькими холостяками, общие счётчики делятся на жильцов</span>
-                                </label>
+                            <!-- Bug 29.05.2026 (Коммит 22): 2 кнопки family/singles
+                                 убраны. Юзер выбрал per-room флаг как единственный
+                                 source of truth для «холостяка». Тариф один на всех
+                                 (family default), статус холостяка ставится через
+                                 чекбокс «Холостяцкая квартира» в Жилфонде при
+                                 редактировании комнаты. Hidden radio сохраняет
+                                 t_type='family' для совместимости с backend
+                                 (tariff_type поле в БД не сломаем). -->
+                            <input type="radio" name="t_type" id="t_type_family" value="family" checked hidden>
+                            <input type="radio" name="t_type" id="t_type_singles" value="singles" hidden>
+                            <div style="background:#f0f9ff; border-left:3px solid #2563eb; padding:10px 14px; border-radius:6px; margin: 4px 0 18px 0; font-size:12.5px; color:#1e40af;">
+                                <i class="fa-solid fa-info-circle"></i>
+                                Этот тариф применяется ко всем привязанным жильцам.
+                                Статус «холостяцкой квартиры» (счётчики делятся между
+                                жильцами) ставится в <b>Жилфонде → редактирование
+                                комнаты → чекбокс «Холостяцкая квартира»</b>.
                             </div>
-                            <style>
-                                /* Активная категория — обводка цветом + фон */
-                                .tariff-category-row label:has(input:checked) {
-                                    border-color: #2563eb;
-                                    background: rgba(37,99,235,0.08);
-                                    box-shadow: 0 0 0 1px #2563eb;
-                                }
-                                .tariff-category-row label:has(#t_type_singles:checked) {
-                                    border-color: #7c3aed;
-                                    background: rgba(124,58,237,0.08);
-                                    box-shadow: 0 0 0 1px #7c3aed;
-                                }
-                                .tariff-category-row label:hover {
-                                    border-color: var(--text-secondary);
-                                }
-                            </style>
 
                             <!-- Bug 29.05.2026 (Коммит 21): 3 вкладки внутри формы
                                  тарифа для уменьшения прокрутки. JS-обработчик в

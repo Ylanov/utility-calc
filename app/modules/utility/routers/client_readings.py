@@ -603,20 +603,13 @@ async def save_reading(
         await db.flush()
         reading_id_for_celery = new_draft.id
 
-    # Bug 29.05.2026 (Коммит 16): для холостяцких квартир (tariff_type='singles')
-    # — после создания/обновления reading'а для текущего жильца, клонируем
-    # его для ВСЕХ ДРУГИХ жильцов той же комнаты. Это реализует требование:
-    # «один холостяк подал — все жильцы видят один счёт». Cost-компоненты
-    # уже поделены на N через Bug AS этап 4 + Коммит 15, поэтому каждый
-    # reading имеет долю одного жильца (total_cost / N). Сумма по всем
-    # жильцам квартиры = реальный расход × тариф.
-    #
-    # Family-тарифы (tariff_type='family') НЕ затрагиваются — для них один
-    # reading на user.id как было.
-    is_singles_tariff = (
-        getattr(tariff, "tariff_type", "family") == "singles"
-    )
-    if is_singles_tariff:
+    # Bug 29.05.2026 (Коммит 22 — revert Коммита 16): триггер изменён.
+    # Раньше клонирование шло когда tariff.tariff_type='singles'. После
+    # уточнения архитектуры — теперь триггер `room.is_singles_apartment`.
+    # Один тариф на всех; статус «холостяцкая квартира» — атрибут комнаты.
+    # Family-комнаты НЕ затрагиваются.
+    is_singles_apt = bool(getattr(user.room, "is_singles_apartment", False))
+    if is_singles_apt:
         # Все другие жильцы той же комнаты, активные.
         other_residents = (await db.execute(
             select(User).where(
