@@ -76,12 +76,27 @@ async def get_tariffs(
     applicable_to. Тариф меняется редко, селектор отвечает быстро
     из горячего кеша Postgres — кешировать на 5+ минут не нужно.
     """
+    from sqlalchemy import or_ as _or
     stmt = select(Tariff).where(Tariff.is_active)
     if applicable_to in ("dormitory", "house"):
-        # Тарифы с applicable_to=='both' видны для любого типа.
-        stmt = stmt.where(Tariff.applicable_to.in_([applicable_to, "both"]))
+        # Bug 29.05.2026 (Коммит 23): тарифы с applicable_to=NULL раньше
+        # отрезались фильтром. Юзер видел в Жилфонде только «Без
+        # переопределения» в селекторе тарифа. Теперь NULL воспринимается
+        # как «применим к любому типу» (старые тарифы до миграции housing_001).
+        # «both» — явный универсальный, тоже видны для любого типа.
+        stmt = stmt.where(
+            _or(
+                Tariff.applicable_to.is_(None),
+                Tariff.applicable_to.in_([applicable_to, "both"]),
+            )
+        )
     elif applicable_to == "both":
-        stmt = stmt.where(Tariff.applicable_to == "both")
+        stmt = stmt.where(
+            _or(
+                Tariff.applicable_to.is_(None),
+                Tariff.applicable_to == "both",
+            )
+        )
     result = await db.execute(stmt.order_by(Tariff.id))
     return result.scalars().all()
 
