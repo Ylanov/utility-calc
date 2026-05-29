@@ -581,7 +581,11 @@ export const HousingModule = {
         const sel = this.modal.inputs.tariff;
         if (!sel) return;
         sel.innerHTML = '<option value="">— Без переопределения —</option>';
-        (this.tariffs || []).filter(t => t.is_active).forEach(t => {
+        // Сервер (/api/tariffs) уже возвращает ТОЛЬКО активные (WHERE is_active),
+        // а response_model=TariffSchema не включает поле is_active в ответ —
+        // поэтому фильтр t.is_active отбрасывал ВСЕ тарифы (undefined → falsy)
+        // и селектор был пуст. Не фильтруем повторно.
+        (this.tariffs || []).forEach(t => {
             const opt = document.createElement('option');
             opt.value = String(t.id);
             opt.textContent = t.name;
