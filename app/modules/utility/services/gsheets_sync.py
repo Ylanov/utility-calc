@@ -109,6 +109,54 @@ def _max_age_days() -> int:
     return config.get_int("gsheets.max_age_days", DEFAULT_GSHEETS_MAX_AGE_DAYS)
 
 
+def _cutoff_date() -> Optional[datetime]:
+    """Фиксированная нижняя граница sync: подачи раньше этой даты НЕ
+    импортируются, даже если попадают в окно max_age_days.
+
+    Параметр: `gsheets.cutoff_date` в analyzer_settings, ISO-формат
+    `YYYY-MM-DD` (например `2026-01-15`). Если не задан или невалиден —
+    возвращает None, фильтр работает только по max_age_days.
+
+    Зачем: max_age_days считается относительно «сегодня» и каждый день
+    сдвигается. Если админ хочет «никогда не подгружать подачи раньше
+    15 января» — нужна абсолютная дата. Случилось 29.05.2026 когда
+    почистили старые подачи 2025 года и не хотим чтобы они возвращались
+    через 2 месяца когда max_age_days передвинется.
+    """
+    from app.modules.utility.services.analyzer_config import config
+    raw = config.get_str("gsheets.cutoff_date", "")
+    if not raw or not raw.strip():
+        return None
+    raw = raw.strip()
+    for fmt in ("%Y-%m-%d", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(raw, fmt)
+        except ValueError:
+            continue
+    logger.warning(
+        "[GSHEETS-SYNC] gsheets.cutoff_date=%r не распарсился (ожидаем "
+        "YYYY-MM-DD или DD.MM.YYYY). Игнорируем настройку.", raw,
+    )
+    return None
+
+
+def _effective_age_cutoff() -> datetime:
+    """Эффективная нижняя граница sync: максимальная из двух —
+    `today - max_age_days` (relative) и `cutoff_date` (absolute).
+
+    Если cutoff_date не задан — только max_age_days.
+    Если cutoff_date в будущем относительно max-границы (т.е. админ
+    хочет ещё более позднюю границу) — используется cutoff_date.
+    Если cutoff_date в прошлом — игнорируется (max_age_days уже жёстче).
+    """
+    from datetime import timedelta as _td
+    relative_cutoff = utcnow() - _td(days=_max_age_days())
+    absolute_cutoff = _cutoff_date()
+    if absolute_cutoff is None:
+        return relative_cutoff
+    return max(relative_cutoff, absolute_cutoff)
+
+
 # =======================================================================
 # Парсеры
 # =======================================================================
@@ -551,9 +599,10 @@ def sync_gsheets(
     # ~3 месяца (текущий + предыдущий + запас на поздние подачи).
     # Без этого фильтра gsheets_import_rows растёт неограниченно, и
     # админ видит сотни «зависших» подач за давно закрытые периоды.
-    from datetime import timedelta as _td
-    max_age_days = _max_age_days()
-    age_cutoff = utcnow() - _td(days=max_age_days)
+    # Граница = max(today - max_age_days, cutoff_date) — см.
+    # _effective_age_cutoff(). cutoff_date — фиксированная дата
+    # (не сдвигается каждый день).
+    age_cutoff = _effective_age_cutoff()
 
     # ОПТИМИЗАЦИЯ N+1 (apr 2026): раньше для каждой строки делали отдельный
     # pg_insert(...).on_conflict_do_nothing() — на 1000+ строк это 1000 round-trip
@@ -799,9 +848,9 @@ def promote_auto_approved_rows(db: Session) -> dict:
     # Это тот же порог что используется в sync для новых строк. Старые
     # «застрявшие» строки помечаем как rejected отдельным механизмом —
     # здесь только filter, чтобы они не превращались в фейковые reading'и.
-    from datetime import timedelta as _td2
+    # Граница та же что и при sync (см. _effective_age_cutoff).
     from sqlalchemy import or_ as _or
-    cutoff = utcnow() - _td2(days=_max_age_days())
+    cutoff = _effective_age_cutoff()
 
     rows = db.query(GSheetsImportRow).filter(
         GSheetsImportRow.status == "auto_approved",
