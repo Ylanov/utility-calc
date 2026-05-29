@@ -603,6 +603,82 @@ async def save_reading(
         await db.flush()
         reading_id_for_celery = new_draft.id
 
+    # Bug 29.05.2026 (Коммит 16): для холостяцких квартир (tariff_type='singles')
+    # — после создания/обновления reading'а для текущего жильца, клонируем
+    # его для ВСЕХ ДРУГИХ жильцов той же комнаты. Это реализует требование:
+    # «один холостяк подал — все жильцы видят один счёт». Cost-компоненты
+    # уже поделены на N через Bug AS этап 4 + Коммит 15, поэтому каждый
+    # reading имеет долю одного жильца (total_cost / N). Сумма по всем
+    # жильцам квартиры = реальный расход × тариф.
+    #
+    # Family-тарифы (tariff_type='family') НЕ затрагиваются — для них один
+    # reading на user.id как было.
+    is_singles_tariff = (
+        getattr(tariff, "tariff_type", "family") == "singles"
+    )
+    if is_singles_tariff:
+        # Все другие жильцы той же комнаты, активные.
+        other_residents = (await db.execute(
+            select(User).where(
+                User.room_id == user.room_id,
+                User.is_deleted.is_(False),
+                User.role == "user",
+                User.id != user.id,
+            )
+        )).scalars().all()
+
+        # Для каждого другого жильца — создать draft с теми же значениями
+        # ИЛИ обновить существующий draft если он есть.
+        current_reading_data = {
+            "hot_water": hot, "cold_water": cold, "electricity": elect,
+            "total_209": total_209, "total_205": total_205,
+            "total_cost": grand_total,
+            "anomaly_flags": (baseline_flag or "") + "|SINGLES_SHARED",
+            "anomaly_score": 0,
+        }
+        # Добавляем cost_* из costs_for_model_fields
+        from app.modules.utility.services.calculations import (
+            costs_for_model_fields as _cfmf,
+        )
+        current_reading_data.update(_cfmf(costs))
+
+        for other_user in other_residents:
+            existing_draft = (await db.execute(
+                select(MeterReading).where(
+                    MeterReading.user_id == other_user.id,
+                    MeterReading.period_id == period.id,
+                    MeterReading.is_approved.is_(False),
+                )
+            )).scalars().first()
+
+            if existing_draft:
+                for k, v in current_reading_data.items():
+                    setattr(existing_draft, k, v)
+                existing_draft.edit_count = (existing_draft.edit_count or 0) + 1
+                db.add(existing_draft)
+            else:
+                clone = MeterReading(
+                    user_id=other_user.id,
+                    room_id=user.room_id,
+                    period_id=period.id,
+                    debt_209=Decimal("0.00"),
+                    overpayment_209=Decimal("0.00"),
+                    debt_205=Decimal("0.00"),
+                    overpayment_205=Decimal("0.00"),
+                    is_approved=False,
+                    edit_count=1,
+                    edit_history=[],
+                    **current_reading_data,
+                )
+                db.add(clone)
+
+        await db.flush()
+        logger.info(
+            "[CALC] singles-tariff: подача user=%s клонирована на %d других "
+            "жильцов комнаты room=%s",
+            user.id, len(other_residents), user.room_id,
+        )
+
     await db.commit()
 
     # 8. Запускаем асинхронную проверку на аномалии
