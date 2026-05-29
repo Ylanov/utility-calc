@@ -524,19 +524,44 @@
                                  Стили — .tariff-type-row в style.css (активный
                                  chip подсвечивается через :has(input:checked)).
                                  ============================================= -->
-                            <div class="tariff-type-row">
-                                <span class="label"><i class="fa-solid fa-tag"></i> Назначение тарифа:</span>
-                                <label class="chip t-family">
-                                    <input type="radio" name="t_type" id="t_type_family" value="family" checked>
-                                    <i class="fa-solid fa-people-roof"></i>
-                                    <span>Семейный (по счётчикам)</span>
+                            <!-- ============================================
+                                 КАТЕГОРИЯ ТАРИФА — 2 крупные кнопки
+                                 (заменяет radio-chips, юзер выбирает кого
+                                 этим тарифом обслуживать). Bug 29.05.2026:
+                                 ранее были маленькие radio + поле «сумма
+                                 за койко-место», теперь — крупные кнопки
+                                 family/singles, койко-место удалено.
+                                 ============================================ -->
+                            <div class="tariff-category-row" style="display:flex; gap:14px; margin: 4px 0 18px 0;">
+                                <label class="tariff-category-btn" style="flex:1; cursor:pointer; padding:18px; border:2px solid var(--border-color); border-radius:12px; display:flex; flex-direction:column; align-items:center; gap:8px; transition:all .15s; background:var(--bg-secondary, #fff);">
+                                    <input type="radio" name="t_type" id="t_type_family" value="family" checked style="display:none;">
+                                    <i class="fa-solid fa-people-roof" style="font-size:32px; color:#2563eb;"></i>
+                                    <strong style="font-size:15px; color:var(--text-main);">Семейные</strong>
+                                    <span style="font-size:12px; color:var(--text-secondary); text-align:center;">Квартиры со счётчиками, обычный расчёт по показаниям</span>
                                 </label>
-                                <label class="chip t-singles">
-                                    <input type="radio" name="t_type" id="t_type_singles" value="singles">
-                                    <i class="fa-solid fa-user-tie"></i>
-                                    <span>Для холостяков (койко-место)</span>
+                                <label class="tariff-category-btn" style="flex:1; cursor:pointer; padding:18px; border:2px solid var(--border-color); border-radius:12px; display:flex; flex-direction:column; align-items:center; gap:8px; transition:all .15s; background:var(--bg-secondary, #fff);">
+                                    <input type="radio" name="t_type" id="t_type_singles" value="singles" style="display:none;">
+                                    <i class="fa-solid fa-user-group" style="font-size:32px; color:#7c3aed;"></i>
+                                    <strong style="font-size:15px; color:var(--text-main);">Холостяки</strong>
+                                    <span style="font-size:12px; color:var(--text-secondary); text-align:center;">Квартиры с несколькими холостяками, общие счётчики делятся на жильцов</span>
                                 </label>
                             </div>
+                            <style>
+                                /* Активная категория — обводка цветом + фон */
+                                .tariff-category-row label:has(input:checked) {
+                                    border-color: #2563eb;
+                                    background: rgba(37,99,235,0.08);
+                                    box-shadow: 0 0 0 1px #2563eb;
+                                }
+                                .tariff-category-row label:has(#t_type_singles:checked) {
+                                    border-color: #7c3aed;
+                                    background: rgba(124,58,237,0.08);
+                                    box-shadow: 0 0 0 1px #7c3aed;
+                                }
+                                .tariff-category-row label:hover {
+                                    border-color: var(--text-secondary);
+                                }
+                            </style>
 
                             <h4 style="margin: 18px 0 14px 0; font-size: 13px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; font-weight: 700;">
                                 <i class="fa-solid fa-coins"></i> Ставки тарифа
@@ -639,30 +664,12 @@
                                 </div>
                             </div>
 
-                            <!-- ==============================================
-                                 СЕКЦИЯ 4: КОЙКО-МЕСТО
-                                 ============================================== -->
-                            <div class="tcard t-bed">
-                                <div class="tcard-head">
-                                    <span class="tcard-icon"><i class="fa-solid fa-bed"></i></span>
-                                    <div>
-                                        <div class="tcard-title">Койко-место (одиночки)</div>
-                                        <div class="tcard-subtitle">Для жильцов с <code>billing_mode = per_capita</code></div>
-                                    </div>
-                                </div>
-                                <div class="tcard-body">
-                                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:14px;">
-                                        <div class="form-group" style="margin: 0;">
-                                            <label><i class="fa-solid fa-ruble-sign" style="color:#7c3aed;"></i> Сумма за место, ₽/мес</label>
-                                            <input type="number" step="0.01" min="0" id="t_per_capita" value="0">
-                                            <small class="hint-text" style="display:block; margin-top:4px; font-size:11px;">
-                                                Фикс. сумма для холостяков (счётчики не подают).
-                                                <b>0</b> — тариф для одиночек не используется.
-                                            </small>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
+                            <!-- Bug 29.05.2026: секция «Койко-место (одиночки)» удалена.
+                                 billing_mode=per_capita больше не используется. Все жильцы
+                                 (семейные и холостяки) платят по счётчикам. Для холостяков
+                                 счётчики общие на квартиру, cost делится на N жильцов.
+                                 Поле per_capita_amount в БД остаётся для совместимости,
+                                 но в форме не показывается и сохраняется как 0. -->
 
                             <h4 style="margin: 22px 0 14px 0; font-size: 13px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; font-weight: 700;">
                                 <i class="fa-solid fa-snowflake"></i> Сезонные правила

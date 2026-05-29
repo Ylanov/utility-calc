@@ -18,9 +18,10 @@ export const TariffsModule = {
         electricity_rate: 't_el_rate',
         // electricity_per_sqm (ОДН) убран из формулы в мае 2026.
         // Поле в БД оставлено nullable; в форме его больше нет.
-        // Сумма за «койко-место» (для холостяков, billing_mode='per_capita').
-        // 0 = тариф для одиночек не применяется.
-        per_capita_amount: 't_per_capita',
+        // Bug 29.05.2026: per_capita_amount убран из формы (койко-место
+        // больше не используется). В БД поле остаётся для совместимости
+        // (Pydantic default=0), но в data не отправляется и значение
+        // в форме не читается.
         // Нормативы потребления для жильцов без счётчика (User.has_X_meter=False).
         // Расход тогда = norm_per_capita × residents_count.
         // См. миграцию meters_001_per_user_config.
@@ -124,14 +125,6 @@ export const TariffsModule = {
                 if (!t || t.type !== 'checkbox') return;
                 if (!t.id || !(t.id.startsWith('t_charge_') || t.id.startsWith('t_singles_skip_'))) return;
                 if (typeof this.recalcPreview === 'function') this.recalcPreview();
-            });
-            // Bug 29.05.2026: переключение типа тарифа family/singles —
-            // показать/скрыть секцию нормативов. Холостяки счётчики не
-            // подают, норматив не нужен.
-            this.dom.form.addEventListener('change', (e) => {
-                if (e.target && e.target.name === 't_type') {
-                    this._toggleNormsSection(e.target.value === 'family');
-                }
             });
         }
         if (this.dom.selector) {
@@ -404,16 +397,15 @@ export const TariffsModule = {
 
         // Тип тарифа: family/singles (см. tariffs_type_001_family_singles).
         // Старые тарифы без поля → 'family' по default.
+        // Bug 29.05.2026 (Коммит 14, revert Коммита 13): нормативы нужны
+        // ОБОИМ типам — у холостяков тоже могут не подать счётчики, тогда
+        // AUTO_NORM прибавляет норматив к показаниям как и у семейных.
+        // Скрытие секции нормативов для singles убрано.
         const ttype = tariff.tariff_type || 'family';
         const radioFam = document.getElementById('t_type_family');
         const radioSng = document.getElementById('t_type_singles');
         if (radioFam) radioFam.checked = (ttype === 'family');
         if (radioSng) radioSng.checked = (ttype === 'singles');
-        // Bug 29.05.2026: секция «Нормативы потребления» нужна ТОЛЬКО для
-        // семейных тарифов (по счётчикам). Холостяки (койко-место) платят
-        // фиксированную сумму, счётчики не подаются — норматив не нужен.
-        // Скрываем секцию при типе 'singles' чтобы не путать админа.
-        this._toggleNormsSection(ttype === 'family');
 
         // Сезонность per-tariff (heating + hw_heating). См. миграцию
         // tariffs_seasonal_002_per_tariff. heating_active=true + даты=null →
@@ -624,14 +616,6 @@ export const TariffsModule = {
             cost_electricity: 'Электр.', cost_maintenance: 'Содержание', cost_social_rent: 'Наём',
             cost_waste: 'ТКО', cost_fixed_part: 'Отопление',
         })[key] || key;
-    },
-
-    // Bug 29.05.2026: показывать секцию «Нормативы потребления» только
-    // для семейных тарифов (по счётчикам). Для холостяков (фикс. сумма
-    // за койко-место) счётчики не подаются — норматив не нужен.
-    _toggleNormsSection(show) {
-        const section = document.getElementById('t_norms_section');
-        if (section) section.style.display = show ? '' : 'none';
     },
 
     // ====================================================================
