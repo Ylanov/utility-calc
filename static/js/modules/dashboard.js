@@ -633,8 +633,6 @@ export const DashboardModule = {
             { label: 'С комнатой',      value: s.with_room,        color: '#10b981', bg: '#ecfdf5' },
             { label: 'Семьи',           value: s.by_resident_type?.family || 0,  color: '#7c3aed', bg: '#f5f3ff' },
             { label: 'Холостяки',       value: s.by_resident_type?.single || 0,  color: '#ea580c', bg: '#fff7ed' },
-            { label: 'По счётчикам',    value: s.by_billing_mode?.by_meter || 0,  color: '#0ea5e9', bg: '#eff6ff' },
-            { label: 'Койко-место',     value: s.by_billing_mode?.per_capita || 0,color: '#d946ef', bg: '#fdf4ff' },
         ];
         const dorms = s.by_dormitory || [];
         const dormTable = dorms.length ? `

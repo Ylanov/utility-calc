@@ -210,7 +210,6 @@ async def create_user(
         username=new_user.username,
         hashed_password=get_password_hash(new_user.password),
         role=new_user.role,
-        workplace=new_user.workplace,
         residents_count=new_user.residents_count,
         tariff_id=new_user.tariff_id,
         # room_id выставится через move_user_to_room ниже — вместе с RoomAssignment.
@@ -306,7 +305,6 @@ async def get_users(
             User.username.ilike(search_filter),
             Room.dormitory_name.ilike(search_filter),
             Room.room_number.ilike(search_filter),
-            User.workplace.ilike(search_filter)
         )
         items_query = items_query.outerjoin(Room, User.room_id == Room.id).where(search_condition)
         count_query = count_query.outerjoin(Room, User.room_id == Room.id).where(search_condition)
@@ -341,7 +339,6 @@ async def get_users(
         "role": User.role,
         "dormitory": Room.dormitory_name,
         "apartment_area": Room.apartment_area,
-        "workplace": User.workplace
     }
     sort_column = valid_sort_fields.get(sort_by, User.id)
 
@@ -545,7 +542,6 @@ async def export_users_list(
             User.username.ilike(p),
             Room.dormitory_name.ilike(p),
             Room.room_number.ilike(p),
-            User.workplace.ilike(p),
         ))
     if resident_type:
         q = q.where(User.resident_type == resident_type)
@@ -567,9 +563,9 @@ async def export_users_list(
     ws = wb.active
     ws.title = "Жильцы"
     headers = [
-        "ID", "Логин / ФИО", "Роль", "Тип жильца", "Режим оплаты",
+        "ID", "Логин / ФИО", "Роль", "Тип жильца",
         "Тип помещения", "Общежитие / Улица", "Комната / Квартира",
-        "Площадь м²", "Проживающих", "Тариф", "Место работы",
+        "Площадь м²", "Проживающих", "Тариф",
     ]
     for i, h in enumerate(headers, 1):
         c = ws.cell(row=1, column=i, value=h)
@@ -580,30 +576,27 @@ async def export_users_list(
         ws.cell(row=i, column=2, value=u.username)
         ws.cell(row=i, column=3, value=u.role)
         ws.cell(row=i, column=4, value="Семейный" if u.resident_type == "family" else "Холостяк")
-        ws.cell(row=i, column=5, value="По счётчикам" if u.billing_mode == "by_meter" else "За койко-место")
-        # housing_001/E2-C: новые колонки 6-8 — тип + адрес. Для дома кладём
+        # housing_001/E2-C: колонки 5-7 — тип помещения + адрес. Для дома кладём
         # ул+дом в "Общежитие/Улица", квартиру в "Комната/Квартира".
         if u.room and u.room.place_type == "house":
-            ws.cell(row=i, column=6, value="Дом / квартира")
+            ws.cell(row=i, column=5, value="Дом / квартира")
             _addr = ", ".join(filter(None, [
                 f"ул. {u.room.street}" if u.room.street else None,
                 f"д. {u.room.house_number}" if u.room.house_number else None,
             ])) or ""
-            ws.cell(row=i, column=7, value=_addr)
-            ws.cell(row=i, column=8, value=(f"кв. {u.room.apartment_number}" if u.room.apartment_number else ""))
+            ws.cell(row=i, column=6, value=_addr)
+            ws.cell(row=i, column=7, value=(f"кв. {u.room.apartment_number}" if u.room.apartment_number else ""))
         else:
-            ws.cell(row=i, column=6, value="Общежитие" if u.room else "")
-            ws.cell(row=i, column=7, value=u.room.dormitory_name if u.room else "")
-            ws.cell(row=i, column=8, value=u.room.room_number if u.room else "")
-        ws.cell(row=i, column=9, value=float(u.room.apartment_area) if (u.room and u.room.apartment_area) else 0)
-        ws.cell(row=i, column=10, value=u.residents_count or 1)
-        ws.cell(row=i, column=11, value=u.tariff.name if u.tariff else "")
-        ws.cell(row=i, column=12, value=u.workplace or "")
-    # 12 колонок (раньше было 11): A..L. Ширины перенумерованы:
-    # F → "Тип помещения", G → "Общежитие/Улица", H → "Комната/Квартира".
-    for col, width in [("A", 6), ("B", 32), ("C", 10), ("D", 14), ("E", 18),
-                       ("F", 16), ("G", 22), ("H", 14), ("I", 10), ("J", 12),
-                       ("K", 22), ("L", 24)]:
+            ws.cell(row=i, column=5, value="Общежитие" if u.room else "")
+            ws.cell(row=i, column=6, value=u.room.dormitory_name if u.room else "")
+            ws.cell(row=i, column=7, value=u.room.room_number if u.room else "")
+        ws.cell(row=i, column=8, value=float(u.room.apartment_area) if (u.room and u.room.apartment_area) else 0)
+        ws.cell(row=i, column=9, value=u.residents_count or 1)
+        ws.cell(row=i, column=10, value=u.tariff.name if u.tariff else "")
+    # 10 колонок: A..J (убраны «Режим оплаты» и «Место работы»).
+    for col, width in [("A", 6), ("B", 32), ("C", 10), ("D", 14),
+                       ("E", 16), ("F", 22), ("G", 14), ("H", 10), ("I", 12),
+                       ("J", 22)]:
         ws.column_dimensions[col].width = width
 
     buf = io.BytesIO()

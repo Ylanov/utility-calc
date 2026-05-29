@@ -470,13 +470,11 @@ export const HousingModule = {
     renderRoomDetails(data) {
         const residents = (data.residents || []).map(r => {
             const type = r.resident_type === 'single' ? '👤 Холост.' : '👨‍👩‍👧 Семья';
-            const mode = r.billing_mode === 'per_capita' ? '🛏 Койко' : '📊 Счёт.';
             const tariff = r.tariff_name ? `<span style="color:#6366f1;">(${escapeHtml(r.tariff_name)})</span>` : '<span style="color:#9ca3af;">(дефолт)</span>';
             return `
                 <li style="padding:6px 0; border-bottom:1px solid #e5e7eb; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
                     <b style="color:#1f2937;">${escapeHtml(r.username)}</b>
                     <span style="font-size:11px; background:#e0e7ff; color:#3730a3; padding:2px 7px; border-radius:10px;">${type}</span>
-                    <span style="font-size:11px; background:#fef3c7; color:#92400e; padding:2px 7px; border-radius:10px;">${mode}</span>
                     <span style="font-size:12px; color:var(--text-secondary);">платят за: <b>${r.residents_count}</b> чел.</span>
                     ${tariff}
                     ${r.workplace ? `<span style="font-size:12px; color:var(--text-secondary);">• ${escapeHtml(r.workplace)}</span>` : ''}

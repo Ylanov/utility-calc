@@ -212,7 +212,6 @@ class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=100)
     password: str = Field(..., min_length=8, max_length=128)
     role: AllowedRole = "user"
-    workplace: str = ""
     residents_count: int = Field(1, ge=1, le=20)
     tariff_id: Optional[int] = None
     room_id: Optional[int] = None
@@ -235,7 +234,6 @@ class UserResponse(BaseModel):
     username: str
     role: str
 
-    workplace: Optional[str] = None
     residents_count: int
 
     tariff_id: Optional[int] = None
@@ -258,7 +256,6 @@ class UserUpdate(BaseModel):
     username: Optional[str] = Field(None, min_length=3, max_length=100)
     password: Optional[str] = Field(None, min_length=8, max_length=128)
     role: Optional[AllowedRole] = None
-    workplace: Optional[str] = None
     residents_count: Optional[int] = Field(None, ge=1, le=20)
     tariff_id: Optional[int] = None
     room_id: Optional[int] = None

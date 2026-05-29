@@ -13,6 +13,7 @@ export const UsersModule = {
     tariffs: [],
     dormsCache:[],
     roomsCache: {},
+    housesCache: [],
 
     async init() {
         this.cacheDOM();
@@ -24,8 +25,11 @@ export const UsersModule = {
 
         await Promise.all([
             this.loadTariffs(),
-            this.loadDormitories()
+            this.loadDormitories(),
+            this.loadHouses(),
         ]);
+        // Стартовое состояние пикеров помещения (по умолчанию — общежитие).
+        this.applyNewPlaceType();
 
         this.initTable();
         // Аналитика — параллельно с первым запросом таблицы, не блокирует
@@ -41,9 +45,12 @@ export const UsersModule = {
             btnDownloadTemplate: document.getElementById('btnDownloadTemplate'),
             btnExport: document.getElementById('btnExportUsers'),
             newTariffSelect: document.getElementById('newTariffId'),
-            // Новые поля формы создания
             newResidentType: document.getElementById('newResidentType'),
-            newBillingMode: document.getElementById('newBillingMode'),
+            // Тип помещения (общага/дом) + раздельные пикеры
+            newPlaceTypeRadios: document.querySelectorAll('input[name="newPlaceType"]'),
+            newDormPicker: document.getElementById('newDormPicker'),
+            newHousePicker: document.getElementById('newHousePicker'),
+            newHouseSelect: document.getElementById('newHouseSelect'),
 
             newDormSelect: document.getElementById('newDormSelect'),
             newRoomSelect: document.getElementById('newRoomSelect'),
@@ -55,7 +62,6 @@ export const UsersModule = {
             infoEl: document.getElementById('infoEl'),
             // Фильтры в toolbar
             filterResidentType: document.getElementById('filterResidentType'),
-            filterBillingMode: document.getElementById('filterBillingMode'),
             filterDormitory: document.getElementById('filterDormitory'),
             // housing_001/E2-C: фильтр по типу помещения.
             filterPlaceType: document.getElementById('filterPlaceType'),
@@ -74,7 +80,6 @@ export const UsersModule = {
                 role: document.getElementById('editRole'),
                 tariff: document.getElementById('editTariffId'),
                 residents: document.getElementById('editResidentsCount'),
-                work: document.getElementById('editWorkplace'),
 
                 dormSelect: document.getElementById('editDormSelect'),
                 roomSelect: document.getElementById('editRoomSelect'),
@@ -85,7 +90,6 @@ export const UsersModule = {
                 infoCw: document.getElementById('editInfoCw'),
                 infoEl: document.getElementById('editInfoEl'),
                 residentType: document.getElementById('editResidentType'),
-                billingMode: document.getElementById('editBillingMode'),
                 btnHistory: document.getElementById('btnShowResidenceHistory'),
                 historyContainer: document.getElementById('editResidenceHistory'),
             },
@@ -152,7 +156,6 @@ export const UsersModule = {
                 const search = document.getElementById('usersSearchInput')?.value.trim();
                 if (search) qs.set('search', search);
                 if (this.dom.filterResidentType?.value) qs.set('resident_type', this.dom.filterResidentType.value);
-                if (this.dom.filterBillingMode?.value) qs.set('billing_mode', this.dom.filterBillingMode.value);
                 if (this.dom.filterDormitory?.value) qs.set('dormitory', this.dom.filterDormitory.value);
                 if (this.dom.filterPlaceType?.value) qs.set('place_type', this.dom.filterPlaceType.value);
                 api.download('/users/export/list?' + qs.toString(), 'residents_export.xlsx');
@@ -164,17 +167,21 @@ export const UsersModule = {
         if (this.modal.form) this.modal.form.addEventListener('submit', (e) => this.handleEditSubmit(e));
         if (this.modal.btnClose) this.modal.btnClose.addEventListener('click', () => this.closeModal());
 
-        // Авто-синхронизация типа жильца ↔ режима оплаты в форме создания
-        // (single по умолчанию per_capita; family по умолчанию by_meter).
-        if (this.dom.newResidentType && this.dom.newBillingMode) {
-            this.dom.newResidentType.addEventListener('change', (e) => {
-                this.dom.newBillingMode.value =
-                    e.target.value === 'single' ? 'per_capita' : 'by_meter';
-            });
+        // Переключатель типа помещения (общага/дом) в форме создания.
+        if (this.dom.newPlaceTypeRadios) {
+            this.dom.newPlaceTypeRadios.forEach(r =>
+                r.addEventListener('change', () => this.applyNewPlaceType())
+            );
+        }
+        // Дом: выбор адреса → показать параметры помещения.
+        if (this.dom.newHouseSelect) {
+            this.dom.newHouseSelect.addEventListener('change', (e) =>
+                this.showHouseInfo(e.target.value)
+            );
         }
 
-        // Фильтры таблицы: резидент тип / режим / общежитие
-        [this.dom.filterResidentType, this.dom.filterBillingMode, this.dom.filterDormitory, this.dom.filterPlaceType].forEach(el => {
+        // Фильтры таблицы: тип жильца / общежитие / тип помещения
+        [this.dom.filterResidentType, this.dom.filterDormitory, this.dom.filterPlaceType].forEach(el => {
             el?.addEventListener('change', () => this.table?.refresh());
         });
 
@@ -274,6 +281,65 @@ export const UsersModule = {
         }
     },
 
+    // Загрузка домов/квартир (place_type=house) для пикера в форме создания.
+    // Лейбл опции — адрес (улица, дом, квартира).
+    async loadHouses() {
+        if (!this.dom.newHouseSelect) return;
+        try {
+            const res = await api.get('/rooms?place_type=house&limit=1000');
+            this.housesCache = res.items || [];
+            const fmt = (r) => {
+                const p = [];
+                if (r.street) p.push(`ул. ${r.street}`);
+                if (r.house_number) p.push(`д. ${r.house_number}`);
+                if (r.apartment_number) p.push(`кв. ${r.apartment_number}`);
+                return p.join(', ') || `Дом #${r.id}`;
+            };
+            this.dom.newHouseSelect.innerHTML = '<option value="">-- Выберите дом / квартиру --</option>' +
+                this.housesCache.map(r => `<option value="${r.id}">${this._escape(fmt(r))}</option>`).join('');
+        } catch (e) {
+            this.dom.newHouseSelect.innerHTML = '<option value="">Нет домов (создайте в Жилфонде)</option>';
+        }
+    },
+
+    // Текущий выбранный тип помещения в форме создания (dormitory|house).
+    _currentNewPlaceType() {
+        const checked = document.querySelector('input[name="newPlaceType"]:checked');
+        return checked ? checked.value : 'dormitory';
+    },
+
+    // Переключение пикеров общага/дом + сброс выбора противоположного,
+    // чтобы случайно не отправить чужой room_id.
+    applyNewPlaceType() {
+        const isHouse = this._currentNewPlaceType() === 'house';
+        if (this.dom.newDormPicker) this.dom.newDormPicker.style.display = isHouse ? 'none' : '';
+        if (this.dom.newHousePicker) this.dom.newHousePicker.style.display = isHouse ? '' : 'none';
+        if (this.dom.newRoomInfo) this.dom.newRoomInfo.style.display = 'none';
+        if (isHouse) {
+            if (this.dom.newDormSelect) this.dom.newDormSelect.value = '';
+            if (this.dom.newRoomSelect) {
+                this.dom.newRoomSelect.value = '';
+                this.dom.newRoomSelect.disabled = true;
+            }
+        } else if (this.dom.newHouseSelect) {
+            this.dom.newHouseSelect.value = '';
+        }
+    },
+
+    // Показать параметры выбранного дома в info-блоке (как для комнаты).
+    showHouseInfo(roomIdStr) {
+        const box = this.dom.newRoomInfo;
+        if (!box) return;
+        const room = (this.housesCache || []).find(r => String(r.id) === String(roomIdStr));
+        if (!room) { box.style.display = 'none'; return; }
+        box.style.display = 'block';
+        if (this.dom.infoArea) this.dom.infoArea.textContent = Number(room.apartment_area || 0).toFixed(1);
+        if (this.dom.infoCap) this.dom.infoCap.textContent = room.total_room_residents || 1;
+        if (this.dom.infoHw) this.dom.infoHw.textContent = room.hw_meter_serial || '-';
+        if (this.dom.infoCw) this.dom.infoCw.textContent = room.cw_meter_serial || '-';
+        if (this.dom.infoEl) this.dom.infoEl.textContent = room.el_meter_serial || '-';
+    },
+
     initTable() {
         const self = this;
         this.table = new TableController({
@@ -293,12 +359,10 @@ export const UsersModule = {
             getExtraParams: () => {
                 const p = {};
                 const rt = self.dom.filterResidentType?.value;
-                const bm = self.dom.filterBillingMode?.value;
                 const dn = self.dom.filterDormitory?.value;
                 // housing_001/E2-C: фильтр по типу помещения.
                 const pt = self.dom.filterPlaceType?.value;
                 if (rt) p.resident_type = rt;
-                if (bm) p.billing_mode = bm;
                 if (dn) p.dormitory = dn;
                 if (pt) p.place_type = pt;
                 return p;
@@ -321,17 +385,12 @@ export const UsersModule = {
                 const area = user.room && user.room.apartment_area ? Number(user.room.apartment_area).toFixed(1) : '-';
                 const totalResidents = user.room ? user.room.total_room_residents : 1;
 
-                // Бейджи нового доменного слоя: тип жильца + режим оплаты.
-                // family/single → иконка семьи или человека;
-                // by_meter/per_capita → счётчик или койко-место.
+                // Бейдж типа жильца (семья/холостяк). Режим оплаты убран —
+                // все платят по счётчикам, у холостяков счёт делится автоматически.
                 const rt = user.resident_type || 'family';
-                const bm = user.billing_mode || 'by_meter';
                 const typeChip = rt === 'single'
                     ? el('span', { title: 'Холостяк', class: 'chip', style: { background: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '600' } }, '👤 Холост.')
                     : el('span', { title: 'Семейный', class: 'chip', style: { background: '#dbeafe', color: '#1e40af', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '600' } }, '👨‍👩‍👧 Семья');
-                const modeChip = bm === 'per_capita'
-                    ? el('span', { title: 'Койко-место (фикс. сумма)', class: 'chip', style: { background: '#ede9fe', color: '#5b21b6', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '600' } }, '🛏 Койко')
-                    : el('span', { title: 'По счётчикам', class: 'chip', style: { background: '#d1fae5', color: '#065f46', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '600' } }, '📊 Счёт.');
 
                 // Кликабельная ячейка с ФИО — открывает Hub-модалку со всеми
                 // действиями (редактирование / переезд / договоры). Раньше
@@ -362,7 +421,6 @@ export const UsersModule = {
                     nameCell,
                     el('td', {}, el('span', { class: `role-badge ${user.role}` }, user.role)),
                     el('td', { class: 'text-center' }, typeChip),
-                    el('td', { class: 'text-center' }, modeChip),
                     el('td', {}, address),
                     el('td', {}, area),
                     // Bug BB: вместо «N / M» (доля жильца от комнаты) — просто
@@ -371,7 +429,6 @@ export const UsersModule = {
                     // residents_count указывает на одно лицо (главу), а
                     // фактическое кол-во людей хранится в room.total_room_residents.
                     el('td', { class: 'text-center text-sm' }, String(totalResidents)),
-                    el('td', {}, user.workplace || '-'),
                     el('td', { class: 'text-center' },
                         el('button', {
                             class: 'btn-icon btn-delete',
@@ -428,13 +485,10 @@ export const UsersModule = {
             </div>`;
 
         const types = s.by_resident_type || {};
-        const modes = s.by_billing_mode || {};
         this.dom.statsHost.innerHTML = [
             card('Всего жильцов', s.total_users || 0, '#2563eb', `${s.with_room} с комнатой · ${s.without_room} без`),
-            card('Семейных', types.family || 0, '#1e40af', 'платят по счётчикам'),
-            card('Холостяков', types.single || 0, '#92400e', 'койко-место'),
-            card('По счётчикам', modes.by_meter || 0, '#065f46', 'by_meter'),
-            card('За койко-место', modes.per_capita || 0, '#5b21b6', 'per_capita'),
+            card('Семейных', types.family || 0, '#1e40af', 'обычные комнаты'),
+            card('Холостяков', types.single || 0, '#92400e', 'счёт делится на жильцов'),
             card('Общий долг', this._fmtMoney(s.total_debt), s.total_debt > 0 ? '#dc2626' : '#10b981', 'из последних начислений'),
             card('Переплаты', this._fmtMoney(s.total_overpayment), s.total_overpayment > 0 ? '#7c3aed' : '#9ca3af', 'авансы'),
         ].join('');
@@ -503,7 +557,11 @@ export const UsersModule = {
         event.preventDefault();
         const button = this.dom.addForm.querySelector('button');
         const tariffIdVal = this.dom.newTariffSelect ? this.dom.newTariffSelect.value : null;
-        const roomIdVal = this.dom.newRoomSelect ? this.dom.newRoomSelect.value : null;
+        // room_id берём из активного пикера: общага → комната, дом → адрес.
+        const placeType = this._currentNewPlaceType();
+        const roomIdVal = placeType === 'house'
+            ? (this.dom.newHouseSelect?.value || null)
+            : (this.dom.newRoomSelect?.value || null);
 
         const data = {
             username: document.getElementById('newUsername').value.trim(),
@@ -512,16 +570,11 @@ export const UsersModule = {
             tariff_id: tariffIdVal ? parseInt(tariffIdVal) : null,
             room_id: roomIdVal ? parseInt(roomIdVal) : null,
             residents_count: parseInt(document.getElementById('residentsCount').value) || 1,
-            workplace: document.getElementById('workplace').value.trim(),
-            // Новые поля: определяют способ расчёта (family/by_meter vs single/per_capita).
-            // При single валидатор в модели сам выставит residents_count=1 и billing_mode=per_capita,
-            // но мы всё равно шлём оба явно — чтобы не было сюрпризов если валидатор не сработает.
+            // Тип жильца (family/single). Режим оплаты и место работы убраны:
+            // все платят по счётчикам, у холостяков счёт делится в billing,
+            // resident_type синхронизируется с холостяцкой квартирой на бэке.
             resident_type: this.dom.newResidentType?.value || 'family',
-            billing_mode: this.dom.newBillingMode?.value || 'by_meter',
             // Конфигурация счётчиков жильца (meters_001_per_user_config).
-            // По умолчанию все три True (старая логика). Если снять галочку —
-            // на мобиле поле скрывается, анализатор не флагит «не подал X»,
-            // в calculate_utilities берётся tariff.X_norm_per_capita × residents.
             has_hw_meter: document.getElementById('newHasHwMeter')?.checked ?? true,
             has_cw_meter: document.getElementById('newHasCwMeter')?.checked ?? true,
             has_el_meter: document.getElementById('newHasElMeter')?.checked ?? true,
@@ -540,9 +593,12 @@ export const UsersModule = {
                 this.dom.newRoomSelect.disabled = true;
                 this.dom.newRoomSelect.innerHTML = '<option value="">Сначала выберите общежитие</option>';
             }
+            if (this.dom.newHouseSelect) this.dom.newHouseSelect.value = '';
             if (this.dom.newRoomInfo) {
                 this.dom.newRoomInfo.style.display = 'none';
             }
+            // form.reset() вернул radio типа помещения на «общежитие» — синхронизируем пикеры.
+            this.applyNewPlaceType();
 
             this.table.refresh();
         } catch (error) {
@@ -582,7 +638,6 @@ export const UsersModule = {
         document.getElementById('hubUserName').textContent = user.username;
         const addr = user.room ? `${user.room.dormitory_name}, ком. ${user.room.room_number}` : '—';
         const rt = user.resident_type === 'single' ? 'Холостяк' : 'Семья';
-        const bm = user.billing_mode === 'per_capita' ? 'койко-место' : 'по счётчикам';
         const area = user.room?.apartment_area
             ? `${Number(user.room.apartment_area).toFixed(1)} м²` : '—';
         // Bug BB: «доля» убрана — показываем просто число жильцов в комнате.
@@ -592,7 +647,7 @@ export const UsersModule = {
                 <div>
                     <div style="font-weight:600; font-size:13px;">${this._escape(addr)}</div>
                     <div style="color:var(--text-secondary); font-size:11px; margin-top:2px;">
-                        ${this._escape(rt)} · ${this._escape(bm)} · ${this._escape(area)} · ${this._escape(residents)} чел.
+                        ${this._escape(rt)} · ${this._escape(area)} · ${this._escape(residents)} чел.
                     </div>
                 </div>
                 <div style="text-align:right;">
@@ -950,9 +1005,7 @@ export const UsersModule = {
             if (inputs.role) inputs.role.value = user.role;
             if (inputs.tariff) inputs.tariff.value = user.tariff_id || '';
             if (inputs.residents) inputs.residents.value = user.residents_count;
-            if (inputs.work) inputs.work.value = user.workplace || '';
             if (inputs.residentType) inputs.residentType.value = user.resident_type || 'family';
-            if (inputs.billingMode) inputs.billingMode.value = user.billing_mode || 'by_meter';
 
             // Конфигурация счётчиков жильца (meters_001_per_user_config).
             // Если поле отсутствует в ответе (старые сервера) — по умолчанию true.
@@ -962,15 +1015,6 @@ export const UsersModule = {
             if (hwBox) hwBox.checked = user.has_hw_meter !== false;
             if (cwBox) cwBox.checked = user.has_cw_meter !== false;
             if (elBox) elBox.checked = user.has_el_meter !== false;
-
-            // Авто-подбор billing_mode при смене типа: single → per_capita.
-            // Админ может оставить выбор вручную (но прозрачно, не молча).
-            if (inputs.residentType && inputs.billingMode) {
-                inputs.residentType.onchange = () => {
-                    inputs.billingMode.value =
-                        inputs.residentType.value === 'single' ? 'per_capita' : 'by_meter';
-                };
-            }
 
             // История проживания — по кнопке (lazy load).
             if (inputs.btnHistory && inputs.historyContainer) {
@@ -1052,9 +1096,7 @@ export const UsersModule = {
             tariff_id: tariffIdVal ? parseInt(tariffIdVal) : null,
             room_id: roomIdVal ? parseInt(roomIdVal) : null,
             residents_count: parseInt(this.modal.inputs.residents.value),
-            workplace: this.modal.inputs.work.value.trim(),
             resident_type: this.modal.inputs.residentType?.value || 'family',
-            billing_mode: this.modal.inputs.billingMode?.value || 'by_meter',
             // Конфигурация счётчиков жильца (meters_001_per_user_config).
             // Шлём всегда (UserUpdate.has_X_meter = Optional[bool], None=не менять;
             // мы посылаем явное значение из чекбокса).

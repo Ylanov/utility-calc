@@ -34,8 +34,24 @@
                     </div>
                 </div>
 
-                <!-- Выбор помещения -->
-                <div class="form-grid-2" style="background: var(--bg-page); padding: 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 16px;">
+                <!-- Тип помещения: общежитие или дом (как в Жилфонде).
+                     Переключает блок выбора помещения ниже. -->
+                <div class="form-group" style="margin-bottom: 12px;">
+                    <label>Тип помещения</label>
+                    <div class="radio-group" style="margin: 0;">
+                        <label class="radio-label">
+                            <input type="radio" name="newPlaceType" value="dormitory" checked>
+                            <span>🏢 Общежитие</span>
+                        </label>
+                        <label class="radio-label">
+                            <input type="radio" name="newPlaceType" value="house">
+                            <span>🏠 Дом / квартира</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- Выбор помещения: ОБЩЕЖИТИЕ (каскад общага → комната) -->
+                <div id="newDormPicker" class="form-grid-2" style="background: var(--bg-page); padding: 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 16px;">
                     <div class="form-group" style="margin: 0;">
                         <label>Общежитие</label>
                         <select id="newDormSelect"><option value="">Загрузка...</option></select>
@@ -46,43 +62,37 @@
                     </div>
                 </div>
 
+                <!-- Выбор помещения: ДОМ / КВАРТИРА (один список по адресу) -->
+                <div id="newHousePicker" class="form-group" style="display: none; background: var(--bg-page); padding: 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 16px;">
+                    <label>Дом / квартира</label>
+                    <select id="newHouseSelect"><option value="">Загрузка...</option></select>
+                    <p class="hint-text" style="font-size:11px; margin:6px 0 0;">
+                        Дома создаются во вкладке «Жилфонд». Здесь — выбор существующего адреса для заселения.
+                    </p>
+                </div>
+
                 <div id="newRoomInfo" style="display: none; background: var(--success-bg); padding: 12px 16px; border-radius: var(--radius-sm); border: 1px solid #cce8d6; margin-bottom: 16px; font-size: 13px;">
-                    <strong style="color: var(--success-color); display: block; margin-bottom: 4px;">Параметры комнаты:</strong>
+                    <strong style="color: var(--success-color); display: block; margin-bottom: 4px;">Параметры помещения:</strong>
                     Площадь: <b id="infoArea">0</b> м² | Всего мест: <b id="infoCap">0</b><br>
                     Счетчики: ГВС (<span id="infoHw" style="color: var(--danger-color); font-family: monospace;">-</span>), ХВС (<span id="infoCw" style="color: var(--primary-color); font-family: monospace;">-</span>), Электр. (<span id="infoEl" style="color: #d97706; font-family: monospace;">-</span>)
                 </div>
 
-                <div class="form-grid-2" style="margin-bottom: 16px;">
+                <!-- Кол-во проживающих + тип жильца. Режим оплаты (койко-место)
+                     убран: все платят по счётчикам, у холостяков счёт делится
+                     автоматически (см. формулу singles в billing). -->
+                <div class="form-grid-2" style="margin-bottom: 24px;">
                     <div class="form-group">
                         <label>Сколько человек платит с этого Л/С</label>
                         <input type="number" id="residentsCount" value="1" min="1">
                     </div>
                     <div class="form-group">
-                        <label>Место работы</label>
-                        <input type="text" id="workplace">
-                    </div>
-                </div>
-
-                <!-- Тип жильца определяет способ расчёта (см. доменную модель):
-                     family → by_meter (по счётчикам), single → per_capita (койко-место).
-                     При выборе single поле residents_count автоматически станет 1
-                     (валидатор в модели User) и billing_mode → per_capita. -->
-                <div class="form-grid-2" style="margin-bottom: 24px;">
-                    <div class="form-group">
                         <label>Тип жильца</label>
                         <select id="newResidentType">
-                            <option value="family">Семейный (по счётчикам)</option>
-                            <option value="single">Холостяк (койко-место)</option>
-                        </select>
-                    </div>
-                    <div class="form-group">
-                        <label>Режим оплаты</label>
-                        <select id="newBillingMode">
-                            <option value="by_meter">По счётчикам</option>
-                            <option value="per_capita">За койко-место</option>
+                            <option value="family">Семейный</option>
+                            <option value="single">Холостяк</option>
                         </select>
                         <p class="hint-text" style="font-size:11px; margin:4px 0 0;">
-                            По умолчанию выводится из типа жильца. Можно переопределить вручную (редкий случай).
+                            Для холостяцких квартир тип проставляется автоматически при заселении.
                         </p>
                     </div>
                 </div>
@@ -165,11 +175,6 @@
                     <option value="family">Семейные</option>
                     <option value="single">Холостяки</option>
                 </select>
-                <select id="filterBillingMode" style="min-width:160px;" title="Режим оплаты">
-                    <option value="">Все режимы оплаты</option>
-                    <option value="by_meter">По счётчикам</option>
-                    <option value="per_capita">За койко-место</option>
-                </select>
                 <select id="filterDormitory" style="min-width:160px;" title="Фильтр по общежитию">
                     <option value="">Все общежития</option>
                 </select>
@@ -202,18 +207,16 @@
                         <th data-sort="username" class="sortable">Логин</th>
                         <th data-sort="role" class="sortable">Роль</th>
                         <th class="text-center" title="Тип жильца: семейный / холостяк">Тип</th>
-                        <th class="text-center" title="Режим оплаты: по счётчикам / за койко-место">Оплата</th>
                         <th data-sort="dormitory" class="sortable">Общ.</th>
                         <th data-sort="apartment_area" class="sortable">Площ.</th>
                         <!-- Bug BB: было «Доля» N/M — заменено на простое
                              число жильцов комнаты (total_room_residents). -->
                         <th class="text-center" title="Кол-во проживающих в комнате">Жильцы</th>
-                        <th data-sort="workplace" class="sortable">Работа</th>
                         <th class="text-center">Действия</th>
                     </tr>
                 </thead>
                 <tbody id="usersTableBody">
-                    <tr><td colspan="10" class="text-center" style="padding: 40px; color: var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка данных...</td></tr>
+                    <tr><td colspan="8" class="text-center" style="padding: 40px; color: var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка данных...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -256,7 +259,7 @@
                             <strong style="font-size:14px;">Редактировать</strong>
                         </div>
                         <div style="font-size:11px; color:var(--text-secondary); line-height:1.4;">
-                            Логин, роль, тариф, работа, тип жильца, режим оплаты.
+                            Логин, роль, тариф, тип жильца, помещение, счётчики.
                         </div>
                     </button>
 
@@ -394,33 +397,13 @@
                             <input type="number" id="editResidentsCount" min="1">
                         </div>
                         <div class="form-group">
-                            <label>Место работы</label>
-                            <input type="text" id="editWorkplace">
-                        </div>
-                    </div>
-
-                    <!-- Тип жильца определяет МЕТОД РАСЧЁТА:
-                         family → по счётчикам (как раньше),
-                         single → за койко-место (фикс. сумма из тарифа). -->
-                    <div class="form-grid-2" style="margin-top:8px;">
-                        <div class="form-group">
                             <label>Тип жильца</label>
                             <select id="editResidentType">
-                                <option value="family">Семейный (платит по счётчикам)</option>
-                                <option value="single">Холостяк (койко-место)</option>
+                                <option value="family">Семейный</option>
+                                <option value="single">Холостяк</option>
                             </select>
                             <p class="hint-text" style="margin:4px 0 0;font-size:11px;">
-                                Холостяки автоматически переключаются на «За койко-место» из тарифа.
-                            </p>
-                        </div>
-                        <div class="form-group">
-                            <label>Режим оплаты</label>
-                            <select id="editBillingMode">
-                                <option value="by_meter">По счётчикам</option>
-                                <option value="per_capita">За койко-место (фикс. сумма)</option>
-                            </select>
-                            <p class="hint-text" style="margin:4px 0 0;font-size:11px;">
-                                Обычно вытекает из типа, но можно переопределить вручную.
+                                Для холостяцких квартир тип проставляется автоматически при заселении.
                             </p>
                         </div>
                     </div>
