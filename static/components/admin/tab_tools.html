@@ -297,15 +297,14 @@
             </div>
         </section>
 
-        <!-- ==========================================
-             СЕКЦИЯ 2.2: СЕЗОННЫЕ НАДБАВКИ
-             Управление сезонными статьями: отопление и
-             подогрев ГВС. Один глобальный переключатель
-             вместо «удалять heating из тарифа летом и
-             возвращать осенью». Состояние хранится в
-             system_settings, читается в calculate_utilities.
-             ========================================== -->
-        <section class="accordion-section" data-section="seasonal" data-ops-tab="tariffs">
+        <!-- Bug 29.05.2026 (Коммит 20): секция «Сезонные надбавки —
+             аварийный выключатель» удалена. Сезонность убрана из системы.
+             Сезонные SystemSetting'и (seasonal_heating, seasonal_hw_heating)
+             остаются в БД с дефолтами True. Если потребуется аварийно
+             отключить — через psql напрямую.
+             Скрытая section — DOM-структура admin.html ожидает что между
+             accordion-секциями есть селекторы; ставим display:none. -->
+        <section class="accordion-section" data-section="seasonal" data-ops-tab="tariffs" style="display:none;">
             <button class="accordion-header" type="button" aria-expanded="false">
                 <span class="accordion-title">
                     <span class="accordion-icon" style="background:rgba(239,68,68,0.10); color:#dc2626;">
@@ -671,76 +670,19 @@
                                  Поле per_capita_amount в БД остаётся для совместимости,
                                  но в форме не показывается и сохраняется как 0. -->
 
-                            <h4 style="margin: 22px 0 14px 0; font-size: 13px; color: var(--text-secondary); text-transform: uppercase; letter-spacing: .5px; font-weight: 700;">
-                                <i class="fa-solid fa-snowflake"></i> Сезонные правила
-                            </h4>
-
-                            <!-- ==============================================
-                                 СЕКЦИЯ 5: СЕЗОННОСТЬ (per-tariff)
-                                 Каждый тариф знает свой график (heating + hw).
-                                 Глобальные SystemSetting'и — emergency override.
-                                 ============================================== -->
-                            <div class="tcard t-season">
-                                <div class="tcard-head">
-                                    <span class="tcard-icon"><i class="fa-solid fa-temperature-three-quarters"></i></span>
-                                    <div>
-                                        <div class="tcard-title">Сезонность этого тарифа</div>
-                                        <div class="tcard-subtitle">График отопления и подогрева ГВС — год игнорируется, важны только месяц и день</div>
-                                    </div>
-                                </div>
-                                <div class="tcard-body">
-                                    <p class="hint-text" style="margin:0 0 14px 0; font-size:12px;">
-                                        Пример: «ЦСООР Лидер» — отопление с 15.10 по 15.04,
-                                        «ФИЛИ» — с 01.11 по 30.04. Даты пусто = статья работает круглый год.
-                                    </p>
-
-                                    <!-- ── Отопление ── -->
-                                    <div style="border:1px solid var(--border-color); border-left:3px solid #dc2626; border-radius:8px; padding:12px 14px; background:var(--bg-page); margin-bottom:10px;">
-                                        <label style="display:flex; align-items:center; gap:10px; cursor:pointer; margin-bottom:8px;">
-                                            <input type="checkbox" id="t_heating_active" checked
-                                                   style="width:18px; height:18px; cursor:pointer; accent-color:#dc2626;">
-                                            <span style="font-weight:700; font-size:13.5px; color:#b91c1c;">
-                                                <i class="fa-solid fa-fire"></i> Отопление активно
-                                            </span>
-                                        </label>
-                                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-                                            <div class="form-group" style="margin:0;">
-                                                <label style="font-size:11.5px; color:var(--text-secondary);">Начало сезона</label>
-                                                <input type="date" id="t_heating_start"
-                                                       title="Дата начала отопительного сезона. Год игнорируется.">
-                                            </div>
-                                            <div class="form-group" style="margin:0;">
-                                                <label style="font-size:11.5px; color:var(--text-secondary);">Конец сезона</label>
-                                                <input type="date" id="t_heating_end"
-                                                       title="Дата окончания отопительного сезона. Год игнорируется.">
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    <!-- ── Подогрев ГВС ── -->
-                                    <div style="border:1px solid var(--border-color); border-left:3px solid #f59e0b; border-radius:8px; padding:12px 14px; background:var(--bg-page);">
-                                        <label style="display:flex; align-items:center; gap:10px; cursor:pointer; margin-bottom:8px;">
-                                            <input type="checkbox" id="t_hw_heating_active" checked
-                                                   style="width:18px; height:18px; cursor:pointer; accent-color:#f59e0b;">
-                                            <span style="font-weight:700; font-size:13.5px; color:#b45309;">
-                                                <i class="fa-solid fa-droplet"></i> Подогрев ГВС активен
-                                            </span>
-                                        </label>
-                                        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-                                            <div class="form-group" style="margin:0;">
-                                                <label style="font-size:11.5px; color:var(--text-secondary);">Начало подогрева</label>
-                                                <input type="date" id="t_hw_heating_start"
-                                                       title="Когда поставщик начинает подогрев ГВС.">
-                                            </div>
-                                            <div class="form-group" style="margin:0;">
-                                                <label style="font-size:11.5px; color:var(--text-secondary);">Конец подогрева</label>
-                                                <input type="date" id="t_hw_heating_end"
-                                                       title="Когда поставщик прекращает подогрев (летняя профилактика ТЭЦ).">
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
+                            <!-- Bug 29.05.2026 (Коммит 20): секция «Сезонные правила»
+                                 (отопление + подогрев ГВС графики per-tariff) удалена
+                                 из UI. Поля в БД остаются с дефолтами (heating_active=
+                                 True, *_season_start/end=NULL = круглогодично).
+                                 Hidden inputs ниже нужны чтобы tariffs.js при сохранении
+                                 не послал null в backend (он не падает на этом, но
+                                 hidden=checked явно говорит «круглогодично»). -->
+                            <input type="checkbox" id="t_heating_active" checked hidden>
+                            <input type="date" id="t_heating_start" hidden>
+                            <input type="date" id="t_heating_end" hidden>
+                            <input type="checkbox" id="t_hw_heating_active" checked hidden>
+                            <input type="date" id="t_hw_heating_start" hidden>
+                            <input type="date" id="t_hw_heating_end" hidden>
 
                             <!-- ==============================================
                                  Bug AT этап 2: «Что начисляет этот тариф»
