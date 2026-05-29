@@ -409,6 +409,18 @@ async def auto_fill_period_readings(
                 MeterReading.period_id != target_period.id,
             )
         )).all()
+        # КРИТИЧНО: фильтруем history так чтобы оставались ТОЛЬКО периоды
+        # ХРОНОЛОГИЧЕСКИ РАНЬШЕ target. Иначе для ранних месяцев (например
+        # auto_fill для Февраль) система брала бы Май как «предыдущий» —
+        # ведь по выборке history содержит ВСЕ approved reading'и.
+        # Случай Капранова (29.05.2026): target=Февраль, history=[Май,
+        # Начальный]. По chron DESC Май(2026,5) > Начальный(0,0), и
+        # last_hot = history[0] = Май = 1468 → Февраль hot_water стал
+        # 1468 + 3 = 1471 (вместо правильного 1456 + 3 = 1459 от
+        # Начального). Внутренний consistency сломан.
+        # Fix: оставляем только rows с chron < target_chron.
+        target_chron = period_chron_key(target_period.name)
+        rows = [(r, p) for r, p in rows if period_chron_key(p.name) < target_chron]
         history = [r for r, _p in sorted(
             rows, key=lambda row: period_chron_key(row[1].name), reverse=True
         )][:6]
