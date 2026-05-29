@@ -132,6 +132,10 @@ async def main() -> int:
         print(f"Найдено approved-reading'ов холостяцких квартир: {len(targets)}")
         if args.period_id is not None:
             print(f"(фильтр period_id={args.period_id})")
+        else:
+            print("⚠ period_id НЕ задан — будут пересчитаны ВСЕ периоды, включая")
+            print("  исторические (их квитанции уже выставлены по старой формуле).")
+            print("  Обычно нужен только текущий период: --period-id <id>.")
         print()
         if not targets:
             print("OK — нечего пересчитывать.")
