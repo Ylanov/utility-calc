@@ -229,6 +229,113 @@ async def trigger_promote_auto_approved(
     return await asyncio.to_thread(_run)
 
 
+@router.post("/auto-normalize-decimal")
+async def trigger_auto_normalize_decimal(
+    year: int = Query(2026, ge=2020, le=2100),
+    dry_run: bool = Query(True, description="True — preview без изменений"),
+    current_user: User = Depends(get_current_user),
+):
+    """Bug 29.05.2026 (Коммит 18): авто-нормализация пропущенной
+    десятичной точки в rejected GSheets-подачах.
+
+    Сценарий: жильцы вводят показания счётчика без десятичной точки.
+    Например 1418500 вместо 14185.00. Это `value_too_large` → rejected.
+    На проде 77 таких записей за 2026.
+
+    Эвристика: если hot_water или cold_water > MAX_WATER_METER_VALUE
+    (99999.999) И /1000 < этого порога — предполагаем что пропущена
+    точка после 5-й цифры (стандарт счётчика 5+3). Делим на 1000.
+
+    Пример: 1418500 → 1418.500 (правдоподобно)
+            14185000 → 14185.000 (тоже OK)
+            141850000 → 141850.000 (НЕ нормализуем — всё равно out of range)
+
+    dry_run=True (default) — показывает что бы изменилось без apply.
+    dry_run=False — apply: status auto_approved, conflict_reason=NULL,
+    hot_water/cold_water делятся на 1000.
+
+    После apply — запусти /promote-historical для создания reading'ов.
+    """
+    require_admin(current_user)
+
+    import asyncio
+    from app.modules.utility.tasks import sync_db_session
+    from datetime import datetime
+
+    def _run():
+        with sync_db_session() as db:
+            from app.modules.utility.services.reading_validators import (
+                MAX_WATER_METER_VALUE,
+            )
+            from app.modules.utility.models import GSheetsImportRow
+
+            max_water = Decimal(str(MAX_WATER_METER_VALUE))
+            start = datetime(year, 1, 1)
+            end = datetime(year + 1, 1, 1)
+
+            rows = db.query(GSheetsImportRow).filter(
+                GSheetsImportRow.status == "rejected",
+                GSheetsImportRow.sheet_timestamp >= start,
+                GSheetsImportRow.sheet_timestamp < end,
+                GSheetsImportRow.matched_user_id.is_not(None),
+            ).all()
+
+            normalized = 0
+            skipped = 0
+            preview = []
+
+            for r in rows:
+                hot = Decimal(str(r.hot_water)) if r.hot_water is not None else None
+                cold = Decimal(str(r.cold_water)) if r.cold_water is not None else None
+
+                needs_norm_hot = hot is not None and hot > max_water
+                needs_norm_cold = cold is not None and cold > max_water
+
+                if not (needs_norm_hot or needs_norm_cold):
+                    skipped += 1
+                    continue
+
+                new_hot = hot / Decimal("1000") if needs_norm_hot else hot
+                new_cold = cold / Decimal("1000") if needs_norm_cold else cold
+
+                # Проверяем что нормализация дала разумное значение
+                if (new_hot is not None and new_hot > max_water) or \
+                   (new_cold is not None and new_cold > max_water):
+                    skipped += 1
+                    continue
+
+                preview.append({
+                    "row_id": r.id,
+                    "raw_fio": r.raw_fio,
+                    "old_hot": float(hot) if hot is not None else None,
+                    "new_hot": float(new_hot) if new_hot is not None else None,
+                    "old_cold": float(cold) if cold is not None else None,
+                    "new_cold": float(new_cold) if new_cold is not None else None,
+                })
+
+                if not dry_run:
+                    r.hot_water = new_hot
+                    r.cold_water = new_cold
+                    r.status = "auto_approved"
+                    r.conflict_reason = None
+                    db.add(r)
+                normalized += 1
+
+            if not dry_run and normalized > 0:
+                db.commit()
+
+            return {
+                "year": year,
+                "dry_run": dry_run,
+                "total_rejected": len(rows),
+                "normalized": normalized,
+                "skipped_unsafe": skipped,
+                "preview": preview[:20],  # первые 20 для отчёта
+            }
+
+    return await asyncio.to_thread(_run)
+
+
 @router.post("/promote-historical")
 async def trigger_promote_historical(
     year: int = Query(..., ge=2020, le=2100),
