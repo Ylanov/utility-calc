@@ -229,6 +229,67 @@ async def trigger_promote_auto_approved(
     return await asyncio.to_thread(_run)
 
 
+@router.post("/promote-historical")
+async def trigger_promote_historical(
+    year: int = Query(..., ge=2020, le=2100),
+    current_user: User = Depends(get_current_user),
+):
+    """Bug 29.05.2026 (Коммит 17): массовый promote auto_approved
+    GSheets-подач за весь указанный год.
+
+    Стандартный `promote_auto_approved_rows` работает только для
+    АКТИВНОГО периода. Если жилец подал в Январе 2026, status='auto_approved'
+    но reading_id=NULL — promote не подберёт его в Мае. Подачи висят.
+
+    Этот endpoint проходит по ВСЕМ BillingPeriod года (по биллинговой
+    хронологии), для каждого вызывает promote с фильтром sheet_timestamp
+    в соответствующем месяце. На выходе — суммарная статистика.
+
+    Пример: после очистки 29.05.2026 у Калачёва Март 1005, Февраль 999
+    и других висели auto_approved. После этого endpoint'а они станут
+    GSHEETS_IMPORT reading'ами в соответствующих периодах.
+    """
+    require_admin(current_user)
+
+    import asyncio
+    from app.modules.utility.tasks import sync_db_session
+    from app.modules.utility.services.gsheets_sync import promote_auto_approved_rows
+    from app.modules.utility.services.period_helpers import period_chron_key
+
+    def _run():
+        with sync_db_session() as db:
+            # Все периоды этого года, кроме Начального (chron=(0,0))
+            all_periods = db.query(BillingPeriod).all()
+            year_periods = [
+                p for p in all_periods
+                if period_chron_key(p.name)[0] == year
+            ]
+            # Сортируем по хронологии (Февраль → Март → Апрель → Май)
+            year_periods.sort(key=lambda p: period_chron_key(p.name))
+
+            summary = {"year": year, "periods_processed": 0, "results": []}
+            total_created = 0
+            total_skipped = 0
+            total_bound = 0
+            for period in year_periods:
+                result = promote_auto_approved_rows(db, target_period=period)
+                summary["results"].append({
+                    "period_id": period.id,
+                    "period_name": period.name,
+                    **result,
+                })
+                summary["periods_processed"] += 1
+                total_created += result.get("created", 0)
+                total_skipped += result.get("skipped", 0)
+                total_bound += result.get("bound", 0)
+            summary["total_created"] = total_created
+            summary["total_skipped"] = total_skipped
+            summary["total_bound"] = total_bound
+            return summary
+
+    return await asyncio.to_thread(_run)
+
+
 # =========================================================================
 # STATS
 # =========================================================================

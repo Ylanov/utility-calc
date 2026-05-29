@@ -813,7 +813,7 @@ def _ensure_active_period(db: Session):
     return period
 
 
-def promote_auto_approved_rows(db: Session) -> dict:
+def promote_auto_approved_rows(db: Session, target_period=None) -> dict:
     """Продвигает GSheetsImportRow со статусом auto_approved в MeterReading.
 
     Логика:
@@ -826,6 +826,14 @@ def promote_auto_approved_rows(db: Session) -> dict:
       3. Создаём MeterReading на активный период; остальные сестринские строки
          того же жильца биндим к тому же reading_id (закрываем как обработанные).
 
+    Параметр `target_period` (Bug 29.05.2026, Коммит 17):
+      Если None — используется текущий активный BillingPeriod (как было).
+      Если задан — создаём reading'и в этом периоде, и фильтруем rows ТОЛЬКО
+      теми у которых sheet_timestamp попадает в календарный месяц этого периода.
+      Это нужно для исторического promote (Январь/Февраль/Март/Апрель 2026):
+      53 подачи зависли auto_approved потому что они от прошлых месяцев, а
+      promote по умолчанию обрабатывает только активный.
+
     Возвращает {'created': N, 'skipped': M, 'bound': K, 'errors': [...]}.
     """
     from decimal import Decimal as _Dec
@@ -833,8 +841,9 @@ def promote_auto_approved_rows(db: Session) -> dict:
     from app.modules.utility.models import (
         MeterReading, GSheetsImportRow,
     )
+    from app.modules.utility.services.period_helpers import period_chron_key
 
-    active_period = _ensure_active_period(db)
+    active_period = target_period if target_period is not None else _ensure_active_period(db)
 
     # КРИТИЧНО (фикс инцидента may 2026 — «Пегарьков А.В.»):
     # Promote НЕ фильтровал по sheet_timestamp. Строки от 2023 года, давно
@@ -866,6 +875,23 @@ def promote_auto_approved_rows(db: Session) -> dict:
             GSheetsImportRow.sheet_timestamp >= cutoff,
         ),
     ).all()
+
+    # Bug 29.05.2026 (Коммит 17): если target_period передан, фильтруем
+    # rows ТОЛЬКО теми что в его календарном месяце. Иначе historical
+    # promote для Февраль создал бы reading'и для всех (включая Май)
+    # в Февральском периоде — это double-charging.
+    if target_period is not None:
+        target_chron = period_chron_key(target_period.name)
+        if target_chron != (0, 0):
+            rows = [
+                r for r in rows
+                if r.sheet_timestamp is not None
+                and (r.sheet_timestamp.year, r.sheet_timestamp.month) == target_chron
+            ]
+            logger.info(
+                "[GSHEETS-PROMOTE] target_period='%s' (chron=%s) — фильтр оставил %d rows",
+                target_period.name, target_chron, len(rows),
+            )
 
     # Disgnостика: сколько promote'нутых строк имели NULL timestamp и
     # сколько было «слишком старых» — для отслеживания на проде.
