@@ -1308,15 +1308,131 @@ async def _apply_approve(
         )
 
     # Guard 2: meter_decreased — счётчик «упал».
+    # Bug 29.05.2026 (Коммит 19): EDGE CASE AUTO-FIX.
+    # Если prev_meaningful — это AUTO_NORM (а НЕ реальная manual подача),
+    # это значит жилец подал РЕАЛЬНО меньше чем накопленный норматив.
+    # По ПП №354 это переплата, а не «упал счётчик». Auto-fix:
+    #   1. Найти last_manual (предыдущая РЕАЛЬНАЯ подача).
+    #   2. Если current >= last_manual.hot/cold — норматив переоценил.
+    #      Удаляем AUTO_NORM-цепочку между last_manual и current, заново
+    #      вычисляем breakdown с last_manual как prev.
+    #   3. Если current < last_manual — реально упал, оставляем conflict.
     if breakdown and breakdown.get("meter_decreased") and prev_meaningful is not None:
-        await _block_with_conflict(
-            "manual_approve_blocked: meter_decreased: счётчик 'упал' — "
-            f"hot {prev_meaningful.hot_water}→{row.hot_water}, "
-            f"cold {prev_meaningful.cold_water}→{row.cold_water}. "
-            "Возможные причины: смена счётчика без оформления, ошибка ввода "
-            "жильца, или сменился жилец в комнате. Используйте «Поменять "
-            "ГВС/ХВС», «Сделать baseline» или «Отклонить»."
-        )
+        prev_flags_upper = (prev_meaningful.anomaly_flags or "").upper()
+        prev_is_auto_norm = "AUTO_NORM" in prev_flags_upper
+        if prev_is_auto_norm:
+            # Найти LAST MANUAL (не AUTO_*) для этого жильца строго раньше
+            # текущего периода по биллингу.
+            from app.modules.utility.services.period_helpers import (
+                period_chron_key as _pck,
+            )
+            target_chron = _pck(target_period.name) if target_period else None
+            all_history = (await db.execute(
+                select(MeterReading, BillingPeriod)
+                .join(BillingPeriod, MeterReading.period_id == BillingPeriod.id)
+                .where(
+                    MeterReading.user_id == user.id,
+                    MeterReading.is_approved.is_(True),
+                )
+            )).all()
+            # Только manual (без AUTO_NORM/AUTO_AVG/AUTO_GENERATED/etc),
+            # строго раньше target_chron.
+            def _is_manual(r):
+                f = (r.anomaly_flags or "").upper()
+                for skip in ("AUTO_NORM", "AUTO_AVG", "AUTO_GENERATED",
+                             "AUTO_NO_HISTORY", "AUTO_AVG_FALLBACK", "BASELINE"):
+                    if skip in f:
+                        return False
+                return True
+            manual_history = [
+                (r, p) for r, p in all_history
+                if _is_manual(r)
+                and (target_chron is None or _pck(p.name) < target_chron)
+            ]
+            manual_history.sort(key=lambda rp: _pck(rp[1].name), reverse=True)
+            last_manual = manual_history[0][0] if manual_history else None
+
+            if (last_manual
+                and row.hot_water >= last_manual.hot_water
+                and row.cold_water >= last_manual.cold_water):
+                # Auto-fix: удалить AUTO_NORM-readings между last_manual и
+                # текущим периодом (НЕ трогая current — он ещё не создан).
+                last_manual_chron = _pck(
+                    next(p for r, p in all_history if r.id == last_manual.id).name
+                )
+                auto_norm_ids = [
+                    r.id for r, p in all_history
+                    if "AUTO_NORM" in (r.anomaly_flags or "").upper()
+                    and last_manual_chron < _pck(p.name) < target_chron
+                ]
+                if auto_norm_ids:
+                    from sqlalchemy import delete as _sa_delete
+                    await db.execute(
+                        _sa_delete(MeterReading).where(
+                            MeterReading.id.in_(auto_norm_ids)
+                        )
+                    )
+                    await db.flush()
+                    import logging as _log_ef
+                    _log_ef.getLogger(__name__).info(
+                        "[GSHEETS-APPROVE] auto-fix edge case (real<norm): "
+                        "user=%s удалено %d AUTO_NORM между last_manual=%s и "
+                        "current=%s. Заново вычисляем breakdown.",
+                        user.id, len(auto_norm_ids), last_manual.id, target_period,
+                    )
+                    # Заново вычисляем breakdown с last_manual как prev.
+                    breakdown = compute_reading_breakdown(
+                        user=user, room=room_obj, tariff=eff_tariff,
+                        current_hot=row.hot_water,
+                        current_cold=row.cold_water,
+                        current_elect=electricity_value,
+                        prev_reading=last_manual,
+                        heating_season_active=_heating,
+                        hot_water_heating_active=_hw,
+                    )
+                    # prev_meaningful обновляем тоже — для остальных guards
+                    prev_meaningful = last_manual
+                    # Если новый breakdown больше не meter_decreased — продолжаем.
+                    if not breakdown.get("meter_decreased"):
+                        # Skip Guard 2 — теперь всё ок.
+                        pass
+                    else:
+                        # Всё ещё meter_decreased даже от last_manual — реально упал.
+                        await _block_with_conflict(
+                            "manual_approve_blocked: meter_decreased даже после "
+                            "auto-fix AUTO_NORM. Реальная подача меньше последней "
+                            f"manual id={last_manual.id}. Используйте «Сделать "
+                            "baseline» или «Отклонить»."
+                        )
+                else:
+                    # AUTO_NORM не найдены — обычный meter_decreased
+                    await _block_with_conflict(
+                        "manual_approve_blocked: meter_decreased: счётчик 'упал' — "
+                        f"hot {prev_meaningful.hot_water}→{row.hot_water}, "
+                        f"cold {prev_meaningful.cold_water}→{row.cold_water}. "
+                        "Используйте «Поменять ГВС/ХВС», «Сделать baseline» или «Отклонить»."
+                    )
+            else:
+                # current < last_manual — реально упал.
+                await _block_with_conflict(
+                    "manual_approve_blocked: meter_decreased: счётчик 'упал' — "
+                    f"hot {prev_meaningful.hot_water}→{row.hot_water}, "
+                    f"cold {prev_meaningful.cold_water}→{row.cold_water}. "
+                    "Возможные причины: смена счётчика без оформления, ошибка ввода "
+                    "жильца, или сменился жилец в комнате. Используйте «Поменять "
+                    "ГВС/ХВС», «Сделать baseline» или «Отклонить»."
+                )
+        else:
+            # prev_meaningful — реальная manual подача, не AUTO_NORM.
+            # Обычный meter_decreased — счётчик реально упал.
+            await _block_with_conflict(
+                "manual_approve_blocked: meter_decreased: счётчик 'упал' — "
+                f"hot {prev_meaningful.hot_water}→{row.hot_water}, "
+                f"cold {prev_meaningful.cold_water}→{row.cold_water}. "
+                "Возможные причины: смена счётчика без оформления, ошибка ввода "
+                "жильца, или сменился жилец в комнате. Используйте «Поменять "
+                "ГВС/ХВС», «Сделать baseline» или «Отклонить»."
+            )
 
     # Guard 3: total_cost_too_high — финальный sanity на расчётный итог.
     # Это главная защита от цикла: cleanup_outlier_readings_task ровно по
