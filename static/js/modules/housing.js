@@ -162,6 +162,12 @@ export const HousingModule = {
             if (rad) rad.addEventListener('change', () => this._applyPlaceTypeUI());
         });
 
+        // Холостяцкая квартира: «Кол-во проживающих» считается автоматически
+        // (= число прописанных жильцов), поэтому поле блокируем на ввод.
+        if (this.modal.inputs.isSingles) {
+            this.modal.inputs.isSingles.addEventListener('change', () => this._applySinglesUI());
+        }
+
         [this.modal.btnClose, this.modal.btnCancel].forEach(btn => {
             if (btn) btn.addEventListener('click', () => {
                 this.modal.window.classList.remove('open');
@@ -617,6 +623,9 @@ export const HousingModule = {
         if (sec.house)   sec.house.style.display   = isHouse ? '' : 'none';
         if (sec.meters)  sec.meters.style.display  = isHouse ? 'none' : '';
         if (sec.singles) sec.singles.style.display = isHouse ? 'none' : '';
+        // Дом снимает галочку холостяка — обновляем состояние поля «кол-во».
+        if (isHouse && this.modal.inputs.isSingles) this.modal.inputs.isSingles.checked = false;
+        this._applySinglesUI();
 
         // Required-атрибуты — браузер сам не пускает submit пустых полей.
         const setReq = (el, req) => {
@@ -650,6 +659,31 @@ export const HousingModule = {
         const currentTariff = this.modal.inputs.tariff?.value || null;
         this.loadTariffs(isHouse ? 'house' : 'dormitory')
             .then(() => this.fillTariffSelect(currentTariff));
+    },
+
+    /**
+     * Холостяцкая квартира: «Кол-во проживающих» = число прописанных жильцов,
+     * считается на бэке автоматически (recount_singles_residents). Поэтому
+     * при включённой галочке блокируем поле на ввод и снимаем required
+     * (иначе пустое readonly-поле заблокирует submit).
+     */
+    _applySinglesUI() {
+        const cap = this.modal.inputs.cap;
+        if (!cap) return;
+        const isSingles = !!this.modal.inputs.isSingles?.checked;
+        if (isSingles) {
+            cap.setAttribute('readonly', '');
+            cap.removeAttribute('required');
+            cap.title = 'Считается автоматически = число прописанных жильцов квартиры';
+            cap.style.background = '#f1f5f9';
+            cap.style.cursor = 'not-allowed';
+        } else {
+            cap.removeAttribute('readonly');
+            cap.setAttribute('required', '');
+            cap.title = '';
+            cap.style.background = '';
+            cap.style.cursor = '';
+        }
     },
 
     openModal(room = null) {
@@ -699,6 +733,9 @@ export const HousingModule = {
             }
             this.fillTariffSelect(null);
         }
+        // Состояние поля «кол-во проживающих» зависит от галочки холостяка
+        // (уже выставлена выше для room / new).
+        this._applySinglesUI();
         this.modal.window.classList.add('open');
     },
 

@@ -236,6 +236,10 @@ async def get_reading_state(
         "has_hw_meter": bool(getattr(user, "has_hw_meter", True)),
         "has_cw_meter": bool(getattr(user, "has_cw_meter", True)),
         "has_el_meter": bool(getattr(user, "has_el_meter", True)),
+        # Серийники счётчиков комнаты — общие для всех жильцов квартиры.
+        "hw_meter_serial": getattr(user.room, "hw_meter_serial", None),
+        "cw_meter_serial": getattr(user.room, "cw_meter_serial", None),
+        "el_meter_serial": getattr(user.room, "el_meter_serial", None),
         "meter_format_hint": meter_format_value,
         "meter_example": meter_example_value,
         "meter_instructions": meter_instructions_value,

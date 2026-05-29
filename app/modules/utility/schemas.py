@@ -220,9 +220,8 @@ class UserCreate(BaseModel):
     resident_type: ResidentType = "family"
     # 'by_meter' (как раньше) | 'per_capita' (фикс. сумма из тарифа)
     billing_mode: Optional[BillingMode] = None  # None → выводится из resident_type
-    hw_meter_serial: Optional[str] = None
-    cw_meter_serial: Optional[str] = None
-    el_meter_serial: Optional[str] = None
+    # Серийники счётчиков живут на Room (общие для квартиры), не на User —
+    # см. ReadingStateResponse. На жильце их нет.
     # Флаги наличия счётчиков. По умолчанию все True (как было).
     # Если False — анализатор не флагит «не подал X», в calculate_utilities
     # используется tariff.X_norm_per_capita × residents_count.
@@ -265,9 +264,7 @@ class UserUpdate(BaseModel):
     room_id: Optional[int] = None
     resident_type: Optional[ResidentType] = None
     billing_mode: Optional[BillingMode] = None
-    hw_meter_serial: Optional[str] = None
-    cw_meter_serial: Optional[str] = None
-    el_meter_serial: Optional[str] = None
+    # Серийники счётчиков — на Room, не на User (см. UserCreate).
     has_hw_meter: Optional[bool] = None
     has_cw_meter: Optional[bool] = None
     has_el_meter: Optional[bool] = None
@@ -447,6 +444,12 @@ class ReadingStateResponse(BaseModel):
     has_hw_meter: bool = True
     has_cw_meter: bool = True
     has_el_meter: bool = True
+
+    # Серийники счётчиков комнаты (общие для всех жильцов квартиры, в т.ч.
+    # холостяцкой). Жилец видит, по какому счётчику подаёт показания.
+    hw_meter_serial: Optional[str] = None
+    cw_meter_serial: Optional[str] = None
+    el_meter_serial: Optional[str] = None
 
     # Bug AT этап 4: «надо ли подавать показания». False — клиент
     # скрывает форму подачи целиком и показывает «не требуется».
