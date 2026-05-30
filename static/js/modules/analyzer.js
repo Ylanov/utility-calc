@@ -77,6 +77,11 @@ export const AnalyzerModule = {
             groups:         document.querySelectorAll('[data-analyzer-group]'),
             groupTabRows:   document.querySelectorAll('[data-group-tabs]'),
 
+            // Inbox-командный центр (inline-экран «Сводка проблем»)
+            inboxInlineBody:    document.getElementById('inboxInlineBody'),
+            inboxInlineSummary: document.getElementById('inboxInlineSummary'),
+            btnInboxInlineRefresh: document.getElementById('btnInboxInlineRefresh'),
+
             // Таб «Анализ периода»
             tabPreview:     document.getElementById('tabPreview'),
             tabCompare:     document.getElementById('tabCompare'),
@@ -174,6 +179,26 @@ export const AnalyzerModule = {
         // Группы верхнего уровня (Обзор / Проблемы / Анализ / Операции)
         this.dom.groups?.forEach(btn => {
             btn.addEventListener('click', () => this._setGroup(btn.dataset.analyzerGroup));
+        });
+
+        // Inbox-командный центр: фильтры + refresh + делегация resolve/triage
+        document.querySelectorAll('[data-inbox-inline-filter]').forEach(b => {
+            b.addEventListener('click', () => {
+                document.querySelectorAll('[data-inbox-inline-filter]').forEach(x => {
+                    const a = x === b;
+                    x.classList.toggle('primary-btn', a);
+                    x.classList.toggle('secondary-btn', !a);
+                });
+                this.loadInboxInline(b.dataset.inboxInlineFilter);
+            });
+        });
+        this.dom.btnInboxInlineRefresh?.addEventListener('click',
+            () => this.loadInboxInline(this._inboxInlineFilter || 'all'));
+        this.dom.inboxInlineBody?.addEventListener('click', (e) => {
+            const tBtn = e.target.closest('button[data-inbox-triage]');
+            if (tBtn) { this.aiTriage(Number(tBtn.dataset.inboxTriage), tBtn); return; }
+            const rBtn = e.target.closest('button[data-resolve-action]');
+            if (rBtn) this._resolveIssue(rBtn.dataset.issueId, rBtn.dataset.resolveAction, rBtn);
         });
 
         // Под-табы внутри активной группы
@@ -341,7 +366,7 @@ export const AnalyzerModule = {
     // Группа → её первый таб (активируется при выборе группы).
     _GROUP_FIRST_TAB: {
         overview: 'dashboard',
-        problems: 'highdelta',
+        problems: 'inbox',
         analysis: 'period',
         ops: 'reload',
     },
@@ -368,6 +393,8 @@ export const AnalyzerModule = {
         this.dom.panes.forEach(pane => {
             pane.style.display = pane.dataset.analyzerPane === tabId ? '' : 'none';
         });
+        // Авто-загрузка свежего списка при открытии «Сводки проблем».
+        if (tabId === 'inbox') this.loadInboxInline(this._inboxInlineFilter || 'all');
     },
 
     _setPeriodsTab(tab) {
@@ -1285,6 +1312,11 @@ export const AnalyzerModule = {
 
         // Делегация click для resolve-кнопок внутри tablицы.
         document.getElementById('analyzerInboxBody').addEventListener('click', (e) => {
+            const tBtn = e.target.closest('button[data-inbox-triage]');
+            if (tBtn) {
+                this.aiTriage(Number(tBtn.dataset.inboxTriage), tBtn);
+                return;
+            }
             const btn = e.target.closest('button[data-resolve-action]');
             if (!btn) return;
             const issueId = btn.dataset.issueId;
@@ -1408,9 +1440,17 @@ export const AnalyzerModule = {
                     <i class="fa-solid fa-${meta.icon}"></i> ${escapeHtml(meta.ru)}
                 </button>`;
         };
+        // 🤖 ИИ-триаж — для аномалий/формата с reading_id (переиспользуем aiTriage).
+        const triageReadingId = ctx.reading_id;
+        const triageBtn = (triageReadingId && (issue.kind === 'anomaly' || issue.kind === 'format'))
+            ? `<button class="secondary-btn" data-inbox-triage="${triageReadingId}"
+                   title="ИИ-разбор причины (GigaChat)" style="padding:5px 10px; font-size:12px; margin-left:4px; background:#7c3aed; color:#fff; border:1px solid #7c3aed;">
+                   <i class="fa-solid fa-robot"></i></button>`
+            : '';
         const buttons = [
             renderBtn(suggested, true),
             ...available.filter(a => a !== suggested).map(a => renderBtn(a, false)),
+            triageBtn,
         ].join('');
 
         return `
@@ -1468,6 +1508,59 @@ export const AnalyzerModule = {
             btn.disabled = false;
             btn.innerHTML = origHtml;
         }
+    },
+
+    // ============================================================
+    // INBOX-КОМАНДНЫЙ ЦЕНТР (inline-экран «Сводка проблем»)
+    // Переиспользует _inboxRowHtml / _resolveIssue / aiTriage.
+    // ============================================================
+    async loadInboxInline(filter) {
+        filter = filter || 'all';
+        this._inboxInlineFilter = filter;
+        const body = this.dom.inboxInlineBody;
+        if (!body) return;
+        body.innerHTML = '<p style="color:var(--text-secondary); padding:20px;">Загружаем…</p>';
+        const params = new URLSearchParams({ period_days: '30', limit: '200' });
+        if (filter === 'critical') { params.set('kind', 'anomalies'); params.set('severity', 'critical'); }
+        else if (filter === 'anomalies') params.set('kind', 'anomalies');
+        else if (filter === 'gsheets') params.set('kind', 'gsheets');
+        try {
+            const data = await api.get(`/admin/analyzer/inbox?${params.toString()}`);
+            this._renderInboxInline(data);
+        } catch (e) {
+            body.innerHTML = `<p style="color:var(--danger-color);">Ошибка: ${escapeHtml(e.message)}</p>`;
+        }
+    },
+
+    _renderInboxInline(data) {
+        const sum = data.summary || {};
+        if (this.dom.inboxInlineSummary) {
+            this.dom.inboxInlineSummary.textContent =
+                `Всего: ${data.total} · аномалии: ${sum.anomalies || 0} · формат: ${sum.format || 0} · gsheets: ${sum.gsheets || 0} · critical: ${sum.critical || 0}`;
+        }
+        const body = this.dom.inboxInlineBody;
+        if (!data.issues || !data.issues.length) {
+            body.innerHTML = `
+                <div style="text-align:center; padding:50px; color:var(--success-color);">
+                    <i class="fa-solid fa-check-circle" style="font-size:28px;"></i>
+                    <div style="margin-top:10px; font-size:14px;">Проблем не найдено — всё чисто.</div>
+                </div>`;
+            return;
+        }
+        body.innerHTML = `
+            <div style="overflow-x:auto; border:1px solid var(--border-color); border-radius:8px;">
+                <table style="width:100%; border-collapse:collapse; font-size:13px; min-width:720px;">
+                    <thead style="background:var(--bg-page);">
+                        <tr style="font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.3px;">
+                            <th style="text-align:left; padding:8px 10px; width:90px;">Severity</th>
+                            <th style="text-align:left; padding:8px 10px;">Проблема</th>
+                            <th style="text-align:left; padding:8px 10px;">Контекст</th>
+                            <th style="text-align:right; padding:8px 10px;">Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody>${data.issues.map(i => this._inboxRowHtml(i)).join('')}</tbody>
+                </table>
+            </div>`;
     },
 
     // ============================================================
@@ -1832,7 +1925,7 @@ export const AnalyzerModule = {
             ${v._parse_failed ? '<div style="margin-top:10px; font-size:11px; color:var(--danger-color);">⚠ Ответ ИИ не распознан как JSON — показан сырой текст.</div>' : ''}
             <div style="margin-top:8px; font-size:11px; color:var(--text-tertiary);">Подсказка ИИ, не окончательное решение. Проверьте перед действием.</div>`;
         const overlay = document.createElement('div');
-        overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
+        overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:10001; display:flex; align-items:center; justify-content:center; padding:20px;';
         overlay.innerHTML = `
             <div style="background:var(--bg-card,#fff); border-radius:12px; padding:20px 22px; max-width:560px; width:100%; max-height:85vh; overflow:auto; box-shadow:0 20px 60px rgba(0,0,0,0.3);">
                 ${html}

@@ -1034,6 +1034,9 @@
                         </div>
                         <div data-group-tabs="problems" style="margin-bottom:18px; display:none;">
                             <div role="tablist" style="display:inline-flex; border:1px solid var(--border-color); border-radius:8px; overflow:hidden; flex-wrap:wrap;">
+                                <button type="button" data-analyzer-tab="inbox" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
+                                    <i class="fa-solid fa-inbox"></i> Сводка проблем
+                                </button>
                                 <button type="button" data-analyzer-tab="highdelta" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
                                     <i class="fa-solid fa-bolt-lightning"></i> Аномальные дельты
                                 </button>
@@ -1142,6 +1145,25 @@
                         </div>
                         </div>
                         <!-- ^ /data-analyzer-pane="dashboard" -->
+
+                        <!-- ==================== ТАБ: СВОДКА ПРОБЛЕМ (Inbox inline) ==================== -->
+                        <div data-analyzer-pane="inbox" style="display:none;">
+                            <p style="font-size:13px; color:var(--text-secondary); margin:0 0 12px 0;">
+                                Единый список всех проблем — аномальные дельты, битый формат, конфликты GSheets — с действиями и ИИ-разбором. Решайте прямо отсюда.
+                            </p>
+                            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:14px;">
+                                <span style="font-size:13px; color:var(--text-secondary);">Фильтр:</span>
+                                <button class="action-btn primary-btn" data-inbox-inline-filter="all" style="padding:5px 12px; font-size:12px;">Все</button>
+                                <button class="action-btn secondary-btn" data-inbox-inline-filter="critical" style="padding:5px 12px; font-size:12px;">Критичные</button>
+                                <button class="action-btn secondary-btn" data-inbox-inline-filter="anomalies" style="padding:5px 12px; font-size:12px;">Аномалии</button>
+                                <button class="action-btn secondary-btn" data-inbox-inline-filter="gsheets" style="padding:5px 12px; font-size:12px;">GSheets</button>
+                                <button id="btnInboxInlineRefresh" class="icon-btn" title="Обновить" style="margin-left:auto;"><i class="fa-solid fa-rotate-right"></i></button>
+                            </div>
+                            <div id="inboxInlineSummary" style="font-size:12px; color:var(--text-secondary); margin-bottom:10px;"></div>
+                            <div id="inboxInlineBody">
+                                <p style="color:var(--text-secondary); padding:20px;">Загрузка…</p>
+                            </div>
+                        </div>
 
                         <!-- ==================== ТАБ 2: АНАЛИЗ ПЕРИОДА ==================== -->
                         <div data-analyzer-pane="period" style="display:none;">
