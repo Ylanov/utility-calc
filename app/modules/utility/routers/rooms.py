@@ -698,7 +698,14 @@ async def update_room(room_id: int, data: RoomUpdate, db: AsyncSession = Depends
             ),
         )
 
+    # Не затираем NOT NULL поля явным null: клиент мог прислать
+    # has_*_meter / is_singles_apartment = null (контракт RoomUpdate допускает
+    # Optional) → setattr NULL в nullable=False колонку = IntegrityError/500.
+    _non_null_cols = {"has_hw_meter", "has_cw_meter", "has_el_meter",
+                      "is_singles_apartment"}
     for key, value in update_data.items():
+        if key in _non_null_cols and value is None:
+            continue
         setattr(room, key, value)
 
     if singles_changed:
@@ -753,7 +760,11 @@ async def delete_room(room_id: int, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/bulk-meter-config", dependencies=[Depends(allow_management)])
-async def bulk_meter_config(data: RoomMeterConfigBulk, db: AsyncSession = Depends(get_db)):
+async def bulk_meter_config(
+    data: RoomMeterConfigBulk,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Применить конфигурацию счётчиков ко ВСЕМ комнатам дома/общежития одним
     действием — «настроил один раз на весь дом». Квартиры статичны: жильцы
     наследуют конфиг автоматически. Цель — dormitory_name ИЛИ street+house_number.
@@ -762,6 +773,7 @@ async def bulk_meter_config(data: RoomMeterConfigBulk, db: AsyncSession = Depend
         has_hw_meter=data.has_hw_meter,
         has_cw_meter=data.has_cw_meter,
         has_el_meter=data.has_el_meter,
+        updated_at=utcnow(),  # bulk-UPDATE не триггерит Python onupdate
     )
     if data.dormitory_name:
         q = q.where(Room.place_type == "dormitory",
@@ -776,6 +788,20 @@ async def bulk_meter_config(data: RoomMeterConfigBulk, db: AsyncSession = Depend
             detail="Укажите общежитие (dormitory_name) или дом (street + house_number)",
         )
     result = await db.execute(q)
+    # Аудит: массовая смена конфигурации счётчиков влияет на начисления всему
+    # дому/общежитию — фиксируем кто/что/сколько комнат.
+    from app.modules.utility.routers.admin_dashboard import write_audit_log
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action="bulk_meter_config", entity_type="room", entity_id=None,
+        details={
+            "target": data.dormitory_name or f"{data.street} {data.house_number}",
+            "has_hw_meter": data.has_hw_meter,
+            "has_cw_meter": data.has_cw_meter,
+            "has_el_meter": data.has_el_meter,
+            "updated_rooms": result.rowcount,
+        },
+    )
     await db.commit()
     return {"status": "ok", "updated_rooms": result.rowcount}
 

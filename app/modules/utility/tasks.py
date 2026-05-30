@@ -1559,12 +1559,27 @@ def scan_resident_problems_task():
     в колокольчике / Inbox / дневном брифинге.
     """
     async def _run():
-        from app.core.database import AsyncSessionLocal
+        # Свой engine на вызов (как auto_fill_missing_readings_task): asyncio.run
+        # создаёт новый event loop каждый запуск, а asyncpg-коннекты привязаны
+        # к loop'у создания. Модульный AsyncSessionLocal на QueuePool дал бы
+        # «Future attached to a different loop» при USE_PGBOUNCER=False.
+        from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession as _AS
+        from sqlalchemy.orm import sessionmaker as _smaker
         from app.modules.utility.services.resident_problem_scanner import (
             scan_resident_problems,
         )
-        async with AsyncSessionLocal() as db:
-            return await scan_resident_problems(db)
+        _engine = create_async_engine(
+            settings.DATABASE_URL_ASYNC,
+            echo=False, future=True, pool_pre_ping=True,
+            connect_args={"prepared_statement_cache_size": 0,
+                          "statement_cache_size": 0, "command_timeout": 60},
+        )
+        _mk = _smaker(bind=_engine, class_=_AS, expire_on_commit=False, autoflush=False)
+        try:
+            async with _mk() as db:
+                return await scan_resident_problems(db)
+        finally:
+            await _engine.dispose()
 
     try:
         result = asyncio.run(_run())

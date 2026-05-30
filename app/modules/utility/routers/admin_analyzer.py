@@ -1562,7 +1562,10 @@ async def list_high_delta_readings(
             MeterReading.period_id.isnot(None),
         )
         .order_by(desc(MeterReading.created_at))
-        .limit(2000)
+        # 10000 вместо 2000: при 320+ жильцах × многих периодах топ-2000 по
+        # created_at мог не содержать хронологически предыдущий reading →
+        # ложный is_initial / неверный prev. 10000 покрывает реальный объём.
+        .limit(10000)
     )
     rows = (await db.execute(stmt)).scalars().all()
 
@@ -1895,6 +1898,10 @@ async def ai_triage_reading(
         raw = raw.strip()
     try:
         verdict = _json.loads(raw)
+        # LLM мог вернуть валидный JSON, но не объект (массив/строку/число) —
+        # фронт ждёт dict с probable_cause/recommended_action.
+        if not isinstance(verdict, dict):
+            raise ValueError("verdict is not a JSON object")
     except (ValueError, TypeError):
         verdict = {
             "probable_cause": raw[:500],

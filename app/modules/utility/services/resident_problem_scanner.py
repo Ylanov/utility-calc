@@ -22,7 +22,7 @@ import logging
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import select, update
+from sqlalchemy import select, tuple_, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -231,16 +231,29 @@ async def scan_resident_problems(db: AsyncSession) -> dict:
             await _upsert_problem(db, user_id, p["type"], p["score"], p["details"])
             open_count += 1
 
-    # 5. Авто-resolve: open/acknowledged сигналы, НЕ обновлённые этим сканом
-    #    (last_seen_at < scan_start) — проблема исчезла.
-    await db.execute(
-        update(ResidentProblem)
-        .where(
-            ResidentProblem.status.in_(["open", "acknowledged"]),
-            ResidentProblem.last_seen_at < scan_start,
+    # 5. Авто-resolve: закрываем open/acknowledged сигналы, НЕ обнаруженные в
+    #    этом скане. Исключаем detected_keys ЯВНО (tuple notin_) — нельзя
+    #    полагаться только на last_seen_at < scan_start: при autoflush=False
+    #    обновлённый в этом же скане last_seen_at ещё НЕ записан в БД к моменту
+    #    UPDATE, и только что подтверждённый/обновлённый сигнал ложно попал бы
+    #    под условие (флип-флоп каждые 6ч + откат acknowledge админа).
+    #    Если в скане никого не нашли (пустое окно/сбой) — НЕ резолвим, чтобы
+    #    не стереть разом всю историю активных сигналов.
+    if by_user:
+        resolve_stmt = (
+            update(ResidentProblem)
+            .where(
+                ResidentProblem.status.in_(["open", "acknowledged"]),
+                ResidentProblem.last_seen_at < scan_start,
+            )
+            .values(status="resolved", resolved_at=scan_start)
         )
-        .values(status="resolved", resolved_at=scan_start)
-    )
+        if detected_keys:
+            resolve_stmt = resolve_stmt.where(
+                tuple_(ResidentProblem.user_id, ResidentProblem.problem_type)
+                .notin_(list(detected_keys))
+            )
+        await db.execute(resolve_stmt)
     await db.commit()
 
     logger.info(
