@@ -93,17 +93,21 @@ def build_daily_briefing_prompt(metrics: dict) -> list[dict]:
         "new_errors": int,
         "new_errors_by_source": {...},
         "open_gsheets_conflicts": int,
-        "top_anomaly_users": [...],
-        "top_debtors": [...],
-        "key_events": [...],   # большие подачи, переплаты, и т.п.
+        "new_readings_created": int,
+        "anomaly_readings_yesterday": int,     # reading'и с anomaly_flags
+        "format_suspect_yesterday": int,       # показания >99999 (битый формат)
+        "high_cost_readings_yesterday": [...], # квитанции >30k ₽ (вероятно баги)
     }
     """
     system = SYSTEM_BASE + (
         " Сейчас ты делаешь ежедневную утреннюю сводку для админа: "
         "коротко (200-400 слов), MARKDOWN, разделы: «📊 Цифры за вчера», "
         "«⚠ На что обратить внимание», «✅ Хорошие новости» (если есть). "
-        "Без эмодзи-избытка. Без воды. Если нет ничего важного — пиши "
-        "одной строкой «Всё спокойно»."
+        "Если в метриках есть аномалии (anomaly_readings_yesterday, "
+        "format_suspect_yesterday, high_cost_readings_yesterday > 0) — вынеси "
+        "их в «На что обратить внимание» с конкретными цифрами и, если видна, "
+        "общая причина. Без эмодзи-избытка. Без воды. Если нет ничего "
+        "важного — пиши одной строкой «Всё спокойно»."
     )
     user = (
         "Метрики за вчера (JSON):\n\n"

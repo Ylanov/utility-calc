@@ -14,7 +14,7 @@ import json
 import logging
 from datetime import datetime, timedelta
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, or_, select
 
 from app.core.database import AsyncSessionLocal
 from app.core.time_utils import utcnow
@@ -27,6 +27,7 @@ from app.modules.utility.models import (
     ErrorLog,
     GSheetsImportRow,
     MeterReading,
+    User,
 )
 
 logger = logging.getLogger(__name__)
@@ -202,12 +203,49 @@ async def _daily_briefing_run() -> dict:
             )
         )).scalar_one()
 
+        # ─── Блок аномалий за вчера (раздел «⚠ На что обратить внимание») ───
+        anomaly_count = (await db.execute(
+            select(func.count(MeterReading.id)).where(
+                MeterReading.created_at >= yesterday_start,
+                MeterReading.created_at < yesterday_end,
+                MeterReading.anomaly_flags.isnot(None),
+                MeterReading.anomaly_flags != "",
+            )
+        )).scalar_one()
+        format_suspect_count = (await db.execute(
+            select(func.count(MeterReading.id)).where(
+                MeterReading.created_at >= yesterday_start,
+                MeterReading.created_at < yesterday_end,
+                or_(MeterReading.hot_water > 99999,
+                    MeterReading.cold_water > 99999),
+            )
+        )).scalar_one()
+        # Дорогие квитанции (>30k ₽ — по опыту почти всегда баг данных).
+        high_cost_rows = (await db.execute(
+            select(MeterReading.id, MeterReading.total_cost, User.username)
+            .join(User, MeterReading.user_id == User.id, isouter=True)
+            .where(
+                MeterReading.created_at >= yesterday_start,
+                MeterReading.created_at < yesterday_end,
+                MeterReading.total_cost > 30000,
+            )
+            .order_by(desc(MeterReading.total_cost))
+            .limit(5)
+        )).all()
+        high_cost_list = [
+            {"reading_id": rid, "total_cost": float(tc or 0), "username": un}
+            for (rid, tc, un) in high_cost_rows
+        ]
+
         metrics = {
             "period": yesterday_start.date().isoformat(),
             "new_errors": new_errors,
             "new_errors_by_source": errors_by_source,
             "open_gsheets_conflicts": open_gsheets_conflicts,
             "new_readings_created": new_readings,
+            "anomaly_readings_yesterday": anomaly_count,
+            "format_suspect_yesterday": format_suspect_count,
+            "high_cost_readings_yesterday": high_cost_list,
         }
 
         messages = build_daily_briefing_prompt(metrics)
