@@ -99,22 +99,35 @@ def _detect_for_user(
     submitted = [r for r in series if r is not None]
 
     # ---------- NOT_SUBMITTING ----------
-    # Считаем сколько последних периодов подряд НЕТ подачи (с конца).
+    # «Реальная» подача = НЕ авто-добивка. auto_fill_missing_readings_task
+    # ежедневно создаёт approved-readings с флагом AUTO_NORM/AUTO_GENERATED для
+    # неподавших — если считать их подачей, NOT_SUBMITTING никогда не сработает
+    # в закрытых периодах (всё «добито»). Поэтому для gap авто/ручные служебные
+    # readings = «не подавал».
+    def _is_real_submission(r) -> bool:
+        if r is None:
+            return False
+        fl = r.anomaly_flags or ""
+        return not any(m in fl for m in (
+            "AUTO_NORM", "AUTO_GENERATED", "AUTO_NO_HISTORY", "MANUAL_RECEIPT"))
+
+    real_submitted = [r for r in series if _is_real_submission(r)]
     gap = 0
     for r in reversed(series):
-        if r is None:
+        if not _is_real_submission(r):
             gap += 1
         else:
             break
-    # Сигналим только если жилец КОГДА-ТО подавал (есть baseline) и молчит N+.
-    if submitted and gap >= NOT_SUBMITTING_PERIODS:
+    # Сигналим только если жилец КОГДА-ТО реально подавал (есть baseline) и
+    # реально молчит N+ периодов (авто-добивка молчанием не считается).
+    if real_submitted and gap >= NOT_SUBMITTING_PERIODS:
         problems.append({
             "type": "NOT_SUBMITTING",
             "score": min(40 + gap * 10, 100),
             "details": {"periods_silent": gap,
-                        "last_period": next(
+                        "last_real_period": next(
                             (p.name for p, r in zip(periods_chrono[::-1], series[::-1])
-                             if r is not None), None)},
+                             if _is_real_submission(r)), None)},
         })
 
     # ---------- FORMAT_SUSPECT ----------
