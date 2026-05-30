@@ -556,6 +556,162 @@ async def get_users_with_debts(
 
 
 # =========================================================================
+# ЗЕРКАЛО ПО КВАРТИРАМ: та же отчётность, но агрегация по ПОМЕЩЕНИЮ, без ФИО.
+# Долг квартиры = сумма долгов всех жильцов комнаты (по room_id). Адрес вместо
+# ФИО; кто живёт — в детализации /rooms/{id}/residents-finance.
+# =========================================================================
+@router.get("/rooms-status", summary="Список квартир с долгами (агрегация по помещению)")
+async def get_rooms_with_debts(
+        page: int = Query(1, ge=1),
+        limit: int = Query(50, ge=1, le=500),
+        search: str | None = Query(None),
+        only_debtors: bool = Query(False),
+        only_overpaid: bool = Query(False),
+        has_data: bool = Query(False),
+        dormitory: Optional[str] = Query(None),
+        place_type: Optional[str] = Query(None, pattern="^(dormitory|house)$"),
+        min_debt: Optional[float] = Query(None, ge=0),
+        sort_by: str = Query("room", pattern="^(room|debt|overpay|total)$"),
+        sort_dir: str = Query("asc", pattern="^(asc|desc)$"),
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+):
+    if current_user.role not in ("financier", "accountant", "admin"):
+        raise HTTPException(status_code=403, detail="Доступ запрещен")
+    offset = (page - 1) * limit
+    active = (await db.execute(
+        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
+    )).scalars().first()
+    period_id = active.id if active else None
+
+    d209 = func.coalesce(func.sum(MeterReading.debt_209), 0).label("debt_209")
+    o209 = func.coalesce(func.sum(MeterReading.overpayment_209), 0).label("overpayment_209")
+    d205 = func.coalesce(func.sum(MeterReading.debt_205), 0).label("debt_205")
+    o205 = func.coalesce(func.sum(MeterReading.overpayment_205), 0).label("overpayment_205")
+    od209 = func.coalesce(func.sum(MeterReading.obor_debit_209), 0).label("obor_debit_209")
+    oc209 = func.coalesce(func.sum(MeterReading.obor_credit_209), 0).label("obor_credit_209")
+    od205 = func.coalesce(func.sum(MeterReading.obor_debit_205), 0).label("obor_debit_205")
+    oc205 = func.coalesce(func.sum(MeterReading.obor_credit_205), 0).label("obor_credit_205")
+    total = func.coalesce(func.sum(MeterReading.total_cost), 0).label("current_total_cost")
+    residents = func.count(func.distinct(MeterReading.user_id)).label("residents_count")
+
+    stmt = select(
+        Room, d209, o209, d205, o205, total, od209, oc209, od205, oc205, residents,
+    ).outerjoin(
+        MeterReading,
+        (Room.id == MeterReading.room_id) & (MeterReading.period_id == period_id),
+    )
+    search_condition = None
+    if search:
+        sv = f"%{search.lower()}%"
+        search_condition = or_(
+            func.lower(Room.dormitory_name).like(sv),
+            func.lower(Room.room_number).like(sv),
+            func.lower(Room.street).like(sv),
+            func.lower(Room.house_number).like(sv),
+            func.lower(Room.apartment_number).like(sv),
+        )
+        stmt = stmt.where(search_condition)
+    if dormitory:
+        stmt = stmt.where(Room.dormitory_name == dormitory)
+    if place_type:
+        stmt = stmt.where(Room.place_type == place_type)
+    stmt = stmt.group_by(Room.id)
+    if only_debtors:
+        stmt = stmt.having((d209 + d205) > 0)
+    if only_overpaid:
+        stmt = stmt.having((o209 + o205) > 0)
+    if min_debt is not None:
+        stmt = stmt.having((d209 + d205) >= min_debt)
+    if has_data:
+        stmt = stmt.having(
+            (d209 + o209 + d205 + o205 + od209 + oc209 + od205 + oc205) > 0
+        )
+
+    sort_map = {
+        "room": (Room.dormitory_name, Room.room_number, Room.street, Room.house_number),
+        "debt": ((d209 + d205).label("__d"),),
+        "overpay": ((o209 + o205).label("__o"),),
+        "total": (total,),
+    }
+    direction = desc if sort_dir == "desc" else asc
+    order_cols = [direction(c).nulls_last() for c in sort_map[sort_by]]
+    order_cols.append(asc(Room.id))
+    stmt = stmt.order_by(*order_cols).limit(limit).offset(offset)
+
+    count_stmt = select(func.count(Room.id))
+    if search_condition is not None:
+        count_stmt = count_stmt.where(search_condition)
+    if dormitory:
+        count_stmt = count_stmt.where(Room.dormitory_name == dormitory)
+    if place_type:
+        count_stmt = count_stmt.where(Room.place_type == place_type)
+    if only_debtors or only_overpaid or min_debt is not None or has_data:
+        inner = stmt.with_only_columns(Room.id).limit(None).offset(None).order_by(None).subquery()
+        count_stmt = select(func.count()).select_from(inner)
+    total_items = (await db.execute(count_stmt)).scalar_one()
+
+    rows = (await db.execute(stmt)).all()
+    items = []
+    for row in rows:
+        room = row[0]
+        items.append({
+            "room_id": room.id,
+            "address": room.format_address,
+            "place_type": room.place_type,
+            "dormitory_name": room.dormitory_name,
+            "room_number": room.room_number,
+            "residents_count": int(row[10] or 0),
+            "debt_209": row[1], "overpayment_209": row[2],
+            "debt_205": row[3], "overpayment_205": row[4],
+            "current_total_cost": row[5],
+            "obor_debit_209": row[6], "obor_credit_209": row[7],
+            "obor_debit_205": row[8], "obor_credit_205": row[9],
+        })
+    return {"total": total_items, "page": page, "size": limit, "items": items}
+
+
+@router.get("/rooms/{room_id}/residents-finance",
+            summary="Финансы жильцов конкретной квартиры (раскрытие строки)")
+async def room_residents_finance(
+        room_id: int,
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+):
+    if current_user.role not in ("financier", "accountant", "admin"):
+        raise HTTPException(status_code=403, detail="Доступ запрещен")
+    active = (await db.execute(
+        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
+    )).scalars().first()
+    period_id = active.id if active else None
+
+    d209 = func.coalesce(func.sum(MeterReading.debt_209), 0)
+    o209 = func.coalesce(func.sum(MeterReading.overpayment_209), 0)
+    d205 = func.coalesce(func.sum(MeterReading.debt_205), 0)
+    o205 = func.coalesce(func.sum(MeterReading.overpayment_205), 0)
+    total = func.coalesce(func.sum(MeterReading.total_cost), 0)
+
+    stmt = select(User, d209, o209, d205, o205, total).outerjoin(
+        MeterReading,
+        (User.id == MeterReading.user_id) & (MeterReading.period_id == period_id),
+    ).where(
+        User.room_id == room_id, User.is_deleted.is_(False),
+    ).group_by(User.id).order_by(User.username)
+    rows = (await db.execute(stmt)).all()
+    return {
+        "room_id": room_id,
+        "residents": [{
+            "user_id": r[0].id,
+            "username": r[0].username,
+            "full_name": getattr(r[0], "full_name", None),
+            "debt_209": r[1], "overpayment_209": r[2],
+            "debt_205": r[3], "overpayment_205": r[4],
+            "current_total_cost": r[5],
+        } for r in rows],
+    }
+
+
+# =========================================================================
 # NEW: KPI / STATS / EXPORT / HISTORY / UNDO / RECONCILE
 # =========================================================================
 
