@@ -1254,6 +1254,13 @@
                                     <label style="font-size:12px; color:var(--text-secondary); display:flex; align-items:center; gap:4px; cursor:pointer;" title="Начальные показания (без предыдущего reading) — это абсолютное значение счётчика при первой подаче, а не расход за месяц. По умолчанию скрыты, чтобы не засорять список.">
                                         <input type="checkbox" id="highDeltaIncludeInitial"> показать начальные
                                     </label>
+                                    <label style="font-size:12px; color:var(--text-secondary);">
+                                        Сортировка:
+                                        <select id="highDeltaSort" style="padding:4px 8px; font-size:12px;">
+                                            <option value="delta" selected>по дельте</option>
+                                            <option value="cost">по сумме ₽</option>
+                                        </select>
+                                    </label>
                                     <button id="btnLoadHighDelta" class="action-btn warning-btn" style="padding:6px 14px; font-size:13px;">
                                         <i class="fa-solid fa-bolt-lightning"></i> Найти
                                     </button>

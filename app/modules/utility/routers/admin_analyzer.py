@@ -26,7 +26,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, func, desc
+from sqlalchemy import select, func, desc, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -1243,6 +1243,48 @@ async def get_inbox(
                 "available_actions": ["open", "reject"],
             })
 
+    # 3) Битый формат показаний (>99999 = потеряна десятичная точка) — критично,
+    #    т.к. даёт счёт в сотни тысяч ₽ (инцидент 1.48 млрд май 2026).
+    if kind in ("all", "anomalies"):
+        fmt_q = (
+            select(MeterReading)
+            .options(
+                selectinload(MeterReading.user).selectinload(User.room),
+                selectinload(MeterReading.period),
+            )
+            .where(
+                MeterReading.created_at >= cutoff,
+                or_(MeterReading.hot_water > 99999,
+                    MeterReading.cold_water > 99999),
+            )
+            .order_by(MeterReading.total_cost.desc().nullslast())
+            .limit(limit)
+        )
+        for r in (await db.execute(fmt_q)).scalars().all():
+            room = r.user.room if r.user else None
+            issues.append({
+                "issue_id": f"format:{r.id}",
+                "kind": "format",
+                "severity": "critical",
+                "title": "Битый формат показания (потеряна точка)",
+                "flag": "FORMAT_SUSPECT",
+                "score": 90,
+                "context": {
+                    "reading_id": r.id,
+                    "user_id": r.user.id if r.user else None,
+                    "username": r.user.username if r.user else None,
+                    "period_id": r.period_id,
+                    "period_name": r.period.name if r.period else None,
+                    "dormitory": room.dormitory_name if room else None,
+                    "room_number": room.room_number if room else None,
+                    "total_cost": float(r.total_cost or 0),
+                    "hot_water": float(r.hot_water) if r.hot_water is not None else None,
+                    "cold_water": float(r.cold_water) if r.cold_water is not None else None,
+                },
+                "suggested_action": "verify",
+                "available_actions": ["verify", "ignore"],
+            })
+
     # Сортируем итоговый список: critical → high → medium → low,
     # внутри по score убыванию.
     sev_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
@@ -1256,6 +1298,7 @@ async def get_inbox(
         "summary": {
             "anomalies": sum(1 for i in issues if i["kind"] == "anomaly"),
             "gsheets":   sum(1 for i in issues if i["kind"] == "gsheets"),
+            "format":    sum(1 for i in issues if i["kind"] == "format"),
             "critical":  sum(1 for i in issues if i["severity"] == "critical"),
             "high":      sum(1 for i in issues if i["severity"] == "high"),
         },
@@ -1391,6 +1434,22 @@ async def resolve_inbox_issue(
 
         raise HTTPException(400, f"Действие {data.action!r} не применимо к gsheets")
 
+    # === FORMAT (битый формат показания) ===
+    if kind == "format":
+        # verify/ignore — no-op на бэке (фронт откроет reading в реестре для
+        # ручного исправления точки). ignore логируем для аудита.
+        if data.action in ("verify", "ignore"):
+            if data.action == "ignore":
+                await write_audit_log(
+                    db, current_user.id, current_user.username,
+                    action="inbox_resolve_ignore_format", entity_type="meter_reading",
+                    entity_id=entity_id,
+                    details={"note": data.note},
+                )
+                await db.commit()
+            return {"status": "ok", "action": data.action}
+        raise HTTPException(400, f"Действие {data.action!r} не применимо к format")
+
     raise HTTPException(400, f"Неизвестный kind: {kind!r}")
 
 
@@ -1465,6 +1524,9 @@ async def list_high_delta_readings(
                               description="Включать начальные показания (нет предыдущего "
                                           "reading). По умолчанию скрыты: дельта «от 0» = "
                                           "абсолютное показание счётчика, а не расход за месяц."),
+    sort_by: str = Query("delta",
+                              description="Сортировка: delta (по приросту м³) | "
+                                          "cost (по сумме квитанции — деньги важнее)"),
     limit: int = Query(200, ge=1, le=1000),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -1591,11 +1653,12 @@ async def list_high_delta_readings(
                 "anomaly_flags": r.anomaly_flags,
             })
 
-    # Сортируем по убыванию дельты, режем по лимиту.
-    items.sort(key=lambda it: it["delta_max"], reverse=True)
+    # Сортировка: по сумме квитанции (деньги важнее) или по дельте.
+    sort_field = "total_cost" if sort_by == "cost" else "delta_max"
+    items.sort(key=lambda it: it[sort_field], reverse=True)
     items = items[:limit]
 
-    return {"count": len(items), "threshold": float(th), "items": items}
+    return {"count": len(items), "threshold": float(th), "sort_by": sort_by, "items": items}
 
 
 @router.get("/cloned-baselines")

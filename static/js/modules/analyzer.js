@@ -1811,8 +1811,9 @@ export const AnalyzerModule = {
         try {
             const includeInitial = document.getElementById('highDeltaIncludeInitial')?.checked
                 ? '&include_initial=true' : '';
+            const sortBy = document.getElementById('highDeltaSort')?.value || 'delta';
             const data = await api.get(
-                `/admin/analyzer/high-delta-readings?threshold=${threshold}&limit=300${includeInitial}`
+                `/admin/analyzer/high-delta-readings?threshold=${threshold}&sort_by=${sortBy}&limit=300${includeInitial}`
             );
             this._lastHighDeltaData = data;  // для bulk-кнопки
             this._renderHighDelta(data);
