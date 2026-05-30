@@ -764,6 +764,36 @@ async def debts_stats(
     )
     overpayers_count = (await db.execute(overpayers_q)).scalar_one()
 
+    # --- Учёт по КВАРТИРАМ (помещениям), а не по жильцам ---
+    # Квартир с долгом: distinct room_id где сумма debt_209+205 > 0.
+    rooms_debt_q = (
+        select(func.count(func.distinct(MeterReading.room_id)))
+        .where(
+            MeterReading.period_id == period_id,
+            MeterReading.room_id.isnot(None),
+            (MeterReading.debt_209 > 0) | (MeterReading.debt_205 > 0),
+        )
+    )
+    rooms_with_debt_count = (await db.execute(rooms_debt_q)).scalar_one()
+
+    # Квартир с переплатой
+    rooms_over_q = (
+        select(func.count(func.distinct(MeterReading.room_id)))
+        .where(
+            MeterReading.period_id == period_id,
+            MeterReading.room_id.isnot(None),
+            (MeterReading.overpayment_209 > 0) | (MeterReading.overpayment_205 > 0),
+        )
+    )
+    rooms_overpaying_count = (await db.execute(rooms_over_q)).scalar_one()
+
+    # Всего квартир с данными в периоде (для шапки в режиме «Квартиры»)
+    total_rooms_q = (
+        select(func.count(func.distinct(MeterReading.room_id)))
+        .where(MeterReading.period_id == period_id, MeterReading.room_id.isnot(None))
+    )
+    total_rooms = (await db.execute(total_rooms_q)).scalar_one()
+
     # Всего активных жильцов
     total_users_q = select(func.count(User.id)).where(
         User.is_deleted.is_(False), User.role == "user",
@@ -773,6 +803,7 @@ async def debts_stats(
     total_debt = float(total_debt_209 or 0) + float(total_debt_205 or 0)
     total_over = float(total_over_209 or 0) + float(total_over_205 or 0)
     avg_debt = (total_debt / debtors_count) if debtors_count else 0.0
+    avg_debt_room = (total_debt / rooms_with_debt_count) if rooms_with_debt_count else 0.0
 
     # Последний импорт
     last_log = (await db.execute(
@@ -814,6 +845,11 @@ async def debts_stats(
         "total_overpay_205": float(total_over_205 or 0),
         "total_overpay": round(total_over, 2),
         "avg_debt_per_debtor": round(avg_debt, 2),
+        # Учёт по квартирам (помещениям)
+        "rooms_with_debt_count": int(rooms_with_debt_count or 0),
+        "rooms_overpaying_count": int(rooms_overpaying_count or 0),
+        "total_rooms": int(total_rooms or 0),
+        "avg_debt_per_room": round(avg_debt_room, 2),
         "readings_count": int(readings_count or 0),
         "last_import": {
             "id": last_log.id,

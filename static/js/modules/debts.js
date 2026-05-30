@@ -268,10 +268,20 @@ export const DebtsModule = {
             ? `счёт ${lastImp.account_type}, ${fmtDateTime(lastImp.started_at)} · ${lastImp.started_by || '—'}`
             : 'импортов ещё не было';
 
+        // Режим «Квартиры»: считаем помещения, а не людей.
+        const rooms = this.state.mode === 'rooms';
+
         this.dom.stats.innerHTML = [
-            card('#f5f3ff', '#7c3aed', '📅', s.period_name || '—', 'Активный период', `всего жильцов: ${s.total_users}`),
-            card('#fef2f2', '#dc2626', '🔴', s.debtors_count, 'Должников', `средний долг: ${fmtMoney(s.avg_debt_per_debtor)} ₽`),
-            card('#ecfdf5', '#10b981', '🟢', s.overpayers_count, 'С переплатами', `сумма: ${fmtMoney(s.total_overpay)} ₽`),
+            card('#f5f3ff', '#7c3aed', '📅', s.period_name || '—', 'Активный период',
+                rooms ? `всего квартир: ${s.total_rooms ?? '—'}` : `всего жильцов: ${s.total_users}`),
+            rooms
+                ? card('#fef2f2', '#dc2626', '🏠', s.rooms_with_debt_count ?? 0, 'Квартир с долгом',
+                    `средний долг: ${fmtMoney(s.avg_debt_per_room)} ₽ · жильцов-должников: ${s.debtors_count}`)
+                : card('#fef2f2', '#dc2626', '🔴', s.debtors_count, 'Должников',
+                    `средний долг: ${fmtMoney(s.avg_debt_per_debtor)} ₽`),
+            rooms
+                ? card('#ecfdf5', '#10b981', '🟢', s.rooms_overpaying_count ?? 0, 'Квартир с переплатой', `сумма: ${fmtMoney(s.total_overpay)} ₽`)
+                : card('#ecfdf5', '#10b981', '🟢', s.overpayers_count, 'С переплатами', `сумма: ${fmtMoney(s.total_overpay)} ₽`),
             card('#fff7ed', '#ea580c', '💰', `${fmtMoney(s.total_debt)} ₽`, 'Суммарный долг', `209: ${fmtMoney(s.total_debt_209)} · 205: ${fmtMoney(s.total_debt_205)}`),
             card('#eff6ff', '#2563eb', '📊', s.readings_count, 'Показаний в периоде', ''),
             card('#f9fafb', '#6b7280', '⏱️', lastImp ? lastImp.status : '—', 'Последний импорт', lastHtml),
@@ -721,6 +731,7 @@ export const DebtsModule = {
         if (bu) { bu.className = 'action-btn ' + (mode === 'users' ? 'primary-btn' : 'secondary-btn'); bu.style.cssText = sty; }
         if (br) { br.className = 'action-btn ' + (mode === 'rooms' ? 'primary-btn' : 'secondary-btn'); br.style.cssText = sty; }
         this.loadUsers();
+        this.loadStats();  // KPI-плашка зависит от режима (квартир с долгом / должников)
     },
 
     updatePagination() {

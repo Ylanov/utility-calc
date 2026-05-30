@@ -1720,6 +1720,11 @@
 
                         <!-- Фильтры + поиск -->
                         <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:14px; padding:10px 12px; background:var(--bg-page); border-radius:8px;">
+                            <!-- Режим учёта: по жильцам (ФИО) или по квартирам (адрес, агрегат) -->
+                            <div style="display:inline-flex; border:1px solid var(--border-color); border-radius:8px; overflow:hidden; background:var(--bg-card);">
+                                <button type="button" data-summary-mode="users" class="action-btn primary-btn" style="border-radius:0; padding:6px 12px; font-size:12px;">👤 Жильцы</button>
+                                <button type="button" data-summary-mode="rooms" class="action-btn secondary-btn" style="border-radius:0; padding:6px 12px; font-size:12px;">🏠 Квартиры</button>
+                            </div>
                             <input type="text" id="summarySearch" placeholder="Поиск по ФИО или комнате…" style="flex:1; min-width:200px; padding:7px 10px; font-size:13px;">
                             <div role="tablist" style="display:inline-flex; border:1px solid var(--border-color); border-radius:8px; overflow:hidden; background:var(--bg-card);">
                                 <button type="button" data-summary-filter="all" class="action-btn primary-btn" style="border-radius:0; padding:6px 12px; font-size:12px;">Все</button>

@@ -64,9 +64,13 @@ export const SummaryModule = {
         pollTimer: null,
         // Фильтры финансовой отчётности
         filter: 'all',     // 'all'|'debtors'|'overpaid'|'anomaly'|'missing'
+        // Режим учёта: 'users' (по жильцам, ФИО) или 'rooms' (по квартирам,
+        // агрегат по всем жильцам комнаты). Следим за помещениями, не людьми.
+        mode: 'users',
         search: '',
         expandedDorms: new Set(),          // раскрытые карточки общежитий
         expandedResidents: new Set(),      // раскрытые жильцы (user_id)
+        expandedRooms: new Set(),          // раскрытые квартиры (room_id) в режиме «Квартиры»
         residentDetailCache: new Map(),    // user_id -> detail JSON (фетчится по клику)
         residentDetailLoading: new Set(),  // user_id -> загрузка идёт
         // Текущая загруженная сводка v2
@@ -118,6 +122,20 @@ export const SummaryModule = {
             btn.addEventListener('click', () => {
                 this.state.filter = btn.dataset.summaryFilter;
                 document.querySelectorAll('[data-summary-filter]').forEach(b => {
+                    b.classList.toggle('primary-btn',   b === btn);
+                    b.classList.toggle('secondary-btn', b !== btn);
+                });
+                this.loadData();
+            });
+        });
+
+        // Режим учёта: Жильцы / Квартиры
+        document.querySelectorAll('[data-summary-mode]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const mode = btn.dataset.summaryMode;
+                if (this.state.mode === mode) return;
+                this.state.mode = mode;
+                document.querySelectorAll('[data-summary-mode]').forEach(b => {
                     b.classList.toggle('primary-btn',   b === btn);
                     b.classList.toggle('secondary-btn', b !== btn);
                 });
@@ -209,6 +227,19 @@ export const SummaryModule = {
                 return;
             }
 
+            // Разворот квартиры (режим «Квартиры») — список жильцов комнаты.
+            const roomRow = e.target.closest('[data-toggle-room]');
+            if (roomRow) {
+                const rid = Number(roomRow.dataset.toggleRoom);
+                if (this.state.expandedRooms.has(rid)) {
+                    this.state.expandedRooms.delete(rid);
+                } else {
+                    this.state.expandedRooms.add(rid);
+                }
+                this.renderSummary();
+                return;
+            }
+
             const resRow = e.target.closest('[data-toggle-resident]');
             if (resRow) {
                 const uid = Number(resRow.dataset.toggleResident);
@@ -288,6 +319,7 @@ export const SummaryModule = {
         this.state.expandedResidents.clear();
         this.state.residentDetailCache.clear();
         this.state.residentDetailLoading.clear();
+        this.state.expandedRooms.clear();
 
         this.dom.kpis.innerHTML = '<div style="grid-column: 1/-1; padding:14px; text-align:center; color:var(--text-secondary);">Загрузка…</div>';
         this.dom.topRow.innerHTML = '';
@@ -299,6 +331,7 @@ export const SummaryModule = {
         if (this.state.filter === 'anomaly')  params.set('only_anomaly', 'true');
         if (this.state.filter === 'missing')  params.set('only_missing', 'true');
         if (this.state.search) params.set('search', this.state.search);
+        if (this.state.mode === 'rooms') params.set('group_by', 'room');
 
         try {
             const data = await api.get(`/admin/summary/v2?${params}`, { signal: this.state.controller.signal });
@@ -314,18 +347,22 @@ export const SummaryModule = {
 
     renderKPI(d) {
         const k = d.kpi || {};
+        const rooms = (d.group_by || this.state.mode) === 'room' || this.state.mode === 'rooms';
         const card = (label, value, color, hint) => `
             <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; padding:14px;">
                 <div style="font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.5px;">${esc(label)}</div>
                 <div style="font-size:20px; font-weight:700; color:${color}; margin:4px 0 2px;">${value}</div>
                 ${hint ? `<div style="font-size:11px; color:var(--text-tertiary);">${esc(hint)}</div>` : ''}
             </div>`;
+        const countHint = rooms ? `${k.rooms_count ?? 0} квартир` : `${k.residents_count ?? 0} жильцов`;
+        const missingHint = rooms ? 'квартир без подачи' : 'жильцы не подали';
+        const flaggedLabel = rooms ? 'Проблемных квартир' : 'Аномалий';
         this.dom.kpis.innerHTML = [
-            card('Всего начислено', fmtMoney(k.total_billed),     '#059669', `${k.residents_count} жильцов`),
+            card('Всего начислено', fmtMoney(k.total_billed),     '#059669', countHint),
             card('Долгов',          fmtMoney(k.total_debt),       k.total_debt > 0 ? '#dc2626' : '#10b981', 'к возврату'),
             card('Переплат',        fmtMoney(k.total_overpay),    k.total_overpay > 0 ? '#7c3aed' : '#9ca3af', 'аванс'),
-            card('Аномалий',        String(k.flagged_count || 0), k.flagged_count > 0 ? '#f59e0b' : '#10b981', 'требуют внимания'),
-            card('Без квитанции',   String(k.missing_count || 0), k.missing_count > 0 ? '#dc2626' : '#10b981', 'жильцы не подали'),
+            card(flaggedLabel,      String(k.flagged_count || 0), k.flagged_count > 0 ? '#f59e0b' : '#10b981', 'требуют внимания'),
+            card('Без квитанции',   String(k.missing_count || 0), k.missing_count > 0 ? '#dc2626' : '#10b981', missingHint),
         ].join('');
     },
 
@@ -336,14 +373,22 @@ export const SummaryModule = {
             if (!items.length) {
                 return '<div style="padding:14px; color:var(--text-secondary); font-size:12px;">— нет —</div>';
             }
-            return items.map(r => `
+            return items.map(r => {
+                // Режим «Квартиры»: главная строка — адрес, подпись — кол-во жильцов.
+                const isRoom = r.room_id !== undefined && r.username === undefined;
+                const mainLine = isRoom ? (r.address || `комн. ${r.room_number || '—'}`) : r.username;
+                const subLine = isRoom
+                    ? `${r.residents_count || 0} чел.`
+                    : `комн. ${r.room_number || '—'}`;
+                return `
                 <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 12px; border-bottom:1px solid var(--border-color);">
                     <div style="flex:1; min-width:0;">
-                        <div style="font-weight:600; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(r.username)}</div>
-                        <div style="color:var(--text-secondary); font-size:11px;">комн. ${esc(r.room_number || '—')}</div>
+                        <div style="font-weight:600; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(mainLine)}</div>
+                        <div style="color:var(--text-secondary); font-size:11px;">${esc(subLine)}</div>
                     </div>
                     <div style="font-weight:700; color:${color}; white-space:nowrap;">${fmtMoney(r[fld])}</div>
-                </div>`).join('');
+                </div>`;
+            }).join('');
         };
         this.dom.topRow.innerHTML = `
             <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; overflow:hidden;">
@@ -395,7 +440,7 @@ export const SummaryModule = {
                         ${flagBadge}
                     </div>
                     <div style="color:var(--text-secondary); font-size:12px; margin-top:2px;">
-                        ${d.residents_count} жильцов · начислено ${fmtMoney(d.total_billed)}
+                        ${d.rooms_count !== undefined ? `${d.rooms_count} квартир` : `${d.residents_count} жильцов`} · начислено ${fmtMoney(d.total_billed)}
                         ${d.total_overpay > 0 ? ` · переплат ${fmtMoney(d.total_overpay)}` : ''}
                     </div>
                 </div>
@@ -405,6 +450,31 @@ export const SummaryModule = {
     },
 
     _renderDormBody(d) {
+        // Режим «Квартиры»: таблица по помещениям (адрес, агрегат).
+        if (Array.isArray(d.rooms)) {
+            const rows = d.rooms.map(r => this._renderRoomRow(r)).join('');
+            return `
+                <div style="border-top:1px solid var(--border-color); overflow-x:auto;">
+                    <table style="width:100%; border-collapse:collapse; min-width:980px; font-size:13px;">
+                        <thead style="background:var(--bg-page); color:var(--text-secondary); font-size:11px; text-transform:uppercase;">
+                            <tr>
+                                <th style="text-align:left; padding:8px 10px;">Квартира</th>
+                                <th style="text-align:center; padding:8px 10px;">Жильцов</th>
+                                <th style="text-align:right; padding:8px 10px;">209 (Комм.)</th>
+                                <th style="text-align:right; padding:8px 10px;">205 (Найм)</th>
+                                <th style="text-align:right; padding:8px 10px;">Итого</th>
+                                <th style="text-align:right; padding:8px 10px;">Δ vs прошлый</th>
+                                <th style="text-align:center; padding:8px 10px;">Динамика</th>
+                                <th style="text-align:right; padding:8px 10px;">Долг</th>
+                                <th style="text-align:right; padding:8px 10px;">Переплата</th>
+                                <th style="text-align:left; padding:8px 10px;">Флаги</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>`;
+        }
+
         const rows = d.residents.map(r => this._renderResidentRow(r)).join('');
         return `
             <div style="border-top:1px solid var(--border-color); overflow-x:auto;">
@@ -427,6 +497,111 @@ export const SummaryModule = {
                     <tbody>${rows}</tbody>
                 </table>
             </div>`;
+    },
+
+    // Строка квартиры (агрегат по жильцам комнаты). Клик — разворот списка
+    // жильцов этой квартиры (данные уже встроены в ответ, без доп. запроса).
+    _renderRoomRow(r) {
+        const isExpanded = this.state.expandedRooms.has(r.room_id);
+        const deltaCell = (() => {
+            if (r.delta_amount === null || r.delta_amount === undefined) return '<span style="color:var(--text-tertiary);">—</span>';
+            const sign = r.delta_amount > 0 ? '+' : '';
+            const color = r.delta_amount > 0 ? '#dc2626' : r.delta_amount < 0 ? '#10b981' : '#6b7280';
+            const arrow = r.delta_amount > 0 ? '▲' : r.delta_amount < 0 ? '▼' : '—';
+            const pctText = r.delta_percent != null ? ` (${sign}${r.delta_percent.toFixed(1)}%)` : '';
+            return `<span style="color:${color}; font-weight:600;">${arrow} ${sign}${r.delta_amount.toFixed(2)}</span><span style="color:${color}; font-size:11px;">${pctText}</span>`;
+        })();
+
+        const allFlags = [...(r.finance_flags || []), ...(r.meter_flags || []).slice(0, 2)];
+        const flagsHtml = allFlags.map(f => {
+            const m = FLAG_META[f] || { color: '#6b7280', bg: '#f3f4f6', icon: 'fa-tag', title: f };
+            return `<span title="${esc(m.title)} (${esc(f)})" style="display:inline-block; padding:2px 6px; border-radius:8px; background:${m.bg}; color:${m.color}; font-size:10px; font-weight:600; margin-right:3px; margin-bottom:2px; white-space:nowrap;">
+                <i class="fa-solid ${m.icon}"></i> ${esc(m.title)}
+            </span>`;
+        }).join('');
+
+        const debtCell = r.debt > 0
+            ? `<span style="color:#dc2626; font-weight:700;">${fmtMoney(r.debt)}</span>`
+            : '<span style="color:var(--text-tertiary);">—</span>';
+        const overCell = r.overpayment > 0
+            ? `<span style="color:#7c3aed; font-weight:700;">${fmtMoney(r.overpayment)}</span>`
+            : '<span style="color:var(--text-tertiary);">—</span>';
+
+        const missingBadge = r.missing_count > 0
+            ? `<span style="background:#fee2e2; color:#991b1b; padding:1px 6px; border-radius:8px; font-size:10px; font-weight:600; margin-left:6px;">${r.missing_count} без подачи</span>`
+            : '';
+
+        const mainRow = `
+            <tr data-toggle-room="${r.room_id}" style="border-bottom:1px solid var(--border-color); cursor:pointer; ${isExpanded ? 'background:rgba(59,130,246,0.05);' : ''}">
+                <td style="padding:8px 10px;">
+                    <div style="font-weight:600;">
+                        <i class="fa-solid fa-chevron-${isExpanded ? 'down' : 'right'}" style="color:var(--text-tertiary); font-size:10px; margin-right:4px;"></i>
+                        ${esc(r.address || ('комн. ' + (r.room_number || '—')))}${missingBadge}
+                    </div>
+                    <div style="color:var(--text-secondary); font-size:11px;">${esc(r.area || 0)}м²${r.place_type === 'house' ? ' · дом' : ''}</div>
+                </td>
+                <td style="padding:8px 10px; text-align:center; font-weight:600;">${r.residents_count}</td>
+                <td style="padding:8px 10px; text-align:right; font-family:monospace;">${Number(r.total_209 || 0).toFixed(2)}</td>
+                <td style="padding:8px 10px; text-align:right; font-family:monospace;">${Number(r.total_205 || 0).toFixed(2)}</td>
+                <td style="padding:8px 10px; text-align:right; font-family:monospace; font-weight:700;">
+                    ${(() => {
+                        const tc = Number(r.total_cost || 0);
+                        if (tc < 0) return `<span style="color:#7c3aed;">${fmtMoney(Math.abs(tc))} (остаток)</span>`;
+                        if (tc === 0) return '<span style="color:#9ca3af;">0,00 ₽</span>';
+                        return `<span style="color:#059669;">${fmtMoney(tc)}</span>`;
+                    })()}
+                </td>
+                <td style="padding:8px 10px; text-align:right;">${deltaCell}</td>
+                <td style="padding:8px 10px; text-align:center;">${sparkSvg(r.sparkline)}</td>
+                <td style="padding:8px 10px; text-align:right;">${debtCell}</td>
+                <td style="padding:8px 10px; text-align:right;">${overCell}</td>
+                <td style="padding:8px 10px;">${flagsHtml || '<span style="color:var(--text-tertiary); font-size:11px;">—</span>'}</td>
+            </tr>`;
+
+        if (!isExpanded) return mainRow;
+
+        const residents = r.residents || [];
+        const resRows = residents.length
+            ? residents.map(p => {
+                const pDebt = p.debt > 0 ? `<span style="color:#dc2626; font-weight:600;">${fmtMoney(p.debt)}</span>` : '—';
+                const pOver = p.overpayment > 0 ? `<span style="color:#7c3aed; font-weight:600;">${fmtMoney(p.overpayment)}</span>` : '—';
+                const pTotal = p.reading_id ? fmtMoney(p.total_cost) : '<span style="color:#9ca3af;">нет квит.</span>';
+                return `
+                    <tr style="border-bottom:1px solid #eef2f7;">
+                        <td style="padding:5px 10px;">${esc(p.username)}</td>
+                        <td style="padding:5px 10px; text-align:center; color:var(--text-secondary);">${p.residents_count} чел.</td>
+                        <td style="padding:5px 10px; text-align:right; font-family:monospace;">${pTotal}</td>
+                        <td style="padding:5px 10px; text-align:right;">${pDebt}</td>
+                        <td style="padding:5px 10px; text-align:right;">${pOver}</td>
+                    </tr>`;
+            }).join('')
+            : '<tr><td colspan="5" style="padding:8px 10px; color:var(--text-tertiary);">Нет жильцов.</td></tr>';
+
+        return mainRow + `
+            <tr style="background:#fafafa;">
+                <td colspan="10" style="padding:0; border-bottom:1px solid var(--border-color);">
+                    <div style="padding:10px 16px;">
+                        <div style="font-size:11px; font-weight:600; color:var(--text-secondary); text-transform:uppercase; margin-bottom:6px;">
+                            <i class="fa-solid fa-users"></i> Жильцы квартиры (${residents.length})
+                        </div>
+                        <table style="width:100%; border-collapse:collapse; font-size:12px; background:var(--bg-card); border:1px solid var(--border-color); border-radius:8px; overflow:hidden;">
+                            <thead style="background:var(--bg-page); color:var(--text-secondary); font-size:10px; text-transform:uppercase;">
+                                <tr>
+                                    <th style="text-align:left; padding:5px 10px;">ФИО</th>
+                                    <th style="text-align:center; padding:5px 10px;">Размер семьи</th>
+                                    <th style="text-align:right; padding:5px 10px;">Итог</th>
+                                    <th style="text-align:right; padding:5px 10px;">Долг</th>
+                                    <th style="text-align:right; padding:5px 10px;">Переплата</th>
+                                </tr>
+                            </thead>
+                            <tbody>${resRows}</tbody>
+                        </table>
+                        <div style="font-size:11px; color:var(--text-tertiary); margin-top:6px;">
+                            Для детального разбора по жильцу переключитесь в режим «Жильцы».
+                        </div>
+                    </div>
+                </td>
+            </tr>`;
     },
 
     _renderResidentRow(r) {

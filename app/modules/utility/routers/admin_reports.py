@@ -424,6 +424,12 @@ async def get_accountant_summary_v2(
                     "(1-24). По умолчанию 12 — год истории. UI позволяет "
                     "переключать через dropdown «Показать периодов»."
     ),
+    group_by: str = Query(
+        "user", pattern="^(user|room)$",
+        description="user — по жильцам (ФИО), room — по квартирам (адрес, "
+                    "агрегат по всем жильцам комнаты). Финсводка следит за "
+                    "помещениями, а не за людьми.",
+    ),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -442,7 +448,7 @@ async def get_accountant_summary_v2(
             select(BillingPeriod).order_by(BillingPeriod.id.desc()).limit(1)
         )).scalars().first()
     if not period:
-        return {"period": None, "kpi": {}, "dormitories": [], "flag_catalog": FLAG_CATALOG}
+        return {"group_by": group_by, "period": None, "kpi": {}, "dormitories": [], "flag_catalog": FLAG_CATALOG}
 
     # 2) Тянем все утверждённые показания за этот период + жильцов с комнатой
     stmt = (
@@ -477,6 +483,9 @@ async def get_accountant_summary_v2(
     # инцидент мая 2026 с Сорокиным С.А. и helper period_helpers.py.
     user_ids = [r[0].id for r in rows]
     history_map: dict[int, list[MeterReading]] = {uid: [] for uid in user_ids}
+    # period_id → chronological_key. Хоистим дефолтом, чтобы room-режим мог
+    # безопасно ссылаться даже когда история пустая.
+    period_id_to_key: dict = {}
     if user_ids:
         all_periods = (await db.execute(select(BillingPeriod))).scalars().all()
         cur_key = period_chron_key(period.name)
@@ -532,6 +541,230 @@ async def get_accountant_summary_v2(
                     and search not in (room.room_number or ""):
                 continue
             missing_users.append((user, room))
+
+    # ============================================================
+    # РЕЖИМ «КВАРТИРЫ» (group_by=room): агрегируем по помещению, а не по
+    # жильцу. Долг квартиры = сумма по ВСЕМ её жильцам (решение 30.05.2026).
+    # Фин-фильтры (only_debtors/overpaid/anomaly/missing) применяются на
+    # УРОВНЕ комнаты после суммирования, не по каждому жильцу. Внутри
+    # каждой комнаты несём список жильцов — для разворота строки.
+    # ============================================================
+    if group_by == "room":
+        from app.modules.utility.services.anomaly_flags import real_flags
+
+        room_acc: dict[int, dict] = {}
+
+        def _ensure_room(room) -> dict:
+            if room.id not in room_acc:
+                room_acc[room.id] = {
+                    "room_id": room.id,
+                    "dorm_name": room.dormitory_name or "Без общежития",
+                    "room_number": room.room_number,
+                    "address": room.format_address or (room.room_number or "—"),
+                    "place_type": getattr(room, "place_type", None),
+                    "area": float(room.apartment_area or 0),
+                    "residents_count": 0,
+                    "total_cost": Decimal("0"),
+                    "total_209": Decimal("0"),
+                    "total_205": Decimal("0"),
+                    "debt": Decimal("0"),
+                    "overpayment": Decimal("0"),
+                    "anomaly_score": 0,
+                    "meter_flags": set(),
+                    "missing_count": 0,
+                    "reading_ids": [],
+                    "residents": [],
+                    "_cost_by_key": {},   # chrono_key -> сумма cost жильцов
+                    "_debt_by_key": {},   # chrono_key -> сумма debt жильцов
+                }
+            return room_acc[room.id]
+
+        # 1) Суммируем поданные показания по комнатам.
+        for user, reading, room in rows:
+            if search:
+                s = search.lower().strip()
+                if s not in (user.username or "").lower() and s not in (room.room_number or ""):
+                    continue
+            debt = Decimal(str((reading.debt_209 or 0) + (reading.debt_205 or 0)))
+            overpay = Decimal(str((reading.overpayment_209 or 0) + (reading.overpayment_205 or 0)))
+            cur_cost = Decimal(str(reading.total_cost or 0))
+            ra = _ensure_room(room)
+            ra["residents_count"] += 1
+            ra["total_cost"] += cur_cost
+            ra["total_209"] += Decimal(str(reading.total_209 or 0))
+            ra["total_205"] += Decimal(str(reading.total_205 or 0))
+            ra["debt"] += debt
+            ra["overpayment"] += overpay
+            ra["anomaly_score"] = max(ra["anomaly_score"], int(reading.anomaly_score or 0))
+            for mf in real_flags(reading.anomaly_flags):
+                ra["meter_flags"].add(mf)
+            if reading.id:
+                ra["reading_ids"].append(reading.id)
+            for h in history_map.get(user.id, []):
+                k = period_id_to_key.get(h.period_id)
+                if k is None:
+                    continue
+                ra["_cost_by_key"][k] = ra["_cost_by_key"].get(k, Decimal("0")) + Decimal(str(h.total_cost or 0))
+                ra["_debt_by_key"][k] = ra["_debt_by_key"].get(k, Decimal("0")) + Decimal(str((h.debt_209 or 0) + (h.debt_205 or 0)))
+            ra["residents"].append({
+                "user_id": user.id,
+                "username": user.username,
+                "residents_count": user.residents_count or 1,
+                "reading_id": reading.id,
+                "total_cost": float(cur_cost),
+                "debt": float(debt),
+                "overpayment": float(overpay),
+            })
+
+        # 2) Жильцы без подачи (MISSING_RECEIPT) — помечаем их комнату.
+        for user, room in missing_users:
+            ra = _ensure_room(room)
+            ra["missing_count"] += 1
+            ra["residents"].append({
+                "user_id": user.id,
+                "username": user.username,
+                "residents_count": user.residents_count or 1,
+                "reading_id": None,
+                "total_cost": 0.0,
+                "debt": 0.0,
+                "overpayment": 0.0,
+            })
+
+        # 3) Финализация: re-analyze по агрегату комнаты, флаги, фильтры.
+        rooms_by_dorm: dict[str, dict] = {}
+        grand_billed_r = Decimal("0")
+        grand_debt_r = Decimal("0")
+        grand_overpay_r = Decimal("0")
+        flagged_rooms = 0
+        missing_rooms = 0
+        all_rooms_flat = []
+
+        for ra in room_acc.values():
+            keys_sorted = sorted(ra["_cost_by_key"].keys())
+            prev_costs = [ra["_cost_by_key"][k] for k in keys_sorted]
+            prev_debts = [ra["_debt_by_key"].get(k, Decimal("0")) for k in keys_sorted]
+            cur_cost = ra["total_cost"]
+            debt = ra["debt"]
+            overpay = ra["overpayment"]
+            has_reading = bool(ra["reading_ids"])
+
+            flags, fin_score = analyze_finance(
+                user_id=ra["room_id"],
+                residents_count=ra["residents_count"] or 1,
+                current_total_cost=cur_cost,
+                current_debt=debt,
+                current_overpayment=overpay,
+                prev_costs=prev_costs,
+                prev_debts=prev_debts,
+                has_reading=has_reading,
+                resident_type="family",
+                billing_mode="by_meter",
+            )
+            if ra["missing_count"] and not has_reading and "MISSING_RECEIPT" not in flags:
+                flags = list(flags) + ["MISSING_RECEIPT"]
+            meter_flags = sorted(ra["meter_flags"])
+
+            # Фин-фильтры на уровне комнаты
+            if only_debtors and debt <= 0:
+                continue
+            if only_overpaid and overpay <= 0:
+                continue
+            if only_anomaly and not flags and not meter_flags:
+                continue
+            if only_missing and not ra["missing_count"]:
+                continue
+
+            delta_amount = None
+            delta_percent = None
+            if prev_costs:
+                last = prev_costs[-1]
+                delta_amount = float(cur_cost - last)
+                if last > 0:
+                    delta_percent = float((cur_cost - last) / last * 100)
+            sparkline = [float(c) for c in prev_costs] + [float(cur_cost)]
+
+            row = {
+                "room_id": ra["room_id"],
+                "room_number": ra["room_number"],
+                "address": ra["address"],
+                "place_type": ra["place_type"],
+                "area": ra["area"],
+                "residents_count": ra["residents_count"],
+                "missing_count": ra["missing_count"],
+                "total_cost": float(cur_cost),
+                "total_209": float(ra["total_209"]),
+                "total_205": float(ra["total_205"]),
+                "debt": float(debt),
+                "overpayment": float(overpay),
+                "delta_amount": delta_amount,
+                "delta_percent": delta_percent,
+                "sparkline": sparkline,
+                "finance_flags": flags,
+                "finance_score": fin_score,
+                "meter_flags": meter_flags,
+                "anomaly_score": ra["anomaly_score"],
+                "reading_ids": ra["reading_ids"],
+                "residents": sorted(ra["residents"], key=lambda r: (r.get("username") or "")),
+            }
+            dn = ra["dorm_name"]
+            if dn not in rooms_by_dorm:
+                rooms_by_dorm[dn] = {
+                    "name": dn, "rooms": [], "total_billed": Decimal("0"),
+                    "total_debt": Decimal("0"), "total_overpay": Decimal("0"),
+                    "flagged_count": 0,
+                }
+            dd = rooms_by_dorm[dn]
+            dd["rooms"].append(row)
+            dd["total_billed"] += cur_cost
+            dd["total_debt"] += debt
+            dd["total_overpay"] += overpay
+            if flags or meter_flags:
+                dd["flagged_count"] += 1
+                flagged_rooms += 1
+            if ra["missing_count"]:
+                missing_rooms += 1
+            grand_billed_r += cur_cost
+            grand_debt_r += debt
+            grand_overpay_r += overpay
+            all_rooms_flat.append(row)
+
+        dorms_out = []
+        for name in sorted(rooms_by_dorm.keys()):
+            dd = rooms_by_dorm[name]
+            dd["rooms"].sort(key=lambda r: (r.get("room_number") or ""))
+            dorms_out.append({
+                "name": dd["name"],
+                "total_billed": float(dd["total_billed"]),
+                "total_debt": float(dd["total_debt"]),
+                "total_overpay": float(dd["total_overpay"]),
+                "flagged_count": dd["flagged_count"],
+                "rooms_count": len(dd["rooms"]),
+                "rooms": dd["rooms"],
+            })
+
+        top_debtor_rooms = sorted(
+            [r for r in all_rooms_flat if r["debt"] > 0], key=lambda r: -r["debt"]
+        )[:5]
+        top_overpay_rooms = sorted(
+            [r for r in all_rooms_flat if r["overpayment"] > 0], key=lambda r: -r["overpayment"]
+        )[:5]
+
+        return {
+            "group_by": "room",
+            "period": {"id": period.id, "name": period.name, "is_active": period.is_active},
+            "kpi": {
+                "total_billed": float(grand_billed_r),
+                "total_debt": float(grand_debt_r),
+                "total_overpay": float(grand_overpay_r),
+                "flagged_count": flagged_rooms,
+                "rooms_count": sum(d["rooms_count"] for d in dorms_out),
+                "missing_count": missing_rooms,
+            },
+            "top_debtors": top_debtor_rooms,
+            "top_overpayers": top_overpay_rooms,
+            "dormitories": dorms_out,
+            "flag_catalog": FLAG_CATALOG,
+        }
 
     # 5) Сборка ответа
     grand_billed = Decimal("0")
@@ -716,6 +949,7 @@ async def get_accountant_summary_v2(
     )[:5]
 
     return {
+        "group_by": "user",
         "period": {"id": period.id, "name": period.name, "is_active": period.is_active},
         "kpi": {
             "total_billed": float(grand_billed),
