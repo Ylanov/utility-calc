@@ -116,6 +116,11 @@ export const AnalyzerModule = {
             highDeltaThreshold: document.getElementById('highDeltaThreshold'),
             highDeltaContainer: document.getElementById('highDeltaContainer'),
 
+            // Таб «Клон-baseline»
+            btnLoadClones: document.getElementById('btnLoadClones'),
+            clonesMinGroup: document.getElementById('clonesMinGroup'),
+            clonesContainer: document.getElementById('clonesContainer'),
+
             // Таб «Переподгрузка периода»
             reloadYear: document.getElementById('reloadYear'),
             reloadMonth: document.getElementById('reloadMonth'),
@@ -254,6 +259,9 @@ export const AnalyzerModule = {
 
         // Таб «Аномальные дельты»
         this.dom.btnLoadHighDelta?.addEventListener('click', () => this.loadHighDelta());
+
+        // Таб «Клон-baseline»
+        this.dom.btnLoadClones?.addEventListener('click', () => this.loadClones());
         this.dom.highDeltaContainer?.addEventListener('click', (e) => {
             const delBtn = e.target.closest('button[data-highdelta-delete]');
             if (delBtn) {
@@ -1656,6 +1664,67 @@ export const AnalyzerModule = {
             // approve_single бросает 400 с понятным сообщением.
             toast('Не удалось утвердить: ' + e.message, 'error');
         }
+    },
+
+    // ============================================================
+    // КЛОН-BASELINE (группы жильцов с идентичными показаниями)
+    // ============================================================
+    async loadClones() {
+        if (!this.dom.clonesContainer) return;
+        const minGroup = Number(this.dom.clonesMinGroup?.value || 3);
+        this.dom.clonesContainer.innerHTML =
+            '<p style="color:var(--text-secondary); padding:20px;">Загружаем…</p>';
+        try {
+            const data = await api.get(
+                `/admin/analyzer/cloned-baselines?min_group=${minGroup}`
+            );
+            this._renderClones(data);
+        } catch (e) {
+            this.dom.clonesContainer.innerHTML =
+                `<p style="color:var(--danger-color);">Ошибка: ${escapeHtml(e.message)}</p>`;
+        }
+    },
+
+    _renderClones(data) {
+        const groups = data.groups || [];
+        if (groups.length === 0) {
+            this.dom.clonesContainer.innerHTML = `
+                <div style="text-align:center; padding:30px; color:var(--success-color);">
+                    <i class="fa-solid fa-check-circle" style="font-size:24px;"></i>
+                    <div style="margin-top:8px; font-weight:600;">Клонированных baseline не найдено</div>
+                    <div style="margin-top:4px; font-size:12px; color:var(--text-secondary);">
+                        За период «${escapeHtml(data.period_name || '—')}» нет групп из ≥${data.min_group} жильцов с идентичными показаниями.
+                    </div>
+                </div>`;
+            return;
+        }
+        const fmt = (v) => Number(v).toFixed(2);
+        const blocks = groups.map(g => {
+            const members = (g.members || []).map(m => {
+                const addr = m.dormitory_name
+                    ? `${escapeHtml(m.dormitory_name)}/${escapeHtml(String(m.room_number || ''))}`
+                    : '—';
+                return `<li style="padding:3px 0; font-size:12px;">
+                    ${escapeHtml(m.full_name || m.username || '—')}
+                    <span style="color:var(--text-secondary);">· ${addr}</span>
+                </li>`;
+            }).join('');
+            return `
+                <div style="border:1px solid var(--border-color); border-radius:8px; padding:12px 14px; margin-bottom:10px;">
+                    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                        <span style="background:#fef3c7; color:#92400e; padding:3px 10px; border-radius:6px; font-weight:700; font-family:monospace;">
+                            ГВС ${fmt(g.hot_water)} · ХВС ${fmt(g.cold_water)}
+                        </span>
+                        <span style="font-weight:700; color:var(--danger-color);">${g.user_count} жильцов с одинаковым показанием</span>
+                    </div>
+                    <ul style="margin:8px 0 0 0; padding-left:18px; columns:2;">${members}</ul>
+                </div>`;
+        }).join('');
+        this.dom.clonesContainer.innerHTML = `
+            <div style="margin-bottom:10px; font-size:13px; color:var(--text-secondary);">
+                Период: <b>${escapeHtml(data.period_name || '—')}</b> · найдено групп: <b>${data.count}</b>
+            </div>
+            ${blocks}`;
     },
 
     // ============================================================

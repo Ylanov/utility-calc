@@ -1031,6 +1031,9 @@
                             <button type="button" data-analyzer-tab="highdelta" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
                                 <i class="fa-solid fa-bolt-lightning"></i> Аномальные дельты
                             </button>
+                            <button type="button" data-analyzer-tab="clones" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
+                                <i class="fa-solid fa-clone"></i> Клон-baseline
+                            </button>
                             <button type="button" data-analyzer-tab="reload" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px; color:#dc2626;">
                                 <i class="fa-solid fa-rotate"></i> Переподгрузка периода
                             </button>
@@ -1258,6 +1261,30 @@
                             </div>
                             <div id="highDeltaContainer">
                                 <p style="color:var(--text-secondary); font-size:13px;">Нажмите «Найти» — увидите утверждённые reading'и с дельтой выше порога относительно предыдущего.</p>
+                            </div>
+                        </div>
+
+                        <!-- ==================== ТАБ CLONES: клонированный baseline ==================== -->
+                        <div data-analyzer-pane="clones" style="display:none;">
+                            <p style="color:var(--text-secondary); font-size:13px; margin-bottom:10px;">
+                                Группы жильцов с <b>идентичными</b> показаниями ГВС/ХВС в одном периоде — признак шаблонного залива baseline (напр. 9.00/21.00 у группы), а не реальных подач. Такой baseline даёт ложные «аномальные дельты» при первой настоящей подаче.
+                            </p>
+                            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px;">
+                                <label style="font-size:12px; color:var(--text-secondary);">
+                                    Мин. размер группы:
+                                    <select id="clonesMinGroup" style="padding:4px 8px; font-size:12px;">
+                                        <option value="2">&ge; 2</option>
+                                        <option value="3" selected>&ge; 3</option>
+                                        <option value="5">&ge; 5</option>
+                                        <option value="10">&ge; 10</option>
+                                    </select>
+                                </label>
+                                <button id="btnLoadClones" class="action-btn warning-btn" style="padding:6px 14px; font-size:13px;">
+                                    <i class="fa-solid fa-clone"></i> Найти
+                                </button>
+                            </div>
+                            <div id="clonesContainer">
+                                <p style="color:var(--text-secondary); font-size:13px;">Нажмите «Найти» — увидите группы с одинаковым baseline за активный период.</p>
                             </div>
                         </div>
 

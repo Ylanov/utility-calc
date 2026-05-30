@@ -1596,3 +1596,94 @@ async def list_high_delta_readings(
     items = items[:limit]
 
     return {"count": len(items), "threshold": float(th), "items": items}
+
+
+@router.get("/cloned-baselines")
+async def list_cloned_baselines(
+    period_id: int | None = Query(None, description="ID периода; по умолчанию активный"),
+    min_group: int = Query(3, ge=2, le=50,
+                           description="Минимум разных жильцов с идентичными показаниями = группа"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Группы жильцов с ИДЕНТИЧНЫМИ показаниями (ГВС+ХВС) в одном периоде —
+    признак шаблонного («клонированного») залива baseline, а не реальных подач.
+
+    Пример (май 2026): у группы жильцов prev-показание было ровно 9.00/21.00
+    — слишком одинаково для реальных счётчиков. Такой baseline потом даёт
+    ложные «аномальные дельты» при первой настоящей подаче.
+
+    Что админ дальше делает: проверяет группу, при необходимости пересобирает
+    baseline из реальных первых показаний (manual-entry / reload period).
+    """
+    _require_admin(current_user)
+    from decimal import Decimal as _D
+
+    # Определяем период (активный по умолчанию).
+    if period_id is None:
+        period = (await db.execute(
+            select(BillingPeriod).where(BillingPeriod.is_active)
+        )).scalars().first()
+        period_id = period.id if period else None
+    else:
+        period = (await db.execute(
+            select(BillingPeriod).where(BillingPeriod.id == period_id)
+        )).scalars().first()
+    if not period_id:
+        return {"count": 0, "period_id": None, "period_name": None,
+                "min_group": min_group, "groups": []}
+
+    stmt = (
+        select(MeterReading)
+        .options(selectinload(MeterReading.user).selectinload(User.room))
+        .where(
+            MeterReading.period_id == period_id,
+            MeterReading.is_approved.is_(True),
+        )
+    )
+    rows = (await db.execute(stmt)).scalars().all()
+
+    # Группируем по (hot_water, cold_water). Исключаем нулевые — 0/0 это
+    # легитимное «не пользовался / нет счётчика», а не клон.
+    groups_map: dict[tuple, list] = {}
+    for r in rows:
+        h = r.hot_water or _D("0")
+        c = r.cold_water or _D("0")
+        if h <= 0 and c <= 0:
+            continue
+        groups_map.setdefault((str(h), str(c)), []).append(r)
+
+    groups = []
+    for (h_s, c_s), lst in groups_map.items():
+        users = {r.user_id for r in lst}  # уникальные жильцы
+        if len(users) < min_group:
+            continue
+        members = []
+        for r in lst:
+            u = r.user
+            room = u.room if u else None
+            members.append({
+                "reading_id": r.id,
+                "user_id": u.id if u else None,
+                "username": u.username if u else None,
+                "full_name": u.full_name if u else None,
+                "dormitory_name": room.dormitory_name if room else None,
+                "room_number": room.room_number if room else None,
+                "total_cost": float(r.total_cost or 0),
+            })
+        groups.append({
+            "hot_water": float(_D(h_s)),
+            "cold_water": float(_D(c_s)),
+            "user_count": len(users),
+            "members": members,
+        })
+
+    groups.sort(key=lambda g: -g["user_count"])  # крупнейшие клоны сверху
+
+    return {
+        "count": len(groups),
+        "period_id": period_id,
+        "period_name": period.name if period else None,
+        "min_group": min_group,
+        "groups": groups,
+    }
