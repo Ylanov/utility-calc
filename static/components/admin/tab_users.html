@@ -97,30 +97,11 @@
                     </div>
                 </div>
 
-                <!-- Какие счётчики у жильца. Снять галочку = «нет физического счётчика»,
-                     потребление будет считаться по нормативу из тарифа (× жильцов),
-                     анализатор не флагит «не подал X». См. миграцию meters_001_per_user_config. -->
-                <div style="background: var(--bg-page); padding: 14px 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 24px;">
-                    <label style="display:block; margin-bottom:8px; font-weight:500; font-size:13px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.3px;">
-                        Какие счётчики установлены
-                    </label>
-                    <div style="display:flex; flex-wrap:wrap; gap:18px;">
-                        <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:13px;">
-                            <input type="checkbox" id="newHasHwMeter" checked>
-                            <span style="color: var(--danger-color);">🔥 ГВС</span>
-                        </label>
-                        <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:13px;">
-                            <input type="checkbox" id="newHasCwMeter" checked>
-                            <span style="color: var(--primary-color);">❄️ ХВС</span>
-                        </label>
-                        <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:13px;">
-                            <input type="checkbox" id="newHasElMeter" checked>
-                            <span style="color: #d97706;">⚡ Электричество</span>
-                        </label>
-                    </div>
-                    <p class="hint-text" style="font-size:11px; margin:8px 0 0;">
-                        Если счётчика нет — снимите галочку. Потребление по этому ресурсу
-                        будет считаться по нормативу × число жильцов (см. тариф).
+                <!-- Счётчики настраиваются на КОМНАТЕ (Жилфонд), жилец наследует.
+                     В форме жильца не дублируем (meters_002, room_static_architecture). -->
+                <div style="background:#eff6ff; padding:12px 16px; border-radius: var(--radius-sm); border:1px solid #bfdbfe; margin-bottom: 24px;">
+                    <p class="hint-text" style="font-size:12px; margin:0; color:#1e40af;">
+                        <i class="fa-solid fa-circle-info"></i> Какие счётчики есть в квартире — настраивается в разделе <b>Жилфонд</b> на самой комнате (жилец наследует автоматически). Здесь больше не задаётся.
                     </p>
                 </div>
 
@@ -408,31 +389,11 @@
                         </div>
                     </div>
 
-                    <!-- Конфигурация счётчиков жильца. Если снять галочку — значит
-                         физического счётчика у жильца нет: подача формы скрывается
-                         на мобиле, анализатор не флагит «не подал X», расчёт идёт
-                         по нормативу × residents_count (см. поля тарифа X_norm_per_capita). -->
-                    <div style="background: var(--bg-page); padding: 14px 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-top:12px;">
-                        <label style="display:block; margin-bottom:8px; font-weight:500; font-size:13px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.3px;">
-                            Установленные счётчики у жильца
-                        </label>
-                        <div style="display:flex; flex-wrap:wrap; gap:18px;">
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:13px;">
-                                <input type="checkbox" id="editHasHwMeter" checked>
-                                <span style="color: var(--danger-color);">🔥 ГВС</span>
-                            </label>
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:13px;">
-                                <input type="checkbox" id="editHasCwMeter" checked>
-                                <span style="color: var(--primary-color);">❄️ ХВС</span>
-                            </label>
-                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:13px;">
-                                <input type="checkbox" id="editHasElMeter" checked>
-                                <span style="color: #d97706;">⚡ Электричество</span>
-                            </label>
-                        </div>
-                        <p class="hint-text" style="font-size:11px; margin:8px 0 0;">
-                            Снимите галочку, если физического счётчика нет — расход по этому ресурсу
-                            будет считаться по нормативу из тарифа × число жильцов.
+                    <!-- Счётчики настраиваются на КОМНАТЕ (Жилфонд), жилец наследует.
+                         В форме жильца не дублируем (meters_002, room_static_architecture). -->
+                    <div style="background:#eff6ff; padding:12px 16px; border-radius: var(--radius-sm); border:1px solid #bfdbfe; margin-top:12px;">
+                        <p class="hint-text" style="font-size:12px; margin:0; color:#1e40af;">
+                            <i class="fa-solid fa-circle-info"></i> Какие счётчики есть в квартире — настраивается в разделе <b>Жилфонд</b> на самой комнате (жилец наследует). Здесь больше не задаётся.
                         </p>
                     </div>
 

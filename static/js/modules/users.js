@@ -574,10 +574,8 @@ export const UsersModule = {
             // все платят по счётчикам, у холостяков счёт делится в billing,
             // resident_type синхронизируется с холостяцкой квартирой на бэке.
             resident_type: this.dom.newResidentType?.value || 'family',
-            // Конфигурация счётчиков жильца (meters_001_per_user_config).
-            has_hw_meter: document.getElementById('newHasHwMeter')?.checked ?? true,
-            has_cw_meter: document.getElementById('newHasCwMeter')?.checked ?? true,
-            has_el_meter: document.getElementById('newHasElMeter')?.checked ?? true,
+            // Счётчики (has_*_meter) НЕ шлём — настраиваются на КОМНАТЕ (Жилфонд),
+            // жилец наследует (meters_002, room_static_architecture).
         };
 
         setLoading(button, true, 'Создание...');
@@ -1007,14 +1005,8 @@ export const UsersModule = {
             if (inputs.residents) inputs.residents.value = user.residents_count;
             if (inputs.residentType) inputs.residentType.value = user.resident_type || 'family';
 
-            // Конфигурация счётчиков жильца (meters_001_per_user_config).
-            // Если поле отсутствует в ответе (старые сервера) — по умолчанию true.
-            const hwBox = document.getElementById('editHasHwMeter');
-            const cwBox = document.getElementById('editHasCwMeter');
-            const elBox = document.getElementById('editHasElMeter');
-            if (hwBox) hwBox.checked = user.has_hw_meter !== false;
-            if (cwBox) cwBox.checked = user.has_cw_meter !== false;
-            if (elBox) elBox.checked = user.has_el_meter !== false;
+            // Счётчики жильца больше не редактируются в форме — настраиваются
+            // на КОМНАТЕ (Жилфонд), жилец наследует (meters_002).
 
             // История проживания — по кнопке (lazy load).
             if (inputs.btnHistory && inputs.historyContainer) {
@@ -1097,12 +1089,8 @@ export const UsersModule = {
             room_id: roomIdVal ? parseInt(roomIdVal) : null,
             residents_count: parseInt(this.modal.inputs.residents.value),
             resident_type: this.modal.inputs.residentType?.value || 'family',
-            // Конфигурация счётчиков жильца (meters_001_per_user_config).
-            // Шлём всегда (UserUpdate.has_X_meter = Optional[bool], None=не менять;
-            // мы посылаем явное значение из чекбокса).
-            has_hw_meter: document.getElementById('editHasHwMeter')?.checked ?? true,
-            has_cw_meter: document.getElementById('editHasCwMeter')?.checked ?? true,
-            has_el_meter: document.getElementById('editHasElMeter')?.checked ?? true,
+            // Счётчики (has_*_meter) НЕ шлём — настраиваются на КОМНАТЕ (Жилфонд),
+            // жилец наследует (meters_002, room_static_architecture).
         };
 
         if (this.modal.inputs.password.value) {
