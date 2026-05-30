@@ -601,10 +601,17 @@ async def get_manual_state(db: AsyncSession, user_id: int):
     if not user:
         raise HTTPException(status_code=404, detail="Пользователь не найден")
 
+    # meters_002: наличие счётчиков — приоритет КОМНАТЫ (user.room загружен
+    # выше через selectinload), fallback user. Иначе форма ручного ввода
+    # покажет неверный набор полей счётчиков.
+    def _room_meter(attr: str) -> bool:
+        rv = getattr(user.room, attr, None) if user.room else None
+        return bool(rv) if rv is not None else bool(getattr(user, attr, True))
+
     meter_config = {
-        "has_hw_meter": bool(user.has_hw_meter),
-        "has_cw_meter": bool(user.has_cw_meter),
-        "has_el_meter": bool(user.has_el_meter),
+        "has_hw_meter": _room_meter("has_hw_meter"),
+        "has_cw_meter": _room_meter("has_cw_meter"),
+        "has_el_meter": _room_meter("has_el_meter"),
     }
 
     if not user.room:

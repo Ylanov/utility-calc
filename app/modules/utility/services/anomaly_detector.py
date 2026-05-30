@@ -271,6 +271,7 @@ def check_reading_for_anomalies_v2(
     user: Optional[User] = None,
     avg_peer_consumption: Optional[Dict[str, Decimal]] = None,
     neighbor_deltas: Optional[List[Dict[str, Decimal]]] = None,
+    room=None,
 ) -> Tuple[Optional[str], int]:
     """Возвращает: (строка_флагов | None, risk_score 0..100).
 
@@ -297,10 +298,25 @@ def check_reading_for_anomalies_v2(
 
     # Маппинг ресурс → has_X_meter. Если у жильца нет счётчика — не флагим
     # ничего по этому ресурсу (см. меняла meters_001_per_user_config).
+    # meters_002: наличие счётчиков — свойство КОМНАТЫ. Приоритет room
+    # (из параметра или user.room), fallback user-флаги (совместимость).
+    _room = room
+    if _room is None and user is not None:
+        try:
+            _room = getattr(user, "room", None)
+        except Exception:
+            _room = None
+
+    def _has_meter(attr: str) -> bool:
+        rv = getattr(_room, attr, None) if _room is not None else None
+        if rv is None and user is not None:
+            rv = getattr(user, attr, True)
+        return bool(rv) if rv is not None else True
+
     meter_present_map = {
-        "HOT": bool(getattr(user, "has_hw_meter", True)) if user else True,
-        "COLD": bool(getattr(user, "has_cw_meter", True)) if user else True,
-        "ELECT": bool(getattr(user, "has_el_meter", True)) if user else True,
+        "HOT": _has_meter("has_hw_meter"),
+        "COLD": _has_meter("has_cw_meter"),
+        "ELECT": _has_meter("has_el_meter"),
     }
 
     # --- 1. КРИТИЧЕСКИЕ ПРОВЕРКИ ---

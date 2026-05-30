@@ -194,7 +194,7 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
             )
 
     temp_reading = MeterReading(hot_water=hot_to_save, cold_water=cold_to_save, electricity=elect_to_save)
-    flags, score = check_reading_for_anomalies_v2(temp_reading, history, user=user)
+    flags, score = check_reading_for_anomalies_v2(temp_reading, history, user=user, room=room)
     if is_baseline:
         flags, score = "BASELINE", 0
 
