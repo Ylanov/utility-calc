@@ -74,6 +74,8 @@ export const AnalyzerModule = {
             // Топ-табы (dashboard/period/housing/maintenance)
             tabs:           document.querySelectorAll('[data-analyzer-tab]'),
             panes:          document.querySelectorAll('[data-analyzer-pane]'),
+            groups:         document.querySelectorAll('[data-analyzer-group]'),
+            groupTabRows:   document.querySelectorAll('[data-group-tabs]'),
 
             // Таб «Анализ периода»
             tabPreview:     document.getElementById('tabPreview'),
@@ -169,7 +171,12 @@ export const AnalyzerModule = {
             if (card) this.openInbox(card.dataset.inboxFilter);
         });
 
-        // Верхнеуровневые табы
+        // Группы верхнего уровня (Обзор / Проблемы / Анализ / Операции)
+        this.dom.groups?.forEach(btn => {
+            btn.addEventListener('click', () => this._setGroup(btn.dataset.analyzerGroup));
+        });
+
+        // Под-табы внутри активной группы
         this.dom.tabs?.forEach(btn => {
             btn.addEventListener('click', () => this._setTab(btn.dataset.analyzerTab));
         });
@@ -329,6 +336,27 @@ export const AnalyzerModule = {
                 }
             }
         });
+    },
+
+    // Группа → её первый таб (активируется при выборе группы).
+    _GROUP_FIRST_TAB: {
+        overview: 'dashboard',
+        problems: 'highdelta',
+        analysis: 'period',
+        ops: 'reload',
+    },
+
+    _setGroup(groupId) {
+        this.dom.groups.forEach(btn => {
+            const active = btn.dataset.analyzerGroup === groupId;
+            btn.classList.toggle('primary-btn', active);
+            btn.classList.toggle('secondary-btn', !active);
+        });
+        this.dom.groupTabRows.forEach(row => {
+            row.style.display = row.dataset.groupTabs === groupId ? '' : 'none';
+        });
+        const firstTab = this._GROUP_FIRST_TAB[groupId];
+        if (firstTab) this._setTab(firstTab);
     },
 
     _setTab(tabId) {

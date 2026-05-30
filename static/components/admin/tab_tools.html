@@ -1008,44 +1008,74 @@
             <div class="accordion-body">
                 <div class="accordion-content">
                     <div class="inner">
-                        <!-- ТАБЫ ВЕРХНЕГО УРОВНЯ: Дашборд / Период / Жилфонд / Обслуживание -->
-                        <div role="tablist" style="display:inline-flex; border:1px solid var(--border-color); border-radius:8px; overflow:hidden; margin-bottom:18px; flex-wrap:wrap;">
-                            <button type="button" data-analyzer-tab="dashboard" class="action-btn primary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
-                                <i class="fa-solid fa-gauge"></i> Аномалии и настройки
+                        <!-- ВЕРХНИЙ РЯД: 4 группы (Обзор / Проблемы / Анализ / Операции) -->
+                        <div role="tablist" style="display:inline-flex; border:1px solid var(--border-color); border-radius:8px; overflow:hidden; margin-bottom:10px; flex-wrap:wrap;">
+                            <button type="button" data-analyzer-group="overview" class="action-btn primary-btn" style="border-radius:0; padding:9px 20px; font-size:13px; font-weight:600;">
+                                <i class="fa-solid fa-gauge"></i> Обзор
                             </button>
-                            <button type="button" data-analyzer-tab="period" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
-                                <i class="fa-solid fa-chart-column"></i> Анализ периода
+                            <button type="button" data-analyzer-group="problems" class="action-btn secondary-btn" style="border-radius:0; padding:9px 20px; font-size:13px; font-weight:600;">
+                                <i class="fa-solid fa-triangle-exclamation"></i> Проблемы
                             </button>
-                            <button type="button" data-analyzer-tab="housing" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
-                                <i class="fa-solid fa-building"></i> Анализ жилфонда
+                            <button type="button" data-analyzer-group="analysis" class="action-btn secondary-btn" style="border-radius:0; padding:9px 20px; font-size:13px; font-weight:600;">
+                                <i class="fa-solid fa-chart-line"></i> Анализ
                             </button>
-                            <button type="button" data-analyzer-tab="reconcile" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
-                                <i class="fa-solid fa-scale-unbalanced"></i> Сверка 1С
+                            <button type="button" data-analyzer-group="ops" class="action-btn secondary-btn" style="border-radius:0; padding:9px 20px; font-size:13px; font-weight:600;">
+                                <i class="fa-solid fa-screwdriver-wrench"></i> Операции
                             </button>
-                            <button type="button" data-analyzer-tab="stuck" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
-                                <i class="fa-solid fa-bug"></i> Заблокированные
-                            </button>
-                            <button type="button" data-analyzer-tab="mismatches" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
-                                <i class="fa-solid fa-clock-rotate-left"></i> Подмены GSheets
-                            </button>
-                            <button type="button" data-analyzer-tab="highdelta" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
-                                <i class="fa-solid fa-bolt-lightning"></i> Аномальные дельты
-                            </button>
-                            <button type="button" data-analyzer-tab="clones" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
-                                <i class="fa-solid fa-clone"></i> Клон-baseline
-                            </button>
-                            <button type="button" data-analyzer-tab="reload" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px; color:#dc2626;">
-                                <i class="fa-solid fa-rotate"></i> Переподгрузка периода
-                            </button>
-                            <button type="button" data-analyzer-tab="autorebuild" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px; color:#7c3aed;">
-                                <i class="fa-solid fa-wand-magic-sparkles"></i> Авто-пересборка за год
-                            </button>
-                            <button type="button" data-analyzer-tab="movecandidates" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px; color:#0ea5e9;">
-                                <i class="fa-solid fa-truck-moving"></i> Претенденты на переезд
-                            </button>
-                            <button type="button" data-analyzer-tab="maintenance" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
-                                <i class="fa-solid fa-broom"></i> Обслуживание
-                            </button>
+                        </div>
+
+                        <!-- ПОД-РЯДЫ ТАБОВ ПО ГРУППАМ (показывается только активная группа) -->
+                        <div data-group-tabs="overview" style="margin-bottom:18px;">
+                            <div role="tablist" style="display:inline-flex; border:1px solid var(--border-color); border-radius:8px; overflow:hidden; flex-wrap:wrap;">
+                                <button type="button" data-analyzer-tab="dashboard" class="action-btn primary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
+                                    <i class="fa-solid fa-gauge"></i> Аномалии и настройки
+                                </button>
+                            </div>
+                        </div>
+                        <div data-group-tabs="problems" style="margin-bottom:18px; display:none;">
+                            <div role="tablist" style="display:inline-flex; border:1px solid var(--border-color); border-radius:8px; overflow:hidden; flex-wrap:wrap;">
+                                <button type="button" data-analyzer-tab="highdelta" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
+                                    <i class="fa-solid fa-bolt-lightning"></i> Аномальные дельты
+                                </button>
+                                <button type="button" data-analyzer-tab="clones" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
+                                    <i class="fa-solid fa-clone"></i> Клон-baseline
+                                </button>
+                                <button type="button" data-analyzer-tab="mismatches" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
+                                    <i class="fa-solid fa-clock-rotate-left"></i> Подмены GSheets
+                                </button>
+                                <button type="button" data-analyzer-tab="stuck" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
+                                    <i class="fa-solid fa-bug"></i> Заблокированные
+                                </button>
+                            </div>
+                        </div>
+                        <div data-group-tabs="analysis" style="margin-bottom:18px; display:none;">
+                            <div role="tablist" style="display:inline-flex; border:1px solid var(--border-color); border-radius:8px; overflow:hidden; flex-wrap:wrap;">
+                                <button type="button" data-analyzer-tab="period" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
+                                    <i class="fa-solid fa-chart-column"></i> Анализ периода
+                                </button>
+                                <button type="button" data-analyzer-tab="housing" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
+                                    <i class="fa-solid fa-building"></i> Анализ жилфонда
+                                </button>
+                                <button type="button" data-analyzer-tab="reconcile" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
+                                    <i class="fa-solid fa-scale-unbalanced"></i> Сверка 1С
+                                </button>
+                            </div>
+                        </div>
+                        <div data-group-tabs="ops" style="margin-bottom:18px; display:none;">
+                            <div role="tablist" style="display:inline-flex; border:1px solid var(--border-color); border-radius:8px; overflow:hidden; flex-wrap:wrap;">
+                                <button type="button" data-analyzer-tab="reload" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px; color:#dc2626;">
+                                    <i class="fa-solid fa-rotate"></i> Переподгрузка периода
+                                </button>
+                                <button type="button" data-analyzer-tab="autorebuild" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px; color:#7c3aed;">
+                                    <i class="fa-solid fa-wand-magic-sparkles"></i> Авто-пересборка за год
+                                </button>
+                                <button type="button" data-analyzer-tab="movecandidates" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px; color:#0ea5e9;">
+                                    <i class="fa-solid fa-truck-moving"></i> Претенденты на переезд
+                                </button>
+                                <button type="button" data-analyzer-tab="maintenance" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
+                                    <i class="fa-solid fa-broom"></i> Обслуживание
+                                </button>
+                            </div>
                         </div>
 
                         <!-- ==================== ТАБ 1: АНОМАЛИИ И НАСТРОЙКИ ==================== -->
