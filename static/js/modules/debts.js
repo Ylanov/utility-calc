@@ -33,6 +33,7 @@ export const DebtsModule = {
     isInitialized: false,
     state: {
         page: 1, limit: 50, total: 0, search: '',
+        mode: 'users',  // 'users' | 'rooms' — учёт по жильцам или по квартирам
         filterType: '', dormitory: '', minDebt: '',
         hideEmpty: true,  // Bug AB: по умолчанию скрываем пустые
         sortBy: 'room', sortDir: 'asc',
@@ -114,6 +115,9 @@ export const DebtsModule = {
     },
 
     bindEvents() {
+        // Переключатель режима учёта: жильцы (ФИО) / квартиры (адрес).
+        document.getElementById('debtsModeUsers')?.addEventListener('click', () => this.setMode('users'));
+        document.getElementById('debtsModeRooms')?.addEventListener('click', () => this.setMode('rooms'));
         this.dom.btnRefresh?.addEventListener('click', () => this.reload());
         this.dom.btnExport?.addEventListener('click', () => this.exportExcel());
         this.dom.btnZombieCheck?.addEventListener('click', () => this.openZombieModal());
@@ -579,6 +583,7 @@ export const DebtsModule = {
     // ==========================================================================
     async loadUsers() {
         if (!this.dom.tableBody) return;
+        if (this.state.mode === 'rooms') return this.loadRooms();
         const requestId = ++this.state.lastRequestId;
         this.dom.tableBody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:20px">Загрузка…</td></tr>';
 
@@ -608,6 +613,114 @@ export const DebtsModule = {
                 el('tr', {}, el('td', { colspan: '10', style: { color: 'red', textAlign: 'center', padding: '20px' } }, e.message))
             );
         }
+    },
+
+    // ── РЕЖИМ КВАРТИР: зеркало loadUsers, агрегация по помещению, без ФИО ──
+    async loadRooms() {
+        const requestId = ++this.state.lastRequestId;
+        this.dom.tableBody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:20px">Загрузка…</td></tr>';
+        const sortBy = ['debt', 'overpay', 'total'].includes(this.state.sortBy)
+            ? this.state.sortBy : 'room';
+        const params = new URLSearchParams({
+            page: this.state.page, limit: this.state.limit,
+            sort_by: sortBy, sort_dir: this.state.sortDir,
+        });
+        if (this.state.search) params.set('search', this.state.search);
+        if (this.state.filterType === 'debtors') params.set('only_debtors', 'true');
+        if (this.state.filterType === 'overpaid') params.set('only_overpaid', 'true');
+        if (this.state.dormitory) params.set('dormitory', this.state.dormitory);
+        if (this.state.minDebt) params.set('min_debt', this.state.minDebt);
+        if (this.state.hideEmpty) params.set('has_data', 'true');
+        try {
+            const data = await api.get(`/financier/rooms-status?${params}`);
+            if (requestId !== this.state.lastRequestId) return;
+            this.state.total = data.total;
+            this.renderRooms(data.items);
+            this.updatePagination();
+        } catch (e) {
+            if (requestId !== this.state.lastRequestId) return;
+            this.dom.tableBody.innerHTML =
+                `<tr><td colspan="10" style="color:red;text-align:center;padding:20px">${e.message}</td></tr>`;
+        }
+    },
+
+    renderRooms(rooms) {
+        if (!rooms || !rooms.length) {
+            this.dom.tableBody.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:20px; color:var(--text-secondary);">Нет данных для текущих фильтров</td></tr>';
+            return;
+        }
+        const f = (v) => {
+            const a = Math.abs(Number(v || 0));
+            if (a < 0.005) return '0';
+            return (a >= 10000 ? a.toFixed(0) : a.toFixed(2)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+        };
+        const esc = (s) => String(s ?? '').replace(/[&<>"]/g,
+            (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        this.dom.tableBody.innerHTML = rooms.map((r) => {
+            const d209 = Number(r.debt_209 || 0), o209 = Number(r.overpayment_209 || 0);
+            const d205 = Number(r.debt_205 || 0), o205 = Number(r.overpayment_205 || 0);
+            const totalDebt = d209 + d205, total = Number(r.current_total_cost || 0);
+            const bg = totalDebt >= 10000 ? 'background:#fef2f2;'
+                : totalDebt >= 1000 ? 'background:#fffbeb;'
+                : (o209 + o205) > 0 ? 'background:#f0fdf4;' : '';
+            return `<tr style="${bg}">
+                <td style="color:var(--text-secondary);">#${r.room_id}</td>
+                <td colspan="2"><b>${esc(r.address)}</b> <span style="color:var(--text-secondary);font-size:12px;">· 👤 ${r.residents_count}</span></td>
+                <td style="text-align:right; color:#991b1b;">${d209 > 0 ? f(d209) : '—'}</td>
+                <td style="text-align:right; color:#15803d;">${o209 > 0 ? f(o209) : '—'}</td>
+                <td style="text-align:right; color:#d97706;">${d205 > 0 ? f(d205) : '—'}</td>
+                <td style="text-align:right; color:#15803d;">${o205 > 0 ? f(o205) : '—'}</td>
+                <td style="text-align:right; font-weight:700;">${totalDebt > 0 ? f(totalDebt) : '—'}</td>
+                <td style="text-align:right;">${f(total)}</td>
+                <td style="text-align:right;"><button class="icon-btn" data-room-residents="${r.room_id}" title="Кто живёт в квартире"><i class="fa-solid fa-users"></i></button></td>
+            </tr>`;
+        }).join('');
+        this.dom.tableBody.querySelectorAll('[data-room-residents]').forEach((btn) => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.showRoomResidents(Number(btn.dataset.roomResidents));
+            });
+        });
+    },
+
+    async showRoomResidents(roomId) {
+        const esc = (s) => String(s ?? '').replace(/[&<>"]/g,
+            (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        const f = (v) => Number(v || 0).toFixed(2);
+        try {
+            const data = await api.get(`/financier/rooms/${roomId}/residents-finance`);
+            const rows = (data.residents || []).map((p) => `<tr style="border-bottom:1px solid var(--border-color);">
+                <td style="padding:8px 10px;">${esc(p.full_name || p.username)}</td>
+                <td style="padding:8px 10px;text-align:right;color:#991b1b;">${f(Number(p.debt_209) + Number(p.debt_205))} ₽</td>
+                <td style="padding:8px 10px;text-align:right;color:#15803d;">${f(Number(p.overpayment_209) + Number(p.overpayment_205))} ₽</td>
+                <td style="padding:8px 10px;text-align:right;">${f(p.current_total_cost)} ₽</td>
+            </tr>`).join('') || '<tr><td colspan="4" style="padding:16px;text-align:center;color:var(--text-secondary);">Нет жильцов</td></tr>';
+            const overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:3000;display:flex;align-items:center;justify-content:center;padding:20px;';
+            overlay.innerHTML = `<div style="background:var(--bg-card,#fff);border-radius:12px;max-width:560px;width:100%;max-height:82vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid var(--border-color);"><b>Жильцы квартиры · долги</b><button data-rr-close style="background:none;border:none;font-size:22px;line-height:1;cursor:pointer;">×</button></div>
+                <table style="width:100%;border-collapse:collapse;font-size:13px;"><thead><tr style="background:var(--bg-page);font-size:11px;color:var(--text-secondary);text-transform:uppercase;"><th style="text-align:left;padding:8px 10px;">Жилец</th><th style="text-align:right;padding:8px 10px;">Долг</th><th style="text-align:right;padding:8px 10px;">Переплата</th><th style="text-align:right;padding:8px 10px;">Итог</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay || e.target.closest('[data-rr-close]')) overlay.remove();
+            });
+            document.body.appendChild(overlay);
+        } catch (e) {
+            toast('Ошибка: ' + e.message, 'error');
+        }
+    },
+
+    setMode(mode) {
+        if (this.state.mode === mode) return;
+        this.state.mode = mode;
+        this.state.page = 1;
+        const t = document.getElementById('debtsTitle');
+        if (t) t.textContent = mode === 'rooms' ? 'Долги по квартирам' : 'Список жильцов и долгов';
+        const bu = document.getElementById('debtsModeUsers');
+        const br = document.getElementById('debtsModeRooms');
+        const sty = 'border-radius:0; padding:5px 12px; font-size:12px;';
+        if (bu) { bu.className = 'action-btn ' + (mode === 'users' ? 'primary-btn' : 'secondary-btn'); bu.style.cssText = sty; }
+        if (br) { br.className = 'action-btn ' + (mode === 'rooms' ? 'primary-btn' : 'secondary-btn'); br.style.cssText = sty; }
+        this.loadUsers();
     },
 
     updatePagination() {
