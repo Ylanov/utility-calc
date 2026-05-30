@@ -1281,12 +1281,13 @@ export const AnalyzerModule = {
             anomalies: 'Аномалии — список проблем',
             critical:  'Критические аномалии (score ≥ 80)',
             gsheets:   'GSheets — конфликты сопоставления',
+            format:    'Битый формат показаний',
         };
         const title = titleMap[filter] || 'Список проблем';
         document.getElementById('analyzerInboxTitle').textContent = title;
         const sum = data.summary || {};
         document.getElementById('analyzerInboxSummary').textContent =
-            `Всего: ${data.total} · anomalies: ${sum.anomalies || 0} · gsheets: ${sum.gsheets || 0} · critical: ${sum.critical || 0}`;
+            `Всего: ${data.total} · аномалии: ${sum.anomalies || 0} · формат: ${sum.format || 0} · gsheets: ${sum.gsheets || 0} · critical: ${sum.critical || 0}`;
 
         const body = document.getElementById('analyzerInboxBody');
         if (!data.issues || !data.issues.length) {
@@ -1344,6 +1345,19 @@ export const AnalyzerModule = {
                     ${escapeHtml(ctx.dormitory_raw || '—')} · комн. ${escapeHtml(ctx.room_raw || '—')}
                 </div>
                 ${ctx.conflict_reason ? `<div style="color:#9a3412; font-size:11px; margin-top:3px;"><i class="fa-solid fa-triangle-exclamation"></i> ${escapeHtml(ctx.conflict_reason)}</div>` : ''}`;
+        } else if (issue.kind === 'format') {
+            const cost = ctx.total_cost != null
+                ? `<span style="color:var(--text-secondary);"> · ${(ctx.total_cost).toLocaleString('ru-RU', {minimumFractionDigits:2, maximumFractionDigits:2})} ₽</span>`
+                : '';
+            contextHtml = `
+                <div><b>${escapeHtml(ctx.username || '—')}</b>${cost}</div>
+                <div style="color:var(--text-secondary); font-size:11px;">
+                    ${escapeHtml(ctx.dormitory || '—')} · комн. ${escapeHtml(ctx.room_number || '—')} · ${escapeHtml(ctx.period_name || '—')}
+                </div>
+                <div style="margin-top:3px; font-size:11px;">
+                    <span style="font-family:monospace;">ГВС ${ctx.hot_water != null ? Number(ctx.hot_water).toFixed(0) : '—'} · ХВС ${ctx.cold_water != null ? Number(ctx.cold_water).toFixed(0) : '—'}</span>
+                    <span style="background:#fef3c7; color:#92400e; padding:1px 5px; border-radius:3px; margin-left:4px;">потеряна точка?</span>
+                </div>`;
         }
 
         // Кнопка suggested action — primary, остальные available — secondary.
@@ -1393,6 +1407,10 @@ export const AnalyzerModule = {
             }
             if (kind === 'gsheets') {
                 toast(`Откройте GSheets-импорт и найдите строку #${rawId}`, 'info');
+                return;
+            }
+            if (kind === 'format') {
+                toast(`Откройте «Сверка показаний» и исправьте точку в reading #${rawId}`, 'info');
                 return;
             }
         }
