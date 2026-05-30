@@ -179,9 +179,14 @@ def calculate_utilities(
     v_el   = safe_positive(D(volume_electricity_share))
 
     residents = D(user.residents_count if user.residents_count else 1)
-    has_hw = getattr(user, "has_hw_meter", True)
-    has_cw = getattr(user, "has_cw_meter", True)
-    has_el = getattr(user, "has_el_meter", True)
+    # Наличие счётчиков — приоритет КОМНАТЫ (статично, meters_002), fallback
+    # на User для совместимости со старыми данными до переноса.
+    def _has_meter(attr: str) -> bool:
+        rv = getattr(room, attr, None)
+        return bool(rv) if rv is not None else bool(getattr(user, attr, True))
+    has_hw = _has_meter("has_hw_meter")
+    has_cw = _has_meter("has_cw_meter")
+    has_el = _has_meter("has_el_meter")
 
     if not has_hw:
         # Счётчика ГВС нет — норматив × жильцов. Если norm=0 → 0.

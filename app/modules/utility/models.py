@@ -118,6 +118,15 @@ class Room(Base):
     cw_meter_serial = Column(String, nullable=True)
     el_meter_serial = Column(String, nullable=True)
 
+    # Наличие физических счётчиков в помещении — свойство КОМНАТЫ (статично).
+    # Жилец наследует (резолв в calculate_utilities / readings_state; приоритет
+    # комнаты, fallback на User для совместимости). False → объём по нормативу
+    # (tariff.*_norm_per_capita), вкладка счётчика скрыта в ЛК. Настраивается
+    # через Жилфонд один раз на квартиру/дом (квартиры статичны, жильцы — нет).
+    has_hw_meter = Column(Boolean, nullable=False, default=True, server_default="true")
+    has_cw_meter = Column(Boolean, nullable=False, default=True, server_default="true")
+    has_el_meter = Column(Boolean, nullable=False, default=True, server_default="true")
+
     last_hot_water = Column(Numeric(12, 3), default=0.000)
     last_cold_water = Column(Numeric(12, 3), default=0.000)
     last_electricity = Column(Numeric(12, 3), default=0.000)

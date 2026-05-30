@@ -207,6 +207,12 @@ async def get_reading_state(
         "Пример: «01433.887»."
     )
 
+    # Наличие счётчиков — приоритет КОМНАТЫ (meters_002, статично), fallback
+    # на User (совместимость со старыми данными до переноса).
+    def _room_meter(attr: str) -> bool:
+        rv = getattr(user.room, attr, None) if user.room else None
+        return bool(rv) if rv is not None else bool(getattr(user, attr, True))
+
     return {
         "period_name": period.name if period else None,
         "prev_hot": prev_hot,
@@ -237,11 +243,11 @@ async def get_reading_state(
         "cost_fixed_part": current_reading.cost_fixed_part if current_reading else None,
         "billing_mode": bm,
         "per_capita_amount": per_capita_amount,
-        # Конфигурация счётчиков (см. meters_001_per_user_config). Клиент
-        # использует эти флаги чтобы спрятать поля ввода у отсутствующих счётчиков.
-        "has_hw_meter": bool(getattr(user, "has_hw_meter", True)),
-        "has_cw_meter": bool(getattr(user, "has_cw_meter", True)),
-        "has_el_meter": bool(getattr(user, "has_el_meter", True)),
+        # Конфигурация счётчиков — приоритет КОМНАТЫ (meters_002, статично),
+        # fallback на User. Клиент скрывает поля ввода у отсутствующих счётчиков.
+        "has_hw_meter": _room_meter("has_hw_meter"),
+        "has_cw_meter": _room_meter("has_cw_meter"),
+        "has_el_meter": _room_meter("has_el_meter"),
         # Серийники счётчиков комнаты — общие для всех жильцов квартиры.
         "hw_meter_serial": getattr(user.room, "hw_meter_serial", None),
         "cw_meter_serial": getattr(user.room, "cw_meter_serial", None),
