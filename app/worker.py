@@ -166,6 +166,12 @@ celery.conf.beat_schedule = {
         "task": "scan_resident_problems_task",
         "schedule": crontab(minute=30, hour="*/6"),
     },
+    # Авто-перерасчёт расхождений активного периода — каждые 6ч в :45 (после
+    # scan :30). Безопасные drift фиксит сам, опасные/повторные → сигнал.
+    "auto-recalc-drift-6h": {
+        "task": "auto_recalc_drift_task",
+        "schedule": crontab(minute=45, hour="*/6"),
+    },
 }
 
 # ИМПОРТЫ ЗАДАЧ

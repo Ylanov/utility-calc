@@ -258,6 +258,9 @@ async def scan_resident_problems(db: AsyncSession) -> dict:
             .where(
                 ResidentProblem.status.in_(["open", "acknowledged"]),
                 ResidentProblem.last_seen_at < scan_start,
+                # Резолвим ТОЛЬКО типы, которые детектит ЭТОТ сканер — иначе
+                # затёрли бы RECALC_DRIFT, который ведёт auto_recalc_drift.
+                ResidentProblem.problem_type.in_(list(_PROBLEM_META.keys())),
             )
             .values(status="resolved", resolved_at=scan_start)
         )

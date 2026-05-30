@@ -1588,3 +1588,40 @@ def scan_resident_problems_task():
     except Exception as e:
         logger.exception("[scan_resident_problems_task] crashed")
         return {"crashed": True, "error": str(e)}
+
+
+@celery.task(name="auto_recalc_drift_task")
+def auto_recalc_drift_task():
+    """Авто-перерасчёт расхождений активного периода: безопасные drift фиксит,
+    опасные/повторные — сигналит в Монитор проблем (RECALC_DRIFT)."""
+    async def _run():
+        from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession as _AS
+        from sqlalchemy.orm import sessionmaker as _smaker
+        from sqlalchemy import select as _select
+        from app.modules.utility.models import BillingPeriod as _BP
+        from app.modules.utility.services.auto_recalc_drift import auto_recalc_drift
+        _engine = create_async_engine(
+            settings.DATABASE_URL_ASYNC,
+            echo=False, future=True, pool_pre_ping=True,
+            connect_args={"prepared_statement_cache_size": 0,
+                          "statement_cache_size": 0, "command_timeout": 120},
+        )
+        _mk = _smaker(bind=_engine, class_=_AS, expire_on_commit=False, autoflush=False)
+        try:
+            async with _mk() as db:
+                period = (await db.execute(
+                    _select(_BP).where(_BP.is_active.is_(True))
+                )).scalars().first()
+                if not period:
+                    return {"skipped": "no_active_period"}
+                return await auto_recalc_drift(db, period.id)
+        finally:
+            await _engine.dispose()
+
+    try:
+        result = asyncio.run(_run())
+        logger.info("[auto_recalc_drift_task] %s", result)
+        return result
+    except Exception as e:
+        logger.exception("[auto_recalc_drift_task] crashed")
+        return {"crashed": True, "error": str(e)}
