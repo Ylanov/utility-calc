@@ -218,6 +218,12 @@ async def get_reading_state(
         "total_cost": current_reading.total_cost if current_reading else None,
         "total_209": current_reading.total_209 if current_reading else None,
         "total_205": current_reading.total_205 if current_reading else None,
+        # Долг/переплата 1С — справочно (НЕ входят в total/ИТОГО). Клиент
+        # показывает их отдельным блоком «обратитесь в ФЭО».
+        "debt_209": current_reading.debt_209 if current_reading else None,
+        "debt_205": current_reading.debt_205 if current_reading else None,
+        "overpayment_209": current_reading.overpayment_209 if current_reading else None,
+        "overpayment_205": current_reading.overpayment_205 if current_reading else None,
         "is_draft": is_draft,
         "is_period_open": is_period_open,
         "is_already_approved": is_already_approved,

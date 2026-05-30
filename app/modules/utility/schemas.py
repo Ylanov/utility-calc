@@ -416,6 +416,12 @@ class ReadingStateResponse(BaseModel):
     total_209: Optional[Decimal] = None
     total_205: Optional[Decimal] = None
 
+    # Долг/переплата 1С — справочно (НЕ входят в total/ИТОГО к оплате за месяц).
+    debt_209: Optional[Decimal] = None
+    debt_205: Optional[Decimal] = None
+    overpayment_209: Optional[Decimal] = None
+    overpayment_205: Optional[Decimal] = None
+
     is_draft: bool
     is_period_open: bool
     is_already_approved: bool = False
