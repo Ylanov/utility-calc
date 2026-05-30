@@ -50,6 +50,11 @@ _PROBLEM_META = {
     "METER_FROZEN":    ("medium", "Счётчик «замер»"),
     "FORMAT_SUSPECT":  ("critical", "Битый формат показания"),
     "OVERPAY_SUSPECT": ("low", "Подозрительная переплата"),
+    # Уровень КОМНАТЫ: состав жильцов не совпадает с типом квартиры
+    # (несколько семей / холостяки без пометки / смешанные типы). severity и
+    # title уточняются по kind через override в _upsert_problem; здесь — дефолт
+    # для авто-резолва и fallback. См. services/room_audit.py.
+    "ROOM_TYPE_MISMATCH": ("high", "Несоответствие типа квартиры"),
 }
 
 # Финансовые флаги finance_analyzer → наши problem_type.
@@ -244,6 +249,37 @@ async def scan_resident_problems(db: AsyncSession) -> dict:
             await _upsert_problem(db, user_id, p["type"], p["score"], p["details"])
             open_count += 1
 
+    # 4b. Уровень КОМНАТЫ: несоответствие типа квартиры составу жильцов.
+    #     Считаем по привязке User.room_id (а не по подачам), сигнал вешаем на
+    #     представителя комнаты (min user_id) — один сигнал на проблемную
+    #     квартиру. Изолируем try/except: сбой аудита не должен валить весь скан.
+    room_mismatch_count = 0
+    try:
+        from app.modules.utility.services.room_audit import find_room_type_mismatches
+        for m in await find_room_type_mismatches(db):
+            rep_uid = m["representative_user_id"]
+            detected_keys.add((rep_uid, "ROOM_TYPE_MISMATCH"))
+            await _upsert_problem(
+                db, rep_uid, "ROOM_TYPE_MISMATCH",
+                score=75 if m["severity"] == "high" else 50,
+                details={
+                    "kind": m["kind"],
+                    "room_id": m["room_id"],
+                    "address": m["address"],
+                    "n_residents": m["n_residents"],
+                    "n_family": m["n_family"],
+                    "n_single": m["n_single"],
+                    "recommendation": m["recommendation"],
+                    "residents": m["residents"],
+                },
+                severity=m["severity"],
+                title=m["title"],
+            )
+            open_count += 1
+            room_mismatch_count += 1
+    except Exception:
+        logger.exception("[resident_scan] room type audit failed")
+
     # 5. Авто-resolve: закрываем open/acknowledged сигналы, НЕ обнаруженные в
     #    этом скане. Исключаем detected_keys ЯВНО (tuple notin_) — нельзя
     #    полагаться только на last_seen_at < scan_start: при autoflush=False
@@ -251,8 +287,10 @@ async def scan_resident_problems(db: AsyncSession) -> dict:
     #    UPDATE, и только что подтверждённый/обновлённый сигнал ложно попал бы
     #    под условие (флип-флоп каждые 6ч + откат acknowledge админа).
     #    Если в скане никого не нашли (пустое окно/сбой) — НЕ резолвим, чтобы
-    #    не стереть разом всю историю активных сигналов.
-    if by_user:
+    #    не стереть разом всю историю активных сигналов. by_user покрывает
+    #    per-user детекторы; detected_keys — на случай когда есть только
+    #    room-level сигналы (аудит типа квартиры не зависит от подач).
+    if by_user or detected_keys:
         resolve_stmt = (
             update(ResidentProblem)
             .where(
@@ -278,14 +316,18 @@ async def scan_resident_problems(db: AsyncSession) -> dict:
     return {
         "scanned_users": len(by_user),
         "problems_detected": open_count,
+        "room_mismatches": room_mismatch_count,
         "periods": [p.name for p in periods_chrono],
     }
 
 
 async def _upsert_problem(
-    db: AsyncSession, user_id: int, ptype: str, score: int, details: Optional[dict]
+    db: AsyncSession, user_id: int, ptype: str, score: int, details: Optional[dict],
+    severity: Optional[str] = None, title: Optional[str] = None,
 ) -> None:
-    severity, title = _PROBLEM_META.get(ptype, ("medium", ptype))
+    sev_default, title_default = _PROBLEM_META.get(ptype, ("medium", ptype))
+    severity = severity or sev_default
+    title = title or title_default
     now = utcnow()
     existing = (await db.execute(
         select(ResidentProblem).where(

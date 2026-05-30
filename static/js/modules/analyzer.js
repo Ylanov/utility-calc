@@ -88,6 +88,10 @@ export const AnalyzerModule = {
             btnRpRefresh:     document.getElementById('btnRpRefresh'),
             rpSummary:        document.getElementById('rpSummary'),
             rpBody:           document.getElementById('rpBody'),
+            // Аудит типов квартир (room-type-mismatches)
+            btnRtmRefresh:    document.getElementById('btnRtmRefresh'),
+            rtmSummary:       document.getElementById('rtmSummary'),
+            rtmBody:          document.getElementById('rtmBody'),
 
             // Таб «Анализ периода»
             tabPreview:     document.getElementById('tabPreview'),
@@ -212,6 +216,7 @@ export const AnalyzerModule = {
         this.dom.btnScanProblems?.addEventListener('click', () => this.scanProblems());
         this.dom.btnRpRefresh?.addEventListener('click', () => this.loadResidentProblems());
         this.dom.rpSeverityFilter?.addEventListener('change', () => this.loadResidentProblems());
+        this.dom.btnRtmRefresh?.addEventListener('click', () => this.loadRoomTypeMismatches());
         this.dom.rpBody?.addEventListener('click', (e) => {
             const btn = e.target.closest('button[data-rp-action]');
             if (btn) this.rpAction(Number(btn.dataset.rpId), btn.dataset.rpAction, btn);
@@ -412,6 +417,7 @@ export const AnalyzerModule = {
         // Авто-загрузка свежего списка при открытии «Сводки проблем».
         if (tabId === 'inbox') this.loadInboxInline(this._inboxInlineFilter || 'all');
         if (tabId === 'residentproblems') this.loadResidentProblems();
+        if (tabId === 'roomtypes') this.loadRoomTypeMismatches();
     },
 
     _setPeriodsTab(tab) {
@@ -1670,6 +1676,75 @@ export const AnalyzerModule = {
                     <tbody>${rows}</tbody>
                 </table>
             </div>`;
+    },
+
+    // ============================================================
+    // АУДИТ ТИПОВ КВАРТИР — состав жильцов vs тип квартиры
+    // Endpoint: GET /admin/analyzer/room-type-mismatches
+    // ============================================================
+    async loadRoomTypeMismatches() {
+        const body = this.dom.rtmBody;
+        if (!body) return;
+        body.innerHTML = '<p style="color:var(--text-secondary); padding:20px;">Загрузка…</p>';
+        try {
+            const data = await api.get('/admin/analyzer/room-type-mismatches');
+            this._renderRoomTypeMismatches(data);
+        } catch (e) {
+            body.innerHTML = `<p style="color:var(--danger-color);">Ошибка: ${escapeHtml(e.message)}</p>`;
+        }
+    },
+
+    _renderRoomTypeMismatches(data) {
+        const items = data.items || [];
+        const KIND = {
+            multi_family:        { label: 'Несколько семей',       color: '#991b1b', bg: '#fee2e2', icon: 'fa-users' },
+            unmarked_singles:    { label: 'Холостяки без пометки',  color: '#9a3412', bg: '#ffedd5', icon: 'fa-user-group' },
+            mixed_types:         { label: 'Смешанные типы',         color: '#9a3412', bg: '#fff7ed', icon: 'fa-shuffle' },
+            singles_with_family: { label: 'Семейный в холостяцкой', color: '#854d0e', bg: '#fefce8', icon: 'fa-user' },
+        };
+        if (this.dom.rtmSummary) {
+            const bk = data.by_kind || {};
+            const parts = Object.entries(bk).map(([k, n]) => `${KIND[k]?.label || k}: ${n}`);
+            this.dom.rtmSummary.textContent = data.count
+                ? `Проблемных квартир: ${data.count} · ${parts.join(' · ')}`
+                : '';
+        }
+        if (!items.length) {
+            this.dom.rtmBody.innerHTML = `
+                <div style="text-align:center; padding:50px; color:var(--success-color);">
+                    <i class="fa-solid fa-check-circle" style="font-size:28px;"></i>
+                    <div style="margin-top:10px;">Все квартиры соответствуют своему типу.</div>
+                </div>`;
+            return;
+        }
+        const typeBadge = (r) => r.resident_type === 'single'
+            ? '<span style="background:#ede9fe; color:#5b21b6; padding:1px 6px; border-radius:6px; font-size:10px; font-weight:600;">холостяк</span>'
+            : `<span style="background:#dbeafe; color:#1e40af; padding:1px 6px; border-radius:6px; font-size:10px; font-weight:600;">семья · ${r.residents_count} чел.</span>`;
+
+        const cards = items.map(it => {
+            const k = KIND[it.kind] || { label: it.kind, color: '#6b7280', bg: '#f3f4f6', icon: 'fa-triangle-exclamation' };
+            const residents = (it.residents || []).map(r => `
+                <div style="display:flex; align-items:center; gap:8px; padding:4px 0; border-bottom:1px dashed #eef2f7;">
+                    <span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(r.full_name || r.username || '—')}</span>
+                    ${typeBadge(r)}
+                </div>`).join('');
+            return `
+                <div style="border:1px solid var(--border-color); border-left:4px solid ${k.color}; border-radius:10px; padding:14px 16px; margin-bottom:12px; background:var(--bg-card);">
+                    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:8px;">
+                        <span style="background:${k.bg}; color:${k.color}; padding:3px 10px; border-radius:8px; font-size:11px; font-weight:700;">
+                            <i class="fa-solid ${k.icon}"></i> ${escapeHtml(k.label)}
+                        </span>
+                        <strong style="font-size:14px;">${escapeHtml(it.address || ('комн. ' + (it.room_number || '—')))}</strong>
+                        <span style="color:var(--text-secondary); font-size:12px;">${escapeHtml(it.dormitory_name || '')}</span>
+                        <span style="margin-left:auto; font-size:11px; color:var(--text-secondary);">${it.n_residents} жильцов · семейных: ${it.n_family} · холостяков: ${it.n_single}</span>
+                    </div>
+                    <div style="font-size:13px; margin-bottom:8px;">${residents}</div>
+                    <div style="font-size:12px; color:var(--text-secondary); background:var(--bg-page); padding:8px 10px; border-radius:6px;">
+                        <i class="fa-solid fa-lightbulb" style="color:#f59e0b;"></i> ${escapeHtml(it.recommendation || '')}
+                    </div>
+                </div>`;
+        }).join('');
+        this.dom.rtmBody.innerHTML = cards;
     },
 
     async rpAction(id, action, btn) {

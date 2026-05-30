@@ -1755,6 +1755,33 @@ async def list_cloned_baselines(
     }
 
 
+@router.get("/room-type-mismatches")
+async def list_room_type_mismatches(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Квартиры, чей состав жильцов не соответствует типу квартиры.
+
+    Полный аудит несоответствий:
+      • multi_family       — 2+ семейных аккаунта в семейной квартире;
+      • unmarked_singles   — 2+ холостяка, но квартира не помечена холостяцкой;
+      • mixed_types        — и семейные, и холостяки в одной несхолостяцкой;
+      • singles_with_family— семейный аккаунт в холостяцкой квартире.
+
+    Считаем по привязке к комнате (User.room_id), не по подачам — ловит и тех,
+    кто не подаёт показания, и «мёртвые души». Тот же источник, что и сигнал
+    ROOM_TYPE_MISMATCH в Мониторе проблем. Что админ делает: проверяет состав,
+    помечает квартиру холостяцкой / правит тип жильца / убирает дубль-призрак.
+    """
+    _require_admin(current_user)
+    from app.modules.utility.services.room_audit import find_room_type_mismatches
+    items = await find_room_type_mismatches(db)
+    by_kind: dict[str, int] = {}
+    for it in items:
+        by_kind[it["kind"]] = by_kind.get(it["kind"], 0) + 1
+    return {"count": len(items), "by_kind": by_kind, "items": items}
+
+
 @router.post("/ai-triage/{reading_id}")
 async def ai_triage_reading(
     reading_id: int,

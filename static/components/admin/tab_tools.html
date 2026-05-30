@@ -1052,6 +1052,9 @@
                                 <button type="button" data-analyzer-tab="residentproblems" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
                                     <i class="fa-solid fa-user-shield"></i> Проблемы жильцов
                                 </button>
+                                <button type="button" data-analyzer-tab="roomtypes" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
+                                    <i class="fa-solid fa-house-user"></i> Типы квартир
+                                </button>
                             </div>
                         </div>
                         <div data-group-tabs="analysis" style="margin-bottom:18px; display:none;">
@@ -1189,6 +1192,20 @@
                             <div id="rpSummary" style="font-size:12px; color:var(--text-secondary); margin-bottom:10px;"></div>
                             <div id="rpBody">
                                 <p style="color:var(--text-secondary); padding:20px;">Нажмите «Сканировать сейчас» или «Обновить».</p>
+                            </div>
+                        </div>
+
+                        <!-- ==================== ТАБ: АУДИТ ТИПОВ КВАРТИР ==================== -->
+                        <div data-analyzer-pane="roomtypes" style="display:none;">
+                            <p style="font-size:13px; color:var(--text-secondary); margin:0 0 12px 0;">
+                                Несоответствие типа квартиры составу жильцов: несколько семей в одной квартире, холостяки без пометки «холостяцкая», смешанные типы, семейный в холостяцкой. Считается по привязке к комнате (ловит и неподающих, и «мёртвые души»). Исправляйте в Жилфонде: пометьте квартиру холостяцкой, поправьте тип жильца или уберите дубль.
+                            </p>
+                            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px;">
+                                <div id="rtmSummary" style="font-size:12px; color:var(--text-secondary);"></div>
+                                <button id="btnRtmRefresh" class="icon-btn" title="Обновить" style="margin-left:auto;"><i class="fa-solid fa-rotate-right"></i></button>
+                            </div>
+                            <div id="rtmBody">
+                                <p style="color:var(--text-secondary); padding:20px;">Загрузка…</p>
                             </div>
                         </div>
 
