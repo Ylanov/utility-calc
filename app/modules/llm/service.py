@@ -267,7 +267,24 @@ async def ask(
         )
 
     client = make_client(s.provider, token, base_url=s.base_url)
+
+    # Кастомный системный промпт админа (llm_003) — ДОПОЛНЯЕТ встроенный
+    # (дописывается к первому system-сообщению). Копируем messages, чтобы не
+    # мутировать вход вызывающего.
+    if getattr(s, "system_prompt", None):
+        messages = [dict(m) for m in messages]
+        _si = next((i for i, m in enumerate(messages) if m.get("role") == "system"), None)
+        _extra = "\n\nДополнительные инструкции администратора:\n" + s.system_prompt
+        if _si is not None:
+            messages[_si]["content"] = (messages[_si].get("content", "") or "") + _extra
+        else:
+            messages.insert(0, {"role": "system", "content": s.system_prompt})
+
     prompt_chars = sum(len(m.get("content", "")) for m in messages)
+    # Текст промпта для отчёта «что ушло в ИИ» (обрезаем до 8000 символов).
+    _prompt_dump = "\n\n".join(
+        f"[{m.get('role')}]\n{m.get('content', '')}" for m in messages
+    )[:8000]
     started = time.monotonic()
 
     try:
@@ -288,6 +305,7 @@ async def ask(
                 prompt_chars=prompt_chars, response_chars=None,
                 success=False, error=str(e)[:5000],
                 latency_ms=elapsed_ms,
+                prompt_text=_prompt_dump, response_text=None,
                 related_type=related_type, related_id=related_id,
             )
             db.add(call)
@@ -307,6 +325,7 @@ async def ask(
         prompt_tokens=prompt_tokens, response_tokens=response_tokens,
         cost_rub=cost, latency_ms=elapsed_ms,
         success=True, error=None,
+        prompt_text=_prompt_dump, response_text=(resp.text or "")[:8000],
         related_type=related_type, related_id=related_id,
     )
     db.add(call)

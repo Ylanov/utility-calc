@@ -61,6 +61,7 @@ export const LLMModule = {
             usageKpi:     document.getElementById('llmUsageKpi'),
             callsBody:    document.getElementById('llmCallsBody'),
             refreshCalls: document.getElementById('llmRefreshCalls'),
+            systemPrompt: document.getElementById('llmSystemPrompt'),
         };
     },
 
@@ -109,6 +110,7 @@ export const LLMModule = {
             this.dom.tokensBudget.value = s.monthly_budget_tokens || 0;
             this.dom.periodStart.value  = s.monthly_period_start || '';
             this.dom.enabled.checked = !!s.enabled;
+            if (this.dom.systemPrompt) this.dom.systemPrompt.value = s.system_prompt || '';
             if (s.token_set) {
                 this.dom.tokenHint.innerHTML = `<i class="fa-solid fa-check" style="color:#10b981;"></i> Токен сохранён: <code>${escapeHtml(s.token_hint)}</code>`;
             } else {
@@ -133,6 +135,7 @@ export const LLMModule = {
             daily_budget_rub: Number(this.dom.budget.value) || 50,
             monthly_budget_tokens: Number(this.dom.tokensBudget.value) || 0,
             monthly_period_start: this.dom.periodStart.value || '',
+            system_prompt: this.dom.systemPrompt ? this.dom.systemPrompt.value : '',
         };
         try {
             await api.put('/admin/llm/settings', body);
@@ -259,8 +262,9 @@ export const LLMModule = {
     async loadCalls() {
         try {
             const rows = await api.get('/admin/llm/calls?limit=50');
+            this._lastCalls = rows;
             if (!rows.length) {
-                this.dom.callsBody.innerHTML = '<tr><td colspan="7" style="padding:30px; text-align:center; color:var(--text-secondary);">Вызовов ещё не было</td></tr>';
+                this.dom.callsBody.innerHTML = '<tr><td colspan="8" style="padding:30px; text-align:center; color:var(--text-secondary);">Вызовов ещё не было</td></tr>';
                 return;
             }
             this.dom.callsBody.innerHTML = rows.map(r => `
@@ -274,9 +278,58 @@ export const LLMModule = {
                     <td style="padding:6px 10px;">${r.success
                         ? '<span style="color:#10b981;">✓</span>'
                         : `<span style="color:#dc2626;" title="${escapeHtml(r.error_short || '')}">✗ ${escapeHtml((r.error_short || '').slice(0, 60))}</span>`}</td>
+                    <td style="padding:6px 10px; text-align:center;">${(r.response_text || r.prompt_text)
+                        ? `<button class="icon-btn" data-call-report="${r.id}" title="Что ИИ сделал — промпт и ответ"><i class="fa-solid fa-eye"></i></button>`
+                        : '<span style="color:var(--text-tertiary);">—</span>'}</td>
                 </tr>`).join('');
+            // Делегация: открыть отчёт по клику на «глаз».
+            this.dom.callsBody.onclick = (e) => {
+                const btn = e.target.closest('button[data-call-report]');
+                if (!btn) return;
+                const call = (this._lastCalls || []).find(
+                    c => String(c.id) === btn.dataset.callReport);
+                if (call) this._showCallReport(call);
+            };
         } catch (e) {
             console.warn('[llm] calls failed:', e?.message);
         }
+    },
+
+    /** Модалка «что ИИ сделал»: результат (ответ) + что проверял (промпт). */
+    _showCallReport(call) {
+        const purposeRu = {
+            daily_briefing: '🌅 Утренняя сводка',
+            error_analysis: '🐛 Разбор ошибки',
+            anomaly_triage: '🔍 Триаж аномалии',
+            user_summary: '👤 Разбор жильца',
+            test: '🧪 Тест соединения',
+        }[call.purpose] || call.purpose;
+        const esc = (t) => escapeHtml(t || '');
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:10000; display:flex; align-items:center; justify-content:center; padding:20px;';
+        overlay.innerHTML = `
+            <div style="background:var(--bg-card,#fff); border-radius:12px; padding:20px 22px; max-width:760px; width:100%; max-height:88vh; overflow:auto; box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                    <h3 style="margin:0; font-size:16px;">${esc(purposeRu)}</h3>
+                    <button data-report-close class="icon-btn"><i class="fa-solid fa-xmark"></i></button>
+                </div>
+                <div style="font-size:12px; color:var(--text-secondary); margin-bottom:14px;">
+                    ${esc(fmtDateTime(call.occurred_at))} · ${esc(call.model_name)} ·
+                    ${call.prompt_tokens || '—'}/${call.response_tokens || '—'} токенов ·
+                    ${call.cost_rub ? call.cost_rub.toFixed(4) + ' ₽' : '—'} ·
+                    ${call.success ? '<span style="color:#10b981;">успех</span>' : '<span style="color:#dc2626;">ошибка</span>'}
+                </div>
+                ${call.error_short ? `<div style="background:#fef2f2; border:1px solid #fecaca; border-radius:8px; padding:10px; margin-bottom:12px; font-size:12px; color:#991b1b;"><b>Ошибка:</b> ${esc(call.error_short)}</div>` : ''}
+                <div style="margin-bottom:6px; font-weight:600; font-size:13px; color:#0369a1;">📤 Что ИИ ответил (результат):</div>
+                <pre style="background:#f0f9ff; border:1px solid #bae6fd; border-radius:8px; padding:12px; font-size:12.5px; white-space:pre-wrap; word-break:break-word; margin:0 0 16px; font-family:inherit;">${call.response_text ? esc(call.response_text) : '<i style="color:#9ca3af;">пусто (нет ответа или старый вызов до обновления)</i>'}</pre>
+                <details>
+                    <summary style="cursor:pointer; font-weight:600; font-size:13px; color:var(--text-secondary);">📥 Что ушло в ИИ (промпт + данные, которые он проверял)</summary>
+                    <pre style="background:var(--bg-page); border:1px solid var(--border-color); border-radius:8px; padding:12px; font-size:11.5px; white-space:pre-wrap; word-break:break-word; margin:8px 0 0; font-family:inherit; max-height:320px; overflow:auto;">${call.prompt_text ? esc(call.prompt_text) : '<i style="color:#9ca3af;">пусто</i>'}</pre>
+                </details>
+            </div>`;
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay || e.target.closest('[data-report-close]')) overlay.remove();
+        });
+        document.body.appendChild(overlay);
     },
 };

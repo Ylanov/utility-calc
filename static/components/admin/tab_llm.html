@@ -86,6 +86,19 @@
                 </button>
             </div>
 
+            <!-- Редактор системного промпта (llm_003): дополняет встроенный -->
+            <div style="margin-top:14px;">
+                <label style="display:block; font-size:12px; color:var(--text-secondary); margin-bottom:4px;">
+                    📝 Системный промпт — доп. инструкции ИИ
+                </label>
+                <textarea id="llmSystemPrompt" rows="4" maxlength="4000"
+                          placeholder="Напр.: Отвечай кратко и по-деловому. Особое внимание — крупным долгам и резким скачкам сумм. Если данных мало — честно скажи об этом."
+                          style="width:100%; padding:8px 10px; font-size:13px; font-family:inherit; resize:vertical; box-sizing:border-box;"></textarea>
+                <div style="font-size:11px; color:var(--text-secondary); margin-top:4px;">
+                    Дополняет встроенный промпт (роль/формат), не заменяет. Применяется ко всем задачам ИИ (брифинг, разбор ошибок, триаж аномалий). Сохраняется кнопкой «Сохранить настройки».
+                </div>
+            </div>
+
             <div style="display:flex; gap:8px; margin-top:14px;">
                 <button id="llmSaveSettings" class="action-btn success-btn">
                     <i class="fa-solid fa-floppy-disk"></i> Сохранить настройки
@@ -125,10 +138,11 @@
                         <th style="padding:6px 10px; text-align:right;">₽</th>
                         <th style="padding:6px 10px; text-align:right;">мс</th>
                         <th style="padding:6px 10px; text-align:left;">OK/Err</th>
+                        <th style="padding:6px 10px; text-align:center;">Отчёт</th>
                     </tr>
                 </thead>
                 <tbody id="llmCallsBody">
-                    <tr><td colspan="7" style="padding:20px; text-align:center; color:var(--text-secondary);">Загрузка…</td></tr>
+                    <tr><td colspan="8" style="padding:20px; text-align:center; color:var(--text-secondary);">Загрузка…</td></tr>
                 </tbody>
             </table>
         </div>

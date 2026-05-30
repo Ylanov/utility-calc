@@ -54,6 +54,8 @@ class SettingsUpdate(BaseModel):
         None, description="ISO-дата начала текущего периода (YYYY-MM-DD)",
     )
     base_url: Optional[str] = Field(None, max_length=256)
+    # Кастомная добавка к системному промпту (llm_003). "" = очистить (дефолт).
+    system_prompt: Optional[str] = Field(None, max_length=4000)
 
 
 class TokenSet(BaseModel):
@@ -109,6 +111,7 @@ async def get_settings(
         "budget_mode": "tokens" if (s.monthly_budget_tokens or 0) > 0 else "rub",
         "disabled_until": s.disabled_until.isoformat() if s.disabled_until else None,
         "disabled_reason": s.disabled_reason,
+        "system_prompt": s.system_prompt or "",
         "updated_at": s.updated_at.isoformat() if s.updated_at else None,
         "crypto_ready": is_crypto_ready(),
     }
@@ -140,6 +143,8 @@ async def update_settings(
             except ValueError:
                 raise HTTPException(400, "monthly_period_start: ожидаю YYYY-MM-DD")
     if body.base_url is not None: s.base_url = body.base_url or None
+    if body.system_prompt is not None:
+        s.system_prompt = body.system_prompt.strip() or None
     s.updated_at = utcnow()
     s.updated_by_id = current_user.id
     await db.commit()
@@ -336,6 +341,10 @@ async def list_calls(
             "error_short": (r.error or "")[:300] if r.error else None,
             "related_type": r.related_type,
             "related_id": r.related_id,
+            # Полный текст для модалки «что ИИ проверил / что вернул»
+            # (уже обрезаны до 8000 символов при сохранении в service.ask).
+            "prompt_text": r.prompt_text,
+            "response_text": r.response_text,
         }
         for r in rows
     ]

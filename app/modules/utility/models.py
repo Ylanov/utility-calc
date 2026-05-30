@@ -791,6 +791,10 @@ class LLMSetting(Base):
     disabled_reason = Column(String(200), nullable=True)
     updated_at = Column(DateTime, nullable=True, onupdate=_utcnow)
     updated_by_id = Column(Integer, nullable=True)
+    # Кастомная добавка к системному промпту: админ дописывает инструкции ИИ
+    # (тон, на что обращать внимание). ДОПОЛНЯЕТ встроенный SYSTEM_BASE, не
+    # заменяет. NULL = только дефолтный промпт. См. llm_003 + service.ask.
+    system_prompt = Column(Text, nullable=True)
 
 
 # ======================================================
@@ -819,6 +823,11 @@ class LLMCall(Base):
     success = Column(Boolean, nullable=False, default=False,
                      server_default="false")
     error = Column(Text, nullable=True)
+    # Текст промпта (что ушло в ИИ) и ответа (что ИИ вернул) — для отчёта
+    # админу «что ИИ проверил / что нашёл / правильно ли». Хранятся обрезанными
+    # (см. service.ask), чтобы не раздувать БД. NULL у старых записей.
+    prompt_text = Column(Text, nullable=True)
+    response_text = Column(Text, nullable=True)
 
     # Связанная сущность (error_log/user/ticket) — для линковки UI.
     related_type = Column(String(32), nullable=True, index=True)
