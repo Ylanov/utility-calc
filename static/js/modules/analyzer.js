@@ -82,6 +82,13 @@ export const AnalyzerModule = {
             inboxInlineSummary: document.getElementById('inboxInlineSummary'),
             btnInboxInlineRefresh: document.getElementById('btnInboxInlineRefresh'),
 
+            // Монитор проблем жильцов (сигнализация)
+            btnScanProblems:  document.getElementById('btnScanProblems'),
+            rpSeverityFilter: document.getElementById('rpSeverityFilter'),
+            btnRpRefresh:     document.getElementById('btnRpRefresh'),
+            rpSummary:        document.getElementById('rpSummary'),
+            rpBody:           document.getElementById('rpBody'),
+
             // Таб «Анализ периода»
             tabPreview:     document.getElementById('tabPreview'),
             tabCompare:     document.getElementById('tabCompare'),
@@ -199,6 +206,15 @@ export const AnalyzerModule = {
             if (tBtn) { this.aiTriage(Number(tBtn.dataset.inboxTriage), tBtn); return; }
             const rBtn = e.target.closest('button[data-resolve-action]');
             if (rBtn) this._resolveIssue(rBtn.dataset.issueId, rBtn.dataset.resolveAction, rBtn);
+        });
+
+        // Монитор проблем жильцов
+        this.dom.btnScanProblems?.addEventListener('click', () => this.scanProblems());
+        this.dom.btnRpRefresh?.addEventListener('click', () => this.loadResidentProblems());
+        this.dom.rpSeverityFilter?.addEventListener('change', () => this.loadResidentProblems());
+        this.dom.rpBody?.addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-rp-action]');
+            if (btn) this.rpAction(Number(btn.dataset.rpId), btn.dataset.rpAction, btn);
         });
 
         // Под-табы внутри активной группы
@@ -395,6 +411,7 @@ export const AnalyzerModule = {
         });
         // Авто-загрузка свежего списка при открытии «Сводки проблем».
         if (tabId === 'inbox') this.loadInboxInline(this._inboxInlineFilter || 'all');
+        if (tabId === 'residentproblems') this.loadResidentProblems();
     },
 
     _setPeriodsTab(tab) {
@@ -1561,6 +1578,117 @@ export const AnalyzerModule = {
                     <tbody>${data.issues.map(i => this._inboxRowHtml(i)).join('')}</tbody>
                 </table>
             </div>`;
+    },
+
+    // ============================================================
+    // МОНИТОР ПРОБЛЕМ ЖИЛЬЦОВ (система сигнализации)
+    // ============================================================
+    async scanProblems() {
+        const btn = this.dom.btnScanProblems;
+        const orig = btn ? btn.innerHTML : '';
+        if (btn) {
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Сканирую…';
+        }
+        try {
+            const res = await api.post('/admin/analyzer/scan-problems', {});
+            toast(`Скан завершён: жильцов ${res.scanned_users || 0}, сигналов ${res.problems_detected || 0}`, 'success');
+            await this.loadResidentProblems();
+        } catch (e) {
+            toast('Ошибка скана: ' + (e.message || ''), 'error');
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+        }
+    },
+
+    async loadResidentProblems() {
+        const body = this.dom.rpBody;
+        if (!body) return;
+        const sev = this.dom.rpSeverityFilter?.value || '';
+        body.innerHTML = '<p style="color:var(--text-secondary); padding:20px;">Загружаем…</p>';
+        try {
+            const params = new URLSearchParams({ status: 'active', limit: '300' });
+            if (sev) params.set('severity', sev);
+            const data = await api.get(`/admin/analyzer/resident-problems?${params.toString()}`);
+            this._renderResidentProblems(data);
+        } catch (e) {
+            body.innerHTML = `<p style="color:var(--danger-color);">Ошибка: ${escapeHtml(e.message)}</p>`;
+        }
+    },
+
+    _renderResidentProblems(data) {
+        const items = data.items || [];
+        const sum = data.summary || {};
+        if (this.dom.rpSummary) {
+            this.dom.rpSummary.textContent =
+                `Активных: ${data.count} · critical: ${sum.critical || 0} · high: ${sum.high || 0} · medium: ${sum.medium || 0} · low: ${sum.low || 0}`;
+        }
+        const body = this.dom.rpBody;
+        if (!items.length) {
+            body.innerHTML = `
+                <div style="text-align:center; padding:50px; color:var(--success-color);">
+                    <i class="fa-solid fa-check-circle" style="font-size:28px;"></i>
+                    <div style="margin-top:10px;">Активных проблем нет.</div>
+                </div>`;
+            return;
+        }
+        const sevColors = {
+            critical: { bg: '#fef2f2', fg: '#991b1b' },
+            high: { bg: '#fff7ed', fg: '#9a3412' },
+            medium: { bg: '#fefce8', fg: '#854d0e' },
+            low: { bg: '#f9fafb', fg: '#6b7280' },
+        };
+        const rows = items.map(p => {
+            const c = sevColors[p.severity] || sevColors.medium;
+            const addr = p.dormitory
+                ? `${escapeHtml(p.dormitory)}/${escapeHtml(String(p.room_number || ''))}`
+                : '—';
+            return `
+                <tr style="border-bottom:1px solid var(--border-color);">
+                    <td style="padding:10px;"><span style="display:inline-block; padding:3px 8px; border-radius:4px; background:${c.bg}; color:${c.fg}; font-size:10px; font-weight:600; text-transform:uppercase;">${escapeHtml(p.severity)}</span></td>
+                    <td style="padding:10px;">
+                        <div style="font-weight:600;">${escapeHtml(p.title)}</div>
+                        <div style="font-size:11px; color:var(--text-secondary);">${escapeHtml(p.full_name || p.username || '—')} · ${addr}</div>
+                    </td>
+                    <td style="padding:10px; text-align:right; white-space:nowrap;">
+                        <button class="secondary-btn" data-rp-action="acknowledge" data-rp-id="${p.id}" title="Видел, в работе" style="padding:5px 9px; font-size:12px;"><i class="fa-solid fa-eye"></i></button>
+                        <button class="success-btn" data-rp-action="resolve" data-rp-id="${p.id}" title="Решено" style="padding:5px 9px; font-size:12px; margin-left:4px; background:#10b981; color:#fff; border:1px solid #10b981;"><i class="fa-solid fa-check"></i></button>
+                        <button class="secondary-btn" data-rp-action="snooze" data-rp-id="${p.id}" title="Отложить на неделю" style="padding:5px 9px; font-size:12px; margin-left:4px;"><i class="fa-solid fa-clock"></i></button>
+                    </td>
+                </tr>`;
+        }).join('');
+        body.innerHTML = `
+            <div style="overflow-x:auto; border:1px solid var(--border-color); border-radius:8px;">
+                <table style="width:100%; border-collapse:collapse; font-size:13px; min-width:560px;">
+                    <thead style="background:var(--bg-page);">
+                        <tr style="font-size:11px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.3px;">
+                            <th style="text-align:left; padding:8px 10px; width:90px;">Важность</th>
+                            <th style="text-align:left; padding:8px 10px;">Проблема / жилец</th>
+                            <th style="text-align:right; padding:8px 10px;">Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>`;
+    },
+
+    async rpAction(id, action, btn) {
+        const orig = btn ? btn.innerHTML : '';
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
+        try {
+            await api.post(`/admin/analyzer/resident-problems/${id}/action`,
+                { action, snooze_days: 7 });
+            const row = btn?.closest('tr');
+            if (row) {
+                row.style.transition = 'opacity .25s';
+                row.style.opacity = '0';
+                setTimeout(() => row.remove(), 250);
+            }
+            toast(`✓ ${action}`, 'success');
+        } catch (e) {
+            toast('Ошибка: ' + (e.message || ''), 'error');
+            if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+        }
     },
 
     // ============================================================

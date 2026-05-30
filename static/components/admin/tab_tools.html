@@ -1049,6 +1049,9 @@
                                 <button type="button" data-analyzer-tab="stuck" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
                                     <i class="fa-solid fa-bug"></i> Заблокированные
                                 </button>
+                                <button type="button" data-analyzer-tab="residentproblems" class="action-btn secondary-btn" style="border-radius:0; padding:8px 16px; font-size:13px;">
+                                    <i class="fa-solid fa-user-shield"></i> Проблемы жильцов
+                                </button>
                             </div>
                         </div>
                         <div data-group-tabs="analysis" style="margin-bottom:18px; display:none;">
@@ -1162,6 +1165,30 @@
                             <div id="inboxInlineSummary" style="font-size:12px; color:var(--text-secondary); margin-bottom:10px;"></div>
                             <div id="inboxInlineBody">
                                 <p style="color:var(--text-secondary); padding:20px;">Загрузка…</p>
+                            </div>
+                        </div>
+
+                        <!-- ============ ТАБ: ПРОБЛЕМЫ ЖИЛЬЦОВ (монитор сигнализации) ============ -->
+                        <div data-analyzer-pane="residentproblems" style="display:none;">
+                            <p style="font-size:13px; color:var(--text-secondary); margin:0 0 12px 0;">
+                                Реальные проблемы жильцов — детектируются фоновым сканером (не подаёт показания, долг растёт, битый формат, «замер» счётчика). Решайте здесь: подтвердить / решено / отложить.
+                            </p>
+                            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:12px;">
+                                <button id="btnScanProblems" class="action-btn primary-btn" style="padding:6px 14px; font-size:13px;">
+                                    <i class="fa-solid fa-magnifying-glass-chart"></i> Сканировать сейчас
+                                </button>
+                                <select id="rpSeverityFilter" style="padding:4px 8px; font-size:12px;">
+                                    <option value="">Все важности</option>
+                                    <option value="critical">Критичные</option>
+                                    <option value="high">Высокие</option>
+                                    <option value="medium">Средние</option>
+                                    <option value="low">Низкие</option>
+                                </select>
+                                <button id="btnRpRefresh" class="icon-btn" title="Обновить" style="margin-left:auto;"><i class="fa-solid fa-rotate-right"></i></button>
+                            </div>
+                            <div id="rpSummary" style="font-size:12px; color:var(--text-secondary); margin-bottom:10px;"></div>
+                            <div id="rpBody">
+                                <p style="color:var(--text-secondary); padding:20px;">Нажмите «Сканировать сейчас» или «Обновить».</p>
                             </div>
                         </div>
 
