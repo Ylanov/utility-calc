@@ -149,15 +149,56 @@ function renderDropdown(data) {
     return `
         <div class="notif-dropdown__header">События</div>
         ${items.map(([key, cat]) => `
-            <a class="notif-category" href="${cat.link || '#'}" data-cat="${key}">
+            <div class="notif-category" data-cat="${key}" role="button" tabindex="0">
                 <span class="notif-category__count ${cat.count === 0 ? 'notif-category__count--zero' : ''}">
                     ${cat.count}
                 </span>
                 <span class="notif-category__label">${cat.label}</span>
                 <span class="notif-category__chevron">›</span>
-            </a>
+            </div>
         `).join('')}
     `;
+}
+
+// Окно с КОНКРЕТНЫМИ событиями категории (на кого/где ошибка, что делать).
+function openCategoryModal(cat) {
+    const items = cat.items || [];
+    const esc = (s) => String(s ?? '').replace(/[&<>"]/g,
+        (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    const fmtDate = (iso) => {
+        if (!iso) return '';
+        try {
+            return new Date(iso).toLocaleString('ru-RU',
+                { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+        } catch { return ''; }
+    };
+    const rows = items.length
+        ? items.map((it) => `
+            <div style="padding:10px 14px; border-bottom:1px solid var(--border-color,#eee);">
+                <div style="font-weight:600; font-size:13px;">${esc(it.title)}</div>
+                ${it.subtitle ? `<div style="font-size:12px; color:var(--text-secondary,#6b7280); margin-top:2px;">${esc(it.subtitle)}</div>` : ''}
+                ${it.created_at ? `<div style="font-size:11px; color:var(--text-muted,#9ca3af); margin-top:2px;">${fmtDate(it.created_at)}</div>` : ''}
+            </div>`).join('')
+        : `<div style="padding:24px 16px; text-align:center; color:var(--text-secondary,#6b7280); font-size:13px;">
+               Сводно: <b>${cat.count}</b>. Подробности и действия — в соответствующем разделе (кнопка ниже).
+           </div>`;
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:2000; display:flex; align-items:center; justify-content:center; padding:20px;';
+    overlay.innerHTML = `
+        <div style="background:var(--bg-card,#fff); border-radius:12px; max-width:560px; width:100%; max-height:82vh; overflow:auto; box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:14px 16px; border-bottom:1px solid var(--border-color,#eee);">
+                <b style="font-size:15px;">${esc(cat.label)} · ${cat.count}</b>
+                <button data-notif-modal-close style="background:none; border:none; font-size:22px; line-height:1; cursor:pointer; color:var(--text-secondary,#6b7280);">×</button>
+            </div>
+            <div>${rows}</div>
+            ${cat.link ? `<div style="padding:12px 16px; border-top:1px solid var(--border-color,#eee); text-align:right;">
+                <a href="${esc(cat.link)}" class="action-btn primary-btn" style="padding:6px 14px; font-size:13px; text-decoration:none;">Открыть раздел →</a>
+            </div>` : ''}
+        </div>`;
+    overlay.addEventListener('click', (e) => {
+        if (e.target === overlay || e.target.closest('[data-notif-modal-close]')) overlay.remove();
+    });
+    document.body.appendChild(overlay);
 }
 
 function toggleDropdown() {
@@ -176,6 +217,14 @@ function toggleDropdown() {
     let data = null;
     try { data = JSON.parse(btn.dataset.cache || '{}'); } catch {}
     dd.innerHTML = renderDropdown(data);
+    // Клик по категории → окно с конкретными событиями (на кого/где ошибка),
+    // а не «глухой» переход на дашборд.
+    dd.querySelectorAll('[data-cat]').forEach((el) => {
+        el.addEventListener('click', () => {
+            const cat = (data?.categories || {})[el.dataset.cat];
+            if (cat) openCategoryModal(cat);
+        });
+    });
     dd.hidden = false;
     // Закрываем при клике вне дропдауна
     _outsideClickHandler = (e) => {
