@@ -749,32 +749,42 @@ export const DashboardModule = {
     },
 
     async _renderAnomaliesDetail(myId) {
-        const data = await api.get('/admin/analyzer/dashboard?days=30');
+        // Тот же источник, что и карточка «Аномалий» (активный период, черновики
+        // score≥80) — чтобы число на карточке совпадало с тем, что в модалке.
+        const data = await api.get('/admin/analyzer/pending-anomalies');
         if (myId !== undefined && myId !== this._detailReqId) return;
-        const a = data.anomalies || {};
-        const sev = a.by_severity || {};
+        const items = data.items || [];
         const cards = [
-            { label: 'Всего за 30 дн.',   value: a.total_flagged_readings || 0, color: '#dc2626', bg: '#fef2f2' },
-            { label: 'Критических',       value: sev['critical (80-100)'] || 0, color: '#ef4444', bg: '#fee2e2' },
-            { label: 'Средних',           value: sev['medium (40-79)'] || 0,    color: '#f59e0b', bg: '#fef3c7' },
-            { label: 'Низких',            value: sev['low (1-39)'] || 0,        color: '#10b981', bg: '#ecfdf5' },
+            { label: 'Аномалий на проверке', value: data.count || 0, color: '#dc2626', bg: '#fef2f2',
+              hint: data.period_name || '' },
         ];
-        const top = a.top_flags || [];
-        const max = top[0]?.count || 1;
+        const fmtMoney = (v) => Number(v || 0).toLocaleString('ru-RU', {minimumFractionDigits:2, maximumFractionDigits:2}) + ' ₽';
+        const rows = items.map(it => `
+            <tr style="border-top:1px solid #f3f4f6;">
+                <td style="padding:8px 12px;">${this._escape(it.username)}</td>
+                <td style="padding:8px 12px; color:var(--text-secondary);">${this._escape((it.dormitory_name || '—') + ' / ' + (it.room_number || '—'))}</td>
+                <td style="padding:8px 12px; text-align:center;"><span style="background:#fee2e2; color:#991b1b; padding:2px 8px; border-radius:8px; font-weight:700;">${it.anomaly_score}</span></td>
+                <td style="padding:8px 12px; font-size:11px; color:var(--text-secondary);">${this._escape((it.flags || []).join(', '))}</td>
+                <td style="padding:8px 12px; text-align:right; font-family:monospace;">${fmtMoney(it.total_cost)}</td>
+            </tr>`).join('');
         this.dom.detailBody.innerHTML = `
             ${this._detailGrid(cards)}
-            <h4 style="margin:0 0 10px;"><i class="fa-solid fa-fire" style="color:#dc2626;"></i> Топ срабатываний</h4>
-            ${top.length ? top.map(f => {
-                const pctBar = Math.round((f.count / max) * 100);
-                return `
-                    <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px; font-size:13px;">
-                        <div style="width:200px; font-family:monospace;" title="${this._escape(f.flag)}">${this._escape(f.flag)}</div>
-                        <div style="flex:1; background:#f3f4f6; border-radius:4px; height:14px; overflow:hidden;">
-                            <div style="width:${pctBar}%; height:100%; background:#dc2626;"></div>
-                        </div>
-                        <div style="width:40px; text-align:right; font-weight:600;">${f.count}</div>
-                    </div>`;
-            }).join('') : `<div style="color:var(--text-secondary); font-style:italic;">За 30 дней аномалий не было.</div>`}
+            <h4 style="margin:16px 0 10px;"><i class="fa-solid fa-triangle-exclamation" style="color:#dc2626;"></i> Черновики на проверке (score ≥ 80)</h4>
+            ${items.length ? `
+                <table style="width:100%; border-collapse:collapse; font-size:13px; background:white; border:1px solid var(--border-color); border-radius:6px; overflow:hidden;">
+                    <thead style="background:#f3f4f6;">
+                        <tr style="font-size:11px; color:var(--text-secondary); text-transform:uppercase;">
+                            <th style="text-align:left; padding:8px 12px;">Жилец</th>
+                            <th style="text-align:left; padding:8px 12px;">Общ. / комн.</th>
+                            <th style="text-align:center; padding:8px 12px;">Score</th>
+                            <th style="text-align:left; padding:8px 12px;">Флаги</th>
+                            <th style="text-align:right; padding:8px 12px;">Сумма</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+                <div style="font-size:11px; color:var(--text-tertiary); margin-top:8px;">Разбор — в «Операции → Центр анализа → Аномальные дельты».</div>`
+            : `<div style="color:var(--success-color); padding:24px; text-align:center;"><i class="fa-solid fa-circle-check"></i> Аномалий на проверке нет.</div>`}
         `;
     },
 

@@ -94,6 +94,9 @@ export const HousingModule = {
                 hasCw: document.getElementById('roomHasCw'),
                 hasEl: document.getElementById('roomHasEl'),
                 bulkMeterBtn: document.getElementById('roomBulkMeterBtn'),
+                // Нормализация серийников счётчиков к шаблону.
+                normalizeBtn: document.getElementById('roomNormalizeSerialsBtn'),
+                normalizeHouseBtn: document.getElementById('roomNormalizeHouseBtn'),
                 // Bug AS: новые поля «холостяцкая квартира» + макс. вместимость.
                 isSingles: document.getElementById('roomIsSingles'),
                 maxCapacity: document.getElementById('roomMaxCapacity'),
@@ -174,6 +177,12 @@ export const HousingModule = {
         if (this.modal.inputs.bulkMeterBtn) {
             this.modal.inputs.bulkMeterBtn.addEventListener('click', () => this.bulkMeterToHouse());
         }
+        if (this.modal.inputs.normalizeBtn) {
+            this.modal.inputs.normalizeBtn.addEventListener('click', () => this.normalizeSerialsInForm());
+        }
+        if (this.modal.inputs.normalizeHouseBtn) {
+            this.modal.inputs.normalizeHouseBtn.addEventListener('click', () => this.normalizeSerialsHouse());
+        }
 
         [this.modal.btnClose, this.modal.btnCancel].forEach(btn => {
             if (btn) btn.addEventListener('click', () => {
@@ -220,9 +229,16 @@ export const HousingModule = {
             // Заменили на DOM-конструирование через createElement — браузер
             // сам экранирует текст через textContent.
             const sel = this.dom.dormFilterSelect;
+            // Сохраняем текущий выбор фильтра — иначе после сохранения комнаты
+            // (handleSave → loadDormitories) фильтр сбрасывался на «Все объекты».
+            const prevValue = sel.value;
             sel.innerHTML = '';
             sel.appendChild(new Option('Все объекты', ''));
             dorms.forEach(d => sel.appendChild(new Option(String(d), String(d))));
+            // Восстанавливаем выбор, если такое здание ещё есть в списке.
+            if (prevValue && dorms.map(String).includes(prevValue)) {
+                sel.value = prevValue;
+            }
 
             const list = this.dom.dormList;
             list.innerHTML = '';
@@ -789,6 +805,88 @@ export const HousingModule = {
             toast(`Обновлено комнат: ${res.updated_rooms}`, 'success');
         } catch (e) {
             toast('Ошибка: ' + (e.message || ''), 'error');
+        }
+    },
+
+    // ── Нормализация серийников к шаблону «<тип>-<дом>-<комната>» ──────────
+    // Тип берётся по полю (hw=гвс / cw=хвс / el=эл), ядро «дом-комната» =
+    // числовые сегменты текущего серийника; мусорный буквенный префикс
+    // (КВС/РРР/…) и тип-суффикс отбрасываются. Напр. КВС-4.8-101-ХВС → хвс-4.8-101.
+    _normalizeSerial(old, kind) {
+        const PREFIX = { hw: 'гвс', cw: 'хвс', el: 'эл' };
+        if (!old) return old;
+        const s = String(old).trim();
+        if (!s) return s;
+        const segs = s.replace(/\s+/g, '-').split('-').filter(Boolean);
+        const core = segs.filter(x => /\d/.test(x)).join('-');
+        if (!core) return s;  // ядро не определили — не трогаем
+        return `${PREFIX[kind]}-${core}`;
+    },
+
+    // Кнопка в форме: приводим 3 поля серийников этой квартиры к шаблону.
+    // Сохранение — обычной кнопкой формы после проверки.
+    normalizeSerialsInForm() {
+        const map = [
+            [this.modal.inputs.hw, 'hw'],
+            [this.modal.inputs.cw, 'cw'],
+            [this.modal.inputs.el, 'el'],
+        ];
+        let changed = 0;
+        map.forEach(([input, kind]) => {
+            if (!input) return;
+            const next = this._normalizeSerial(input.value, kind);
+            if (next && next !== input.value) { input.value = next; changed++; }
+        });
+        if (changed) {
+            toast(`Приведено к шаблону полей: ${changed}. Проверьте и нажмите «Сохранить».`, 'success');
+        } else {
+            toast('Нечего приводить (поля пусты или уже в формате).', 'info');
+        }
+    },
+
+    // Bulk по дому/общежитию: предпросмотр (dry_run) → подтверждение → применение.
+    async normalizeSerialsHouse() {
+        const isHouse = !!this.modal.inputs.placeTypeHouse?.checked;
+        const params = new URLSearchParams();
+        let target;
+        if (isHouse) {
+            const street = (this.modal.inputs.street?.value || '').trim();
+            const house = (this.modal.inputs.houseNumber?.value || '').trim();
+            if (!street || !house) return toast('Укажите улицу и номер дома', 'error');
+            params.set('street', street);
+            params.set('house_number', house);
+            target = `дому ${street}, ${house}`;
+        } else {
+            const dorm = (this.modal.inputs.dorm?.value || '').trim();
+            if (!dorm) return toast('Укажите общежитие', 'error');
+            params.set('dormitory_name', dorm);
+            target = `общежитию «${dorm}»`;
+        }
+        let preview;
+        try {
+            preview = await api.post(`/rooms/normalize-serials?${params}&dry_run=true`);
+        } catch (e) {
+            return toast('Ошибка предпросмотра: ' + (e.message || ''), 'error');
+        }
+        if (!preview.changed_rooms) {
+            return toast(`По ${target} нечего нормализовать (всё уже в формате).`, 'info');
+        }
+        const sample = (preview.changes || []).slice(0, 5).map(c => {
+            const parts = Object.values(c.fields).map(v => `${v.old} → ${v.new}`);
+            return `  комн. ${c.room_number}: ${parts.join('; ')}`;
+        }).join('\n');
+        const more = preview.changed_rooms > 5 ? `\n  …и ещё ${preview.changed_rooms - 5} комнат` : '';
+        if (!confirm(
+            `Нормализовать серийники по ${target}?\n\n` +
+            `Изменится комнат: ${preview.changed_rooms} из ${preview.total_rooms}.\n\n` +
+            `Примеры:\n${sample}${more}`
+        )) return;
+        try {
+            const res = await api.post(`/rooms/normalize-serials?${params}&dry_run=false`);
+            toast(`Нормализовано комнат: ${res.changed_rooms}`, 'success');
+            this.table.load();
+        } catch (e) {
+            toast('Ошибка применения: ' + (e.message || ''), 'error');
         }
     },
 

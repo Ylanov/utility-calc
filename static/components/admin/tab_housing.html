@@ -312,7 +312,15 @@
                                 <i class="fa-solid fa-layer-group"></i> Применить ко всему дому
                             </button>
                         </div>
-                        <h4 style="margin-bottom: 12px; font-size: 14px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">Серийные номера счетчиков (Опционально)</h4>
+                        <div style="display:flex; align-items:center; gap:10px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px; margin-bottom: 12px; flex-wrap:wrap;">
+                            <h4 style="margin:0; font-size: 14px;">Серийные номера счетчиков (Опционально)</h4>
+                            <button type="button" id="roomNormalizeSerialsBtn" class="action-btn secondary-btn" style="margin-left:auto; padding:4px 10px; font-size:12px;" title="Привести 3 серийника этой квартиры к шаблону «тип-дом-комната» (напр. хвс-4.8-101). Мусорный префикс убирается.">
+                                <i class="fa-solid fa-wand-magic-sparkles"></i> Привести к шаблону
+                            </button>
+                            <button type="button" id="roomNormalizeHouseBtn" class="action-btn secondary-btn" style="padding:4px 10px; font-size:12px;" title="Нормализовать серийники по ВСЕМ комнатам этого дома/общежития (с предпросмотром перед применением)">
+                                <i class="fa-solid fa-layer-group"></i> По всему дому
+                            </button>
+                        </div>
                         <div class="grid-3-col" style="background: var(--bg-page); padding: 16px; border-radius: var(--radius-sm);">
                             <div class="form-group" style="margin: 0;">
                                 <label style="color: var(--danger-color);"><i class="fa-solid fa-fire"></i> № ГВС</label>

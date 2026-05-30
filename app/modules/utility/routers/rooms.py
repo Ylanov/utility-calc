@@ -806,6 +806,91 @@ async def bulk_meter_config(
     return {"status": "ok", "updated_rooms": result.rowcount}
 
 
+# Нормализация серийников счётчиков к шаблону «<тип>-<дом>-<комната>»
+# (напр. хвс-4.8-101). Тип берётся по полю (hw=гвс / cw=хвс / el=эл), ядро
+# «дом-комната» = числовые сегменты текущего серийника; мусорный буквенный
+# префикс из импорта (КВС/РРР/…) и тип-суффикс отбрасываются. Формат выбран
+# владельцем. Если ядро не определить (нет цифр / пустой серийник) — не трогаем.
+_SERIAL_TYPE_PREFIX = {"hw": "гвс", "cw": "хвс", "el": "эл"}
+
+
+def _normalize_meter_serial(old, kind: str):
+    if not old or not str(old).strip():
+        return None
+    segs = [s for s in str(old).strip().replace(" ", "-").split("-") if s]
+    core = "-".join(s for s in segs if any(ch.isdigit() for ch in s))
+    if not core:
+        return None
+    return f"{_SERIAL_TYPE_PREFIX[kind]}-{core}"
+
+
+@router.post("/normalize-serials", dependencies=[Depends(allow_management)])
+async def normalize_serials(
+    dormitory_name: Optional[str] = Query(None),
+    street: Optional[str] = Query(None),
+    house_number: Optional[str] = Query(None),
+    dry_run: bool = Query(True, description="true — только предпросмотр, не сохранять"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Привести серийники счётчиков к шаблону «<тип>-<дом>-<комната>» (напр.
+    хвс-4.8-101) по всем комнатам дома/общежития одним действием. Мусорный
+    префикс из импорта (КВС/РРР/…) отбрасывается, тип берётся по полю. Цель —
+    dormitory_name ИЛИ street+house_number. dry_run=true — предпросмотр без
+    сохранения (для модалки подтверждения)."""
+    q = select(Room)
+    if dormitory_name:
+        q = q.where(Room.place_type == "dormitory", Room.dormitory_name == dormitory_name)
+    elif street and house_number:
+        q = q.where(Room.place_type == "house",
+                    Room.street == street, Room.house_number == house_number)
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Укажите общежитие (dormitory_name) или дом (street + house_number)",
+        )
+    rooms = (await db.execute(q.order_by(Room.room_number))).scalars().all()
+
+    changes = []
+    for room in rooms:
+        fields = {}
+        for kind, attr in (("hw", "hw_meter_serial"),
+                           ("cw", "cw_meter_serial"),
+                           ("el", "el_meter_serial")):
+            old = getattr(room, attr)
+            new = _normalize_meter_serial(old, kind)
+            if new and new != old:
+                fields[kind] = {"old": old, "new": new}
+                if not dry_run:
+                    setattr(room, attr, new)
+        if fields:
+            changes.append({
+                "room_id": room.id,
+                "room_number": room.room_number,
+                "fields": fields,
+            })
+
+    if not dry_run and changes:
+        from app.modules.utility.routers.admin_dashboard import write_audit_log
+        await write_audit_log(
+            db, current_user.id, current_user.username,
+            action="normalize_meter_serials", entity_type="room", entity_id=None,
+            details={
+                "target": dormitory_name or f"{street} {house_number}",
+                "changed_rooms": len(changes),
+            },
+        )
+        await db.commit()
+
+    return {
+        "dry_run": dry_run,
+        "scope": dormitory_name or f"{street} {house_number}",
+        "total_rooms": len(rooms),
+        "changed_rooms": len(changes),
+        "changes": changes,
+    }
+
+
 @router.post("/{room_id}/replace-meter", dependencies=[Depends(allow_management)])
 async def replace_meter(room_id: int, data: ReplaceMeterSchema, db: AsyncSession = Depends(get_db)):
     """

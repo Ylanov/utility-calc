@@ -1782,6 +1782,52 @@ async def list_room_type_mismatches(
     return {"count": len(items), "by_kind": by_kind, "items": items}
 
 
+@router.get("/pending-anomalies")
+async def list_pending_anomalies(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Аномалии активного периода, ожидающие решения — РОВНО та же выборка, что
+    считает карточка «Аномалий» на дашборде (черновики активного периода, не
+    утверждены, anomaly_score >= 80). count совпадает с числом на карточке, а
+    список даёт детализацию по строке. Раньше модалка показывала флаги за 30
+    дней и расходилась с карточкой по определению."""
+    _require_admin(current_user)
+    active = (await db.execute(
+        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
+    )).scalars().first()
+    if not active:
+        return {"count": 0, "period_name": None, "items": []}
+
+    rows = (await db.execute(
+        select(MeterReading)
+        .options(selectinload(MeterReading.user).selectinload(User.room))
+        .where(
+            MeterReading.period_id == active.id,
+            MeterReading.is_approved.is_(False),
+            MeterReading.anomaly_score >= 80,
+        )
+        .order_by(MeterReading.anomaly_score.desc())
+    )).scalars().all()
+
+    items = []
+    for r in rows:
+        u = r.user
+        room = u.room if u else None
+        items.append({
+            "reading_id": r.id,
+            "user_id": u.id if u else None,
+            "username": u.username if u else "—",
+            "dormitory_name": room.dormitory_name if room else None,
+            "room_number": room.room_number if room else None,
+            "anomaly_score": int(r.anomaly_score or 0),
+            "flags": [f.strip() for f in (r.anomaly_flags or "").split(",") if f.strip()],
+            "total_cost": float(r.total_cost or 0),
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        })
+    return {"count": len(items), "period_name": active.name, "items": items}
+
+
 @router.post("/ai-triage/{reading_id}")
 async def ai_triage_reading(
     reading_id: int,
