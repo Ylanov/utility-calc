@@ -1571,6 +1571,7 @@ export const AnalyzerModule = {
                     </td>
                     <td style="padding:10px 12px; text-align:right; font-family:monospace; font-size:12px;">
                         <div>${Number(it.hot_water).toFixed(2)} / ${Number(it.cold_water).toFixed(2)}</div>
+                        ${it.format_suspect ? '<div><span style="background:#fef3c7; color:#92400e; padding:1px 5px; border-radius:4px; font-size:10px; font-weight:600;" title="Показание >99999 — вероятно потеряна десятичная точка (баг формата)">⚠ формат?</span></div>' : ''}
                         <div style="color:var(--text-tertiary);">${Number(it.reading_total_cost).toLocaleString('ru-RU', {minimumFractionDigits:2, maximumFractionDigits:2})} ₽</div>
                     </td>
                     <td style="padding:10px 12px; text-align:right; white-space:nowrap;">
@@ -1703,6 +1704,9 @@ export const AnalyzerModule = {
             const initialBadge = it.is_initial
                 ? '<span style="background:#dbeafe; color:#1e40af; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:600;">начальное</span>'
                 : '';
+            const formatBadge = it.format_suspect
+                ? '<span style="background:#fef3c7; color:#92400e; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:600;" title="Показание >99999 — вероятно потеряна десятичная точка (баг формата ввода)">⚠ формат?</span>'
+                : '';
             return `
                 <tr style="border-bottom:1px solid var(--border-color);">
                     <td style="padding:10px 12px;">
@@ -1711,7 +1715,7 @@ export const AnalyzerModule = {
                     </td>
                     <td style="padding:10px 12px; font-size:12px;">
                         <div><b>${escapeHtml(it.period_name || '—')}</b></div>
-                        <div style="color:var(--text-secondary);">prev: ${escapeHtml(it.prev_period_name || '—')} ${synthBadge} ${initialBadge}</div>
+                        <div style="color:var(--text-secondary);">prev: ${escapeHtml(it.prev_period_name || '—')} ${synthBadge} ${initialBadge} ${formatBadge}</div>
                     </td>
                     <td style="padding:10px 12px; text-align:right; font-family:monospace; font-size:12px;">
                         <div>ГВС: ${fmt(it.hot_water)} <span style="color:var(--text-tertiary);">(было ${fmt(it.prev_hot_water)})</span></div>

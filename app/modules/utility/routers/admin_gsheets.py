@@ -2800,6 +2800,11 @@ async def list_historical_mismatches(
             "delta_months_approx": delta_months,
             "hot_water": float(sheet_row.hot_water or 0),
             "cold_water": float(sheet_row.cold_water or 0),
+            # Формат-подозрение: показание >99999 = потеряна десятичная точка
+            # (напр. 775930 вместо 775.930) — частая причина «подмен» в истории.
+            "format_suspect": bool(
+                (sheet_row.hot_water or 0) > 99999 or (sheet_row.cold_water or 0) > 99999
+            ),
             "reading_is_approved": bool(reading.is_approved),
             "reading_total_cost": float(reading.total_cost or 0),
         })

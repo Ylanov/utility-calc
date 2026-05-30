@@ -1511,8 +1511,29 @@ async def list_high_delta_readings(
     for r in rows:
         key = (r.user_id, r.room_id)
         by_key.setdefault(key, []).append(r)
+
+    # Хронологическая сортировка по (год, месяц) из period.name, НЕ по
+    # period_id: периоды могли заводиться не по порядку (напр. «Март 2026»
+    # создан позже «Май 2026» → больший id, но раньше по календарю). Без
+    # этого prev определялся неверно → мусорные/отрицательные дельты
+    # (кейс Колемагина: period Март, prev Май, ГВС −10.93).
+    _months_ru = {
+        "январь": 1, "февраль": 2, "март": 3, "апрель": 4, "май": 5, "июнь": 6,
+        "июль": 7, "август": 8, "сентябрь": 9, "октябрь": 10, "ноябрь": 11, "декабрь": 12,
+    }
+
+    def _chrono_key(r):
+        name = (r.period.name if r.period else "") or ""
+        parts = name.strip().lower().split()
+        if len(parts) == 2 and parts[0] in _months_ru:
+            try:
+                return (int(parts[1]), _months_ru[parts[0]], r.period_id or 0)
+            except (ValueError, TypeError):
+                pass
+        return (0, 0, r.period_id or 0)  # fallback: по id
+
     for key in by_key:
-        by_key[key].sort(key=lambda r: r.period_id or 0, reverse=True)
+        by_key[key].sort(key=_chrono_key, reverse=True)
 
     items = []
     for key, lst in by_key.items():
@@ -1555,6 +1576,9 @@ async def list_high_delta_readings(
                 "delta_cold": float(d_cold),
                 "delta_max": float(max_d),
                 "is_initial": is_initial,
+                # Формат-подозрение: целая часть >5 знаков (>99999 м³) = потеряна
+                # десятичная точка (напр. 775930 вместо 775.930) — баг ввода.
+                "format_suspect": bool(cur_hot > 99999 or cur_cold > 99999),
                 "prev_period_name": prev.period.name if prev and prev.period else None,
                 "prev_is_synth": bool(
                     prev and prev.anomaly_flags and (
