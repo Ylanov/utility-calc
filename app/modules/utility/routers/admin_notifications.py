@@ -15,7 +15,7 @@
 """
 from datetime import timedelta
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -23,6 +23,7 @@ from app.core.database import get_db
 from app.core.time_utils import utcnow
 from app.modules.utility.models import (
     User, GSheetsImportRow, AuditLog, MeterReading, SupportTicket,
+    ResidentProblem,
 )
 from app.core.dependencies import RoleChecker
 
@@ -140,6 +141,25 @@ async def get_notifications(
         .limit(limit)
     )).scalars().all()
 
+    # 7) Проблемы жильцов (монитор сигнализации) — активные high+critical,
+    #    не отложенные (snooze). Источник: фоновый scan_resident_problems.
+    rp_filter = [
+        ResidentProblem.status.in_(["open", "acknowledged"]),
+        ResidentProblem.severity.in_(["high", "critical"]),
+        or_(ResidentProblem.snooze_until.is_(None),
+            ResidentProblem.snooze_until < utcnow()),
+    ]
+    resident_problem_count = (await db.execute(
+        select(func.count(ResidentProblem.id)).where(*rp_filter)
+    )).scalar_one()
+    resident_problem_recent = (await db.execute(
+        select(ResidentProblem)
+        .options(selectinload(ResidentProblem.user).selectinload(User.room))
+        .where(*rp_filter)
+        .order_by(ResidentProblem.score.desc())
+        .limit(limit)
+    )).scalars().all()
+
     def _iso(dt):
         return dt.isoformat() if dt else None
 
@@ -147,7 +167,7 @@ async def get_notifications(
         "total": (
             gsheets_conflict_count + gsheets_unmatched_count
             + deletion_count + anomaly_count + tickets_open_count
-            + password_reset_count + overflow_count
+            + password_reset_count + overflow_count + resident_problem_count
         ),
         "categories": {
             "gsheets_conflicts": {
@@ -250,6 +270,27 @@ async def get_notifications(
                         "created_at": _iso(r.created_at),
                     }
                     for r in overflow_recent
+                ],
+            },
+            "resident_problems": {
+                "count": resident_problem_count,
+                "label": "Проблемы жильцов",
+                "link": "/admin.html#tools?section=analyzer",
+                "items": [
+                    {
+                        "id": p.id,
+                        "title": (
+                            f"{p.title} · "
+                            f"{p.user.username if p.user else '—'}"
+                        ),
+                        "subtitle": (
+                            f"{p.user.room.dormitory_name if p.user and p.user.room else ''} "
+                            f"ком. {p.user.room.room_number if p.user and p.user.room else ''} · "
+                            f"важность: {p.severity}"
+                        )[:160],
+                        "created_at": _iso(p.first_detected_at),
+                    }
+                    for p in resident_problem_recent
                 ],
             },
         },
