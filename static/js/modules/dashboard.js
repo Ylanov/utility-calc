@@ -665,8 +665,8 @@ export const DashboardModule = {
         this.dom.detailBody.innerHTML = `
             ${this._detailGrid(cards)}
             ${dormTable}
-            ${topList(topD, '#dc2626', 'Топ-5 должников', 'debt')}
-            ${topList(topO, '#7c3aed', 'Топ-5 переплатчиков', 'overpayment')}
+            ${topList(topD, '#dc2626', 'Топ-5 должников', 'amount')}
+            ${topList(topO, '#7c3aed', 'Топ-5 переплатчиков', 'amount')}
         `;
     },
 

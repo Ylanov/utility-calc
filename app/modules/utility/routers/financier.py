@@ -733,22 +733,33 @@ async def debts_stats(
     )).scalars().first()
     period_id = active_period.id if active_period else None
 
-    # Агрегация по всем readings активного периода
-    agg_q = select(
-        func.coalesce(func.sum(MeterReading.debt_209), 0),
-        func.coalesce(func.sum(MeterReading.overpayment_209), 0),
-        func.coalesce(func.sum(MeterReading.debt_205), 0),
-        func.coalesce(func.sum(MeterReading.overpayment_205), 0),
-        func.count(MeterReading.id),
-    ).where(MeterReading.period_id == period_id)
+    # Агрегация по readings активного периода. ВАЖНО: join User + фильтр
+    # is_deleted/role — чтобы KPI считал ТОЛЬКО активных жильцов и совпадал со
+    # списком «Долги 1С» (users-status фильтрует так же). Иначе долги, оставшиеся
+    # на user_id удалённых/выехавших жильцов после импорта 1С, раздувают счётчик
+    # («Должников: 800», а в списке 1).
+    _active_user = [User.is_deleted.is_(False), User.role == "user"]
+    agg_q = (
+        select(
+            func.coalesce(func.sum(MeterReading.debt_209), 0),
+            func.coalesce(func.sum(MeterReading.overpayment_209), 0),
+            func.coalesce(func.sum(MeterReading.debt_205), 0),
+            func.coalesce(func.sum(MeterReading.overpayment_205), 0),
+            func.count(MeterReading.id),
+        )
+        .join(User, User.id == MeterReading.user_id)
+        .where(MeterReading.period_id == period_id, *_active_user)
+    )
     agg = (await db.execute(agg_q)).one()
     total_debt_209, total_over_209, total_debt_205, total_over_205, readings_count = agg
 
-    # Должников: жильцов где сумма debt_209+205 > 0 в активном периоде
+    # Должников: активных жильцов где debt_209+205 > 0 в активном периоде
     debtors_q = (
         select(func.count(func.distinct(MeterReading.user_id)))
+        .join(User, User.id == MeterReading.user_id)
         .where(
             MeterReading.period_id == period_id,
+            *_active_user,
             (MeterReading.debt_209 > 0) | (MeterReading.debt_205 > 0),
         )
     )
@@ -757,20 +768,25 @@ async def debts_stats(
     # Переплатчиков
     overpayers_q = (
         select(func.count(func.distinct(MeterReading.user_id)))
+        .join(User, User.id == MeterReading.user_id)
         .where(
             MeterReading.period_id == period_id,
+            *_active_user,
             (MeterReading.overpayment_209 > 0) | (MeterReading.overpayment_205 > 0),
         )
     )
     overpayers_count = (await db.execute(overpayers_q)).scalar_one()
 
     # --- Учёт по КВАРТИРАМ (помещениям), а не по жильцам ---
-    # Квартир с долгом: distinct room_id где сумма debt_209+205 > 0.
+    # Квартир с долгом: distinct room_id где сумма debt_209+205 > 0 (по активным
+    # жильцам — join User, чтобы не считать квартиры по долгам выехавших).
     rooms_debt_q = (
         select(func.count(func.distinct(MeterReading.room_id)))
+        .join(User, User.id == MeterReading.user_id)
         .where(
             MeterReading.period_id == period_id,
             MeterReading.room_id.isnot(None),
+            *_active_user,
             (MeterReading.debt_209 > 0) | (MeterReading.debt_205 > 0),
         )
     )
@@ -779,9 +795,11 @@ async def debts_stats(
     # Квартир с переплатой
     rooms_over_q = (
         select(func.count(func.distinct(MeterReading.room_id)))
+        .join(User, User.id == MeterReading.user_id)
         .where(
             MeterReading.period_id == period_id,
             MeterReading.room_id.isnot(None),
+            *_active_user,
             (MeterReading.overpayment_209 > 0) | (MeterReading.overpayment_205 > 0),
         )
     )
@@ -790,7 +808,12 @@ async def debts_stats(
     # Всего квартир с данными в периоде (для шапки в режиме «Квартиры»)
     total_rooms_q = (
         select(func.count(func.distinct(MeterReading.room_id)))
-        .where(MeterReading.period_id == period_id, MeterReading.room_id.isnot(None))
+        .join(User, User.id == MeterReading.user_id)
+        .where(
+            MeterReading.period_id == period_id,
+            MeterReading.room_id.isnot(None),
+            *_active_user,
+        )
     )
     total_rooms = (await db.execute(total_rooms_q)).scalar_one()
 
@@ -819,8 +842,10 @@ async def debts_stats(
         )
         .select_from(MeterReading)
         .join(Room, Room.id == MeterReading.room_id)
+        .join(User, User.id == MeterReading.user_id)
         .where(
             MeterReading.period_id == period_id,
+            *_active_user,
             (MeterReading.debt_209 > 0) | (MeterReading.debt_205 > 0),
         )
         .group_by(Room.dormitory_name)
