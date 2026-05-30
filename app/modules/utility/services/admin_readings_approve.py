@@ -170,8 +170,9 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
                 }
             bl_cost_205 = bl_costs.get("cost_social_rent", ZERO)
             bl_cost_209 = bl_costs.get("total_cost", ZERO) - bl_cost_205
-            bl_total_209 = bl_cost_209 + (reading.debt_209 or ZERO) - (reading.overpayment_209 or ZERO) + adj_map.get(user.id, {}).get('209', ZERO)
-            bl_total_205 = bl_cost_205 + (reading.debt_205 or ZERO) - (reading.overpayment_205 or ZERO) + adj_map.get(user.id, {}).get('205', ZERO)
+            # Долг/переплата 1С НЕ в ИТОГО (30.05.2026) — только начисление + корректировки.
+            bl_total_209 = bl_cost_209 + adj_map.get(user.id, {}).get('209', ZERO)
+            bl_total_205 = bl_cost_205 + adj_map.get(user.id, {}).get('205', ZERO)
             update_mappings.append({
                 # MeterReading PK составной (id + created_at) — оба обязательны
                 # в bulk-update mappings, иначе SQLAlchemy 2.0 рейзит ошибку
@@ -259,8 +260,9 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
         cost_rent_205 = costs['cost_social_rent']
         cost_utils_209 = costs['total_cost'] - cost_rent_205
 
-        total_209 = cost_utils_209 + (reading.debt_209 or ZERO) - (reading.overpayment_209 or ZERO) + user_adjs['209']
-        total_205 = cost_rent_205 + (reading.debt_205 or ZERO) - (reading.overpayment_205 or ZERO) + user_adjs['205']
+        # Долг/переплата 1С НЕ в ИТОГО (30.05.2026) — только начисление + корректировки.
+        total_209 = cost_utils_209 + user_adjs['209']
+        total_205 = cost_rent_205 + user_adjs['205']
 
         # Подготавливаем словари для bulk_update.
         # MeterReading PK составной (id + created_at) — оба обязательны.
@@ -445,11 +447,9 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
     adj_map = {row[0]: (row[1] or ZERO) for row in adj_res.all()}
 
     cost_rent_205 = costs['cost_social_rent']
-    total_209 = (costs['total_cost'] - cost_rent_205) + (reading.debt_209 or ZERO) - (
-            reading.overpayment_209 or ZERO) + adj_map.get('209', ZERO)
-
-    total_205 = cost_rent_205 + (reading.debt_205 or ZERO) - (reading.overpayment_205 or ZERO) + adj_map.get('205',
-                                                                                                             ZERO)
+    # Долг/переплата 1С НЕ в ИТОГО (30.05.2026) — только начисление + корректировки.
+    total_209 = (costs['total_cost'] - cost_rent_205) + adj_map.get('209', ZERO)
+    total_205 = cost_rent_205 + adj_map.get('205', ZERO)
 
     reading.hot_correction = correction_data.hot_correction
     reading.cold_correction = correction_data.cold_correction

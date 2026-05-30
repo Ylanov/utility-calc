@@ -231,8 +231,9 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
     target_debt_205 = target.debt_205 if target else ZERO
     target_over_205 = target.overpayment_205 if target else ZERO
 
-    total_209 = (costs['total_cost'] - costs['cost_social_rent']) + (target_debt_209 or ZERO) - (target_over_209 or ZERO) + adj_map.get('209', ZERO)
-    total_205 = costs['cost_social_rent'] + (target_debt_205 or ZERO) - (target_over_205 or ZERO) + adj_map.get('205', ZERO)
+    # Долг/переплата 1С НЕ в ИТОГО (30.05.2026) — только начисление + корректировки.
+    total_209 = (costs['total_cost'] - costs['cost_social_rent']) + adj_map.get('209', ZERO)
+    total_205 = costs['cost_social_rent'] + adj_map.get('205', ZERO)
 
     if target:
         # Обновляем существующий reading (draft или approved).
@@ -385,8 +386,9 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
         select(MeterReading).where(MeterReading.room_id == room.id, MeterReading.is_approved.is_(False), MeterReading.period_id == active_period.id)
     )).scalars().first()
 
-    total_209 = (costs['total_cost'] - costs['cost_social_rent']) + (draft.debt_209 or ZERO if draft else ZERO) - (draft.overpayment_209 or ZERO if draft else ZERO) + adj_map.get('209', ZERO)
-    total_205 = costs['cost_social_rent'] + (draft.debt_205 or ZERO if draft else ZERO) - (draft.overpayment_205 or ZERO if draft else ZERO) + adj_map.get('205', ZERO)
+    # Долг/переплата 1С НЕ в ИТОГО (30.05.2026) — только начисление + корректировки.
+    total_209 = (costs['total_cost'] - costs['cost_social_rent']) + adj_map.get('209', ZERO)
+    total_205 = costs['cost_social_rent'] + adj_map.get('205', ZERO)
 
     charge_flag = "ONE_TIME_CHARGE_BASELINE" if is_baseline else "ONE_TIME_CHARGE"
     if draft:
@@ -429,9 +431,9 @@ async def create_manual_receipt(
 
     Математика:
       cost_* = calculate_utilities(volume=0, ...)  // только фикс-часть
-      total_209 = cost_total - cost_social_rent + debt_209 - overpay_209 + adj_209
-      total_205 = cost_social_rent              + debt_205 - overpay_205 + adj_205
-      total_cost = total_209 + total_205   // МОЖЕТ БЫТЬ < 0 = переплата
+      total_209 = cost_total - cost_social_rent + adj_209   // долг 1С — НЕ здесь
+      total_205 = cost_social_rent              + adj_205
+      total_cost = total_209 + total_205   // долг/переплата хранятся отдельно
 
     Источник debt/overpay (приоритет):
       1) draft того же периода (если есть — там может быть свежий импорт 1С)
@@ -554,10 +556,12 @@ async def create_manual_receipt(
         "cost_waste": ZERO, "cost_fixed_part": ZERO, "total_cost": ZERO,
     }
 
-    # Total = только сальдо (долг минус переплата) + ручные корректировки.
-    # Если переплата больше долга — total отрицательный (остаток на счёте).
-    total_209 = debt_209 - overpay_209 + adj_map.get("209", ZERO)
-    total_205 = debt_205 - overpay_205 + adj_map.get("205", ZERO)
+    # Долг/переплата 1С НЕ в ИТОГО (30.05.2026): manual_receipt без показаний =
+    # нулевое начисление. Долг/переплата хранятся в reading.debt_*/overpayment_*
+    # (записываются ниже) и показываются отдельной справкой в квитанции. ИТОГО =
+    # только ручные корректировки (обычно 0).
+    total_209 = adj_map.get("209", ZERO)
+    total_205 = adj_map.get("205", ZERO)
 
     # Показания счётчиков = prev (нулевое потребление в текущем периоде)
     hot = prev.hot_water if prev else None

@@ -532,17 +532,15 @@ async def save_reading(
             hot_water_heating_active=hw_heating_now,
         )
 
-    # 6. Сборка долгов и итогов
-    d_209 = draft.debt_209 or Decimal("0.00") if draft else Decimal("0.00")
-    o_209 = draft.overpayment_209 or Decimal("0.00") if draft else Decimal("0.00")
-    d_205 = draft.debt_205 or Decimal("0.00") if draft else Decimal("0.00")
-    o_205 = draft.overpayment_205 or Decimal("0.00") if draft else Decimal("0.00")
-
+    # 6. Итоги. ВАЖНО (30.05.2026): долг/переплата 1С НЕ суммируются в ИТОГО.
+    # ИТОГО = начисление за месяц + корректировки. Долг/переплата хранятся
+    # отдельно (reading.debt_*/overpayment_* из импорта 1С), показываются
+    # справкой в квитанции и агрегируются отдельно для отчётности/баланса.
     cost_rent = costs['cost_social_rent']
     cost_utils = costs['total_cost'] - cost_rent
 
-    total_209 = cost_utils + d_209 - o_209 + adj_map.get('209', Decimal("0.00"))
-    total_205 = cost_rent + d_205 - o_205 + adj_map.get('205', Decimal("0.00"))
+    total_209 = cost_utils + adj_map.get('209', Decimal("0.00"))
+    total_205 = cost_rent + adj_map.get('205', Decimal("0.00"))
     grand_total = total_209 + total_205
     # Пометка флага, чтобы в реестре/админке было понятно — это baseline,
     # ноль намеренно, а не ошибка расчёта.

@@ -995,8 +995,9 @@ def _recalc_compute_one(db_session, reading, user, room, prev_reading, tariffs_b
             }
             base_total = base_205 = base_209 = ZERO
 
-        total_209_b = base_209 + Decimal(str(reading.debt_209 or 0)) - Decimal(str(reading.overpayment_209 or 0))
-        total_205_b = base_205 + Decimal(str(reading.debt_205 or 0)) - Decimal(str(reading.overpayment_205 or 0))
+        # Долг/переплата 1С НЕ в ИТОГО (30.05.2026) — только начисление.
+        total_209_b = base_209
+        total_205_b = base_205
         return {
             "total_209": total_209_b,
             "total_205": total_205_b,
@@ -1064,8 +1065,9 @@ def _recalc_compute_one(db_session, reading, user, room, prev_reading, tariffs_b
     # Adjustments тоже не учитываем в total — они применяются в момент
     # первичного approve. Если админ хочет «чистый» пересчёт по тарифу —
     # ему важны именно cost_* поля и total_cost без корректировок долга.
-    total_209 = cost_209 + (reading.debt_209 or Decimal("0")) - (reading.overpayment_209 or Decimal("0"))
-    total_205 = cost_205 + (reading.debt_205 or Decimal("0")) - (reading.overpayment_205 or Decimal("0"))
+    # Долг/переплата 1С НЕ в ИТОГО (30.05.2026) — только начисление.
+    total_209 = cost_209
+    total_205 = cost_205
 
     # Whitelist полей которые реально есть в MeterReading. calculate_utilities
     # возвращает helper-поля типа sanity_warning (для UI), которые нельзя

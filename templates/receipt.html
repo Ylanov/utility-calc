@@ -113,18 +113,8 @@ td { text-align: right; }
 </table>
 
 <table class="summary">
-    {% if total_debt and total_debt > 0 %}
-    <tr>
-        <th scope="row" class="label">Долг за прошлые периоды:</th>
-        <td class="value" style="color:#b91c1c;">{{ total_debt|round(2) }} руб.</td>
-    </tr>
-    {% endif %}
-    {% if total_overpayment and total_overpayment > 0 %}
-    <tr>
-        <th scope="row" class="label">Переплата с прошлых периодов:</th>
-        <td class="value" style="color:#15803d;">−{{ total_overpayment|round(2) }} руб.</td>
-    </tr>
-    {% endif %}
+    {# Долг/переплата 1С вынесены в отдельный СПРАВОЧНЫЙ блок под итогом —
+       они НЕ суммируются в «К оплате» (решение 30.05.2026). #}
     {% if recalc and recalc != 0 %}
     <tr>
         <th scope="row" class="label">Перерасчёт (в т.ч. в этом месяце):</th>
@@ -166,7 +156,24 @@ td { text-align: right; }
 </div>
 {% else %}
 <div class="total-final">
-    ИТОГО К ОПЛАТЕ: {{ grand_total|round(2) }} руб.
+    ИТОГО К ОПЛАТЕ ЗА МЕСЯЦ: {{ grand_total|round(2) }} руб.
+</div>
+{% endif %}
+
+{# Справочный блок про долг/переплату 1С. НЕ входит в «ИТОГО к оплате за месяц»
+   выше — это накопленное сальдо за прошлые периоды (источник: 1С). #}
+{% if (total_debt and total_debt > 0) or (total_overpayment and total_overpayment > 0) %}
+<div style="margin-top:14px; padding:12px 16px; border:1px solid #fcd34d; background:#fffbeb; border-radius:6px; font-size:11pt; line-height:1.5;">
+    <strong style="color:#92400e;">Справочно (не входит в сумму к оплате за месяц выше):</strong><br>
+    {% if total_debt and total_debt > 0 %}
+    За прошлые периоды за Вами числится задолженность
+    <strong style="color:#b91c1c;">{{ total_debt|round(2) }} руб.</strong><br>
+    {% endif %}
+    {% if total_overpayment and total_overpayment > 0 %}
+    За прошлые периоды у Вас имеется переплата (аванс)
+    <strong style="color:#15803d;">{{ total_overpayment|round(2) }} руб.</strong><br>
+    {% endif %}
+    Для сверки и разъяснений обратитесь в финансово-экономический отдел.
 </div>
 {% endif %}
 
