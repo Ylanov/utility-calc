@@ -1461,6 +1461,10 @@ async def list_stuck_drafts(
 async def list_high_delta_readings(
     threshold: float = Query(50.0, ge=1.0, le=500.0,
                               description="Порог дельты в м³ за период"),
+    include_initial: bool = Query(False,
+                              description="Включать начальные показания (нет предыдущего "
+                                          "reading). По умолчанию скрыты: дельта «от 0» = "
+                                          "абсолютное показание счётчика, а не расход за месяц."),
     limit: int = Query(200, ge=1, le=1000),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -1514,6 +1518,14 @@ async def list_high_delta_readings(
     for key, lst in by_key.items():
         for i, r in enumerate(lst):
             prev = lst[i + 1] if i + 1 < len(lst) else None
+            # Начальное показание (нет предыдущего approved reading) — это НЕ
+            # расход за месяц, а абсолютное значение счётчика при первой подаче
+            # (5 целых + 3 дробных знака). Дельта «от 0» = само показание и
+            # засоряет топ ложными срабатываниями. По умолчанию скрываем —
+            # начальные показания и есть baseline, их не «чистят».
+            is_initial = prev is None
+            if is_initial and not include_initial:
+                continue
             prev_hot = (prev.hot_water if prev else _D("0")) or _D("0")
             prev_cold = (prev.cold_water if prev else _D("0")) or _D("0")
             cur_hot = r.hot_water or _D("0")
@@ -1542,6 +1554,7 @@ async def list_high_delta_readings(
                 "delta_hot": float(d_hot),
                 "delta_cold": float(d_cold),
                 "delta_max": float(max_d),
+                "is_initial": is_initial,
                 "prev_period_name": prev.period.name if prev and prev.period else None,
                 "prev_is_synth": bool(
                     prev and prev.anomaly_flags and (

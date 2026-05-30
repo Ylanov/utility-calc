@@ -1666,8 +1666,10 @@ export const AnalyzerModule = {
         this.dom.highDeltaContainer.innerHTML =
             '<p style="color:var(--text-secondary); padding:20px;">Загружаем…</p>';
         try {
+            const includeInitial = document.getElementById('highDeltaIncludeInitial')?.checked
+                ? '&include_initial=true' : '';
             const data = await api.get(
-                `/admin/analyzer/high-delta-readings?threshold=${threshold}&limit=300`
+                `/admin/analyzer/high-delta-readings?threshold=${threshold}&limit=300${includeInitial}`
             );
             this._lastHighDeltaData = data;  // для bulk-кнопки
             this._renderHighDelta(data);
@@ -1698,6 +1700,9 @@ export const AnalyzerModule = {
             const synthBadge = it.prev_is_synth
                 ? '<span style="background:#fee2e2; color:#991b1b; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:600;">synth prev</span>'
                 : '';
+            const initialBadge = it.is_initial
+                ? '<span style="background:#dbeafe; color:#1e40af; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:600;">начальное</span>'
+                : '';
             return `
                 <tr style="border-bottom:1px solid var(--border-color);">
                     <td style="padding:10px 12px;">
@@ -1706,7 +1711,7 @@ export const AnalyzerModule = {
                     </td>
                     <td style="padding:10px 12px; font-size:12px;">
                         <div><b>${escapeHtml(it.period_name || '—')}</b></div>
-                        <div style="color:var(--text-secondary);">prev: ${escapeHtml(it.prev_period_name || '—')} ${synthBadge}</div>
+                        <div style="color:var(--text-secondary);">prev: ${escapeHtml(it.prev_period_name || '—')} ${synthBadge} ${initialBadge}</div>
                     </td>
                     <td style="padding:10px 12px; text-align:right; font-family:monospace; font-size:12px;">
                         <div>ГВС: ${fmt(it.hot_water)} <span style="color:var(--text-tertiary);">(было ${fmt(it.prev_hot_water)})</span></div>
