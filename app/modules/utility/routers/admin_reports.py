@@ -1008,6 +1008,85 @@ def _infer_source_flag(anomaly_flags):
     return "app"
 
 
+@router.get("/api/admin/rooms/{room_id}/submission-history")
+async def get_room_submission_history(
+    room_id: int,
+    periods: int = Query(12, ge=1, le=24,
+                         description="Сколько последних периодов вернуть (1-24)"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """История подач по КВАРТИРЕ: по каждому месяцу (периоду) — какие показания
+    подали жильцы этой комнаты (ФИО, тип, ГВС/ХВС/электр, сумма, источник).
+    Привязка по `MeterReading.room_id` — ловит и текущих, и прошлых жильцов
+    помещения. Для разворота квартиры в «Финансовой отчётности» (анализ квартиры
+    по месяцам подач). Периоды — в хронологическом порядке (свежие сверху)."""
+    if current_user.role not in ("accountant", "admin", "financier"):
+        raise HTTPException(403, "Доступ запрещён")
+
+    room = await db.get(Room, room_id)
+
+    rows = (await db.execute(
+        select(MeterReading, User, BillingPeriod)
+        .join(BillingPeriod, BillingPeriod.id == MeterReading.period_id)
+        .outerjoin(User, User.id == MeterReading.user_id)
+        .where(
+            MeterReading.room_id == room_id,
+            MeterReading.is_approved.is_(True),
+        )
+    )).all()
+
+    by_period: dict[int, dict] = {}
+    for reading, user, period in rows:
+        slot = by_period.get(period.id)
+        if slot is None:
+            slot = by_period[period.id] = {
+                "period_id": period.id,
+                "period_name": period.name,
+                "_chrono": period_chron_key(period.name),
+                "submissions": [],
+                "total_cost": 0.0,
+                "debt": 0.0,
+                "overpayment": 0.0,
+            }
+        debt = float((reading.debt_209 or 0) + (reading.debt_205 or 0))
+        overpay = float((reading.overpayment_209 or 0) + (reading.overpayment_205 or 0))
+        slot["submissions"].append({
+            "user_id": user.id if user else None,
+            "username": user.username if user else "—",
+            "full_name": getattr(user, "full_name", None) if user else None,
+            "resident_type": (getattr(user, "resident_type", None) or "family") if user else None,
+            "reading_id": reading.id,
+            "is_approved": bool(reading.is_approved),
+            "hot_water": float(reading.hot_water or 0),
+            "cold_water": float(reading.cold_water or 0),
+            "electricity": float(reading.electricity or 0),
+            "total_cost": float(reading.total_cost or 0),
+            "total_209": float(reading.total_209 or 0),
+            "total_205": float(reading.total_205 or 0),
+            "debt": debt,
+            "overpayment": overpay,
+            "source": _infer_source_flag(reading.anomaly_flags),
+            "created_at": reading.created_at.isoformat() if reading.created_at else None,
+        })
+        slot["total_cost"] += float(reading.total_cost or 0)
+        slot["debt"] += debt
+        slot["overpayment"] += overpay
+
+    history = sorted(by_period.values(), key=lambda s: s["_chrono"], reverse=True)[:periods]
+    for s in history:
+        s.pop("_chrono", None)
+        s["submissions"].sort(key=lambda x: (x["username"] or ""))
+
+    return {
+        "room_id": room_id,
+        "address": (room.format_address if room else None) or (room.room_number if room else "—"),
+        "dormitory_name": room.dormitory_name if room else None,
+        "periods_count": len(history),
+        "history": history,
+    }
+
+
 @router.get("/api/admin/residents/{user_id}/finance-detail")
 async def get_resident_finance_detail(
     user_id: int,

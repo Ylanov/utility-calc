@@ -71,6 +71,8 @@ export const SummaryModule = {
         expandedDorms: new Set(),          // раскрытые карточки общежитий
         expandedResidents: new Set(),      // раскрытые жильцы (user_id)
         expandedRooms: new Set(),          // раскрытые квартиры (room_id) в режиме «Квартиры»
+        roomHistoryCache: new Map(),       // room_id -> история подач по месяцам (фетч по клику)
+        roomHistoryLoading: new Set(),     // room_id -> загрузка истории идёт
         residentDetailCache: new Map(),    // user_id -> detail JSON (фетчится по клику)
         residentDetailLoading: new Set(),  // user_id -> загрузка идёт
         // Текущая загруженная сводка v2
@@ -163,9 +165,15 @@ export const SummaryModule = {
             this.state.residentDetailCache.clear();
             this.state.residentDetailLoading.clear();
             this.state.expandedResidents.clear();
+            // То же для истории квартир (глубина периодов изменилась).
+            const expandedRooms = Array.from(this.state.expandedRooms);
+            this.state.roomHistoryCache.clear();
+            this.state.roomHistoryLoading.clear();
+            this.state.expandedRooms.clear();
             this.renderSummary();
             // Заново раскрыть с новой глубиной
             for (const uid of expanded) this.toggleResident(uid);
+            for (const rid of expandedRooms) this.toggleRoom(rid);
         });
 
         // Закрытие модалки «Проверить расчёт».
@@ -227,16 +235,10 @@ export const SummaryModule = {
                 return;
             }
 
-            // Разворот квартиры (режим «Квартиры») — список жильцов комнаты.
+            // Разворот квартиры (режим «Квартиры») — список жильцов + история подач.
             const roomRow = e.target.closest('[data-toggle-room]');
             if (roomRow) {
-                const rid = Number(roomRow.dataset.toggleRoom);
-                if (this.state.expandedRooms.has(rid)) {
-                    this.state.expandedRooms.delete(rid);
-                } else {
-                    this.state.expandedRooms.add(rid);
-                }
-                this.renderSummary();
+                this.toggleRoom(Number(roomRow.dataset.toggleRoom));
                 return;
             }
 
@@ -320,6 +322,8 @@ export const SummaryModule = {
         this.state.residentDetailCache.clear();
         this.state.residentDetailLoading.clear();
         this.state.expandedRooms.clear();
+        this.state.roomHistoryCache.clear();
+        this.state.roomHistoryLoading.clear();
 
         this.dom.kpis.innerHTML = '<div style="grid-column: 1/-1; padding:14px; text-align:center; color:var(--text-secondary);">Загрузка…</div>';
         this.dom.topRow.innerHTML = '';
@@ -596,6 +600,7 @@ export const SummaryModule = {
                             </thead>
                             <tbody>${resRows}</tbody>
                         </table>
+                        ${this._renderRoomHistory(r.room_id)}
                         <div style="font-size:11px; color:var(--text-tertiary); margin-top:6px;">
                             Для детального разбора по жильцу переключитесь в режим «Жильцы».
                         </div>
@@ -693,6 +698,97 @@ export const SummaryModule = {
                     ${detailHtml}
                 </td>
             </tr>`;
+    },
+
+    // =====================================================
+    // РАЗВОРОТ КВАРТИРЫ: список жильцов (встроен) + история подач по месяцам
+    // =====================================================
+    async toggleRoom(rid) {
+        const st = this.state;
+        if (st.expandedRooms.has(rid)) {
+            st.expandedRooms.delete(rid);
+            this.renderSummary();
+            return;
+        }
+        st.expandedRooms.add(rid);
+        if (st.roomHistoryCache.has(rid)) {
+            this.renderSummary();
+            return;
+        }
+        st.roomHistoryLoading.add(rid);
+        this.renderSummary();
+        try {
+            const params = new URLSearchParams();
+            params.set('periods', String(st.historyPeriods || 12));
+            const data = await api.get(`/admin/rooms/${rid}/submission-history?${params}`);
+            st.roomHistoryCache.set(rid, data);
+        } catch (e) {
+            st.roomHistoryCache.set(rid, { __error: String(e.message || e) });
+        } finally {
+            st.roomHistoryLoading.delete(rid);
+            this.renderSummary();
+        }
+    },
+
+    _renderRoomHistory(rid) {
+        const loading = this.state.roomHistoryLoading.has(rid);
+        const data = this.state.roomHistoryCache.get(rid);
+        if (loading || !data) {
+            return `<div style="padding:10px 0; color:var(--text-secondary); font-size:12px;"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка истории подач…</div>`;
+        }
+        if (data.__error) {
+            return `<div style="padding:10px 0; color:var(--danger-color); font-size:12px;">Ошибка истории: ${esc(data.__error)}</div>`;
+        }
+        const hist = data.history || [];
+        if (!hist.length) {
+            return `<div style="padding:10px 0; color:var(--text-tertiary); font-size:12px;">Подач по этой квартире не найдено.</div>`;
+        }
+        // Источник подачи: короткие лейблы (как в истории жильца).
+        const SRC = {
+            gsheets: 'GSheets', app: 'Прил.', manual: 'Вручную', baseline: 'Baseline',
+            manual_receipt: 'Без подачи', one_time: 'Разовое', initial: 'Начальн.',
+            auto: 'Авто', auto_norm_sanction: 'Авто ×3', auto_avg: 'Авто ср.',
+            auto_avg_fallback: 'Авто повтор', auto_no_history: 'Авто', meter_op: 'Счётчик',
+        };
+        const periods = hist.map(p => {
+            const subs = (p.submissions || []).map(s => `
+                <tr style="border-bottom:1px solid #eef2f7;">
+                    <td style="padding:4px 8px;">${esc(s.full_name || s.username)}${s.resident_type === 'single' ? ' <span style="color:#7c3aed; font-size:10px;">(хол.)</span>' : ''}</td>
+                    <td style="padding:4px 8px; text-align:right; font-family:monospace;">${Number(s.hot_water || 0).toFixed(2)}</td>
+                    <td style="padding:4px 8px; text-align:right; font-family:monospace;">${Number(s.cold_water || 0).toFixed(2)}</td>
+                    <td style="padding:4px 8px; text-align:right; font-family:monospace;">${Number(s.electricity || 0).toFixed(2)}</td>
+                    <td style="padding:4px 8px; text-align:right; font-family:monospace; font-weight:600;">${fmtMoney(s.total_cost)}</td>
+                    <td style="padding:4px 8px; font-size:10px; color:var(--text-secondary);">${esc(SRC[s.source] || s.source || '')}</td>
+                </tr>`).join('');
+            const debtBadge = p.debt > 0
+                ? ` · <span style="color:#dc2626;">долг ${fmtMoney(p.debt)}</span>`
+                : '';
+            return `
+                <div style="margin-bottom:10px;">
+                    <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 8px; background:var(--bg-page); border-radius:6px 6px 0 0; font-size:12px; font-weight:600;">
+                        <span>${esc(p.period_name)} · ${(p.submissions || []).length} подач</span>
+                        <span style="color:#059669;">${fmtMoney(p.total_cost)}${debtBadge}</span>
+                    </div>
+                    <table style="width:100%; border-collapse:collapse; font-size:12px;">
+                        <thead style="font-size:10px; color:var(--text-tertiary); text-transform:uppercase;">
+                            <tr>
+                                <th style="text-align:left; padding:3px 8px;">Жилец</th>
+                                <th style="text-align:right; padding:3px 8px;">ГВС</th>
+                                <th style="text-align:right; padding:3px 8px;">ХВС</th>
+                                <th style="text-align:right; padding:3px 8px;">Свет</th>
+                                <th style="text-align:right; padding:3px 8px;">Итог</th>
+                                <th style="text-align:left; padding:3px 8px;">Источник</th>
+                            </tr>
+                        </thead>
+                        <tbody>${subs}</tbody>
+                    </table>
+                </div>`;
+        }).join('');
+        return `
+            <div style="font-size:11px; font-weight:600; color:var(--text-secondary); text-transform:uppercase; margin:12px 0 6px;">
+                <i class="fa-solid fa-calendar-days"></i> История подач по месяцам (${hist.length})
+            </div>
+            <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:8px; padding:10px;">${periods}</div>`;
     },
 
     // =====================================================
