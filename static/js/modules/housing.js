@@ -90,6 +90,10 @@ export const HousingModule = {
                 hw: document.getElementById('roomHwSerial'),
                 cw: document.getElementById('roomCwSerial'),
                 el: document.getElementById('roomElSerial'),
+                hasHw: document.getElementById('roomHasHw'),
+                hasCw: document.getElementById('roomHasCw'),
+                hasEl: document.getElementById('roomHasEl'),
+                bulkMeterBtn: document.getElementById('roomBulkMeterBtn'),
                 // Bug AS: новые поля «холостяцкая квартира» + макс. вместимость.
                 isSingles: document.getElementById('roomIsSingles'),
                 maxCapacity: document.getElementById('roomMaxCapacity'),
@@ -166,6 +170,9 @@ export const HousingModule = {
         // (= число прописанных жильцов), поэтому поле блокируем на ввод.
         if (this.modal.inputs.isSingles) {
             this.modal.inputs.isSingles.addEventListener('change', () => this._applySinglesUI());
+        }
+        if (this.modal.inputs.bulkMeterBtn) {
+            this.modal.inputs.bulkMeterBtn.addEventListener('click', () => this.bulkMeterToHouse());
         }
 
         [this.modal.btnClose, this.modal.btnCancel].forEach(btn => {
@@ -714,6 +721,10 @@ export const HousingModule = {
             this.modal.inputs.hw.value = room.hw_meter_serial || '';
             this.modal.inputs.cw.value = room.cw_meter_serial || '';
             this.modal.inputs.el.value = room.el_meter_serial || '';
+            // Наличие счётчиков комнаты (meters_002). undefined → считаем «есть».
+            if (this.modal.inputs.hasHw) this.modal.inputs.hasHw.checked = room.has_hw_meter !== false;
+            if (this.modal.inputs.hasCw) this.modal.inputs.hasCw.checked = room.has_cw_meter !== false;
+            if (this.modal.inputs.hasEl) this.modal.inputs.hasEl.checked = room.has_el_meter !== false;
             // Bug AS
             if (this.modal.inputs.isSingles) {
                 this.modal.inputs.isSingles.checked = !!room.is_singles_apartment;
@@ -725,6 +736,10 @@ export const HousingModule = {
         } else {
             this.modal.title.textContent = 'Добавить помещение';
             this.modal.inputs.id.value = '';
+            // Дефолты счётчиков нового помещения — все есть.
+            if (this.modal.inputs.hasHw) this.modal.inputs.hasHw.checked = true;
+            if (this.modal.inputs.hasCw) this.modal.inputs.hasCw.checked = true;
+            if (this.modal.inputs.hasEl) this.modal.inputs.hasEl.checked = true;
             // Bug AS: дефолты для нового помещения.
             if (this.modal.inputs.isSingles) this.modal.inputs.isSingles.checked = false;
             if (this.modal.inputs.maxCapacity) this.modal.inputs.maxCapacity.value = '';
@@ -739,6 +754,42 @@ export const HousingModule = {
         // (уже выставлена выше для room / new).
         this._applySinglesUI();
         this.modal.window.classList.add('open');
+    },
+
+    /** Применить галочки счётчиков ко ВСЕМ комнатам текущего дома/общежития. */
+    async bulkMeterToHouse() {
+        const isHouse = !!this.modal.inputs.placeTypeHouse?.checked;
+        const body = {
+            has_hw_meter: !!this.modal.inputs.hasHw?.checked,
+            has_cw_meter: !!this.modal.inputs.hasCw?.checked,
+            has_el_meter: !!this.modal.inputs.hasEl?.checked,
+        };
+        let target;
+        if (isHouse) {
+            body.street = (this.modal.inputs.street?.value || '').trim();
+            body.house_number = (this.modal.inputs.houseNumber?.value || '').trim();
+            if (!body.street || !body.house_number) {
+                return toast('Укажите улицу и номер дома', 'error');
+            }
+            target = `дому ${body.street}, ${body.house_number}`;
+        } else {
+            body.dormitory_name = (this.modal.inputs.dorm?.value || '').trim();
+            if (!body.dormitory_name) {
+                return toast('Укажите общежитие', 'error');
+            }
+            target = `общежитию «${body.dormitory_name}»`;
+        }
+        const on = [
+            body.has_hw_meter && 'ГВС', body.has_cw_meter && 'ХВС',
+            body.has_el_meter && 'электр',
+        ].filter(Boolean).join(', ') || 'нет счётчиков';
+        if (!confirm(`Применить счётчики (${on}) ко ВСЕМ комнатам ${target}?\n\nЖильцы наследуют автоматически.`)) return;
+        try {
+            const res = await api.post('/rooms/bulk-meter-config', body);
+            toast(`Обновлено комнат: ${res.updated_rooms}`, 'success');
+        } catch (e) {
+            toast('Ошибка: ' + (e.message || ''), 'error');
+        }
     },
 
     async handleSave(e) {
@@ -757,6 +808,10 @@ export const HousingModule = {
             apartment_area: parseFloat(this.modal.inputs.area.value),
             total_room_residents: parseInt(this.modal.inputs.cap.value),
             tariff_id: tariffVal ? parseInt(tariffVal) : null,
+            // Конфигурация счётчиков комнаты (наследуется жильцами, meters_002).
+            has_hw_meter: this.modal.inputs.hasHw ? !!this.modal.inputs.hasHw.checked : true,
+            has_cw_meter: this.modal.inputs.hasCw ? !!this.modal.inputs.hasCw.checked : true,
+            has_el_meter: this.modal.inputs.hasEl ? !!this.modal.inputs.hasEl.checked : true,
         };
 
         if (isHouse) {

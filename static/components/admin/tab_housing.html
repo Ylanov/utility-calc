@@ -291,6 +291,27 @@
 
                     <!-- СЧЁТЧИКИ — только для общежития -->
                     <div id="meterFields">
+                        <h4 style="margin-bottom: 8px; font-size: 14px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">Счётчики в помещении</h4>
+                        <p class="hint-text" style="font-size:11px; margin:0 0 10px; color:var(--text-secondary);">
+                            Какие счётчики есть в квартире — настраивается ОДИН раз на помещение, жилец наследует. Нет счётчика → нет вкладки в ЛК, начисление по нормативу.
+                        </p>
+                        <div style="display:flex; gap:18px; flex-wrap:wrap; align-items:center; margin-bottom:14px;">
+                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:13px;">
+                                <input type="checkbox" id="roomHasHw" checked style="width:16px; height:16px;">
+                                <span style="color: var(--danger-color);"><i class="fa-solid fa-fire"></i> ГВС</span>
+                            </label>
+                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:13px;">
+                                <input type="checkbox" id="roomHasCw" checked style="width:16px; height:16px;">
+                                <span style="color: var(--primary-color);"><i class="fa-solid fa-snowflake"></i> ХВС</span>
+                            </label>
+                            <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:13px;">
+                                <input type="checkbox" id="roomHasEl" checked style="width:16px; height:16px;">
+                                <span style="color: #d97706;"><i class="fa-solid fa-bolt"></i> Электричество</span>
+                            </label>
+                            <button type="button" id="roomBulkMeterBtn" class="action-btn secondary-btn" style="margin-left:auto; padding:5px 12px; font-size:12px;" title="Применить эти галочки счётчиков ко ВСЕМ комнатам этого дома/общежития">
+                                <i class="fa-solid fa-layer-group"></i> Применить ко всему дому
+                            </button>
+                        </div>
                         <h4 style="margin-bottom: 12px; font-size: 14px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">Серийные номера счетчиков (Опционально)</h4>
                         <div class="grid-3-col" style="background: var(--bg-page); padding: 16px; border-radius: var(--radius-sm);">
                             <div class="form-group" style="margin: 0;">
