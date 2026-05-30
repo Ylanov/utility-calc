@@ -3,13 +3,13 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, update
 from typing import Optional, List
 
 from app.core.database import get_db
 from app.core.time_utils import utcnow
 from app.modules.utility.models import Room, User, MeterReading, BillingPeriod, Tariff
-from app.modules.utility.schemas import RoomCreate, RoomUpdate, RoomResponse, PaginatedResponse, ReplaceMeterSchema
+from app.modules.utility.schemas import RoomCreate, RoomUpdate, RoomResponse, PaginatedResponse, ReplaceMeterSchema, RoomMeterConfigBulk
 from app.core.dependencies import get_current_user, RoleChecker
 from app.modules.utility.services.calculations import calculate_utilities
 
@@ -750,6 +750,34 @@ async def delete_room(room_id: int, db: AsyncSession = Depends(get_db)):
     await db.delete(room)
     await db.commit()
     return None
+
+
+@router.post("/bulk-meter-config", dependencies=[Depends(allow_management)])
+async def bulk_meter_config(data: RoomMeterConfigBulk, db: AsyncSession = Depends(get_db)):
+    """Применить конфигурацию счётчиков ко ВСЕМ комнатам дома/общежития одним
+    действием — «настроил один раз на весь дом». Квартиры статичны: жильцы
+    наследуют конфиг автоматически. Цель — dormitory_name ИЛИ street+house_number.
+    """
+    q = update(Room).values(
+        has_hw_meter=data.has_hw_meter,
+        has_cw_meter=data.has_cw_meter,
+        has_el_meter=data.has_el_meter,
+    )
+    if data.dormitory_name:
+        q = q.where(Room.place_type == "dormitory",
+                    Room.dormitory_name == data.dormitory_name)
+    elif data.street and data.house_number:
+        q = q.where(Room.place_type == "house",
+                    Room.street == data.street,
+                    Room.house_number == data.house_number)
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Укажите общежитие (dormitory_name) или дом (street + house_number)",
+        )
+    result = await db.execute(q)
+    await db.commit()
+    return {"status": "ok", "updated_rooms": result.rowcount}
 
 
 @router.post("/{room_id}/replace-meter", dependencies=[Depends(allow_management)])

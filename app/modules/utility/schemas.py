@@ -118,6 +118,10 @@ class RoomCreate(BaseModel):
     hw_meter_serial: Optional[str] = None
     cw_meter_serial: Optional[str] = None
     el_meter_serial: Optional[str] = None
+    # Наличие физических счётчиков в помещении (meters_002). Жилец наследует.
+    has_hw_meter: bool = True
+    has_cw_meter: bool = True
+    has_el_meter: bool = True
     # Тариф конкретной комнаты (опциональный). Если задан — у всех её жильцов
     # этот тариф побеждает их персональный (см. tariff_cache.get_effective_tariff).
     tariff_id: Optional[int] = None
@@ -152,6 +156,9 @@ class RoomUpdate(BaseModel):
     hw_meter_serial: Optional[str] = None
     cw_meter_serial: Optional[str] = None
     el_meter_serial: Optional[str] = None
+    has_hw_meter: Optional[bool] = None
+    has_cw_meter: Optional[bool] = None
+    has_el_meter: Optional[bool] = None
     tariff_id: Optional[int] = None
     is_singles_apartment: Optional[bool] = None
     max_capacity: Optional[int] = None
@@ -184,11 +191,25 @@ class RoomResponse(BaseModel):
     hw_meter_serial: Optional[str] = None
     cw_meter_serial: Optional[str] = None
     el_meter_serial: Optional[str] = None
+    has_hw_meter: bool = True
+    has_cw_meter: bool = True
+    has_el_meter: bool = True
     tariff_id: Optional[int] = None
     is_singles_apartment: bool = False
     max_capacity: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class RoomMeterConfigBulk(BaseModel):
+    """Массовое применение конфигурации счётчиков ко всем комнатам дома/общежития."""
+    has_hw_meter: bool
+    has_cw_meter: bool
+    has_el_meter: bool
+    # Цель: либо общежитие (dormitory_name), либо дом (street + house_number).
+    dormitory_name: Optional[str] = None
+    street: Optional[str] = None
+    house_number: Optional[str] = None
 
 
 # ======================================================
