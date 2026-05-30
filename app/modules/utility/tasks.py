@@ -1547,3 +1547,29 @@ def cleanup_outlier_readings_task():
     задача чистит уже сохранённые «исторические» outliers.
     """
     return _cleanup_outlier_readings_run()
+
+
+@celery.task(name="scan_resident_problems_task")
+def scan_resident_problems_task():
+    """Фоновый скан реальных проблем жильцов → таблица resident_problems.
+
+    Запускается по расписанию (см. worker.beat_schedule). Прогоняет детекторы
+    (не подаёт / долг растёт / битый формат / замер счётчика и т.д.), upsert'ит
+    персистентные сигналы, авто-закрывает исчезнувшие. Результат видят админы
+    в колокольчике / Inbox / дневном брифинге.
+    """
+    async def _run():
+        from app.core.database import AsyncSessionLocal
+        from app.modules.utility.services.resident_problem_scanner import (
+            scan_resident_problems,
+        )
+        async with AsyncSessionLocal() as db:
+            return await scan_resident_problems(db)
+
+    try:
+        result = asyncio.run(_run())
+        logger.info("[scan_resident_problems_task] %s", result)
+        return result
+    except Exception as e:
+        logger.exception("[scan_resident_problems_task] crashed")
+        return {"crashed": True, "error": str(e)}

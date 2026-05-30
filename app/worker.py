@@ -159,6 +159,13 @@ celery.conf.beat_schedule = {
         "task": "llm_daily_briefing_task",
         "schedule": crontab(minute=0, hour=6),
     },
+    # Монитор проблем жильцов — каждые 6 часов в :30 (не пересекается с
+    # другими задачами). Прогоняет детекторы (не подаёт / долг растёт /
+    # формат / замер) и обновляет resident_problems для сигнализации.
+    "scan-resident-problems-6h": {
+        "task": "scan_resident_problems_task",
+        "schedule": crontab(minute=30, hour="*/6"),
+    },
 }
 
 # ИМПОРТЫ ЗАДАЧ
