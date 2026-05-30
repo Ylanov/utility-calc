@@ -866,9 +866,17 @@ async def _prepare_client_receipt_context(
     if not reading.is_approved:
         raise HTTPException(400, "Квитанция еще не сформирована")
 
-    tariff = (await db.execute(
-        select(Tariff).where(Tariff.is_active).order_by(Tariff.valid_from.desc())
-    )).scalars().first()
+    # Эффективный тариф жильца (Room.tariff_id → User.tariff_id → default id=1) —
+    # тот же, что использует billing при расчёте. РАНЬШЕ брался «первый активный
+    # по valid_from», что могло вернуть пустой тариф (ФИЛИ/Благодать с нулевыми
+    # ставками) → в PDF-квитанции все ставки = 0, хотя cost_* посчитаны верным
+    # тарифом при подаче (рассинхрон «расчёт есть, тарифы по нулям»).
+    from app.modules.utility.services.tariff_cache import tariff_cache
+    tariff = tariff_cache.get_effective_tariff(user=reading.user, room=reading.room)
+    if tariff is None:
+        tariff = (await db.execute(
+            select(Tariff).where(Tariff.is_active).order_by(Tariff.id)
+        )).scalars().first()
     if not tariff:
         raise HTTPException(500, "Тариф не найден")
 
