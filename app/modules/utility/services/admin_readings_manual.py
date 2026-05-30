@@ -226,12 +226,10 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
         )).scalars().first()
 
     target = draft or approved_current
-    target_debt_209 = target.debt_209 if target else ZERO
-    target_over_209 = target.overpayment_209 if target else ZERO
-    target_debt_205 = target.debt_205 if target else ZERO
-    target_over_205 = target.overpayment_205 if target else ZERO
 
     # Долг/переплата 1С НЕ в ИТОГО (30.05.2026) — только начисление + корректировки.
+    # У target поля debt_*/overpayment_* НЕ перезаписываются (см. ниже) —
+    # накопленное сальдо 1С сохраняется как есть.
     total_209 = (costs['total_cost'] - costs['cost_social_rent']) + adj_map.get('209', ZERO)
     total_205 = costs['cost_social_rent'] + adj_map.get('205', ZERO)
 
