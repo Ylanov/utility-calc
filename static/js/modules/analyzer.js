@@ -263,6 +263,12 @@ export const AnalyzerModule = {
         // Таб «Клон-baseline»
         this.dom.btnLoadClones?.addEventListener('click', () => this.loadClones());
         this.dom.highDeltaContainer?.addEventListener('click', (e) => {
+            const triageBtn = e.target.closest('button[data-highdelta-triage]');
+            if (triageBtn) {
+                e.preventDefault();
+                this.aiTriage(Number(triageBtn.dataset.highdeltaTriage), triageBtn);
+                return;
+            }
             const delBtn = e.target.closest('button[data-highdelta-delete]');
             if (delBtn) {
                 e.preventDefault();
@@ -1728,6 +1734,73 @@ export const AnalyzerModule = {
     },
 
     // ============================================================
+    // ИИ-ТРИАЖ аномалии (GigaChat, by-request)
+    // ============================================================
+    /** Запрашивает ИИ-разбор reading'а и показывает вердикт в модалке. */
+    async aiTriage(readingId, btnEl) {
+        if (!readingId) return;
+        const origHtml = btnEl ? btnEl.innerHTML : '';
+        if (btnEl) {
+            btnEl.disabled = true;
+            btnEl.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+        }
+        try {
+            const res = await api.post(`/admin/analyzer/ai-triage/${readingId}`, {});
+            this._showTriageModal(res);
+        } catch (e) {
+            toast('ИИ-триаж: ' + (e.message || 'ошибка'), 'error');
+        } finally {
+            if (btnEl) { btnEl.disabled = false; btnEl.innerHTML = origHtml; }
+        }
+    },
+
+    _showTriageModal(res) {
+        const v = res.verdict || {};
+        const catLabels = {
+            format_error: '🔢 Битый формат (потеряна точка)',
+            period_substitution: '📅 Подмена периода',
+            cloned_baseline: '👥 Клонированный baseline',
+            real_consumption: '💧 Реальный расход',
+            data_entry_error: '✍ Опечатка ввода',
+            unknown: '❓ Неопределённо',
+        };
+        const sevColors = { low: '#10b981', medium: '#f59e0b', high: '#ef4444', critical: '#991b1b' };
+        const cat = catLabels[v.cause_category] || escapeHtml(v.cause_category || '—');
+        const sev = v.severity || '—';
+        const conf = (v.confidence != null) ? Math.round(Number(v.confidence) * 100) + '%' : '—';
+        const html = `
+            <div style="font-size:18px; font-weight:700; margin-bottom:4px;">${cat}</div>
+            <div style="display:flex; gap:14px; font-size:12px; color:var(--text-secondary); margin-bottom:12px; flex-wrap:wrap;">
+                <span>Уверенность: <b>${conf}</b></span>
+                <span>Важность: <b style="color:${sevColors[sev] || '#6b7280'};">${escapeHtml(String(sev))}</b></span>
+                <span>${Number(res.cost_rub || 0).toFixed(4)} ₽ · ${res.latency_ms || 0} мс</span>
+            </div>
+            <div style="background:var(--bg-page); border-radius:8px; padding:12px 14px; margin-bottom:12px;">
+                <div style="font-weight:600; font-size:13px; margin-bottom:4px;">Вероятная причина</div>
+                <div style="font-size:13px;">${escapeHtml(v.probable_cause || '—')}</div>
+            </div>
+            <div style="background:#f0f9ff; border:1px solid #bae6fd; border-radius:8px; padding:12px 14px;">
+                <div style="font-weight:600; font-size:13px; margin-bottom:4px; color:#0369a1;">🔧 Рекомендация</div>
+                <div style="font-size:13px;">${escapeHtml(v.recommended_action || '—')}</div>
+            </div>
+            ${v._parse_failed ? '<div style="margin-top:10px; font-size:11px; color:var(--danger-color);">⚠ Ответ ИИ не распознан как JSON — показан сырой текст.</div>' : ''}
+            <div style="margin-top:8px; font-size:11px; color:var(--text-tertiary);">Подсказка ИИ, не окончательное решение. Проверьте перед действием.</div>`;
+        const overlay = document.createElement('div');
+        overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
+        overlay.innerHTML = `
+            <div style="background:var(--bg-card,#fff); border-radius:12px; padding:20px 22px; max-width:560px; width:100%; max-height:85vh; overflow:auto; box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+                ${html}
+                <div style="text-align:right; margin-top:16px;">
+                    <button class="action-btn secondary-btn" data-triage-close style="padding:6px 16px;">Закрыть</button>
+                </div>
+            </div>`;
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay || e.target.closest('[data-triage-close]')) overlay.remove();
+        });
+        document.body.appendChild(overlay);
+    },
+
+    // ============================================================
     // АНОМАЛЬНЫЕ ДЕЛЬТЫ (high-delta readings vs prev/synth-baseline)
     // ============================================================
     async loadHighDelta() {
@@ -1802,6 +1875,11 @@ export const AnalyzerModule = {
                         ${Number(it.total_cost).toLocaleString('ru-RU', {minimumFractionDigits:2, maximumFractionDigits:2})} ₽
                     </td>
                     <td style="padding:10px 12px; text-align:right; white-space:nowrap;">
+                        <button class="action-btn secondary-btn" data-highdelta-triage="${it.reading_id}"
+                                style="padding:5px 10px; font-size:12px; background:#7c3aed; color:#fff; border:1px solid #7c3aed;"
+                                title="ИИ-разбор: GigaChat определит вероятную причину и рекомендацию">
+                            <i class="fa-solid fa-robot"></i>
+                        </button>
                         <button class="action-btn secondary-btn" data-highdelta-detail="${it.reading_id}"
                                 style="padding:5px 10px; font-size:12px;" title="Открыть «Проверка расчёта»">
                             <i class="fa-solid fa-magnifying-glass"></i>

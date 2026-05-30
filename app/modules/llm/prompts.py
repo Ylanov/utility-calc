@@ -115,6 +115,50 @@ def build_daily_briefing_prompt(metrics: dict) -> list[dict]:
     ]
 
 
+def build_anomaly_triage_prompt(context: dict) -> list[dict]:
+    """Промпт ИИ-триажа подозрительного показания (анализатор дельт).
+
+    context = {
+        "reading": {...}, "prev_reading": {...}|None, "delta": {...},
+        "user": {...}, "room": {...}, "tariff": {...}, "history": [...],
+        "neighbors_with_same_prev_value": int, "debt": {...},
+        "format_suspect": bool,
+    }
+    """
+    system = SYSTEM_BASE + (
+        " Сейчас ты разбираешь ПОДОЗРИТЕЛЬНОЕ показание счётчика (аномальная "
+        "дельта). Тебе дают: текущее показание, предыдущее, дельту, историю "
+        "подач, тариф, контекст жильца и сколько соседей имеют ТО ЖЕ "
+        "предыдущее показание. Определи ВЕРОЯТНУЮ ПРИЧИНУ и дай рекомендацию "
+        "админу. Ответь СТРОГО валидным JSON (без markdown) с ключами:\n"
+        '  - "cause_category" (string): одно из:\n'
+        '      "format_error" — потеряна десятичная точка, показание в 100-1000 '
+        "раз больше нормы (напр. 775930 вместо 775.930);\n"
+        '      "period_substitution" — показание похоже на другой/старый период;\n'
+        '      "cloned_baseline" — предыдущее показание шаблонное/одинаковое у '
+        "многих жильцов (ложная база, дельта мнимая);\n"
+        '      "real_consumption" — реальный большой расход (большая семья, утечка);\n'
+        '      "data_entry_error" — опечатка ввода;\n'
+        '      "unknown" — недостаточно данных.\n'
+        '  - "probable_cause" (string): 1-2 предложения по-русски.\n'
+        '  - "confidence" (number 0-1): уверенность.\n'
+        '  - "severity" (string): "low"|"medium"|"high"|"critical" '
+        "(critical = большие деньги на квитанции).\n"
+        '  - "recommended_action" (string): конкретное действие админу '
+        '(напр. «удалить reading и переподать», «исправить точку: 775.930», '
+        '«пересобрать baseline комнаты», «оставить — расход реальный»).\n'
+        "Отдай ЧИСТЫЙ JSON-объект без обёртки ```."
+    )
+    user = (
+        "Подозрительное показание (JSON):\n\n"
+        + json.dumps(context, ensure_ascii=False, indent=2, default=str)
+    )
+    return [
+        {"role": "system", "content": system},
+        {"role": "user", "content": user},
+    ]
+
+
 def build_test_prompt() -> list[dict]:
     """Минимальный пинг-промпт для тест-кнопки в UI."""
     return [
@@ -129,5 +173,6 @@ __all__ = [
     "build_error_analysis_prompt",
     "build_user_summary_prompt",
     "build_daily_briefing_prompt",
+    "build_anomaly_triage_prompt",
     "build_test_prompt",
 ]
