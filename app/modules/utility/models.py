@@ -1450,3 +1450,57 @@ class SupportTicket(Base):
 
     user = relationship("User", foreign_keys=[user_id])
     responded_by = relationship("User", foreign_keys=[responded_by_id])
+
+
+# ======================================================
+# RESIDENT PROBLEMS (Монитор реальных проблем жильца)
+# Ядро системы сигнализации. Заполняется фоновым сканером
+# (scan_resident_problems), читается колокольчиком / Inbox / брифингом.
+# ======================================================
+class ResidentProblem(Base):
+    """Персистентный сигнал о реальной проблеме жильца.
+
+    Дедупликация: один OPEN-сигнал на (user_id, problem_type). Повторный
+    скан обновляет last_seen_at + score/severity; если проблема исчезла —
+    сканер ставит status=resolved (авто-закрытие). Админ может ack / snooze.
+
+    Типы (problem_type):
+      NOT_SUBMITTING   — не подаёт показания N+ периодов подряд
+      DEBT_GROWING     — долг растёт 3+ периода
+      HIGH_DEBT        — крупный долг (> порога)
+      ZERO_BILL        — нулевой счёт при истории начислений
+      BILL_SPIKE       — резкий скачок суммы
+      METER_FROZEN     — счётчик «замер» (одинаковое значение 3+ периода)
+      FORMAT_SUSPECT   — битый формат показания (потеряна точка)
+      OVERPAY_SUSPECT  — подозрительная переплата
+    """
+    __tablename__ = "resident_problems"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
+                     nullable=False, index=True)
+    problem_type = Column(String(50), nullable=False, index=True)
+    severity = Column(String(20), nullable=False, default="medium")
+    score = Column(Integer, nullable=False, default=0)
+    title = Column(String(200), nullable=False)
+    details = Column(JSONB, nullable=True)
+    # open | acknowledged | resolved
+    status = Column(String(20), nullable=False, default="open", index=True)
+    first_detected_at = Column(DateTime, default=_utcnow, nullable=False)
+    last_seen_at = Column(DateTime, default=_utcnow, nullable=False)
+    resolved_at = Column(DateTime, nullable=True)
+    acknowledged_by_id = Column(
+        Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    acknowledged_at = Column(DateTime, nullable=True)
+    # «Напомнить позже» — сигнал скрыт из активных до этой даты.
+    snooze_until = Column(DateTime, nullable=True)
+
+    user = relationship("User", foreign_keys=[user_id])
+    acknowledged_by = relationship("User", foreign_keys=[acknowledged_by_id])
+
+    __table_args__ = (
+        # Дедупликация: быстрый поиск открытого сигнала (user, type).
+        Index("ix_resident_problems_user_type_status",
+              "user_id", "problem_type", "status"),
+        Index("ix_resident_problems_status_severity", "status", "severity"),
+    )

@@ -34,7 +34,7 @@ from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.modules.utility.models import (
     AnalyzerSetting, AnomalyDismissal, MeterReading, User,
-    GSheetsImportRow, GSheetsAlias, BillingPeriod,
+    GSheetsImportRow, GSheetsAlias, BillingPeriod, ResidentProblem,
 )
 from app.modules.utility.routers.admin_dashboard import write_audit_log
 from app.modules.utility.services.analyzer_config import config, dismissals
@@ -1916,3 +1916,111 @@ async def ai_triage_reading(
             "neighbors_same": neighbors_same,
         },
     }
+
+
+# =========================================================================
+# МОНИТОР ПРОБЛЕМ ЖИЛЬЦОВ (система сигнализации о реальных проблемах)
+# =========================================================================
+_SEV_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
+
+@router.post("/scan-problems")
+async def scan_problems_now(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Запустить сканер проблем жильцов вручную (обычно — фоновый celery)."""
+    _require_admin(current_user)
+    from app.modules.utility.services.resident_problem_scanner import (
+        scan_resident_problems,
+    )
+    return await scan_resident_problems(db)
+
+
+@router.get("/resident-problems")
+async def list_resident_problems(
+    status: str = Query("active",
+                        description="active | open | acknowledged | resolved | all"),
+    severity: Optional[str] = Query(None, description="critical|high|medium|low"),
+    limit: int = Query(300, ge=1, le=1000),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Список сигналов о проблемах жильцов — для колокольчика / Inbox /
+    светофора. active = open+acknowledged без отложенных (snooze)."""
+    _require_admin(current_user)
+    now = utcnow()
+    q = (
+        select(ResidentProblem)
+        .options(selectinload(ResidentProblem.user).selectinload(User.room))
+    )
+    if status == "active":
+        q = q.where(ResidentProblem.status.in_(["open", "acknowledged"]))
+    elif status != "all":
+        q = q.where(ResidentProblem.status == status)
+    if severity:
+        q = q.where(ResidentProblem.severity == severity)
+    rows = (await db.execute(q.limit(1000))).scalars().all()
+
+    items = []
+    for p in rows:
+        if status == "active" and p.snooze_until and p.snooze_until > now:
+            continue  # отложенные не показываем в активных
+        u = p.user
+        room = u.room if u else None
+        items.append({
+            "id": p.id,
+            "user_id": p.user_id,
+            "username": u.username if u else None,
+            "full_name": getattr(u, "full_name", None) if u else None,
+            "dormitory": room.dormitory_name if room else None,
+            "room_number": room.room_number if room else None,
+            "problem_type": p.problem_type,
+            "severity": p.severity,
+            "score": p.score,
+            "title": p.title,
+            "details": p.details,
+            "status": p.status,
+            "first_detected_at": p.first_detected_at.isoformat() if p.first_detected_at else None,
+            "last_seen_at": p.last_seen_at.isoformat() if p.last_seen_at else None,
+        })
+    items.sort(key=lambda x: (_SEV_ORDER.get(x["severity"], 9), -x["score"]))
+    items = items[:limit]
+    summary = {}
+    for it in items:
+        summary[it["severity"]] = summary.get(it["severity"], 0) + 1
+    return {"count": len(items), "summary": summary, "items": items}
+
+
+class ResidentProblemAction(BaseModel):
+    action: str            # acknowledge | resolve | snooze
+    snooze_days: int = 7
+
+
+@router.post("/resident-problems/{problem_id}/action")
+async def resident_problem_action(
+    problem_id: int,
+    data: ResidentProblemAction,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Действие админа над сигналом: acknowledge (видел) / resolve (решено) /
+    snooze (отложить на N дней)."""
+    _require_admin(current_user)
+    p = await db.get(ResidentProblem, problem_id)
+    if not p:
+        raise HTTPException(404, "Сигнал не найден")
+    now = utcnow()
+    if data.action == "acknowledge":
+        p.status = "acknowledged"
+        p.acknowledged_by_id = current_user.id
+        p.acknowledged_at = now
+    elif data.action == "resolve":
+        p.status = "resolved"
+        p.resolved_at = now
+    elif data.action == "snooze":
+        p.snooze_until = now + timedelta(days=max(1, data.snooze_days))
+    else:
+        raise HTTPException(400, f"Неизвестное действие: {data.action!r}")
+    await db.commit()
+    return {"status": "ok", "action": data.action, "problem_id": problem_id}
