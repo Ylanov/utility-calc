@@ -274,6 +274,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GH_PAT }}
 
+      - name: Free disk before pull
+        working-directory: /opt/utility_calc
+        # Хост 15G и общий на несколько стеков. При ~90%+ заполнении тяга
+        # нового образа + пересоздание контейнеров упирается в место — Docker
+        # выдаёт setns / «не смог перезапустить nginx» (инцидент 31.05.2026,
+        # диск был 93%, builder-кэш 1.4ГБ). Подчищаем кэш сборки и висячие
+        # образы ДО pull (current :latest в работе → не трогается).
+        run: |
+          docker builder prune -af || true
+          docker image prune -f || true
+          echo "[disk] after prune:"; df -h / | tail -1
+
       - name: Pull latest images
         working-directory: /opt/utility_calc
         # GHCR периодически отвечает 502 Bad Gateway на manifest GET для
@@ -319,9 +331,17 @@ jobs:
         run: |
           echo "Waiting for backend to stabilize..."
           sleep 15
-          # Очищаем nginx proxy-кеш на случай если он держит старые версии.
+          # Очищаем nginx proxy-кеш на случай если он держит старые версии
+          # (не критично — контейнер мог быть недоступен).
           docker exec utility_nginx find /var/cache/nginx -type f -delete 2>/dev/null || true
-          docker compose restart nginx
+          # force-recreate надёжнее restart: пересоздаёт контейнер, а не пытается
+          # «оживить» возможно зависший (инцидент 31.05.2026 — restart упал с
+          # «did not receive an exit event»). Фолбэк: снести и поднять заново.
+          docker compose up -d --force-recreate --no-deps nginx || {
+            echo "[nginx] recreate failed — force remove + up"
+            docker rm -f utility_nginx || true
+            docker compose up -d --no-deps nginx
+          }
 
       - name: Health check
         working-directory: /opt/utility_calc
