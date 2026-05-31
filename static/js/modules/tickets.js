@@ -4,7 +4,7 @@
 // раскрытие для прочтения + форма ответа.
 
 import { api } from '../core/api.js';
-import { toast, escapeHtml } from '../core/dom.js';
+import { toast, escapeHtml, showConfirm, showPrompt } from '../core/dom.js';
 
 export const TicketsModule = {
     isInitialized: false,
@@ -138,7 +138,7 @@ export const TicketsModule = {
     },
 
     async _respond(id) {
-        const text = prompt('Введите ответ жильцу:');
+        const text = await showPrompt('Ответ жильцу', 'Введите ответ жильцу:');
         if (text === null) return;
         const trimmed = (text || '').trim();
         if (trimmed.length < 1) {
@@ -155,7 +155,7 @@ export const TicketsModule = {
     },
 
     async _setStatus(id, status) {
-        if (!confirm(`Изменить статус на «${status}»?`)) return;
+        if (!await showConfirm(`Изменить статус на «${status}»?`)) return;
         try {
             await api.patch(`/admin/tickets/${id}`, { status });
             toast('Статус обновлён', 'success');

@@ -9,7 +9,7 @@
 //   * Раскрытие строки → панель решения с историей, соседями, флагами и рекомендацией
 
 import { api } from '../core/api.js';
-import { el, toast, setLoading, showPrompt } from '../core/dom.js';
+import { el, toast, setLoading, showPrompt, showConfirm } from '../core/dom.js';
 import { TableController } from '../core/table-controller.js';
 import { createBadges, showHistoryModal, showImportResultModal, openApproveModal } from './readings-ui.js';
 
@@ -559,7 +559,7 @@ export const ReadingsModule = {
     },
 
     async bulkApprove() {
-        if (!confirm('Утвердить все безопасные черновики (anomaly_score < порога)?')) return;
+        if (!await showConfirm('Утвердить все безопасные черновики (anomaly_score < порога)?')) return;
         setLoading(this.dom.btnBulk, true);
         try {
             const res = await api.post('/admin/approve-bulk', {});

@@ -1,6 +1,6 @@
 // static/js/modules/client-profile.js
 import { api } from '../core/api.js';
-import { toast, setLoading } from '../core/dom.js';
+import { toast, setLoading, showAlert } from '../core/dom.js';
 import { Auth } from '../core/auth.js';
 
 export const ClientProfile = {
@@ -129,7 +129,7 @@ export const ClientProfile = {
 
             await api.post('/users/me/setup', payload);
 
-            alert('Ваши данные успешно обновлены. Пожалуйста, войдите в систему с новыми данными.');
+            await showAlert('Ваши данные успешно обновлены. Пожалуйста, войдите в систему с новыми данными.', { title: 'Данные обновлены' });
             Auth.logout();
 
         } catch (error) {

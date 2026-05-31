@@ -13,7 +13,7 @@
 //    (GSheets + утверждённые MeterReading за последний год).
 
 import { api } from '../core/api.js';
-import { toast } from '../core/dom.js';
+import { toast, showConfirm, showPrompt } from '../core/dom.js';
 
 const STATUS_META = {
     pending:        { label: 'В ожидании',   color: '#3b82f6', bg: '#dbeafe' },
@@ -751,11 +751,12 @@ export const GSheetsModule = {
         if (!ids.length) return;
 
         const lastRow = group.rows[group.rows.length - 1];
-        const onlyLast = ids.length > 1 && confirm(
+        const onlyLast = ids.length > 1 && await showConfirm(
             `У жильца «${group.username || group.fio}» ${ids.length} необработанных подач.\n\n` +
             `OK — утвердить ТОЛЬКО последнюю (${fmtDateTime(lastRow.sheet_timestamp)}, ` +
             `ГВС=${fmtNum(lastRow.hot_water)}, ХВС=${fmtNum(lastRow.cold_water)})\n` +
-            `Отмена — утвердить ВСЕ ${ids.length} по очереди`
+            `Отмена — утвердить ВСЕ ${ids.length} по очереди`,
+            { confirmText: 'Только последнюю', cancelText: 'Все по очереди' }
         );
 
         const targetIds = onlyLast
@@ -884,8 +885,8 @@ export const GSheetsModule = {
     async triggerPromote() {
         const btn = this.dom.btnPromote;
         if (!btn) return;
-        if (!confirm('Создать MeterReading для всех auto_approved строк без reading_id?\n\n' +
-                     'Это безопасная операция: дубли не создаются, обработанные строки просто закрываются.')) {
+        if (!await showConfirm('Создать MeterReading для всех auto_approved строк без reading_id?\n\n' +
+                     'Это безопасная операция: дубли не создаются, обработанные строки просто закрываются.', { confirmText: 'Создать' })) {
             return;
         }
         btn.disabled = true;
@@ -924,7 +925,8 @@ export const GSheetsModule = {
     async rebuildAllResidents() {
         const btn = this.dom.btnRebuildAll;
         if (!btn) return;
-        const year = Number(prompt(
+        const year = Number(await showPrompt(
+            'Год пересборки',
             'За какой год пересобрать всех жильцов?\n\n' +
             'Это удалит ВСЕ AUTO_AVG/AUTO_NORM/AUTO_AVG_FALLBACK reading\'и за\n' +
             'указанный год и пересоздаст их из реальных подач Google Sheets.\n\n' +
@@ -935,10 +937,11 @@ export const GSheetsModule = {
         if (!year || isNaN(year) || year < 2020 || year > 2100) {
             return;
         }
-        if (!confirm(
+        if (!await showConfirm(
             `Пересобрать ВСЕХ жильцов с GSheets-подачами за ${year} год?\n\n` +
             `Это может занять 1-5 минут в зависимости от объёма.\n\n` +
-            `OK — запустить, Отмена — отказаться.`
+            `OK — запустить, Отмена — отказаться.`,
+            { danger: true, confirmText: 'Пересобрать' }
         )) return;
 
         btn.disabled = true;
@@ -999,7 +1002,7 @@ export const GSheetsModule = {
             return;
         }
 
-        if (!skipConfirm && !confirm(`Утвердить показания жильца «${row.matched_username || row.raw_fio}»?\nБудет создан MeterReading.`)) return;
+        if (!skipConfirm && !await showConfirm(`Утвердить показания жильца «${row.matched_username || row.raw_fio}»?\nБудет создан MeterReading.`, { confirmText: 'Утвердить' })) return;
 
         // Оптимистичное удаление
         this._removeRowLocally(rowId, 'approved');
@@ -1035,12 +1038,13 @@ export const GSheetsModule = {
         const row = this.state.rows.find(r => r.id === rowId);
         if (!row) return;
         const fio = row.matched_full_name || row.matched_username || row.raw_fio;
-        if (!confirm(
+        if (!await showConfirm(
             `Поменять местами ГВС и ХВС в подаче «${fio}»?\n\n` +
             `Сейчас в строке: ГВС=${row.hot_water}, ХВС=${row.cold_water}.\n` +
             `Станет:           ГВС=${row.cold_water}, ХВС=${row.hot_water}.\n\n` +
             `Использовать когда жилец в Google-таблице ввёл значения в неправильные колонки. ` +
-            `После swap строка вернётся в pending — потом жмёшь «Утвердить» обычной кнопкой.`
+            `После swap строка вернётся в pending — потом жмёшь «Утвердить» обычной кнопкой.`,
+            { confirmText: 'Поменять' }
         )) return;
         try {
             const res = await api.post(`/admin/gsheets/rows/${rowId}/swap-columns`, {});
@@ -1068,7 +1072,7 @@ export const GSheetsModule = {
             return;
         }
         const fio = row.matched_full_name || row.matched_username || row.raw_fio;
-        if (!confirm(
+        if (!await showConfirm(
             `Сделать показания жильца «${fio}» Начальным периодом комнаты?\n\n` +
             `ГВС=${row.hot_water}, ХВС=${row.cold_water} попадут в Initial Setup ` +
             `(или обновят существующий AUTO_GENERATED baseline). Текущая строка ` +
@@ -1380,7 +1384,7 @@ export const GSheetsModule = {
                 return;
             }
             if (act === 'replace') {
-                if (!confirm(`Удалить старое показание (id=${ex.id}) и создать новое из этой строки? Действие необратимо.`)) return;
+                if (!await showConfirm(`Удалить старое показание (id=${ex.id}) и создать новое из этой строки? Действие необратимо.`, { danger: true, confirmText: 'Удалить и заменить' })) return;
                 btn.disabled = true;
                 btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Заменяем…';
                 try {
@@ -1400,7 +1404,7 @@ export const GSheetsModule = {
     async rejectRow(rowId) {
         const row = this.state.rows.find(r => r.id === rowId);
         if (!row) return;
-        if (!confirm(`Отклонить строку жильца «${row.matched_username || row.raw_fio}»?`)) return;
+        if (!await showConfirm(`Отклонить строку жильца «${row.matched_username || row.raw_fio}»?`, { confirmText: 'Отклонить' })) return;
 
         this._removeRowLocally(rowId, 'rejected');
         try {
@@ -1413,7 +1417,7 @@ export const GSheetsModule = {
     },
 
     async deleteRow(rowId) {
-        if (!confirm('Удалить отклонённую строку безвозвратно?')) return;
+        if (!await showConfirm('Удалить отклонённую строку безвозвратно?', { danger: true, confirmText: 'Удалить' })) return;
         this._removeRowLocally(rowId, null);
         try {
             await api.delete(`/admin/gsheets/rows/${rowId}`);
@@ -1750,7 +1754,7 @@ export const GSheetsModule = {
 
             // Делегирование клика. kind='self' — прямая привязка,
             // 'relative' — спросить роль и проставить asRelative.
-            modal.addEventListener('click', (e) => {
+            modal.addEventListener('click', async (e) => {
                 const btn = e.target.closest('[data-pick="1"]');
                 if (!btn) return;
                 const card = btn.closest('.reassign-candidate');
@@ -1759,7 +1763,8 @@ export const GSheetsModule = {
                 const asRelative = kind === 'relative';
                 let note = null;
                 if (asRelative) {
-                    note = prompt(
+                    note = await showPrompt(
+                        'Степень родства',
                         'Кем является «' + rawFio + '» жильцу «' + card.dataset.username + '»?\n'
                         + 'Например: жена, муж, дочь, сын, мать, отец',
                         'Жена',
@@ -1845,7 +1850,7 @@ export const GSheetsModule = {
             toast('Сначала отметьте строки галочками', 'info');
             return;
         }
-        if (!confirm(`Утвердить ${checked.length} строк? Для каждой будет создан MeterReading.`)) return;
+        if (!await showConfirm(`Утвердить ${checked.length} строк? Для каждой будет создан MeterReading.`, { confirmText: 'Утвердить' })) return;
 
         // Оптимистичное удаление
         const toRemove = new Set(checked);

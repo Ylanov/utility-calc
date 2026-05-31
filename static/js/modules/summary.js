@@ -8,7 +8,7 @@
 // фильтры, карточки общежитий, sparkline, выгрузка PDF/Excel/Zip.
 
 import { api } from '../core/api.js';
-import { setLoading, toast } from '../core/dom.js';
+import { setLoading, toast, showConfirm } from '../core/dom.js';
 
 function esc(s) {
     if (s === null || s === undefined) return '';
@@ -1161,13 +1161,14 @@ export const SummaryModule = {
         if (!this.state.selectedPeriodId) {
             return toast('Сначала выберите период', 'warning');
         }
-        if (!confirm(
+        if (!await showConfirm(
             'Создать квитанции для ВСЕХ жильцов которые не подали показания в этом периоде?\n\n' +
             'Для каждого будет создана квитанция:\n' +
             '  • с нулевым потреблением (показания не подавались)\n' +
             '  • БЕЗ начислений фикс-части тарифа\n' +
             '  • с переносом текущего сальдо (долг/переплата) из импорта 1С\n\n' +
-            'Жильцы у которых квитанция уже есть — будут пропущены.'
+            'Жильцы у которых квитанция уже есть — будут пропущены.',
+            { title: 'Массовое создание квитанций', confirmText: 'Создать' }
         )) return;
 
         setLoading(this.dom.btnBulkManualReceipt, true, 'Создание…');
@@ -1196,11 +1197,12 @@ export const SummaryModule = {
         if (!this.state.selectedPeriodId) {
             return toast('Сначала выберите период', 'warning');
         }
-        if (!confirm(
+        if (!await showConfirm(
             'Создать квитанцию вручную?\n\n' +
             'Будет создан approved-reading с НУЛЕВЫМ потреблением и текущими ' +
             'долгами/переплатами жильца. Если переплата покрывает фикс-начисления, ' +
-            'итог будет отрицательным — это значит «остаток средств на счёте».'
+            'итог будет отрицательным — это значит «остаток средств на счёте».',
+            { title: 'Создание квитанции', confirmText: 'Создать' }
         )) return;
 
         try {
@@ -1566,7 +1568,7 @@ export const SummaryModule = {
         }
         const strategyLines = Object.entries(by)
             .map(([k, v]) => `  • ${k}: ${v} жильцов`).join('\n');
-        const ok = window.confirm(
+        const ok = await showConfirm(
             `Авто-добить нормативом период «${pName}»?\n\n` +
             `Будет создано ${willCreate} reading-ов:\n${strategyLines}\n\n` +
             `Логика:\n` +
@@ -1574,7 +1576,8 @@ export const SummaryModule = {
             `  • AUTO_AVG — среднее по дельтам прошлых подач\n` +
             `  • AUTO_AVG_FALLBACK — повтор последних показаний (расход 0)\n` +
             `  • AUTO_NO_HISTORY — только фикс-часть тарифа\n\n` +
-            `Существующие reading'и НЕ затрагиваются.`
+            `Существующие reading'и НЕ затрагиваются.`,
+            { title: 'Авто-добивка нормативом', confirmText: 'Создать' }
         );
         if (!ok) return;
         try {
@@ -1607,9 +1610,10 @@ export const SummaryModule = {
 
         if (entry.is_ok === false) {
             const reason = entry.skip_reason || 'unknown';
-            if (!window.confirm(
+            if (!await showConfirm(
                 `У жильца «${fio}» обнаружена проблема:\n\n${reason}\n\n` +
-                `Авто-пересборка для этого жильца недоступна. Закрыть?`
+                `Авто-пересборка для этого жильца недоступна. Закрыть?`,
+                { title: 'Пересборка недоступна', confirmText: 'Закрыть' }
             )) return;
             return;
         }
@@ -1623,14 +1627,15 @@ export const SummaryModule = {
             ? `\n🔁 Будет применён swap ГВС/ХВС в ${(entry.swaps_to_apply || []).length} строках (жилец перепутал столбцы).\n`
             : '';
 
-        if (!window.confirm(
+        if (!await showConfirm(
             `Пересобрать данные жильца «${fio}» за ${year} год?\n\n` +
             `Будет:\n` +
             `  • Удалены существующие reading'и за затронутые периоды (только GSheets-источника, ручные правки сохранятся).\n` +
             `  • Создан baseline: ${blStr}\n` +
             (readingsStr ? `  • Созданы reading'и:\n  ${readingsStr}\n` : '') +
             swapNote +
-            `\nПродолжить?`
+            `\nПродолжить?`,
+            { title: 'Пересборка из GSheets', confirmText: 'Пересобрать', danger: true }
         )) return;
 
         try {

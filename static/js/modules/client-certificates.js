@@ -12,7 +12,7 @@
 //   4. Форма заказа — период + куда, кнопка активна только если профиль ОК
 
 import { api } from '../core/api.js';
-import { toast } from '../core/dom.js';
+import { toast, showConfirm } from '../core/dom.js';
 
 function esc(s) {
     if (s == null) return '';
@@ -493,7 +493,7 @@ export const ClientCertificates = {
     },
 
     async deleteFamily(id) {
-        if (!confirm('Удалить запись?')) return;
+        if (!await showConfirm('Удалить запись?', { danger: true, confirmText: 'Удалить' })) return;
         try {
             await api.delete(`/me/family/${id}`);
             toast('Удалено', 'success');

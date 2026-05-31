@@ -254,6 +254,42 @@ export function showConfirm(message, opts = {}) {
 }
 
 /**
+ * Блокирующее уведомление с одной кнопкой OK (замена alert(), когда дальше
+ * идёт действие вроде logout — toast не успел бы показаться). Promise<void>.
+ */
+export function showAlert(message, opts = {}) {
+    const { title = 'Готово', okText = 'OK' } = opts;
+    return new Promise((resolve) => {
+        const overlay = el('div', { class: 'modal-overlay open', style: { zIndex: 10000 } });
+        const btnOk = el('button', { class: 'action-btn primary-btn' }, okText);
+        const body = el('div', { class: 'modal-form' });
+        String(message).split('\n').forEach(line => {
+            body.appendChild(el('p', {
+                style: { margin: '0 0 6px 0', color: '#374151', fontSize: '14px', whiteSpace: 'pre-wrap' },
+            }, line));
+        });
+        const modal = el('div', { class: 'modal-window', style: { width: '420px' } },
+            el('div', { class: 'modal-header' }, el('h3', {}, title)),
+            body,
+            el('div', { class: 'modal-footer' }, btnOk)
+        );
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+        setTimeout(() => btnOk.focus(), 50);
+        const close = () => {
+            if (document.body.contains(overlay)) document.body.removeChild(overlay);
+            resolve();
+        };
+        btnOk.onclick = close;
+        const onKey = (e) => {
+            if (!document.body.contains(overlay)) { document.removeEventListener('keydown', onKey); return; }
+            if (e.key === 'Enter' || e.key === 'Escape') { e.preventDefault(); close(); }
+        };
+        document.addEventListener('keydown', onKey);
+    });
+}
+
+/**
  * Многополевой диалог ввода (красивая замена нескольких prompt сразу).
  *   fields: [{ key, label, type='number'|'text', value, hint, min, step }]
  * Возвращает Promise<object|null> — { key: value, ... } (строки) или null при отмене.

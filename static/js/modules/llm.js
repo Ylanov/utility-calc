@@ -8,7 +8,7 @@
 // Токен сохраняется отдельной кнопкой. Тест-кнопка делает реальный пинг.
 
 import { api } from '../core/api.js';
-import { toast } from '../core/dom.js';
+import { toast, showConfirm } from '../core/dom.js';
 
 function escapeHtml(s) {
     if (s === null || s === undefined) return '';
@@ -163,7 +163,7 @@ export const LLMModule = {
     },
 
     async deleteToken() {
-        if (!confirm('Стереть токен и выключить ИИ?')) return;
+        if (!await showConfirm('Стереть токен и выключить ИИ?', { danger: true, confirmText: 'Стереть' })) return;
         try {
             const resp = await fetch('/api/admin/llm/token', {
                 method: 'DELETE', credentials: 'include',

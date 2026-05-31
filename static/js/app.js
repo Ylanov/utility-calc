@@ -1,7 +1,7 @@
 // static/js/app.js
 import { api } from './core/api.js';
 import { Auth } from './core/auth.js';
-import { toast, setLoading } from './core/dom.js';
+import { toast, setLoading, showAlert } from './core/dom.js';
 import { TotpSetup } from './core/totp.js';
 
 // --- ГЛОБАЛЬНЫЙ РЕЕСТР ЗАГРУЖЕННЫХ МОДУЛЕЙ (LAZY LOADING) ---
@@ -195,7 +195,7 @@ function setupAdminProfile() {
 
                 await api.post('/users/me/setup', payload);
 
-                alert('Данные безопасности успешно обновлены. Пожалуйста, войдите в систему с новыми данными.');
+                await showAlert('Данные безопасности успешно обновлены. Пожалуйста, войдите в систему с новыми данными.', { title: 'Данные обновлены' });
                 Auth.logout(); // Выкидываем на логин для проверки
             } catch (err) {
                 toast(err.message, 'error');

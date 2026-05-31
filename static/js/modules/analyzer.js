@@ -4,7 +4,7 @@
 // Дёргает /api/admin/analyzer/* (см. app/modules/utility/routers/admin_analyzer.py).
 
 import { api } from '../core/api.js';
-import { toast, showDialog } from '../core/dom.js';
+import { toast, showDialog, showConfirm, showPrompt } from '../core/dom.js';
 import { SummaryModule } from './summary.js';
 
 const CATEGORY_META = {
@@ -721,7 +721,7 @@ export const AnalyzerModule = {
     },
 
     async deleteDismissal(id) {
-        if (!confirm('Снять пометку «не аномалия»? Анализатор снова начнёт реагировать на эту ситуацию.')) return;
+        if (!await showConfirm('Снять пометку «не аномалия»? Анализатор снова начнёт реагировать на эту ситуацию.', { danger: true, confirmText: 'Снять пометку' })) return;
         try {
             await api.delete(`/admin/analyzer/dismissals/${id}`);
             toast('Удалено', 'success');
@@ -1151,7 +1151,7 @@ export const AnalyzerModule = {
             toast('Минимум 30 дней — защита от случайной полной очистки', 'warning');
             return;
         }
-        if (!confirm(`Удалить завершённые строки импорта старше ${days} дней?\nДействие необратимо (pending / conflict / unmatched не затрагиваются).`)) return;
+        if (!await showConfirm(`Удалить завершённые строки импорта старше ${days} дней?\nДействие необратимо (pending / conflict / unmatched не затрагиваются).`, { danger: true, confirmText: 'Удалить' })) return;
 
         const btn = this.dom.btnCleanupNow;
         if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Очистка…'; }
@@ -1260,10 +1260,11 @@ export const AnalyzerModule = {
 
     async deleteDuplicateReading(readingId) {
         if (!readingId) return;
-        if (!confirm(
+        if (!await showConfirm(
             `Удалить квитанцию #${readingId}?\n\n` +
             'Reading и связанные данные будут удалены безвозвратно. ' +
-            'Используйте только если знаете что это дубликат — оригинал останется.'
+            'Используйте только если знаете что это дубликат — оригинал останется.',
+            { danger: true, confirmText: 'Удалить' }
         )) return;
         try {
             await api.delete(`/admin/readings/${readingId}`);
@@ -1931,9 +1932,10 @@ export const AnalyzerModule = {
 
     async deleteStuckReading(readingId) {
         if (!readingId) return;
-        const confirmed = window.confirm(
+        const confirmed = await showConfirm(
             'Удалить эту запись? Жилец/админ сможет затем переподать корректные показания. ' +
-            'Действие необратимо.'
+            'Действие необратимо.',
+            { danger: true, confirmText: 'Удалить' }
         );
         if (!confirmed) return;
         try {
@@ -2039,10 +2041,11 @@ export const AnalyzerModule = {
 
     async deleteMismatchReading(readingId) {
         if (!readingId) return;
-        if (!window.confirm(
+        if (!await showConfirm(
             'Удалить этот reading? Связанная gsheets-строка снова станет необработанной — ' +
             'если у неё свежий timestamp, она автоматически попадёт в правильный период при ' +
-            'следующем sync. Если старая — отклоните вручную через раздел GSheets.'
+            'следующем sync. Если старая — отклоните вручную через раздел GSheets.',
+            { danger: true, confirmText: 'Удалить' }
         )) return;
         try {
             await api.delete(`/admin/readings/${readingId}`);
@@ -2061,12 +2064,13 @@ export const AnalyzerModule = {
      *  исчезает (см. Капранов май 2026). */
     async approveStuckReading(readingId) {
         if (!readingId) return;
-        const confirmed = window.confirm(
+        const confirmed = await showConfirm(
             'Утвердить эту запись? Система пересчитает стоимость по текущей формуле ' +
             'с актуальным тарифом и текущим «предыдущим» (с пропуском AUTO_GENERATED / ' +
             'DATA_OVERFLOW_RESET). Если итог получится разумным (≤ 100 000 ₽) — запись ' +
             'станет утверждённой и появится в истории жильца как «реальное предыдущее» ' +
-            'для следующего периода.'
+            'для следующего периода.',
+            { confirmText: 'Утвердить' }
         );
         if (!confirmed) return;
         try {
@@ -2354,11 +2358,12 @@ export const AnalyzerModule = {
 
     async deleteHighDeltaReading(readingId) {
         if (!readingId) return;
-        if (!window.confirm(
+        if (!await showConfirm(
             'Удалить этот reading и пересчитать баланс? Жилец сможет подать корректные ' +
             'показания заново. Если корень в неправильном «Начальном периоде» — ' +
             'сначала зайдите в Ручной ввод и поставьте реальные начальные показания, ' +
-            'потом удаляйте эту запись.'
+            'потом удаляйте эту запись.',
+            { danger: true, confirmText: 'Удалить' }
         )) return;
         try {
             await api.delete(`/admin/readings/${readingId}`);
@@ -2375,14 +2380,15 @@ export const AnalyzerModule = {
      *  будет иметь корректную дельту от реального baseline. */
     async convertHighDeltaToBaseline(readingId) {
         if (!readingId) return;
-        if (!window.confirm(
+        if (!await showConfirm(
             'Превратить этот reading в Начальный период (baseline) комнаты?\n\n' +
             'Что произойдёт:\n' +
             '  • значения ГВС/ХВС/электр. переедут в Начальный период комнаты;\n' +
             '  • текущий аномальный reading будет удалён;\n' +
             '  • следующая подача жильца даст нормальную дельту от этих значений.\n\n' +
             'Использовать когда первая реальная подача жильца стала аномальной из-за ' +
-            'AUTO_GENERATED 0/0/0 baseline (типичный кейс).'
+            'AUTO_GENERATED 0/0/0 baseline (типичный кейс).',
+            { danger: true, confirmText: 'Сделать baseline' }
         )) return;
         try {
             const res = await api.post(`/admin/readings/${readingId}/convert-to-baseline`, {});
@@ -2800,12 +2806,13 @@ export const AnalyzerModule = {
 
     async moveResidentToRoom(userId, newRoomId, fio, targetLabel) {
         if (!userId || !newRoomId) return;
-        if (!window.confirm(
+        if (!await showConfirm(
             `Переселить жильца «${fio}» в комнату «${targetLabel}»?\n\n` +
             `• Текущая запись о проживании закроется (moved_out_at = сегодня)\n` +
             `• Создастся новая запись для комнаты ${targetLabel}\n` +
             `• Если в старой никого не останется — она пометится Вакантной\n\n` +
-            `Записи показаний счётчика остаются в обеих комнатах.`
+            `Записи показаний счётчика остаются в обеих комнатах.`,
+            { confirmText: 'Переселить' }
         )) return;
         try {
             const note = `Авто-детект переезда из «Претенденты на переезд» (${new Date().toISOString().slice(0, 10)})`;
@@ -2828,13 +2835,15 @@ export const AnalyzerModule = {
             toast('Сначала «Предпросмотр»', 'warning');
             return;
         }
-        if (!window.confirm(
+        if (!await showConfirm(
             `Запустить авто-пересборку за ${year} год?\n\n` +
             `Это удалит существующие reading'и за все затронутые периоды и создаст ` +
             `новые из GSheets-подач по правилу "latest-per-month + baseline=earliest". ` +
-            `Audit log будет записан.`
+            `Audit log будет записан.`,
+            { danger: true, confirmText: 'Пересобрать' }
         )) return;
-        const typed = window.prompt(
+        const typed = await showPrompt(
+            'Подтверждение',
             `Для подтверждения введите год:\n"${year}"`
         );
         if (typed !== String(year)) {
@@ -2869,13 +2878,15 @@ export const AnalyzerModule = {
             return;
         }
         const periodLabel = `${this.dom.reloadMonth?.selectedOptions[0]?.text || params.month} ${params.year}`;
-        if (!window.confirm(
+        if (!await showConfirm(
             `Удалить все reading'и за «${periodLabel}» и пересоздать из GSheets?\n\n` +
             'Это критичное действие — деньги на квитанциях изменятся. Audit log будет ' +
-            'записан. После завершения запустите «Перерасчёт периода».'
+            'записан. После завершения запустите «Перерасчёт периода».',
+            { danger: true, confirmText: 'Удалить и пересоздать' }
         )) return;
         // Двойное подтверждение для критической операции.
-        const typed = window.prompt(
+        const typed = await showPrompt(
+            'Подтверждение',
             `Для подтверждения введите название периода:\n"${periodLabel}"`
         );
         if (typed !== periodLabel) {
@@ -2918,13 +2929,14 @@ export const AnalyzerModule = {
             toast('Нет записей с synth prev в текущей выборке.', 'info');
             return;
         }
-        if (!window.confirm(
+        if (!await showConfirm(
             `Превратить ВСЕ ${synthItems.length} записей с synth-prev в baseline одним пакетом?\n\n` +
             `Для каждой:\n` +
             `  • значения reading'а → Начальный период комнаты\n` +
             `  • текущий аномальный reading удаляется\n\n` +
             `Используется когда после онбординга накопилось много AUTO_GENERATED 0/0/0.\n` +
-            `После завершения запустите «Перерасчёт» по затронутым периодам.`
+            `После завершения запустите «Перерасчёт» по затронутым периодам.`,
+            { danger: true, confirmText: 'Превратить все' }
         )) return;
         try {
             const ids = synthItems.map(it => it.reading_id);

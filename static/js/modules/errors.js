@@ -6,7 +6,7 @@
 // админ вставляет в чат с AI-ассистентом и получает разбор.
 
 import { api } from '../core/api.js';
-import { toast } from '../core/dom.js';
+import { toast, showConfirm, showPrompt } from '../core/dom.js';
 
 const STATUS_COLOR = {
     500: '#ef4444', 422: '#f59e0b', 400: '#f59e0b', 409: '#f59e0b',
@@ -378,7 +378,7 @@ export const ErrorsModule = {
 
     async markResolved() {
         if (!this.state.selectedId) return;
-        const notes = prompt('Заметка (необязательно — что было сделано):', '');
+        const notes = await showPrompt('Заметка', 'Заметка (необязательно — что было сделано):', '');
         try {
             await api.post(`/admin/errors/${this.state.selectedId}/resolve`,
                 notes ? { notes } : {});
@@ -404,7 +404,7 @@ export const ErrorsModule = {
 
     async deleteCurrent() {
         if (!this.state.selectedId) return;
-        if (!confirm('Удалить эту запись об ошибке? Действие необратимо.')) return;
+        if (!await showConfirm('Удалить эту запись об ошибке? Действие необратимо.', { danger: true, confirmText: 'Удалить' })) return;
         try {
             await api.del(`/admin/errors/${this.state.selectedId}`);
             toast('Удалено', 'success');

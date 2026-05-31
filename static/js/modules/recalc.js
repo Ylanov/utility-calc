@@ -14,7 +14,7 @@
 // 5. После done — строка сохраняется в историю (кнопка «История»).
 
 import { api } from '../core/api.js';
-import { toast } from '../core/dom.js';
+import { toast, showConfirm } from '../core/dom.js';
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -139,7 +139,7 @@ export const RecalcModule = {
         if (!periodId) return toast('Выберите период', 'error');
 
         const periodLabel = this.periods.find(p => String(p.id) === periodId)?.name || `#${periodId}`;
-        if (!confirm(`Запустить предпросчёт для периода «${periodLabel}»?\nПоказания не будут изменены — только собран отчёт.`)) return;
+        if (!await showConfirm(`Запустить предпросчёт для периода «${periodLabel}»?\nПоказания не будут изменены — только собран отчёт.`, { confirmText: 'Запустить' })) return;
 
         this.openModal(`Перерасчёт: ${periodLabel}`);
         this.dom.modalBody.innerHTML = this._progressBlock('Запускаем задачу…', 0);
@@ -302,7 +302,7 @@ export const RecalcModule = {
     },
 
     async applyJob(jobId, periodLabel) {
-        if (!confirm('Применить пересчитанные значения к БД?\nСуммы утверждённых показаний будут обновлены. Действие необратимо.')) return;
+        if (!await showConfirm('Применить пересчитанные значения к БД?\nСуммы утверждённых показаний будут обновлены. Действие необратимо.', { danger: true, confirmText: 'Применить к БД' })) return;
         try {
             const job = await api.post(`/admin/recalc-jobs/${jobId}/apply`);
             this._startPoll(jobId, (j) => this._renderJobState(j, periodLabel));
@@ -312,7 +312,7 @@ export const RecalcModule = {
     },
 
     async cancelJob(jobId) {
-        if (!confirm('Отменить выполнение задачи? Незавершённые изменения откатятся.')) return;
+        if (!await showConfirm('Отменить выполнение задачи? Незавершённые изменения откатятся.', { danger: true, confirmText: 'Отменить задачу' })) return;
         try {
             await api.post(`/admin/recalc-jobs/${jobId}/cancel`);
             toast('Задача отменена', 'info');

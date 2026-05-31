@@ -11,7 +11,7 @@
 //     скачать PDF, удалить заявку (только admin).
 
 import { api } from '../core/api.js';
-import { toast } from '../core/dom.js';
+import { toast, showConfirm, showPrompt } from '../core/dom.js';
 import { TableController } from '../core/table-controller.js';
 
 function esc(s) {
@@ -435,7 +435,7 @@ export const AdminCertificatesModule = {
 
         // Перегенерировать PDF
         document.getElementById('btnCertRegenerate')?.addEventListener('click', async () => {
-            if (!confirm('Перегенерировать PDF с актуальными данными?')) return;
+            if (!await showConfirm('Перегенерировать PDF с актуальными данными?')) return;
             const btn = document.getElementById('btnCertRegenerate');
             const orig = btn.innerHTML;
             btn.disabled = true;
@@ -469,7 +469,7 @@ export const AdminCertificatesModule = {
 
         // Отклонить
         document.getElementById('btnCertReject')?.addEventListener('click', async () => {
-            const reason = prompt('Причина отклонения (попадёт в комментарий заявки):');
+            const reason = await showPrompt('Отклонение', 'Причина отклонения (попадёт в комментарий заявки):');
             if (!reason) return;
             try {
                 await api.patch(`/admin/certificates/${cert.id}`, {
@@ -487,11 +487,11 @@ export const AdminCertificatesModule = {
 
     async _promptAddFamily() {
         const cert = this.currentCert;
-        const name = prompt('ФИО члена семьи:');
+        const name = await showPrompt('Ввод', 'ФИО члена семьи:');
         if (!name || name.trim().length < 2) return;
-        const role = prompt('Отношение (spouse/child/parent/other):', 'child');
+        const role = await showPrompt('Ввод', 'Отношение (spouse/child/parent/other):', 'child');
         if (!role) return;
-        const birth = prompt('Дата рождения (ГГГГ-ММ-ДД) — можно пусто:', '');
+        const birth = await showPrompt('Ввод', 'Дата рождения (ГГГГ-ММ-ДД) — можно пусто:', '');
         try {
             await api.post(`/admin/users/${cert.user.id}/family`, {
                 role: role.trim(),
@@ -507,9 +507,9 @@ export const AdminCertificatesModule = {
 
     async _promptEditFamily(member) {
         const cert = this.currentCert;
-        const name = prompt('ФИО:', member.full_name);
+        const name = await showPrompt('Ввод', 'ФИО:', member.full_name);
         if (!name) return;
-        const birth = prompt('Дата рождения (ГГГГ-ММ-ДД) — можно пусто:', member.birth_date || '');
+        const birth = await showPrompt('Ввод', 'Дата рождения (ГГГГ-ММ-ДД) — можно пусто:', member.birth_date || '');
         try {
             await api.put(`/admin/users/${cert.user.id}/family/${member.id}`, {
                 role: member.role,
@@ -525,7 +525,7 @@ export const AdminCertificatesModule = {
 
     async _deleteFamilyMember(memberId) {
         const cert = this.currentCert;
-        if (!confirm('Удалить члена семьи?')) return;
+        if (!await showConfirm('Удалить члена семьи?', { danger: true, confirmText: 'Удалить' })) return;
         try {
             await api.delete(`/admin/users/${cert.user.id}/family/${memberId}`);
             toast('Удалено', 'success');

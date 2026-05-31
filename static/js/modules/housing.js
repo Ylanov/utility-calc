@@ -1,6 +1,6 @@
 // static/js/modules/housing.js
 import { api } from '../core/api.js';
-import { el, toast, setLoading } from '../core/dom.js';
+import { el, toast, setLoading, showConfirm } from '../core/dom.js';
 import { TableController } from '../core/table-controller.js';
 import { formatRoomAddress } from '../core/format-address.js';
 
@@ -799,7 +799,7 @@ export const HousingModule = {
             body.has_hw_meter && 'ГВС', body.has_cw_meter && 'ХВС',
             body.has_el_meter && 'электр',
         ].filter(Boolean).join(', ') || 'нет счётчиков';
-        if (!confirm(`Применить счётчики (${on}) ко ВСЕМ комнатам ${target}?\n\nЖильцы наследуют автоматически.`)) return;
+        if (!await showConfirm(`Применить счётчики (${on}) ко ВСЕМ комнатам ${target}?\n\nЖильцы наследуют автоматически.`, { confirmText: 'Применить' })) return;
         try {
             const res = await api.post('/rooms/bulk-meter-config', body);
             toast(`Обновлено комнат: ${res.updated_rooms}`, 'success');
@@ -876,10 +876,11 @@ export const HousingModule = {
             return `  комн. ${c.room_number}: ${parts.join('; ')}`;
         }).join('\n');
         const more = preview.changed_rooms > 5 ? `\n  …и ещё ${preview.changed_rooms - 5} комнат` : '';
-        if (!confirm(
+        if (!await showConfirm(
             `Нормализовать серийники по ${target}?\n\n` +
             `Изменится комнат: ${preview.changed_rooms} из ${preview.total_rooms}.\n\n` +
-            `Примеры:\n${sample}${more}`
+            `Примеры:\n${sample}${more}`,
+            { confirmText: 'Нормализовать' }
         )) return;
         try {
             const res = await api.post(`/rooms/normalize-serials?${params}&dry_run=false`);
@@ -956,7 +957,7 @@ export const HousingModule = {
     },
 
     async deleteRoom(id) {
-        if (!confirm('ВНИМАНИЕ! Вы уверены, что хотите удалить помещение? Это возможно только если к нему не привязаны жильцы и нет истории показаний.')) return;
+        if (!await showConfirm('ВНИМАНИЕ! Вы уверены, что хотите удалить помещение? Это возможно только если к нему не привязаны жильцы и нет истории показаний.', { danger: true, confirmText: 'Удалить' })) return;
         try {
             await api.delete(`/rooms/${id}`);
             toast('Помещение удалено', 'success');
@@ -989,7 +990,7 @@ export const HousingModule = {
         };
         if (!payload.new_serial) return toast('Укажите новый номер счетчика', 'error');
         if (isNaN(payload.final_old_value)) return toast('Введите финальное показание', 'error');
-        if (!confirm('Вы уверены? Система рассчитает потребление по старому счетчику и установит новые базовые значения. Это действие нельзя отменить.')) return;
+        if (!await showConfirm('Вы уверены? Система рассчитает потребление по старому счетчику и установит новые базовые значения. Это действие нельзя отменить.')) return;
 
         setLoading(this.meter.btnSubmit, true, 'Оформление...');
         try {

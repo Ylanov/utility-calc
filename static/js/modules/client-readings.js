@@ -1,6 +1,6 @@
 // static/js/modules/client-readings.js
 import { api } from '../core/api.js';
-import { el, toast, setLoading } from '../core/dom.js';
+import { el, toast, setLoading, showConfirm } from '../core/dom.js';
 
 export const ClientReadings = {
     state: {
@@ -437,7 +437,7 @@ export const ClientReadings = {
             if (hm.cold)  lines.push(`❄️ ХВС: ${data.cold_water}`);
             if (hm.elect) lines.push(`⚡ Свет: ${data.electricity}`);
             const msg = `Вы уверены, что хотите перезаписать показания?\n\n${lines.join('\n')}\n\nСтарые данные будут заменены.`;
-            if (!confirm(msg)) return;
+            if (!await showConfirm(msg)) return;
         }
 
         const originalText = document.getElementById('submitBtnText')?.textContent || 'Отправка...';

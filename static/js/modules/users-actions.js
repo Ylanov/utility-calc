@@ -1,6 +1,6 @@
 // static/js/modules/users-actions.js
 import { api } from '../core/api.js';
-import { toast, setLoading } from '../core/dom.js';
+import { toast, setLoading, showConfirm } from '../core/dom.js';
 import { showImportResultModal } from './users-ui.js';
 
 // ==========================================
@@ -115,9 +115,9 @@ export async function handleRelocateSubmit(e, rel, table) {
     }
 
     if (action === 'evict') {
-        if (!confirm('ВНИМАНИЕ! Пользователь будет окончательно выселен и удален. Финальная квитанция будет сформирована. Продолжить?')) return;
+        if (!await showConfirm('ВНИМАНИЕ! Пользователь будет окончательно выселен и удален. Финальная квитанция будет сформирована. Продолжить?', { danger: true, confirmText: 'Выселить' })) return;
     } else {
-        if (!confirm('Система сформирует квитанцию по текущей комнате и переведет жильца в новую. Подтверждаете?')) return;
+        if (!await showConfirm('Система сформирует квитанцию по текущей комнате и переведет жильца в новую. Подтверждаете?', { danger: true, confirmText: 'Переселить' })) return;
     }
 
     setLoading(rel.btnSubmit, true, 'Обработка...');

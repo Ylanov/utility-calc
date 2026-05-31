@@ -10,7 +10,7 @@
 //   * Экспорт текущей выборки в Excel
 
 import { api } from '../core/api.js';
-import { el, toast, setLoading } from '../core/dom.js';
+import { el, toast, setLoading, showConfirm } from '../core/dom.js';
 
 function esc(s) {
     if (s == null) return '';
@@ -526,7 +526,7 @@ export const DebtsModule = {
         const confirmMsg = dupNotes.length
             ? `Загрузить файлы?\n${summary}\n\nЭти файлы уже загружались. Точно повторить?`
             : `Загрузить файлы?\n${summary}`;
-        if (!confirm(confirmMsg)) return;
+        if (!await showConfirm(confirmMsg, { title: 'Загрузка файлов', confirmText: 'Загрузить' })) return;
 
         this.state.isUploading = true;
         if (this.dom.uploadResult) {
@@ -577,7 +577,7 @@ export const DebtsModule = {
         // v1 этот метод можно убрать.
         const radio = document.querySelector('input[name="accountType"]:checked');
         const accountType = radio?.value || '209';
-        if (!confirm(`Загрузить долги для счёта ${accountType}?`)) return;
+        if (!await showConfirm(`Загрузить долги для счёта ${accountType}?`, { title: 'Загрузка', confirmText: 'Загрузить' })) return;
 
         this.state.isUploading = true;
         if (this.dom.uploadResult) {
@@ -1243,7 +1243,7 @@ export const DebtsModule = {
     },
 
     async undoImport(logId) {
-        if (!confirm(`Откатить импорт №${logId}?\nБудут восстановлены долги/переплаты, которые были ДО этого импорта, и удалены созданные им черновики. Действие необратимо.`)) return;
+        if (!await showConfirm(`Откатить импорт №${logId}?\nБудут восстановлены долги/переплаты, которые были ДО этого импорта, и удалены созданные им черновики. Действие необратимо.`, { title: 'Откат импорта', confirmText: 'Откатить', danger: true })) return;
         try {
             const res = await api.post(`/financier/debts/import-history/${logId}/undo`);
             toast(`Откачено: восстановлено ${res.restored_readings}, удалено ${res.removed_drafts}`, 'success');
@@ -1260,13 +1260,14 @@ export const DebtsModule = {
      *  берёт archive_path и запускает import_debts_task — pipeline UPDATE-ит
      *  существующие reading'и значениями из актуальной логики. */
     async reparseImport(logId) {
-        if (!confirm(
+        if (!await showConfirm(
             `Переимпортировать импорт №${logId} из архива?\n\n` +
             `• Файл из 1С возьмётся из архивного хранилища\n` +
             `• Парсер применит актуальную логику (с учётом оборотов Дт/Кр)\n` +
             `• Долги жильцов обновятся, погашенные оборотами обнулятся\n` +
             `• Создастся новый лог импорта (старый останется для аудита)\n\n` +
-            `Полезно если у жильцов в «Долги 1С» видны старые цифры (Муравьев Павел: 635,92 ₽ долг, хотя по ОСВ — погашено).`
+            `Полезно если у жильцов в «Долги 1С» видны старые цифры (Муравьев Павел: 635,92 ₽ долг, хотя по ОСВ — погашено).`,
+            { title: 'Переимпорт', confirmText: 'Переимпортировать' }
         )) return;
         try {
             const res = await api.post(`/financier/debts/import-history/${logId}/reparse`);
@@ -1517,7 +1518,7 @@ export const DebtsModule = {
         else if (category === 'drift') confirmText = 'Записать «Ожидается» в БД для всех drift-расхождений?';
         else if (category === 'missing') confirmText = 'Создать reading-и для всех missing жильцов?';
         else if (category === 'user') confirmText = `Исправить расхождение для user_id=${user_id}?`;
-        if (!confirm(confirmText)) return;
+        if (!await showConfirm(confirmText, { title: 'Исправление целостности', confirmText: 'Применить' })) return;
 
         try {
             const qs = new URLSearchParams({ category, confirm: 'YES' });
@@ -1634,9 +1635,10 @@ export const DebtsModule = {
     },
 
     async _confirmZombieCleanup(overlay, data) {
-        if (!confirm(
+        if (!await showConfirm(
             `Занулить debt_209, debt_205, overpayment_209, overpayment_205 у ${data.count} reading-ов?\n\n` +
-            `Reading'и НЕ удалятся — только финансовые поля станут 0₽. Это обратимо через откат импорта или ручную корректировку.`
+            `Reading'и НЕ удалятся — только финансовые поля станут 0₽. Это обратимо через откат импорта или ручную корректировку.`,
+            { title: 'Зануление сальдо', confirmText: 'Занулить', danger: true }
         )) return;
         try {
             const res = await api.post('/financier/debts/cleanup-zombie-readings?confirm=YES');
@@ -1809,11 +1811,12 @@ export const DebtsModule = {
     },
 
     async deleteImportHistory(logId) {
-        if (!confirm(
+        if (!await showConfirm(
             `Удалить запись истории импорта №${logId}?\n\n` +
             `ВНИМАНИЕ: это удаление БЕЗ отката данных. Используйте только если\n` +
             `этот импорт уже не актуален (данные перетёрты последующим импортом\n` +
-            `или массовым rebuild). Если нужен откат — жми «Откатить» вместо.`
+            `или массовым rebuild). Если нужен откат — жми «Откатить» вместо.`,
+            { title: 'Удаление записи', confirmText: 'Удалить', danger: true }
         )) return;
         try {
             await api.delete(`/financier/debts/import-history/${logId}`);
@@ -1828,13 +1831,14 @@ export const DebtsModule = {
      *  (оставляет последние 5 на каждый счёт). Идеально после массового
      *  rebuild когда в истории накопился мусор. */
     async cleanupImportHistory() {
-        if (!confirm(
+        if (!await showConfirm(
             `Очистить устаревшие записи истории импорта?\n\n` +
             `Будут удалены:\n` +
             `  • все откаченные (status=reverted)\n` +
             `  • все failed (с ошибкой)\n` +
             `  • completed старше последних 5 на каждый счёт (209/205).\n\n` +
-            `Актуальные последние импорты сохранятся. Действие необратимо.`
+            `Актуальные последние импорты сохранятся. Действие необратимо.`,
+            { title: 'Очистка истории', confirmText: 'Очистить', danger: true }
         )) return;
         try {
             const res = await api.post(
@@ -2446,12 +2450,13 @@ export const DebtsModule = {
     },
 
     async resetUserBalance(userId, username) {
-        if (!confirm(
+        if (!await showConfirm(
             `Сбросить баланс жильца «${username}»?\n\n` +
             'Будут обнулены debt_209, debt_205, overpayment_209, overpayment_205 у ВСЕХ ' +
             'его reading-ов (во всех периодах). Действие можно отменить только через ' +
             'журнал действий (audit_log).\n\n' +
-            'Используйте только если после отката импорта у жильца остались зависшие сальдо.'
+            'Используйте только если после отката импорта у жильца остались зависшие сальдо.',
+            { title: 'Сброс баланса', confirmText: 'Сбросить', danger: true }
         )) return;
         try {
             const res = await api.post(`/financier/users/${userId}/reset-balance`);

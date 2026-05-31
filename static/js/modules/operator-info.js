@@ -8,7 +8,7 @@
 // «Юридические реквизиты оператора» во вкладке Операции.
 
 import { api } from '../core/api.js';
-import { toast, setLoading } from '../core/dom.js';
+import { toast, setLoading, showConfirm } from '../core/dom.js';
 
 export const OperatorInfoModule = {
     isInitialized: false,
@@ -72,7 +72,7 @@ export const OperatorInfoModule = {
         // Сервер примет пустые (всё опционально на уровне схемы), но без них
         // политика 152-ФЗ нерабочая.
         if (!payload.operator_name || !payload.operator_email) {
-            const ok = confirm(
+            const ok = await showConfirm(
                 'Не заполнены: «Наименование организации» и/или «Email для запросов по ПД». ' +
                 'Без них политика обработки ПД считается неполной. Сохранить как есть?'
             );

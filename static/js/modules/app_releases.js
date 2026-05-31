@@ -6,7 +6,7 @@
 // опубликовать/снять с публикации, поменять release notes, удалить.
 
 import { api } from '../core/api.js';
-import { toast, escapeHtml } from '../core/dom.js';
+import { toast, escapeHtml, showConfirm, showPrompt } from '../core/dom.js';
 
 function fmtSize(bytes) {
     if (!bytes) return '—';
@@ -218,7 +218,7 @@ export const AppReleasesModule = {
     },
 
     async editNotes(id) {
-        const newNotes = prompt('Новые release notes (можно multi-line — \\n для переноса):');
+        const newNotes = await showPrompt('Release notes', 'Новые release notes (можно multi-line — \\n для переноса):');
         if (newNotes === null) return;
         try {
             await api._request(`/admin/app/releases/${id}`, {
@@ -233,7 +233,7 @@ export const AppReleasesModule = {
     },
 
     async deleteRelease(id) {
-        if (!confirm('Удалить эту версию? Файл APK тоже будет удалён с сервера.')) return;
+        if (!await showConfirm('Удалить эту версию? Файл APK тоже будет удалён с сервера.', { danger: true, confirmText: 'Удалить' })) return;
         try {
             await api.delete(`/admin/app/releases/${id}`);
             toast('Версия удалена', 'success');

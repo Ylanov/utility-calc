@@ -1,6 +1,6 @@
 // static/js/modules/users.js
 import { api } from '../core/api.js';
-import { el, toast, setLoading } from '../core/dom.js';
+import { el, toast, setLoading, showConfirm } from '../core/dom.js';
 import { TableController } from '../core/table-controller.js';
 
 // Импорт вынесенной логики
@@ -607,7 +607,7 @@ export const UsersModule = {
     },
 
     async deleteUser(id) {
-        if (!confirm('Вы действительно хотите удалить этого пользователя? (Мягкое удаление. История показаний сохранится за комнатой.)')) return;
+        if (!await showConfirm('Вы действительно хотите удалить этого пользователя? (Мягкое удаление. История показаний сохранится за комнатой.)', { danger: true, confirmText: 'Удалить' })) return;
 
         try {
             await api.delete(`/users/${id}`);
@@ -875,7 +875,7 @@ export const UsersModule = {
     },
 
     async _deleteContract(contractId) {
-        if (!confirm('Удалить договор безвозвратно? Файл будет стёрт из хранилища.')) return;
+        if (!await showConfirm('Удалить договор безвозвратно? Файл будет стёрт из хранилища.', { danger: true, confirmText: 'Удалить' })) return;
         try {
             await api.delete(`/admin/rental-contracts/${contractId}`);
             toast('Договор удалён', 'success');
@@ -1116,7 +1116,7 @@ export const UsersModule = {
     // =====================================================================
     /** Массово выставить флаг — все активные жильцы увидят popup в моб-приложении. */
     async requestDataRefreshBulk() {
-        if (!confirm('Запросить актуальные данные (общежитие/комната/число жильцов) у ВСЕХ активных жильцов?\n\nКаждый из них увидит однократный popup в мобильном приложении при следующем входе.')) {
+        if (!await showConfirm('Запросить актуальные данные (общежитие/комната/число жильцов) у ВСЕХ активных жильцов?\n\nКаждый из них увидит однократный popup в мобильном приложении при следующем входе.', { confirmText: 'Запросить' })) {
             return;
         }
         try {
@@ -1129,7 +1129,7 @@ export const UsersModule = {
 
     /** Запросить у одного конкретного жильца (вызывается из hub-модалки). */
     async requestDataRefreshOne(userId, username) {
-        if (!confirm(`Запросить актуальные данные у жильца «${username}»?\n\nОн увидит popup при следующем входе в приложение.`)) {
+        if (!await showConfirm(`Запросить актуальные данные у жильца «${username}»?\n\nОн увидит popup при следующем входе в приложение.`, { confirmText: 'Запросить' })) {
             return;
         }
         try {

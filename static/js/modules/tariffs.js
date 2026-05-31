@@ -1,6 +1,6 @@
 // static/js/modules/tariffs.js
 import { api } from '../core/api.js';
-import { setLoading, toast, escapeHtml, showPrompt } from '../core/dom.js';
+import { setLoading, toast, escapeHtml, showPrompt, showConfirm } from '../core/dom.js';
 
 export const TariffsModule = {
     isInitialized: false,
@@ -729,7 +729,7 @@ export const TariffsModule = {
         const action = unassign
             ? `снять комнатный тариф со ВСЕХ комнат общежития «${dorm}»?\nЖильцы вернутся на персональный тариф (или дефолтный).`
             : `привязать тариф «${this.dom.inputName?.value || ''}» ко ВСЕМ комнатам общежития «${dorm}»?\nЭто переопределит персональные тарифы жильцов.`;
-        if (!confirm('Вы уверены — ' + action)) return;
+        if (!await showConfirm('Вы уверены — ' + action, { confirmText: 'Продолжить' })) return;
 
         try {
             const r = await api.post('/tariffs/assign-to-dormitory', {
@@ -898,7 +898,7 @@ export const TariffsModule = {
             confirmMsg += `\n\n⚠️ На этом тарифе ${userCount} жилец(ов). Они будут автоматически переведены на базовый тариф.`;
         }
 
-        if (!confirm(confirmMsg)) return;
+        if (!await showConfirm(confirmMsg, { danger: true, confirmText: 'Удалить' })) return;
 
         const originalText = this.dom.btnDelete.innerText;
         this.dom.btnDelete.innerText = 'Удаление...';
