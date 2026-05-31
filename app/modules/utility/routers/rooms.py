@@ -577,7 +577,11 @@ async def room_residents(
     }
 
 
-@router.get("/{room_id}", response_model=RoomResponse, dependencies=[Depends(allow_management)])
+# ВАЖНО: путь-конвертер `:int` — иначе GET /{room_id} матчит статические
+# GET-роуты вроде /dormitory-overview (Starlette проверяет шаблон ДО валидации,
+# и «dormitory-overview» ловится как room_id → 422). С `:int` матчатся только
+# числовые сегменты, статические пути проходят к своим обработчикам.
+@router.get("/{room_id:int}", response_model=RoomResponse, dependencies=[Depends(allow_management)])
 async def get_room(room_id: int, db: AsyncSession = Depends(get_db)):
     room = await db.get(Room, room_id)
     if not room: raise HTTPException(status_code=404, detail="Комната не найдена")
