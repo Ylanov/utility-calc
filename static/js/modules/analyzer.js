@@ -112,6 +112,8 @@ export const AnalyzerModule = {
             // Таб «Обслуживание»
             cleanupDays:    document.getElementById('analyzerCleanupDays'),
             btnCleanupNow:  document.getElementById('btnAnalyzerCleanupNow'),
+            btnWipeReadings: document.getElementById('btnAnalyzerWipeReadings'),
+            wipeResult:     document.getElementById('analyzerWipeResult'),
             cleanupResult:  document.getElementById('analyzerCleanupResult'),
             btnFindDuplicates: document.getElementById('btnFindDuplicates'),
             duplicatesResult:  document.getElementById('duplicatesResult'),
@@ -249,6 +251,7 @@ export const AnalyzerModule = {
 
         // Таб «Обслуживание»
         this.dom.btnCleanupNow?.addEventListener('click', () => this.runGsheetsCleanup());
+        this.dom.btnWipeReadings?.addEventListener('click', () => this.wipeAllReadings());
         this.dom.btnFindDuplicates?.addEventListener('click', () => this.findDuplicates());
         // Делегирование клика «Удалить дубликат» внутри результата
         this.dom.duplicatesResult?.addEventListener('click', (e) => {
@@ -1169,6 +1172,48 @@ export const AnalyzerModule = {
                 `<div style="padding:12px 16px; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; color:#991b1b;">Ошибка: ${escapeHtml(e.message)}</div>`;
         } finally {
             if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-trash"></i> Очистить сейчас'; }
+        }
+    },
+
+    // ====================================================================
+    // ОПАСНАЯ ЗОНА — полная очистка ВСЕХ показаний («начать заново»).
+    // Двойная защита: confirm + ввод точной фразы. Бэк тоже требует фразу.
+    // ====================================================================
+    async wipeAllReadings() {
+        if (!await showConfirm(
+            'Стереть ВСЕ показания счётчиков по всему биллингу и обнулить ' +
+            '«последнее показание» комнат?\n\nЭто необратимо. 1С-долги, ' +
+            'жильцы, комнаты и тарифы НЕ затрагиваются.',
+            { danger: true, confirmText: 'Продолжить' }
+        )) return;
+
+        const phrase = await showPrompt(
+            'Полная очистка показаний',
+            'Введите фразу СТЕРЕТЬ ВСЁ (заглавными), чтобы подтвердить необратимую очистку:',
+            '', 'СТЕРЕТЬ ВСЁ'
+        );
+        if (phrase === null) return; // отмена
+        if (phrase !== 'СТЕРЕТЬ ВСЁ') {
+            toast('Фраза не совпала — очистка отменена', 'warning');
+            return;
+        }
+
+        const btn = this.dom.btnWipeReadings;
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Очистка…'; }
+        if (this.dom.wipeResult) this.dom.wipeResult.innerHTML = '';
+        try {
+            const res = await api.post('/admin/analyzer/wipe-readings', { confirm: 'СТЕРЕТЬ ВСЁ' });
+            if (this.dom.wipeResult) this.dom.wipeResult.innerHTML = `
+                <div style="padding:12px 16px; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; color:#065f46;">
+                    <b><i class="fa-solid fa-check"></i> Готово.</b>
+                    Удалено показаний: <b>${res.deleted_readings}</b>. Комнаты обнулены — можно начинать заново.
+                </div>`;
+            toast(`Стёрто показаний: ${res.deleted_readings}`, 'success');
+        } catch (e) {
+            if (this.dom.wipeResult) this.dom.wipeResult.innerHTML =
+                `<div style="padding:12px 16px; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; color:#991b1b;">Ошибка: ${escapeHtml(e.message)}</div>`;
+        } finally {
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="fa-solid fa-bomb"></i> Стереть все показания…'; }
         }
     },
 

@@ -1530,6 +1530,24 @@
                                 </button>
                             </div>
                             <div id="duplicatesResult" style="margin-top:12px; font-size:13px;"></div>
+
+                            <hr style="margin:24px 0; border:none; border-top:2px dashed #fca5a5;">
+
+                            <h4 style="margin:0 0 10px 0; color:#991b1b;">
+                                <i class="fa-solid fa-triangle-exclamation"></i> Опасная зона — полная очистка показаний
+                            </h4>
+                            <p class="hint-text" style="margin:0 0 12px 0; font-size:13px;">
+                                Удаляет <b>ВСЕ показания счётчиков</b> (включая «Начальные») по всему биллингу и
+                                обнуляет «последнее показание» комнат — чистый старт «начать заново».
+                                <b>НЕ трогает</b> жильцов, комнаты, тарифы и 1С-долги/корректировки.
+                                Действие <b>необратимо</b> — потребуется ввести фразу-подтверждение.
+                            </p>
+                            <div style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap; background:#fef2f2; border:1px solid #fecaca; padding:12px 16px; border-radius:8px;">
+                                <button id="btnAnalyzerWipeReadings" class="action-btn danger-btn" style="padding:8px 16px; font-size:13px;">
+                                    <i class="fa-solid fa-bomb"></i> Стереть все показания…
+                                </button>
+                            </div>
+                            <div id="analyzerWipeResult" style="margin-top:12px; font-size:13px;"></div>
                         </div>
 
                     </div>

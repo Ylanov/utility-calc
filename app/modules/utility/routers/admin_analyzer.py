@@ -26,7 +26,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, func, desc, or_
+from sqlalchemy import select, func, desc, or_, delete, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -34,7 +34,7 @@ from app.core.auth import get_current_user
 from app.core.database import get_db
 from app.modules.utility.models import (
     AnalyzerSetting, AnomalyDismissal, MeterReading, User,
-    GSheetsImportRow, GSheetsAlias, BillingPeriod, ResidentProblem,
+    GSheetsImportRow, GSheetsAlias, BillingPeriod, ResidentProblem, Room,
 )
 from app.modules.utility.routers.admin_dashboard import write_audit_log
 from app.modules.utility.services.analyzer_config import config, dismissals
@@ -48,6 +48,65 @@ router = APIRouter(prefix="/api/admin/analyzer", tags=["Admin Analyzer"])
 def _require_admin(user: User) -> None:
     if user.role not in ("admin", "accountant"):
         raise HTTPException(status_code=403, detail="Доступ запрещён")
+
+
+# =========================================================================
+# DANGER ZONE — полная очистка показаний («начать заново»)
+# =========================================================================
+_WIPE_CONFIRM_PHRASE = "СТЕРЕТЬ ВСЁ"
+
+
+class WipeReadingsRequest(BaseModel):
+    confirm: str
+
+
+@router.post("/wipe-readings")
+async def wipe_all_readings(
+    payload: WipeReadingsRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """ОПАСНО И НЕОБРАТИМО: удаляет ВСЕ показания счётчиков (включая
+    «Начальные»/baseline) по всему биллингу и обнуляет room.last_* —
+    чистый старт «начать заново».
+
+    НЕ трогает: жильцов, комнаты, тарифы, периоды, а также 1С-долги и
+    корректировки (Adjustment) — это отдельные данные.
+
+    Требует точную фразу-подтверждение в теле запроса (defensive UX —
+    кнопка спрятана в Центре анализа). Пишет аудит-лог.
+    """
+    _require_admin(current_user)
+    if (payload.confirm or "").strip() != _WIPE_CONFIRM_PHRASE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Для очистки введите точную фразу: {_WIPE_CONFIRM_PHRASE}",
+        )
+
+    total = (await db.execute(select(func.count(MeterReading.id)))).scalar_one()
+
+    # FK: GSheetsImportRow.reading_id → readings.id (без ON DELETE) — обнуляем,
+    # иначе DELETE упадёт на foreign key violation.
+    await db.execute(
+        update(GSheetsImportRow)
+        .where(GSheetsImportRow.reading_id.is_not(None))
+        .values(reading_id=None)
+    )
+    # Удаляем ВСЕ показания.
+    await db.execute(delete(MeterReading))
+    # Обнуляем «последнее показание» всех комнат — следующая подача = старт.
+    await db.execute(update(Room).values(
+        last_hot_water=0, last_cold_water=0, last_electricity=0,
+    ))
+
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action="wipe_all_readings", entity_type="reading", entity_id=None,
+        details={"deleted_readings": int(total), "scope": "all_billing",
+                 "reset_room_last": True},
+    )
+    await db.commit()
+    return {"status": "ok", "deleted_readings": int(total)}
 
 
 # =========================================================================
