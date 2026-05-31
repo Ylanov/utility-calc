@@ -891,6 +891,52 @@ async def normalize_serials(
     }
 
 
+@router.post("/{room_id}/make-singles", dependencies=[Depends(allow_management)])
+async def make_room_singles(
+    room_id: int,
+    max_capacity: int = Query(..., ge=1, description="Макс. вместимость (делитель площади)"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Быстрое решение из Центра анализа («Типы квартир»): перевести квартиру в
+    холостяцкую одним кликом. Ставит is_singles_apartment=True + max_capacity и
+    приводит ВСЕХ живущих жильцов к resident_type='single' (резолвит multi_family
+    /unmarked_singles/mixed_types/singles_with_family). Зеркалит логику синка из
+    update_room, но работает и когда флаг уже True (просто добивает типы)."""
+    room = await db.get(Room, room_id)
+    if not room:
+        raise HTTPException(404, "Помещение не найдено")
+    if room.place_type == "house":
+        raise HTTPException(400, "Холостяцкая квартира — только для общежития (place_type='dormitory')")
+
+    room.is_singles_apartment = True
+    room.max_capacity = max_capacity
+    room.updated_at = utcnow()
+
+    res = await db.execute(
+        update(User)
+        .where(
+            User.room_id == room_id,
+            User.is_deleted.is_(False),
+            User.role == "user",
+        )
+        .values(resident_type="single")
+    )
+
+    from app.modules.utility.routers.admin_dashboard import write_audit_log
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action="make_room_singles", entity_type="room", entity_id=room_id,
+        details={
+            "room": f"{room.dormitory_name} / {room.room_number}",
+            "max_capacity": max_capacity,
+            "residents_converted": res.rowcount,
+        },
+    )
+    await db.commit()
+    return {"status": "ok", "room_id": room_id, "residents_converted": res.rowcount}
+
+
 @router.post("/{room_id}/replace-meter", dependencies=[Depends(allow_management)])
 async def replace_meter(room_id: int, data: ReplaceMeterSchema, db: AsyncSession = Depends(get_db)):
     """

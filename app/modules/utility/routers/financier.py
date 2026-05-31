@@ -3489,27 +3489,32 @@ async def reset_user_balance(
 # RECONCILIATION — сверка показаний с долгами (для Центра анализа)
 # =========================================================================
 
-@router.get("/debts/reconcile", summary="Сверка: readings vs debts в активном периоде")
+@router.get("/debts/reconcile", summary="Сверка: readings vs debts (выбранный/активный период)")
 async def debts_reconcile(
+    period_id: Optional[int] = Query(None, description="Период; по умолчанию активный → последний импорт → свежий"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Возвращает 3 списка для вкладки «Сверка 1С» в Центре анализа:
+    """Возвращает данные для вкладки «Сверка 1С» в Центре анализа:
       * readings_without_debts — есть reading, но в 1С долгов нет (ок, оплачено?)
       * debts_without_readings — в readings стоит долг, но reading не утверждён
       * last_import_not_found — ФИО из последнего импорта, не привязанные
-    """
+      * unassigned — НЕразнесённый долг (сумма + по счетам): деньги из 1С, не
+        привязанные к жильцу (ФИО нет в базе / нет комнаты). Главный сигнал
+        проблемы — сколько денег «висит в воздухе».
+    Период — через _resolve_view_period (работает и когда активного нет)."""
     _require_finance(current_user)
 
-    active_period = (await db.execute(
-        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
-    )).scalars().first()
+    active_period = await _resolve_view_period(db, period_id)
     if not active_period:
         return {
             "period": None,
             "readings_without_debts": [],
             "debts_without_readings": [],
             "last_import_not_found": [],
+            "unassigned": {"total_debt": 0.0, "total_overpayment": 0.0, "count": 0,
+                           "by_account": {"209": {"count": 0, "debt": 0.0},
+                                          "205": {"count": 0, "debt": 0.0}}},
         }
 
     # 1) readings_without_debts — approved=True и debt_*/overpayment_* все 0 и total_cost > 0
@@ -3574,10 +3579,48 @@ async def debts_reconcile(
     nf_raw = (last_log.not_found_users or []) if last_log else []
     nf = [_nfu_fio(x) for x in nf_raw][:200]
 
+    # 4) Неразнесённый долг: not_found из ПОСЛЕДНИХ импортов 209/205 за период.
+    #    Главный денежный сигнал — сколько 1С-долга не привязано к жильцу.
+    u_total_debt = 0.0
+    u_total_over = 0.0
+    u_keys: set = set()
+    by_account = {}
+    for acct in ("209", "205"):
+        log = (await db.execute(
+            select(DebtImportLog).where(
+                DebtImportLog.period_id == active_period.id,
+                DebtImportLog.account_type == acct,
+                DebtImportLog.status == "completed",
+            ).order_by(desc(DebtImportLog.started_at)).limit(1)
+        )).scalars().first()
+        acct_debt = 0.0
+        acct_cnt = 0
+        for it in (log.not_found_users or []) if log else []:
+            if isinstance(it, dict):
+                fio = (it.get("fio") or "").strip()
+                dd = float(it.get("debt") or 0)
+                oo = float(it.get("overpayment") or 0)
+            else:
+                fio, dd, oo = str(it).strip(), 0.0, 0.0
+            if not fio:
+                continue
+            u_keys.add(" ".join(fio.lower().split()))
+            acct_debt += dd
+            acct_cnt += 1
+            u_total_debt += dd
+            u_total_over += oo
+        by_account[acct] = {"count": acct_cnt, "debt": round(acct_debt, 2)}
+
     return {
         "period": {"id": active_period.id, "name": active_period.name},
         "readings_without_debts": r_no_debts,
         "debts_without_readings": d_no_readings,
         "last_import_not_found": nf,
         "last_import_id": last_log.id if last_log else None,
+        "unassigned": {
+            "total_debt": round(u_total_debt, 2),
+            "total_overpayment": round(u_total_over, 2),
+            "count": len(u_keys),
+            "by_account": by_account,
+        },
     }

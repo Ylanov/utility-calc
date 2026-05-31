@@ -217,6 +217,12 @@ export const AnalyzerModule = {
         this.dom.btnRpRefresh?.addEventListener('click', () => this.loadResidentProblems());
         this.dom.rpSeverityFilter?.addEventListener('change', () => this.loadResidentProblems());
         this.dom.btnRtmRefresh?.addEventListener('click', () => this.loadRoomTypeMismatches());
+        // Быстрое решение «Сделать холостяцкой» в карточках «Типы квартир».
+        this.dom.rtmBody?.addEventListener('click', (e) => {
+            const btn = e.target.closest('button[data-make-singles]');
+            if (!btn) return;
+            this.makeRoomSingles(Number(btn.dataset.makeSingles), Number(btn.dataset.residents), btn.dataset.addr || '');
+        });
         this.dom.rpBody?.addEventListener('click', (e) => {
             const btn = e.target.closest('button[data-rp-action]');
             if (btn) this.rpAction(Number(btn.dataset.rpId), btn.dataset.rpAction, btn);
@@ -1032,6 +1038,28 @@ export const AnalyzerModule = {
         const r2 = data.debts_without_readings || [];
         const r3 = data.last_import_not_found || [];
 
+        // Неразнесённый долг 1С — главный денежный сигнал проблемы.
+        const u = data.unassigned || {};
+        const ua = u.by_account || {};
+        const secUnassigned = (u.count > 0) ? `
+            <div style="margin-bottom:20px; border:1px solid #fcd34d; border-radius:8px; overflow:hidden;">
+                <div style="background:#fffbeb; padding:12px 15px; border-bottom:1px solid #fcd34d; font-weight:bold; color:#b45309; display:flex; align-items:center; gap:10px;">
+                    <span style="font-size:20px;">🔗</span> Неразнесённый долг 1С — ${fmtMoney(u.total_debt)} · ${u.count} ФИО
+                </div>
+                <div style="padding:12px 15px; background:white; font-size:13px;">
+                    Долг из 1С, не привязанный к жильцу (ФИО нет в базе или у жильца нет комнаты). Деньги «висят» — не учтены ни за кем.
+                    <div style="margin-top:8px; display:flex; gap:18px; flex-wrap:wrap;">
+                        <span>Счёт 209: <b style="color:#c0392b;">${fmtMoney((ua['209'] || {}).debt)}</b> · ${(ua['209'] || {}).count || 0} ФИО</span>
+                        <span>Счёт 205: <b style="color:#d35400;">${fmtMoney((ua['205'] || {}).debt)}</b> · ${(ua['205'] || {}).count || 0} ФИО</span>
+                    </div>
+                    ${data.last_import_id ? `<div style="margin-top:10px;">
+                        <a href="#" onclick="event.preventDefault(); window.__openDebtsNotFound && window.__openDebtsNotFound(${data.last_import_id});" style="color:#7c3aed; font-size:12px;">
+                            Разобрать в «Долги 1С» (кнопка «Почему не нашлись?») →
+                        </a>
+                    </div>` : ''}
+                </div>
+            </div>` : '';
+
         const sec1 = `
             <div style="margin-bottom: 20px; border: 1px solid #bbf7d040; border-radius: 8px; overflow: hidden;">
                 <div style="background: #ecfdf5; padding: 12px 15px; border-bottom: 1px solid #bbf7d0; font-weight: bold; color: #059669; display: flex; align-items: center; gap: 10px;">
@@ -1101,14 +1129,15 @@ export const AnalyzerModule = {
                 </div>` : `<div style="padding:14px; color:var(--text-secondary); background:white; font-size:12px;">Все ФИО из последнего импорта привязаны.</div>`}
             </div>`;
 
-        const totalIssues = r1.length + r2.length + r3.length;
+        const totalIssues = r1.length + r2.length + r3.length + (u.count || 0);
         const header = `
             <div style="padding:10px 14px; background:#eff6ff; border:1px solid #bfdbfe; border-radius:6px; margin-bottom:14px; font-size:13px;">
                 Период: <b>${escapeHtml(data.period.name)}</b>
                 · Всего расхождений: <b style="color:${totalIssues ? '#d97706' : '#059669'};">${totalIssues}</b>
+                ${u.total_debt > 0 ? ` · неразнесено: <b style="color:#b45309;">${fmtMoney(u.total_debt)}</b>` : ''}
             </div>`;
 
-        this.dom.reconcileResults.innerHTML = header + sec1 + sec2 + sec3;
+        this.dom.reconcileResults.innerHTML = header + secUnassigned + sec1 + sec2 + sec3;
     },
 
     async runGsheetsCleanup() {
@@ -1739,12 +1768,41 @@ export const AnalyzerModule = {
                         <span style="margin-left:auto; font-size:11px; color:var(--text-secondary);">${it.n_residents} жильцов · семейных: ${it.n_family} · холостяков: ${it.n_single}</span>
                     </div>
                     <div style="font-size:13px; margin-bottom:8px;">${residents}</div>
-                    <div style="font-size:12px; color:var(--text-secondary); background:var(--bg-page); padding:8px 10px; border-radius:6px;">
-                        <i class="fa-solid fa-lightbulb" style="color:#f59e0b;"></i> ${escapeHtml(it.recommendation || '')}
+                    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                        <div style="flex:1; min-width:200px; font-size:12px; color:var(--text-secondary); background:var(--bg-page); padding:8px 10px; border-radius:6px;">
+                            <i class="fa-solid fa-lightbulb" style="color:#f59e0b;"></i> ${escapeHtml(it.recommendation || '')}
+                        </div>
+                        ${it.place_type !== 'house' ? `
+                        <button class="action-btn" data-make-singles="${it.room_id}" data-residents="${it.n_residents}" data-addr="${escapeHtml(it.address || ('комн. ' + (it.room_number || '')))}"
+                                title="Перевести квартиру в холостяцкую: пометит флаг + приведёт всех жильцов к холостякам (как в Жилфонде)"
+                                style="white-space:nowrap; font-size:12px; padding:6px 12px; background:#7c3aed; color:#fff; border:1px solid #7c3aed;">
+                            <i class="fa-solid fa-bed"></i> Сделать холостяцкой
+                        </button>` : ''}
                     </div>
                 </div>`;
         }).join('');
         this.dom.rtmBody.innerHTML = cards;
+    },
+
+    // Быстрое решение из «Типы квартир»: перевод квартиры в холостяцкую
+    // (флаг + макс. вместимость + все жильцы → холостяки). Резолвит проблему.
+    async makeRoomSingles(roomId, defaultCap, addr) {
+        if (!roomId) return;
+        const capStr = window.prompt(
+            `Перевести «${addr}» в холостяцкую квартиру.\n\n` +
+            `Макс. вместимость (предел квартиры — делитель площади для найма/ТКО/отопления; ` +
+            `счётчики делятся на фактическое число жильцов):`,
+            String(defaultCap || 1));
+        if (capStr === null) return;
+        const cap = parseInt(capStr, 10);
+        if (!cap || cap < 1) { toast('Вместимость должна быть числом ≥ 1', 'error'); return; }
+        try {
+            const res = await api.post(`/rooms/${roomId}/make-singles?max_capacity=${cap}`);
+            toast(`Квартира стала холостяцкой. Жильцов переведено в холостяки: ${res.residents_converted}.`, 'success');
+            this.loadRoomTypeMismatches();
+        } catch (e) {
+            toast('Ошибка: ' + (e.message || ''), 'error');
+        }
     },
 
     async rpAction(id, action, btn) {
