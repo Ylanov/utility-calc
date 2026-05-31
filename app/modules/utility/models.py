@@ -1408,6 +1408,10 @@ class RentalContract(Base):
 
     __table_args__ = (
         Index("idx_rental_user_active", "user_id", "is_active"),
+        # Один договор с данным номером на жильца — защита от дублей импорта 1С
+        # (209 и 205 содержат одни и те же строки «Договор №…»). NULL-номера
+        # (ручные загрузки без номера) не затрагиваются (NULL в PG различны).
+        Index("uq_rental_contract_user_number", "user_id", "number", unique=True),
     )
 
 

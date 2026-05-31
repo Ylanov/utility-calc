@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import desc
+from sqlalchemy.exc import IntegrityError
 
 from app.core.database import get_db
 from app.core.dependencies import require_resident
@@ -373,7 +374,15 @@ async def create_my_contract(
         uploaded_by_id=current_user.id,
     )
     db.add(contract)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            409,
+            f"У вас уже есть договор №{data.number.strip()} — "
+            f"отредактируйте существующий вместо создания дубля.",
+        )
     await db.refresh(contract)
     return contract
 

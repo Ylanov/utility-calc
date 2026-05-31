@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Dict, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from rapidfuzz import process, fuzz
 from app.modules.utility.models import (
     User, MeterReading, BillingPeriod, DebtImportLog, RentalContract,
@@ -599,11 +600,10 @@ def sync_import_debts_process(
 
         # Для парсера договоров: запоминаем последнего сматченного жильца.
         # В ОСВ под каждым ФИО идут строки «Договор от ДД.ММ.ГГГГ № N» —
-        # все они принадлежат предыдущему ФИО.
+        # все они принадлежат предыдущему ФИО. Дедуп — через уникальный индекс
+        # (user_id, number) + ON CONFLICT DO NOTHING (см. ниже), без кеша:
+        # кеш не спасал при раздельной/параллельной загрузке 209 и 205.
         last_matched_user_id: Optional[int] = None
-        # Кеш уже существующих договоров: {user_id: set(number)} — чтобы
-        # не делать SELECT для каждой строки.
-        existing_contracts_cache: Dict[int, set] = {}
 
         updates_dict = {}  # reading_id -> reading object (для обновления)
         inserts_dict = {}  # user_id -> reading object (для вставки) — Bug AG: ключ per-user
@@ -672,27 +672,21 @@ def sync_import_debts_process(
             # RentalContract если ещё нет.
             contract_data = parse_contract_line(name_cell)
             if contract_data and last_matched_user_id:
-                # Lazy-load existing для этого юзера
-                if last_matched_user_id not in existing_contracts_cache:
-                    rows_db = db.execute(
-                        select(RentalContract.number).where(
-                            RentalContract.user_id == last_matched_user_id
-                        )
-                    ).all()
-                    existing_contracts_cache[last_matched_user_id] = {
-                        r[0] for r in rows_db if r[0]
-                    }
-                if contract_data["number"] not in existing_contracts_cache[last_matched_user_id]:
-                    db.add(RentalContract(
-                        user_id=last_matched_user_id,
-                        number=contract_data["number"],
-                        signed_date=contract_data["signed_date"],
-                        is_active=True,
-                        note=f"импортировано из 1С ОСВ (счёт {account_type})",
-                    ))
-                    existing_contracts_cache[last_matched_user_id].add(
-                        contract_data["number"]
-                    )
+                # Идемпотентная вставка: ON CONFLICT (user_id, number) DO NOTHING.
+                # Раньше дедуп шёл через per-import кеш — но при раздельной/
+                # параллельной загрузке 209 и 205 оба таска читали пустой кеш и
+                # создавали ОДИН и тот же договор дважды (баг: два №1682 у
+                # Ярощука). Уникальный индекс + on_conflict исключает дубль при
+                # любой конкуррентности; rowcount=1 только если реально вставили.
+                ins = pg_insert(RentalContract).values(
+                    user_id=last_matched_user_id,
+                    number=contract_data["number"],
+                    signed_date=contract_data["signed_date"],
+                    is_active=True,
+                    note=f"импортировано из 1С ОСВ (счёт {account_type})",
+                    uploaded_at=datetime.now(timezone.utc).replace(tzinfo=None),
+                ).on_conflict_do_nothing(index_elements=["user_id", "number"])
+                if db.execute(ins).rowcount:
                     stats["contracts_created"] += 1
                 continue
 

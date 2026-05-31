@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import desc, or_, func
 from sqlalchemy.orm import selectinload
+from sqlalchemy.exc import IntegrityError
 
 from app.core.database import get_db
 from app.core.dependencies import RoleChecker
@@ -649,7 +650,15 @@ async def admin_upload_contract(
             "size": file_size,
         },
     )
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            409,
+            f"У жильца уже есть договор №{number.strip()} — "
+            f"отредактируйте существующий вместо создания дубля.",
+        )
     await db.refresh(contract)
     return {
         "id": contract.id,
