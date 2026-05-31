@@ -161,11 +161,14 @@ export const ReadingsModule = {
                 api.get('/settings/submission-period').catch(() => null),
             ]);
             const periodActive = !!(data && data.name);
-            // По умолчанию 20-25 если settings не загрузились
-            const startDay = submission?.start_day ?? 20;
-            const endDay = submission?.end_day ?? 25;
+            // По умолчанию московский стандарт 15 → 3 следующего месяца.
+            const startDay = submission?.start_day ?? 15;
+            const endDay = submission?.end_day ?? 3;
             const todayDay = new Date().getDate();
-            const dayInWindow = todayDay >= startDay && todayDay <= endDay;
+            // Окно может переходить через границу месяца (start > end, напр. 15→3).
+            const dayInWindow = (startDay <= endDay)
+                ? (todayDay >= startDay && todayDay <= endDay)
+                : (todayDay >= startDay || todayDay <= endDay);
             const isOpen = periodActive && dayInWindow;
             if (isOpen) {
                 if (this.dom.periodActive) this.dom.periodActive.style.display = 'flex';

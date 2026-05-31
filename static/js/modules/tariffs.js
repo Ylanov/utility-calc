@@ -276,11 +276,31 @@ export const TariffsModule = {
         }
     },
 
+    _renderSchedulePreview() {
+        const box = document.getElementById('schedulePreview');
+        if (!box) return;
+        const s = parseInt(document.getElementById('setStartDay').value);
+        const e = parseInt(document.getElementById('setEndDay').value);
+        if (isNaN(s) || isNaN(e)) { box.textContent = ''; return; }
+        box.textContent = (s <= e)
+            ? `📅 Приём показаний: с ${s} по ${e} число каждого месяца.`
+            : `📅 Приём показаний: с ${s} числа по ${e} число СЛЕДУЮЩЕГО месяца (окно переходит через границу месяца).`;
+    },
+
     async loadSchedule() {
         try {
             const data = await api.getCached('/settings/submission-period', { ttlSeconds: 600 });
             document.getElementById('setStartDay').value = data.start_day;
             document.getElementById('setEndDay').value = data.end_day;
+            this._renderSchedulePreview();
+            // Живой предпросмотр окна при изменении полей (вешаем один раз).
+            ['setStartDay', 'setEndDay'].forEach(id => {
+                const inp = document.getElementById(id);
+                if (inp && !inp._previewBound) {
+                    inp._previewBound = true;
+                    inp.addEventListener('input', () => this._renderSchedulePreview());
+                }
+            });
         } catch (e) {
             console.warn('Failed to load submission schedule settings', e);
             toast('Не удалось загрузить график', 'error');

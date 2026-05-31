@@ -53,10 +53,17 @@ async def _is_submission_day_open(db: AsyncSession) -> tuple[bool, int, int, int
         except (TypeError, ValueError):
             return default
 
-    start_day = _safe_int(start_row.value if start_row else None, 20)
-    end_day = _safe_int(end_row.value if end_row else None, 25)
+    # Дефолт — московский стандарт: с 15 числа по 3 число СЛЕДУЮЩЕГО месяца.
+    start_day = _safe_int(start_row.value if start_row else None, 15)
+    end_day = _safe_int(end_row.value if end_row else None, 3)
     today_day = _date.today().day
-    is_open = start_day <= today_day <= end_day
+    if start_day <= end_day:
+        # Обычное окно внутри одного месяца (напр. 20–25).
+        is_open = start_day <= today_day <= end_day
+    else:
+        # Окно ПЕРЕХОДИТ через границу месяца (напр. 15 → 3 следующего):
+        # открыто с start_day до конца месяца И с 1-го по end_day.
+        is_open = today_day >= start_day or today_day <= end_day
     return is_open, today_day, start_day, end_day
 
 

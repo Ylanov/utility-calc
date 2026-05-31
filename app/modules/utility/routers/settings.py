@@ -76,8 +76,9 @@ async def get_submission_period(
             return default
 
     return SubmissionPeriodSchema(
-        start_day=safe_int(start.value if start else None, 20),
-        end_day=safe_int(end.value if end else None, 25)
+        # Дефолт — московский стандарт: с 15 по 3 число следующего месяца.
+        start_day=safe_int(start.value if start else None, 15),
+        end_day=safe_int(end.value if end else None, 3)
     )
 
 

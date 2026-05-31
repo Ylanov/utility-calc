@@ -179,19 +179,33 @@ def remind_submit_readings_task():
     logger.info("[REMIND] Checking submission deadline...")
     try:
         with sync_db_session() as db:
+            import calendar as _calendar
+            start_setting = db.query(SystemSetting).filter_by(key="submission_start_day").first()
             end_setting = db.query(SystemSetting).filter_by(key="submission_end_day").first()
-            end_day = int(end_setting.value) if end_setting else 25
+            start_day = int(start_setting.value) if start_setting else 15
+            end_day = int(end_setting.value) if end_setting else 3
 
             # datetime.now() здесь возвращает локальное время worker'а;
             # в docker-compose Celery работает с timezone="Europe/Moscow"
             # (см. app/worker.py), а beat-расписание тоже в МСК — значит
             # day-of-month сравнивается без сюрпризов на стыках суток.
             today = datetime.now()
-            days_left = end_day - today.day
+            # Сколько дней до закрытия окна — с учётом перехода через месяц
+            # (start > end, напр. 15 → 3 следующего). В «хвосте» текущего месяца
+            # конец — в следующем: days_left = (дней до конца месяца) + end_day.
+            days_in_month = _calendar.monthrange(today.year, today.month)[1]
+            if start_day <= end_day:
+                days_left = end_day - today.day
+            elif today.day >= start_day:
+                days_left = (days_in_month - today.day) + end_day
+            elif today.day <= end_day:
+                days_left = end_day - today.day
+            else:
+                days_left = -1  # сегодня вне окна подачи
 
             if days_left not in (3, 1, 0):
                 logger.info(
-                    f"[REMIND] today.day={today.day} end_day={end_day} "
+                    f"[REMIND] today.day={today.day} window={start_day}-{end_day} "
                     f"days_left={days_left} — not a reminder day, skip"
                 )
                 return {"sent": 0, "skipped": True, "days_left": days_left}
@@ -739,17 +753,33 @@ def check_auto_period_task():
         with sync_db_session() as db:
             start_setting = db.query(SystemSetting).filter_by(key="submission_start_day").first()
             end_setting = db.query(SystemSetting).filter_by(key="submission_end_day").first()
-            start_day = int(start_setting.value) if start_setting else 20
-            end_day = int(end_setting.value) if end_setting else 25
+            # Дефолт — московский стандарт 15 → 3 следующего месяца.
+            start_day = int(start_setting.value) if start_setting else 15
+            end_day = int(end_setting.value) if end_setting else 3
             today = datetime.now()
             current_day = today.day
             active = db.query(BillingPeriod).filter_by(is_active=True).first()
 
-            if start_day <= current_day <= end_day:
+            month_names = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+                           "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь"]
+
+            # Окно подачи может ПЕРЕХОДИТЬ через границу месяца (start > end,
+            # напр. 15 → 3 следующего). in_window — открыт ли приём сегодня.
+            if start_day <= end_day:
+                in_window = start_day <= current_day <= end_day
+            else:
+                in_window = current_day >= start_day or current_day <= end_day
+
+            if in_window:
                 if not active:
-                    month_names = ["", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь", "Июль", "Август", "Сентябрь",
-                                   "Октябрь", "Ноябрь", "Декабрь"]
-                    period_name = f"{month_names[today.month]} {today.year}"
+                    # В «хвосте» wrap-окна (1..end_day) приём идёт за ПРОШЛЫЙ
+                    # календарный месяц → период именуем прошлым месяцем.
+                    if start_day > end_day and current_day <= end_day:
+                        pm = today.month - 1 if today.month > 1 else 12
+                        py = today.year if today.month > 1 else today.year - 1
+                    else:
+                        pm, py = today.month, today.year
+                    period_name = f"{month_names[pm]} {py}"
                     exists = db.query(BillingPeriod).filter_by(name=period_name).first()
                     if not exists:
                         new_period = BillingPeriod(name=period_name, is_active=True)
@@ -757,25 +787,23 @@ def check_auto_period_task():
                         db.commit()
                         logger.info(f"[AUTO] Opened new period: {period_name}")
             elif active:
-                is_after_end = current_day > end_day
-                is_new_month = current_day < start_day
-                if is_after_end or is_new_month:
-                    # ИСПРАВЛЕНИЕ (apr 2026): раньше check_auto_period_task САМ ставил
-                    # lock через `redis_client.set(... nx=True, ex=1800)` и потом
-                    # вызывал close_period_task.delay(...). Сама close_period_task
-                    # на старте делает такой же `set nx=True` — и видит уже занятый
-                    # lock, возвращает skipped. Итог: автозакрытие никогда не
-                    # отрабатывало, плюс lock висел 1800 сек после каждого Beat-тика.
-                    # Теперь: только наблюдательная проверка (read-only `get`),
-                    # реальный atomic lock делает сама close_period_task.
-                    redis_client = Redis.from_url(settings.REDIS_URL)
-                    if redis_client.get("lock:close_period"):
-                        logger.info("[AUTO] Close already running, skip duplicate")
-                    else:
-                        admin = db.query(User).filter_by(username="admin").first()
-                        if admin:
-                            close_period_task.delay(admin.id)
-                            logger.info(f"[AUTO] Triggered closing task for period '{active.name}'")
+                # Сегодня ВНЕ окна подачи, но период активен → закрываем.
+                # ИСПРАВЛЕНИЕ (apr 2026): раньше check_auto_period_task САМ ставил
+                # lock через `redis_client.set(... nx=True, ex=1800)` и потом
+                # вызывал close_period_task.delay(...). Сама close_period_task
+                # на старте делает такой же `set nx=True` — и видит уже занятый
+                # lock, возвращает skipped. Итог: автозакрытие никогда не
+                # отрабатывало, плюс lock висел 1800 сек после каждого Beat-тика.
+                # Теперь: только наблюдательная проверка (read-only `get`),
+                # реальный atomic lock делает сама close_period_task.
+                redis_client = Redis.from_url(settings.REDIS_URL)
+                if redis_client.get("lock:close_period"):
+                    logger.info("[AUTO] Close already running, skip duplicate")
+                else:
+                    admin = db.query(User).filter_by(username="admin").first()
+                    if admin:
+                        close_period_task.delay(admin.id)
+                        logger.info(f"[AUTO] Triggered closing task for period '{active.name}'")
     except Exception:
         logger.exception("[AUTO] Automation failed")
 

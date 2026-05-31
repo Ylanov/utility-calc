@@ -281,16 +281,20 @@
                         <div class="toolbar-controls styled-form" style="margin-bottom: 0;">
                             <div class="form-group" style="flex: 0 1 auto; margin: 0;">
                                 <label>День начала (вкл.)</label>
-                                <input type="number" id="setStartDay" min="1" max="28" style="width: 160px;" placeholder="Например: 20">
+                                <input type="number" id="setStartDay" min="1" max="28" style="width: 160px;" placeholder="Например: 15">
                             </div>
                             <div class="form-group" style="flex: 0 1 auto; margin: 0;">
                                 <label>День окончания (вкл.)</label>
-                                <input type="number" id="setEndDay" min="1" max="28" style="width: 160px;" placeholder="Например: 25">
+                                <input type="number" id="setEndDay" min="1" max="28" style="width: 160px;" placeholder="Например: 3">
                             </div>
                             <button id="btnSaveSchedule" class="action-btn primary-btn" style="align-self: flex-end; height: 44px;"><i class="fa-solid fa-floppy-disk"></i> Сохранить график</button>
                         </div>
-                        <p class="hint-text" style="margin-top: 12px;">
-                            * Система будет <b>автоматически</b> открывать период в день начала и закрывать его на следующий день после окончания.
+                        <div id="schedulePreview" style="margin-top: 10px; font-size: 13px; font-weight: 600; color: #4338ca;"></div>
+                        <p class="hint-text" style="margin-top: 8px;">
+                            * Система <b>автоматически</b> открывает период в день начала и закрывает после дня окончания.<br>
+                            * Если <b>день окончания меньше дня начала</b> — окно <b>переходит на следующий месяц</b>.
+                            Напр. начало <b>15</b>, окончание <b>3</b> = приём с 15 числа по 3 число следующего месяца
+                            (с 15 мая по 3 июня, с 15 июня по 3 июля и т.д.) — московский стандарт.
                         </p>
                     </div>
                 </div>
