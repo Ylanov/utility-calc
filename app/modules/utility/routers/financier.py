@@ -537,6 +537,33 @@ async def get_users_with_debts(
     result = await db.execute(stmt)
     rows = result.all()
 
+    # Покрытие импортами 1С активного периода: кто из жильцов попал в ПОСЛЕДНИЙ
+    # импорт счёта (applied_state ключуется по str(user_id)). seen_2xx:
+    #   None  — импорта этого счёта в периоде не было (нечему быть «не найденным»);
+    #   set   — множество user_id, попавших в последний импорт счёта.
+    # Жилец с долгом >0 всегда был в импорте (его touch'нули), поэтому «не найден»
+    # покажется только тем, у кого реально нет данных по счёту, а не «долг 0».
+    async def _seen_ids(acct: str):
+        if not period_id:
+            return None
+        last_imp = (await db.execute(
+            select(DebtImportLog)
+            .where(
+                DebtImportLog.period_id == period_id,
+                DebtImportLog.account_type == acct,
+                DebtImportLog.status == "completed",
+            )
+            .order_by(desc(DebtImportLog.started_at))
+            .limit(1)
+        )).scalars().first()
+        if not last_imp:
+            return None
+        st = last_imp.applied_state or {}
+        return {int(k) for k in st.keys() if str(k).isdigit()}
+
+    seen_209 = await _seen_ids("209")
+    seen_205 = await _seen_ids("205")
+
     items = []
     for row in rows:
         user_obj, room_obj = row[0], row[1]
@@ -554,6 +581,9 @@ async def get_users_with_debts(
             "obor_credit_209": row[8],
             "obor_debit_205": row[9],
             "obor_credit_205": row[10],
+            # Покрытие импортом (None если импорта счёта не было).
+            "seen_209": (user_obj.id in seen_209) if seen_209 is not None else None,
+            "seen_205": (user_obj.id in seen_205) if seen_205 is not None else None,
         })
 
     return {"total": total_items, "page": page, "size": limit, "items": items}

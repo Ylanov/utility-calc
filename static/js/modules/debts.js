@@ -929,9 +929,16 @@ export const DebtsModule = {
                 el('td', { style: { fontSize: '12px' } }, room),
             );
 
+            // «Не найден в счёте»: ФИО жильца не было в последнем импорте этого
+            // счёта за период (seen_2xx === false). Отличаем от «долг 0».
+            const notFoundCell = (acct) =>
+                `<span style="color:#b45309; font-size:11px; font-style:italic;" title="ФИО не найдено в последнем импорте счёта ${acct} за этот период — данных по счёту нет (это не «долг 0»)">не найден</span>`;
+
             // Долг/Перепл 209 с движением
             const d209Td = el('td', { style: { borderLeft: '2px solid #eee' } });
-            d209Td.innerHTML = saldoCell(d209, od209, oc209, true, '#c0392b');
+            d209Td.innerHTML = (u.seen_209 === false && d209 < 0.005)
+                ? notFoundCell('209')
+                : saldoCell(d209, od209, oc209, true, '#c0392b');
             tr.appendChild(d209Td);
 
             const o209Td = el('td', {});
@@ -940,7 +947,9 @@ export const DebtsModule = {
 
             // Долг/Перепл 205 с движением
             const d205Td = el('td', { style: { borderLeft: '2px solid #eee' } });
-            d205Td.innerHTML = saldoCell(d205, od205, oc205, true, '#d35400');
+            d205Td.innerHTML = (u.seen_205 === false && d205 < 0.005)
+                ? notFoundCell('205')
+                : saldoCell(d205, od205, oc205, true, '#d35400');
             tr.appendChild(d205Td);
 
             const o205Td = el('td', {});
@@ -1855,6 +1864,9 @@ export const DebtsModule = {
         this.dom.notFoundList.innerHTML = '<div style="padding:20px; text-align:center;"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка…</div>';
         try {
             const data = await api.get(`/financier/debts/import-history/${logId}/not-found`);
+            // Part B: явно подписываем счёт (209/205), чтобы было видно «в каком
+            // счёте не найдено». Суммы по каждому ФИО рендерит renderNotFoundRow.
+            this.dom.notFoundLogMeta.textContent = `импорт №${logId} · счёт ${data.account_type || '—'}`;
             const list = data.not_found_users || [];
             if (!list.length) {
                 this.dom.notFoundList.innerHTML = '<div style="padding:20px; text-align:center; color:var(--text-secondary);">Все ФИО из этого импорта привязаны.</div>';

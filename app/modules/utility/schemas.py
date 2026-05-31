@@ -566,6 +566,10 @@ class UserDebtResponse(BaseModel):
     debt_205: Optional[Decimal] = None
     overpayment_205: Optional[Decimal] = None
     total_cost: Optional[Decimal] = None
+    # Покрытие импортом 1С активного периода: True — жилец был в последнем
+    # импорте счёта, False — не найден (ФИО нет в файле), None — импорта не было.
+    seen_209: Optional[bool] = None
+    seen_205: Optional[bool] = None
 
     model_config = ConfigDict(from_attributes=True)
 
