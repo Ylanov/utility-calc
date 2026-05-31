@@ -964,6 +964,63 @@ async def debts_dormitories(
     return [r for r in rows if r]
 
 
+@router.get("/debts/unassigned", summary="Неразнесённые долги (ФИО не сопоставлены с жильцом)")
+async def debts_unassigned(
+    period_id: Optional[int] = Query(None, description="Период; по умолчанию активный → последний импорт → свежий"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Сумма и список долгов из 1С, которые НЕ привязались ни к одному жильцу
+    (ФИО нет в базе / не сопоставлено, либо у жильца нет комнаты — долг хранится
+    в показании, а оно требует комнату). Берём not_found из ПОСЛЕДНЕГО импорта
+    каждого счёта (209/205) за период и сводим по ФИО. Деньги не теряются из
+    вида: разнесутся, когда заведёшь жильца с комнатой и сделаешь переимпорт."""
+    _require_finance(current_user)
+    period = await _resolve_view_period(db, period_id)
+    if not period:
+        return {"period_name": None, "period_id": None, "total_debt": 0.0,
+                "total_overpayment": 0.0, "count": 0, "items": []}
+
+    merged: dict[str, dict] = {}
+    for acct in ("209", "205"):
+        log = (await db.execute(
+            select(DebtImportLog).where(
+                DebtImportLog.period_id == period.id,
+                DebtImportLog.account_type == acct,
+                DebtImportLog.status == "completed",
+            ).order_by(desc(DebtImportLog.started_at)).limit(1)
+        )).scalars().first()
+        if not log or not log.not_found_users:
+            continue
+        for item in log.not_found_users:
+            if isinstance(item, dict):
+                fio = (item.get("fio") or "").strip()
+                debt = float(item.get("debt") or 0)
+                over = float(item.get("overpayment") or 0)
+            else:
+                fio, debt, over = str(item).strip(), 0.0, 0.0
+            if not fio:
+                continue
+            key = " ".join(fio.lower().split())
+            slot = merged.get(key)
+            if slot is None:
+                slot = merged[key] = {"fio": fio, "debt": 0.0, "overpayment": 0.0, "accounts": []}
+            slot["debt"] += debt
+            slot["overpayment"] += over
+            if acct not in slot["accounts"]:
+                slot["accounts"].append(acct)
+
+    items = sorted(merged.values(), key=lambda x: -x["debt"])
+    return {
+        "period_name": period.name,
+        "period_id": period.id,
+        "total_debt": round(sum(i["debt"] for i in items), 2),
+        "total_overpayment": round(sum(i["overpayment"] for i in items), 2),
+        "count": len(items),
+        "items": items,
+    }
+
+
 @router.get("/debts/export", summary="Excel-выгрузка текущего списка долгов")
 async def debts_export(
     search: str | None = Query(None),

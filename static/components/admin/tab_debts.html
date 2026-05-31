@@ -64,6 +64,23 @@
     </div>
 
     <!-- ============================================
+         НЕРАЗНЕСЁННЫЕ ДОЛГИ (ФИО не сопоставлены с жильцом)
+         ============================================ -->
+    <div id="debtsUnassignedCard" class="card mt-20" style="display:none; border-left:4px solid #f59e0b; margin-bottom:0;">
+        <div class="card-header">
+            <h3><i class="fa-solid fa-link-slash" style="color:#f59e0b; margin-right:8px;"></i> Неразнесённые долги
+                <span id="debtsUnassignedMeta" style="font-weight:normal; font-size:13px; color:var(--text-secondary);"></span>
+            </h3>
+            <button id="btnToggleUnassigned" class="action-btn secondary-btn" style="font-size:12px; padding:5px 12px;">Показать список</button>
+        </div>
+        <p class="hint-text" style="font-size:12px; margin:0 0 10px;">
+            Долги из 1С, ФИО которых нет в базе жильцов (или у жильца нет комнаты) — не привязались.
+            Деньги учтены отдельно и не потеряны. Разнесутся, когда заведёшь жильца с комнатой и сделаешь «Переимпорт».
+        </p>
+        <div id="debtsUnassignedBody" style="display:none;"></div>
+    </div>
+
+    <!-- ============================================
          ТАБЛИЦА ДОЛГОВ с фильтрами и сортировкой
          ============================================ -->
     <div class="card mt-20" style="margin-bottom: 0;">

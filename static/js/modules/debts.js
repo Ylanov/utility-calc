@@ -63,6 +63,7 @@ export const DebtsModule = {
         };
         this.loadViewPeriods();
         this.loadStats();
+        this.loadUnassigned();
         this.loadDormitories();
         this.loadDebtPeriods();
         this.loadUsers();
@@ -98,6 +99,10 @@ export const DebtsModule = {
             uploadResult: document.getElementById('uploadResult'),
             periodSelect: document.getElementById('debtPeriodSelect'),
             viewPeriod: document.getElementById('debtsViewPeriod'),
+            unassignedCard: document.getElementById('debtsUnassignedCard'),
+            unassignedMeta: document.getElementById('debtsUnassignedMeta'),
+            unassignedBody: document.getElementById('debtsUnassignedBody'),
+            btnToggleUnassigned: document.getElementById('btnToggleUnassigned'),
             // KPI
             stats: document.getElementById('debtsStats'),
             // История
@@ -129,6 +134,14 @@ export const DebtsModule = {
             this.state.page = 1;
             this.loadStats();
             this.loadUsers();
+            this.loadUnassigned();
+        });
+        this.dom.btnToggleUnassigned?.addEventListener('click', () => {
+            const b = this.dom.unassignedBody;
+            if (!b) return;
+            const show = b.style.display === 'none';
+            b.style.display = show ? 'block' : 'none';
+            this.dom.btnToggleUnassigned.textContent = show ? 'Скрыть список' : 'Показать список';
         });
         this.dom.btnRefresh?.addEventListener('click', () => this.reload());
         this.dom.btnExport?.addEventListener('click', () => this.exportExcel());
@@ -228,7 +241,7 @@ export const DebtsModule = {
         });
     },
 
-    reload() { this.state.page = 1; this.loadUsers(); this.loadStats(); },
+    reload() { this.state.page = 1; this.loadUsers(); this.loadStats(); this.loadUnassigned(); },
 
     changePage(delta) {
         const newPage = this.state.page + delta;
@@ -267,6 +280,44 @@ export const DebtsModule = {
             });
             if (prev) sel.value = prev;
         } catch { /* молча — останется заглушка «Период…» */ }
+    },
+
+    // Сводка неразнесённых долгов (ФИО из 1С, не привязанные к жильцу/комнате).
+    async loadUnassigned() {
+        const card = this.dom.unassignedCard;
+        if (!card) return;
+        try {
+            const qs = this.state.viewPeriodId ? `?period_id=${this.state.viewPeriodId}` : '';
+            const d = await api.get(`/financier/debts/unassigned${qs}`);
+            if (!d.count) { card.style.display = 'none'; return; }
+            card.style.display = '';
+            if (this.dom.unassignedMeta) {
+                this.dom.unassignedMeta.textContent = `— ${fmtMoney(d.total_debt)} ₽ · ${d.count} ФИО`;
+            }
+            const rows = (d.items || []).map(it => `
+                <tr style="border-bottom:1px solid var(--border-color);">
+                    <td style="padding:6px 10px;">${esc(it.fio)}</td>
+                    <td style="padding:6px 10px; text-align:center; color:var(--text-secondary); font-size:11px;">${esc((it.accounts || []).join(', '))}</td>
+                    <td style="padding:6px 10px; text-align:right; color:#991b1b; font-weight:600;">${it.debt > 0 ? fmtMoney(it.debt) + ' ₽' : '—'}</td>
+                    <td style="padding:6px 10px; text-align:right; color:#15803d;">${it.overpayment > 0 ? fmtMoney(it.overpayment) + ' ₽' : '—'}</td>
+                </tr>`).join('');
+            if (this.dom.unassignedBody) {
+                this.dom.unassignedBody.innerHTML = `
+                    <div style="overflow-x:auto; border:1px solid var(--border-color); border-radius:8px;">
+                        <table style="width:100%; border-collapse:collapse; font-size:13px; min-width:480px;">
+                            <thead style="background:var(--bg-page); font-size:11px; color:var(--text-secondary); text-transform:uppercase;">
+                                <tr>
+                                    <th style="text-align:left; padding:6px 10px;">ФИО из 1С</th>
+                                    <th style="text-align:center; padding:6px 10px;">Счета</th>
+                                    <th style="text-align:right; padding:6px 10px;">Долг</th>
+                                    <th style="text-align:right; padding:6px 10px;">Переплата</th>
+                                </tr>
+                            </thead>
+                            <tbody>${rows}</tbody>
+                        </table>
+                    </div>`;
+            }
+        } catch { /* молча — карточка просто не покажется */ }
     },
 
     // ==========================================================================
