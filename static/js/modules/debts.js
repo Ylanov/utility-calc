@@ -34,6 +34,7 @@ export const DebtsModule = {
     state: {
         page: 1, limit: 50, total: 0, search: '',
         mode: 'users',  // 'users' | 'rooms' — учёт по жильцам или по квартирам
+        viewPeriodId: '',  // период ПРОСМОТРА долгов ('' = авто: активный/последний импорт)
         filterType: '', dormitory: '', minDebt: '',
         hideEmpty: true,  // Bug AB: по умолчанию скрываем пустые
         sortBy: 'room', sortDir: 'asc',
@@ -60,6 +61,7 @@ export const DebtsModule = {
             tabBtn?.click();
             setTimeout(() => this.openNotFoundModal(logId), 120);
         };
+        this.loadViewPeriods();
         this.loadStats();
         this.loadDormitories();
         this.loadDebtPeriods();
@@ -95,6 +97,7 @@ export const DebtsModule = {
             inputUpload: document.getElementById('debtFile1C'),
             uploadResult: document.getElementById('uploadResult'),
             periodSelect: document.getElementById('debtPeriodSelect'),
+            viewPeriod: document.getElementById('debtsViewPeriod'),
             // KPI
             stats: document.getElementById('debtsStats'),
             // История
@@ -120,6 +123,13 @@ export const DebtsModule = {
         // Переключатель режима учёта: жильцы (ФИО) / квартиры (адрес).
         document.getElementById('debtsModeUsers')?.addEventListener('click', () => this.setMode('users'));
         document.getElementById('debtsModeRooms')?.addEventListener('click', () => this.setMode('rooms'));
+        // Период просмотра долгов (когда активного нет — выбрать май/апрель).
+        this.dom.viewPeriod?.addEventListener('change', () => {
+            this.state.viewPeriodId = this.dom.viewPeriod.value || '';
+            this.state.page = 1;
+            this.loadStats();
+            this.loadUsers();
+        });
         this.dom.btnRefresh?.addEventListener('click', () => this.reload());
         this.dom.btnExport?.addEventListener('click', () => this.exportExcel());
         this.dom.btnZombieCheck?.addEventListener('click', () => this.openZombieModal());
@@ -241,13 +251,39 @@ export const DebtsModule = {
         this.state.currentPollId = null;
     },
 
+    // Список периодов для дропдауна «Период просмотра» (шапка списка долгов).
+    async loadViewPeriods() {
+        const sel = this.dom.viewPeriod;
+        if (!sel) return;
+        try {
+            const periods = await api.get('/admin/periods/history');
+            const prev = sel.value;
+            sel.innerHTML = '';
+            (periods || []).forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = String(p.id);
+                opt.textContent = p.name + (p.is_active ? ' (активный)' : '');
+                sel.appendChild(opt);
+            });
+            if (prev) sel.value = prev;
+        } catch { /* молча — останется заглушка «Период…» */ }
+    },
+
     // ==========================================================================
     // KPI
     // ==========================================================================
     async loadStats() {
         if (!this.dom.stats) return;
         try {
-            const s = await api.get('/financier/debts/stats');
+            const qs = this.state.viewPeriodId ? `?period_id=${this.state.viewPeriodId}` : '';
+            const s = await api.get(`/financier/debts/stats${qs}`);
+            // «Авто»-режим: подтягиваем дропдаун к периоду, который выбрал бэк
+            // (активный → последний импорт → свежий), чтобы было видно, что
+            // показываем именно май, а не пустой активный период.
+            if (!this.state.viewPeriodId && s.period_id) {
+                this.state.viewPeriodId = String(s.period_id);
+                if (this.dom.viewPeriod) this.dom.viewPeriod.value = String(s.period_id);
+            }
             this.renderStats(s);
         } catch (e) {
             this.dom.stats.innerHTML = `<div style="padding:14px; color:var(--danger-color); grid-column:1/-1;">Ошибка аналитики: ${esc(e.message)}</div>`;
@@ -274,7 +310,7 @@ export const DebtsModule = {
         const rooms = this.state.mode === 'rooms';
 
         this.dom.stats.innerHTML = [
-            card('#f5f3ff', '#7c3aed', '📅', s.period_name || '—', 'Активный период',
+            card('#f5f3ff', '#7c3aed', '📅', s.period_name || '—', 'Период (просмотр)',
                 rooms ? `всего квартир: ${s.total_rooms ?? '—'}` : `всего жильцов: ${s.total_users}`),
             rooms
                 ? card('#fef2f2', '#dc2626', '🏠', s.rooms_with_debt_count ?? 0, 'Квартир с долгом',
@@ -639,6 +675,7 @@ export const DebtsModule = {
         if (this.state.dormitory) params.set('dormitory', this.state.dormitory);
         if (this.state.minDebt) params.set('min_debt', this.state.minDebt);
         if (this.state.hideEmpty) params.set('has_data', 'true');
+        if (this.state.viewPeriodId) params.set('period_id', this.state.viewPeriodId);
 
         try {
             const data = await api.get(`/financier/users-status?${params}`);
@@ -671,6 +708,7 @@ export const DebtsModule = {
         if (this.state.dormitory) params.set('dormitory', this.state.dormitory);
         if (this.state.minDebt) params.set('min_debt', this.state.minDebt);
         if (this.state.hideEmpty) params.set('has_data', 'true');
+        if (this.state.viewPeriodId) params.set('period_id', this.state.viewPeriodId);
         try {
             const data = await api.get(`/financier/rooms-status?${params}`);
             if (requestId !== this.state.lastRequestId) return;

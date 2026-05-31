@@ -75,6 +75,11 @@
                     <button id="debtsModeUsers" class="action-btn primary-btn" style="border-radius:0; padding:5px 12px; font-size:12px;">👤 Жильцы</button>
                     <button id="debtsModeRooms" class="action-btn secondary-btn" style="border-radius:0; padding:5px 12px; font-size:12px;">🏠 Квартиры</button>
                 </div>
+                <!-- Период просмотра: какой месяц показываем (по умолчанию активный
+                     → последний импорт → свежий). Нужен когда активного периода нет. -->
+                <select id="debtsViewPeriod" title="Период просмотра долгов" style="max-width:160px;">
+                    <option value="">Период…</option>
+                </select>
                 <!-- Фильтры: тип жильца -->
                 <select id="debtsFilterType" title="Быстрый фильтр">
                     <option value="">Все</option>

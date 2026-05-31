@@ -432,6 +432,7 @@ async def get_users_with_debts(
         min_debt: Optional[float] = Query(None, ge=0, description="Минимальный суммарный долг (209+205)"),
         sort_by: str = Query("room", pattern="^(room|username|debt|overpay|total)$"),
         sort_dir: str = Query("asc", pattern="^(asc|desc)$"),
+        period_id: Optional[int] = Query(None, description="Период просмотра; по умолчанию активный → последний импорт → свежий"),
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db)
 ):
@@ -440,10 +441,7 @@ async def get_users_with_debts(
 
     offset = (page - 1) * limit
 
-    res_period = await db.execute(
-        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
-    )
-    active_period = res_period.scalars().first()
+    active_period = await _resolve_view_period(db, period_id)
     period_id = active_period.id if active_period else None
 
     d209 = func.coalesce(func.sum(MeterReading.debt_209), 0).label("debt_209")
@@ -607,15 +605,14 @@ async def get_rooms_with_debts(
         min_debt: Optional[float] = Query(None, ge=0),
         sort_by: str = Query("room", pattern="^(room|debt|overpay|total)$"),
         sort_dir: str = Query("asc", pattern="^(asc|desc)$"),
+        period_id: Optional[int] = Query(None, description="Период просмотра; по умолчанию активный → последний импорт → свежий"),
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db),
 ):
     if current_user.role not in ("financier", "accountant", "admin"):
         raise HTTPException(status_code=403, detail="Доступ запрещен")
     offset = (page - 1) * limit
-    active = (await db.execute(
-        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
-    )).scalars().first()
+    active = await _resolve_view_period(db, period_id)
     period_id = active.id if active else None
 
     d209 = func.coalesce(func.sum(MeterReading.debt_209), 0).label("debt_209")
@@ -709,14 +706,13 @@ async def get_rooms_with_debts(
             summary="Финансы жильцов конкретной квартиры (раскрытие строки)")
 async def room_residents_finance(
         room_id: int,
+        period_id: Optional[int] = Query(None, description="Период просмотра; по умолчанию активный → последний импорт → свежий"),
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db),
 ):
     if current_user.role not in ("financier", "accountant", "admin"):
         raise HTTPException(status_code=403, detail="Доступ запрещен")
-    active = (await db.execute(
-        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
-    )).scalars().first()
+    active = await _resolve_view_period(db, period_id)
     period_id = active.id if active else None
 
     d209 = func.coalesce(func.sum(MeterReading.debt_209), 0)
@@ -749,22 +745,54 @@ async def room_residents_finance(
 # NEW: KPI / STATS / EXPORT / HISTORY / UNDO / RECONCILE
 # =========================================================================
 
+async def _resolve_view_period(db: AsyncSession, period_id: Optional[int]):
+    """Период для ПРОСМОТРА долгов (список/KPI/квартиры).
+
+    Раньше вьюхи жёстко брали активный период — и если активного нет (между
+    месяцами: май закрыт, июнь не открыт), показывали 0 хотя долги залиты в
+    закрытый период. Теперь: явный period_id → он; иначе активный; иначе период
+    последнего импорта долгов; иначе самый свежий период. Так после импорта за
+    май долги видно, даже когда активного периода нет.
+    """
+    if period_id:
+        return (await db.execute(
+            select(BillingPeriod).where(BillingPeriod.id == period_id)
+        )).scalars().first()
+    active = (await db.execute(
+        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
+    )).scalars().first()
+    if active:
+        return active
+    last_imp = (await db.execute(
+        select(DebtImportLog)
+        .where(DebtImportLog.period_id.isnot(None))
+        .order_by(desc(DebtImportLog.started_at))
+        .limit(1)
+    )).scalars().first()
+    if last_imp and last_imp.period_id:
+        p = await db.get(BillingPeriod, last_imp.period_id)
+        if p:
+            return p
+    return (await db.execute(
+        select(BillingPeriod).order_by(BillingPeriod.id.desc()).limit(1)
+    )).scalars().first()
+
+
 def _require_finance(user: User) -> None:
     if user.role not in ("financier", "accountant", "admin"):
         raise HTTPException(status_code=403, detail="Доступ запрещен")
 
 
-@router.get("/debts/stats", summary="KPI по долгам (активный период)")
+@router.get("/debts/stats", summary="KPI по долгам (выбранный/активный период)")
 async def debts_stats(
+    period_id: Optional[int] = Query(None, description="Период просмотра; по умолчанию активный → последний импорт → свежий"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Сводка долгов для шапки вкладки «Долги 1С»."""
     _require_finance(current_user)
 
-    active_period = (await db.execute(
-        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
-    )).scalars().first()
+    active_period = await _resolve_view_period(db, period_id)
     period_id = active_period.id if active_period else None
 
     # Агрегация по readings активного периода. ВАЖНО: join User + фильтр
