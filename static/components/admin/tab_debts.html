@@ -31,9 +31,17 @@
                 </div>
 
                 <!-- Счёт 205 -->
-                <div style="width:100%; display:flex; align-items:center; gap:10px; padding:10px; background:#fef3c7; border:1px solid #fde68a; border-radius:8px; margin-bottom:14px;">
+                <div style="width:100%; display:flex; align-items:center; gap:10px; padding:10px; background:#fef3c7; border:1px solid #fde68a; border-radius:8px; margin-bottom:10px;">
                     <span style="font-weight:600; color:#92400e; min-width:120px;">205 Найм</span>
                     <input type="file" id="debtFile205" accept=".xlsx,.xls" style="flex:1;">
+                </div>
+
+                <!-- Период загрузки: можно грузить за май, апрель и т.д. -->
+                <div style="width:100%; display:flex; align-items:center; gap:10px; padding:10px; background:#ecfdf5; border:1px solid #a7f3d0; border-radius:8px; margin-bottom:14px;">
+                    <span style="font-weight:600; color:#047857; min-width:120px;"><i class="fa-solid fa-calendar-days"></i> За период</span>
+                    <select id="debtPeriodSelect" style="flex:1; padding:6px 8px;" title="Период, в который загрузятся долги. По умолчанию — активный.">
+                        <option value="">Загрузка периодов…</option>
+                    </select>
                 </div>
 
                 <button id="btnUploadDebts" class="action-btn primary-btn" style="background: #8b5cf6; border-color: #8b5cf6; width:100%;">

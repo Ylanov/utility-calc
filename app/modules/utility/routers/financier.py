@@ -293,6 +293,7 @@ async def debts_preview_file(
 async def upload_debts_1c(
         account_type: str = Form(..., pattern="^(209|205)$", description="Тип счета: 209 или 205"),
         file: UploadFile = File(...),
+        period_id: int | None = Form(None, description="Период загрузки; по умолчанию активный"),
         current_user: User = Depends(get_current_user)
 ):
     """Загрузка ОДНОГО файла. Для парной загрузки 205+209 используйте
@@ -310,6 +311,7 @@ async def upload_debts_1c(
         started_by_username=current_user.username,
         batch_id=batch_id,
         original_file_name=original_name,
+        period_id=period_id,
     )
     logger.info(f"[IMPORT] Started task={task.id} for account={account_type} batch={batch_id}")
 
@@ -325,6 +327,7 @@ async def upload_debts_1c(
 async def upload_debts_pair_1c(
         file_209: UploadFile = File(None, description="Файл ОСВ по счёту 209"),
         file_205: UploadFile = File(None, description="Файл ОСВ по счёту 205"),
+        period_id: int | None = Form(None, description="Период загрузки; по умолчанию активный"),
         current_user: User = Depends(get_current_user),
 ):
     """Загружает ОБА файла одной операцией. Оба DebtImportLog получают
@@ -372,6 +375,7 @@ async def upload_debts_pair_1c(
             started_by_username=current_user.username,
             batch_id=batch_id,
             original_file_name=original_name,
+            period_id=period_id,
         )
         signatures.append(sig)
         task_meta.append({"account": account, "file_name": original_name})

@@ -62,6 +62,7 @@ export const DebtsModule = {
         };
         this.loadStats();
         this.loadDormitories();
+        this.loadDebtPeriods();
         this.loadUsers();
         this.loadImportHistory();
     },
@@ -93,6 +94,7 @@ export const DebtsModule = {
             inputUpload205: document.getElementById('debtFile205'),
             inputUpload: document.getElementById('debtFile1C'),
             uploadResult: document.getElementById('uploadResult'),
+            periodSelect: document.getElementById('debtPeriodSelect'),
             // KPI
             stats: document.getElementById('debtsStats'),
             // История
@@ -379,11 +381,35 @@ export const DebtsModule = {
         }
     },
 
+    // Список периодов для выбора «за какой месяц грузим». По умолчанию активный.
+    async loadDebtPeriods() {
+        const sel = this.dom.periodSelect;
+        if (!sel) return;
+        try {
+            const periods = await api.get('/admin/periods/history');
+            const prev = sel.value;
+            sel.innerHTML = '';
+            (periods || []).forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = String(p.id);
+                opt.textContent = p.name + (p.is_active ? ' (активный)' : '');
+                sel.appendChild(opt);
+            });
+            const active = (periods || []).find(p => p.is_active);
+            sel.value = prev
+                || (active ? String(active.id) : (periods && periods[0] ? String(periods[0].id) : ''));
+        } catch {
+            sel.innerHTML = '<option value="">— активный период —</option>';
+        }
+    },
+
     async handleUpload() {
         if (this.state.isUploading) return toast('Импорт уже выполняется', 'info');
 
         const file209 = this.dom.inputUpload209?.files[0] || null;
         const file205 = this.dom.inputUpload205?.files[0] || null;
+        const periodId = this.dom.periodSelect?.value || '';
+        const periodLabel = this.dom.periodSelect?.selectedOptions?.[0]?.textContent || 'активный период';
         // Legacy: если только старая разметка (#debtFile1C + radio) — старая логика.
         if (!file209 && !file205) {
             const legacyFile = this.dom.inputUpload?.files[0];
@@ -405,6 +431,7 @@ export const DebtsModule = {
         }
 
         const summary = [
+            `Период: ${periodLabel}`,
             file209 ? `209: ${file209.name}${this._lastPreview209 ? ` · ФИО найдено: ${this._lastPreview209.rows_with_fio}` : ''}` : null,
             file205 ? `205: ${file205.name}${this._lastPreview205 ? ` · ФИО найдено: ${this._lastPreview205.rows_with_fio}` : ''}` : null,
             ...dupNotes,
@@ -424,6 +451,7 @@ export const DebtsModule = {
         const formData = new FormData();
         if (file209) formData.append('file_209', file209);
         if (file205) formData.append('file_205', file205);
+        if (periodId) formData.append('period_id', periodId);
 
         try {
             const res = await api.post('/financier/import-debts-pair', formData);
@@ -474,6 +502,8 @@ export const DebtsModule = {
         const formData = new FormData();
         formData.append('file', file);
         formData.append('account_type', accountType);
+        const legacyPeriod = this.dom.periodSelect?.value || '';
+        if (legacyPeriod) formData.append('period_id', legacyPeriod);
 
         try {
             const res = await api.post('/financier/import-debts', formData);

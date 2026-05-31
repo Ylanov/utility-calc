@@ -450,6 +450,7 @@ def import_debts_task(
     started_by_username: str | None = None,
     batch_id: str | None = None,
     original_file_name: str | None = None,
+    period_id: int | None = None,
 ) -> dict:
     """Фоновая задача импорта долгов.
 
@@ -476,6 +477,7 @@ def import_debts_task(
             started_by_username=started_by_username,
             batch_id=batch_id,
             original_file_name=original_file_name,
+            period_id=period_id,
         )
 
     # Архивные файлы НЕ удаляем — они привязаны к DebtImportLog.archive_path

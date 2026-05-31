@@ -195,6 +195,20 @@ def normalize_name(value: str) -> str:
     return " ".join(str(value).lower().split())
 
 
+def _normalize_fio_key(value: str) -> str:
+    """Та же нормализация, что у gsheets normalize_fio: lower + убрать точки/
+    запятые + ё→е + схлопнуть пробелы. Алиасы (GSheetsAlias.alias_fio_normalized)
+    сохраняются ИМЕННО в этой форме через _ensure_debt_alias. normalize_name
+    точки/ё не трогает, поэтому для матча алиасов нужен этот ключ — иначе ручные
+    привязки ФИО с «И.И.» или «ё» молча не срабатывали и долг снова уходил в
+    not_found при следующем импорте."""
+    if not value:
+        return ""
+    s = str(value).lower().replace("ё", "е")
+    s = re.sub(r"[.,]", " ", s)
+    return " ".join(s.split())
+
+
 def is_valid_name_row(cell_value: str) -> bool:
     """Проверяет, является ли строка Excel ФИО жильца."""
     if not cell_value:
@@ -244,6 +258,7 @@ def sync_import_debts_process(
     started_by_username: str | None = None,
     batch_id: str | None = None,
     original_file_name: str | None = None,
+    period_id: int | None = None,
 ) -> dict:
     """
     Функция массового импорта долгов.
@@ -513,16 +528,26 @@ def sync_import_debts_process(
     db.flush()  # получаем id
 
     try:
-        active_period = db.execute(
-            select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
-        ).scalars().first()
+        # Период загрузки: если админ выбрал явно (period_id) — грузим в него
+        # (можно за май/апрель/любой закрытый месяц). Иначе — активный период.
+        if period_id:
+            active_period = db.execute(
+                select(BillingPeriod).where(BillingPeriod.id == period_id)
+            ).scalars().first()
+        else:
+            active_period = db.execute(
+                select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
+            ).scalars().first()
 
         if not active_period:
             import_log.status = "failed"
-            import_log.error = "Нет активного периода для загрузки долгов"
+            import_log.error = (
+                f"Период id={period_id} не найден" if period_id
+                else "Нет активного периода для загрузки долгов (выберите период вручную)"
+            )
             import_log.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
             db.commit()
-            return {"status": "error", "message": "Нет активного периода для загрузки долгов"}
+            return {"status": "error", "message": import_log.error}
 
         import_log.period_id = active_period.id
 
@@ -605,6 +630,14 @@ def sync_import_debts_process(
             if norm in aliases_map:
                 uid = aliases_map[norm]
                 cached = users_by_id.get(uid)
+                if cached:
+                    return cached
+            # 2b. Алиасы хранятся в gsheets-нормализации (точки/запятые убраны,
+            # ё→е). Проверяем и этот ключ — иначе reassign для ФИО с «И.И.»/«ё»
+            # не срабатывал и долг снова уходил в not_found.
+            norm_alias = _normalize_fio_key(fio)
+            if norm_alias != norm and norm_alias in aliases_map:
+                cached = users_by_id.get(aliases_map[norm_alias])
                 if cached:
                     return cached
             if norm in fuzzy_cache:
