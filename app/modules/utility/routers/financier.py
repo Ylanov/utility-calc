@@ -1506,6 +1506,102 @@ async def debts_not_found(
     }
 
 
+@router.get("/debts/import-history/{log_id}/not-found-analysis",
+            summary="Почему ФИО не сматчились: категории + лучший кандидат")
+async def debts_not_found_analysis(
+    log_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Диагностика: для КАЖДОГО ненайденного ФИО считает лучшего кандидата в
+    базе жильцов (fuzzy + совпадение фамилии) и относит к категории:
+      • near    (score ≥ 70) — близкое совпадение ЕСТЬ: ФИО просто записано в 1С
+        иначе (сокращение/формат/опечатка). Привязать в 1 клик (reassign).
+      • weak    (50–69)      — совпала фамилия, но имя/отчество расходятся
+        (возможен однофамилец) — нужна проверка.
+      • absent  (< 50)       — похожих в базе нет: бывший жилец, новый человек,
+        или не-резидент-плательщик.
+    Так видно, сколько из N «не найдено» — это формат (быстрый reassign), а
+    сколько реально отсутствуют в базе."""
+    _require_finance(current_user)
+    log = await db.get(DebtImportLog, log_id)
+    if not log:
+        raise HTTPException(404, "Лог импорта не найден")
+
+    raw = log.not_found_users or []
+    fios = []
+    for item in raw:
+        if isinstance(item, dict):
+            fios.append((item.get("fio", ""), item.get("debt", "0"), item.get("overpayment", "0")))
+        else:
+            fios.append((str(item), "0", "0"))
+
+    from sqlalchemy.orm import selectinload as _selectinload
+    from rapidfuzz import fuzz
+    users = (await db.execute(
+        select(User).options(_selectinload(User.room))
+        .where(User.is_deleted.is_(False), User.role == "user")
+    )).scalars().all()
+    user_norm = [(u, " ".join((u.username or "").lower().split())) for u in users if u.username]
+
+    def _best(fio: str):
+        tnorm = " ".join((fio or "").lower().split())
+        if not tnorm or not user_norm:
+            return (0, None, None)
+        ttok = tnorm.split()
+        surname = ttok[0] if ttok else ""
+        best = (0, None, None)  # (score, user, reason)
+        for u, nnorm in user_norm:
+            ntok = nnorm.split()
+            fs = fuzz.token_sort_ratio(tnorm, nnorm)
+            if surname and ntok and surname == ntok[0]:
+                sc, reason = max(100, fs), "совпадает фамилия"
+            elif surname and len(surname) >= 4 and surname in nnorm:
+                sc, reason = max(85, fs), "фамилия внутри ФИО"
+            else:
+                sc, reason = fs, None
+            if sc > best[0]:
+                best = (sc, u, reason)
+        return best
+
+    cats = {"near": 0, "weak": 0, "absent": 0}
+    items = []
+    for fio, debt, overpay in fios:
+        score, u, reason = _best(fio)
+        if score >= 70:
+            cat = "near"
+        elif score >= 50:
+            cat = "weak"
+        else:
+            cat = "absent"
+        cats[cat] += 1
+        cand = None
+        if u is not None and score >= 50:
+            cand = {
+                "id": u.id,
+                "username": u.username,
+                "room": (u.room.format_address if u.room else None),
+            }
+        items.append({
+            "fio": fio,
+            "debt": debt,
+            "overpayment": overpay,
+            "best_score": int(score),
+            "category": cat,
+            "reason": reason,
+            "candidate": cand,
+        })
+
+    items.sort(key=lambda x: -x["best_score"])
+    return {
+        "log_id": log.id,
+        "account_type": log.account_type,
+        "total": len(items),
+        "categories": cats,
+        "items": items,
+    }
+
+
 @router.post("/debts/import-history/{log_id}/undo", summary="Откат импорта 1С")
 async def debts_undo_import(
     log_id: int,

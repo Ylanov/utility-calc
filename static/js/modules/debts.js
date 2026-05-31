@@ -1892,6 +1892,57 @@ export const DebtsModule = {
         }
     },
 
+    // Разбор: почему ненайденные ФИО не сматчились (категории + ближайший кандидат).
+    async renderNotFoundAnalysis(logId) {
+        const box = this.dom.notFoundList;
+        if (!box) return;
+        box.innerHTML = '<div style="padding:20px; text-align:center;"><i class="fa-solid fa-spinner fa-spin"></i> Анализ…</div>';
+        try {
+            const data = await api.get(`/financier/debts/import-history/${logId}/not-found-analysis`);
+            const c = data.categories || {};
+            const CAT = {
+                near:   { label: 'Близкое совпадение',  color: '#92400e', bg: '#fef3c7', desc: 'ФИО записано иначе — привязать в 1 клик' },
+                weak:   { label: 'Однофамилец?',         color: '#9a3412', bg: '#ffedd5', desc: 'фамилия совпала, имя/отчество — нет' },
+                absent: { label: 'Нет в базе',           color: '#991b1b', bg: '#fee2e2', desc: 'бывший / новый / не-резидент' },
+            };
+            const summary = ['near', 'weak', 'absent'].map(k => `
+                <div style="flex:1; background:${CAT[k].bg}; border-radius:8px; padding:10px; text-align:center;">
+                    <div style="font-size:22px; font-weight:700; color:${CAT[k].color};">${c[k] || 0}</div>
+                    <div style="font-size:11px; font-weight:600; color:${CAT[k].color};">${CAT[k].label}</div>
+                    <div style="font-size:10px; color:var(--text-secondary); margin-top:2px;">${CAT[k].desc}</div>
+                </div>`).join('');
+            const rows = (data.items || []).map(it => {
+                const cat = CAT[it.category] || CAT.absent;
+                const cand = it.candidate
+                    ? `${esc(it.candidate.username)}${it.candidate.room ? ` · <span style="color:var(--text-secondary);">${esc(it.candidate.room)}</span>` : ''}`
+                    : '<span style="color:var(--text-tertiary);">—</span>';
+                return `<tr style="border-bottom:1px solid #eef2f7;">
+                    <td style="padding:5px 8px;">${esc(it.fio)}</td>
+                    <td style="padding:5px 8px; text-align:right; font-family:monospace; color:#991b1b;">${Number(it.debt || 0).toFixed(2)}</td>
+                    <td style="padding:5px 8px; text-align:center;"><span style="background:${cat.bg}; color:${cat.color}; padding:1px 7px; border-radius:8px; font-size:11px; font-weight:700;">${it.best_score}</span></td>
+                    <td style="padding:5px 8px; font-size:12px;">${cand}${it.reason ? ` <span style="color:var(--text-tertiary); font-size:10px;">(${esc(it.reason)})</span>` : ''}</td>
+                </tr>`;
+            }).join('');
+            box.innerHTML = `
+                <button class="action-btn secondary-btn" id="btnNfBack" style="font-size:12px; padding:5px 10px; margin-bottom:12px;">← К списку (привязка)</button>
+                <div style="display:flex; gap:8px; margin-bottom:12px;">${summary}</div>
+                <table style="width:100%; border-collapse:collapse; font-size:12px;">
+                    <thead style="background:var(--bg-page); font-size:10px; color:var(--text-tertiary); text-transform:uppercase;">
+                        <tr>
+                            <th style="text-align:left; padding:5px 8px;">ФИО из 1С</th>
+                            <th style="text-align:right; padding:5px 8px;">Долг</th>
+                            <th style="text-align:center; padding:5px 8px;" title="0–100: насколько близок лучший кандидат в базе">Score</th>
+                            <th style="text-align:left; padding:5px 8px;">Ближайший в базе</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>`;
+            document.getElementById('btnNfBack')?.addEventListener('click', () => this.openNotFoundModal(logId));
+        } catch (e) {
+            box.innerHTML = `<div style="padding:16px; color:var(--danger-color);">Ошибка анализа: ${esc(e.message)}</div>`;
+        }
+    },
+
     // ==========================================================================
     // МОДАЛКА «НЕ НАЙДЕННЫЕ»
     // ==========================================================================
@@ -1911,12 +1962,16 @@ export const DebtsModule = {
                 return;
             }
             this.dom.notFoundList.innerHTML = `
-                <p class="hint-text" style="font-size:12px; margin-bottom:12px;">
-                    ФИО из Excel, которых fuzzy-матчер не смог привязать к жильцу.
-                    <b>Суммы долга/переплаты подгружены автоматически</b> — нажмите
-                    «Найти похожих» (если жилец есть в системе) или «Создать жильца»
-                    (если нового нет).
-                </p>
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:12px;">
+                    <p class="hint-text" style="font-size:12px; margin:0;">
+                        ФИО из Excel, которых fuzzy-матчер не смог привязать к жильцу.
+                        <b>Суммы долга/переплаты подгружены автоматически</b> — нажмите
+                        «Найти похожих» (если жилец есть в системе) или «Создать жильца».
+                    </p>
+                    <button class="action-btn secondary-btn" id="btnNfAnalysis" style="white-space:nowrap; font-size:12px; padding:5px 10px;" title="Разобрать почему не сматчились: ближайший кандидат + категория">
+                        📊 Почему не нашлись?
+                    </button>
+                </div>
                 ${list.map(item => {
                     // Backend нормализует к dict {fio, debt, overpayment}.
                     // Старые импорты (до фикса) — debt/overpayment = "0".
@@ -1926,6 +1981,7 @@ export const DebtsModule = {
                     return this.renderNotFoundRow(fio, logId, data.account_type, debt, overpay);
                 }).join('')}
             `;
+            document.getElementById('btnNfAnalysis')?.addEventListener('click', () => this.renderNotFoundAnalysis(logId));
             // Контекст для click-handler. Меняется при каждом openNotFoundModal,
             // handler читает из state — нет накопления listeners.
             this._nfCtx = { logId, accountType: data.account_type };
