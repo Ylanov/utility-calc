@@ -750,45 +750,48 @@ export const SummaryModule = {
             auto: 'Авто', auto_norm_sanction: 'Авто ×3', auto_avg: 'Авто ср.',
             auto_avg_fallback: 'Авто повтор', auto_no_history: 'Авто', meter_op: 'Счётчик',
         };
-        const periods = hist.map(p => {
-            const subs = (p.submissions || []).map(s => `
-                <tr style="border-bottom:1px solid #eef2f7;">
-                    <td style="padding:4px 8px;">${esc(s.full_name || s.username)}${s.resident_type === 'single' ? ' <span style="color:#7c3aed; font-size:10px;">(хол.)</span>' : ''}</td>
-                    <td style="padding:4px 8px; text-align:right; font-family:monospace;">${Number(s.hot_water || 0).toFixed(2)}</td>
-                    <td style="padding:4px 8px; text-align:right; font-family:monospace;">${Number(s.cold_water || 0).toFixed(2)}</td>
-                    <td style="padding:4px 8px; text-align:right; font-family:monospace;">${Number(s.electricity || 0).toFixed(2)}</td>
-                    <td style="padding:4px 8px; text-align:right; font-family:monospace; font-weight:600;">${fmtMoney(s.total_cost)}</td>
-                    <td style="padding:4px 8px; font-size:10px; color:var(--text-secondary);">${esc(SRC[s.source] || s.source || '')}</td>
-                </tr>`).join('');
+        // Компактно: одна таблица, строка = подача жильца, «Месяц» показывается
+        // один раз на группу периода (с подписью долга и числом подач).
+        const num = (v) => Number(v || 0).toFixed(2);
+        const rows = hist.map(p => {
+            const subs = p.submissions || [];
             const debtBadge = p.debt > 0
-                ? ` · <span style="color:#dc2626;">долг ${fmtMoney(p.debt)}</span>`
+                ? `<div style="font-size:10px; color:#dc2626; font-weight:400;">долг ${fmtMoney(p.debt)}</div>`
                 : '';
-            return `
-                <div style="margin-bottom:10px;">
-                    <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 8px; background:var(--bg-page); border-radius:6px 6px 0 0; font-size:12px; font-weight:600;">
-                        <span>${esc(p.period_name)} · ${(p.submissions || []).length} подач</span>
-                        <span style="color:#059669;">${fmtMoney(p.total_cost)}${debtBadge}</span>
-                    </div>
-                    <table style="width:100%; border-collapse:collapse; font-size:12px;">
-                        <thead style="font-size:10px; color:var(--text-tertiary); text-transform:uppercase;">
-                            <tr>
-                                <th style="text-align:left; padding:3px 8px;">Жилец</th>
-                                <th style="text-align:right; padding:3px 8px;">ГВС</th>
-                                <th style="text-align:right; padding:3px 8px;">ХВС</th>
-                                <th style="text-align:right; padding:3px 8px;">Свет</th>
-                                <th style="text-align:right; padding:3px 8px;">Итог</th>
-                                <th style="text-align:left; padding:3px 8px;">Источник</th>
-                            </tr>
-                        </thead>
-                        <tbody>${subs}</tbody>
-                    </table>
-                </div>`;
+            const count = subs.length > 1
+                ? `<div style="font-size:10px; color:var(--text-tertiary); font-weight:400;">${subs.length} подач</div>`
+                : '';
+            return subs.map((s, i) => `
+                <tr style="${i === 0 ? 'border-top:2px solid var(--border-color);' : ''} border-bottom:1px solid #eef2f7;">
+                    <td style="padding:5px 8px; white-space:nowrap; vertical-align:top;">${i === 0 ? `<span style="font-weight:600;">${esc(p.period_name)}</span>${count}${debtBadge}` : ''}</td>
+                    <td style="padding:5px 8px;">${esc(s.full_name || s.username)}${s.resident_type === 'single' ? ' <span style="color:#7c3aed; font-size:10px;">(хол.)</span>' : ''}</td>
+                    <td style="padding:5px 8px; text-align:right; font-family:monospace;">${num(s.hot_water)}</td>
+                    <td style="padding:5px 8px; text-align:right; font-family:monospace;">${num(s.cold_water)}</td>
+                    <td style="padding:5px 8px; text-align:right; font-family:monospace;">${num(s.electricity)}</td>
+                    <td style="padding:5px 8px; text-align:right; font-family:monospace; font-weight:600;">${fmtMoney(s.total_cost)}</td>
+                    <td style="padding:5px 8px; font-size:10px; color:var(--text-secondary);">${esc(SRC[s.source] || s.source || '')}</td>
+                </tr>`).join('');
         }).join('');
         return `
             <div style="font-size:11px; font-weight:600; color:var(--text-secondary); text-transform:uppercase; margin:12px 0 6px;">
                 <i class="fa-solid fa-calendar-days"></i> История подач по месяцам (${hist.length})
             </div>
-            <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:8px; padding:10px;">${periods}</div>`;
+            <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:8px; overflow-x:auto;">
+                <table style="width:100%; border-collapse:collapse; font-size:12px; min-width:560px;">
+                    <thead style="background:var(--bg-page); font-size:10px; color:var(--text-tertiary); text-transform:uppercase;">
+                        <tr>
+                            <th style="text-align:left; padding:5px 8px;">Месяц</th>
+                            <th style="text-align:left; padding:5px 8px;">Жилец</th>
+                            <th style="text-align:right; padding:5px 8px;">ГВС</th>
+                            <th style="text-align:right; padding:5px 8px;">ХВС</th>
+                            <th style="text-align:right; padding:5px 8px;">Свет</th>
+                            <th style="text-align:right; padding:5px 8px;">Итог</th>
+                            <th style="text-align:left; padding:5px 8px;">Источник</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>`;
     },
 
     // =====================================================
