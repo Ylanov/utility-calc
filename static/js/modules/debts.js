@@ -1901,11 +1901,11 @@ export const DebtsModule = {
             const data = await api.get(`/financier/debts/import-history/${logId}/not-found-analysis`);
             const c = data.categories || {};
             const CAT = {
-                near:   { label: 'Близкое совпадение',  color: '#92400e', bg: '#fef3c7', desc: 'ФИО записано иначе — привязать в 1 клик' },
-                weak:   { label: 'Однофамилец?',         color: '#9a3412', bg: '#ffedd5', desc: 'фамилия совпала, имя/отчество — нет' },
-                absent: { label: 'Нет в базе',           color: '#991b1b', bg: '#fee2e2', desc: 'бывший / новый / не-резидент' },
+                same:     { label: 'Скорее тот же',  color: '#15803d', bg: '#dcfce7', desc: 'фамилия+имя+отчество совпали — привязать безопасно' },
+                namesake: { label: 'Однофамилец',    color: '#9a3412', bg: '#ffedd5', desc: 'РАЗНЫЙ человек — без проверки не привязывать' },
+                absent:   { label: 'Нет в базе',     color: '#991b1b', bg: '#fee2e2', desc: 'не заведён жильцом (новый / наниматель / не-резидент)' },
             };
-            const summary = ['near', 'weak', 'absent'].map(k => `
+            const summary = ['same', 'namesake', 'absent'].map(k => `
                 <div style="flex:1; background:${CAT[k].bg}; border-radius:8px; padding:10px; text-align:center;">
                     <div style="font-size:22px; font-weight:700; color:${CAT[k].color};">${c[k] || 0}</div>
                     <div style="font-size:11px; font-weight:600; color:${CAT[k].color};">${CAT[k].label}</div>

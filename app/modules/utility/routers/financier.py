@@ -1544,49 +1544,70 @@ async def debts_not_found_analysis(
     )).scalars().all()
     user_norm = [(u, " ".join((u.username or "").lower().split())) for u in users if u.username]
 
-    def _best(fio: str):
-        tnorm = " ".join((fio or "").lower().split())
-        if not tnorm or not user_norm:
-            return (0, None, None)
-        ttok = tnorm.split()
-        surname = ttok[0] if ttok else ""
-        best = (0, None, None)  # (score, user, reason)
-        for u, nnorm in user_norm:
-            ntok = nnorm.split()
-            fs = fuzz.token_sort_ratio(tnorm, nnorm)
-            if surname and ntok and surname == ntok[0]:
-                sc, reason = max(100, fs), "совпадает фамилия"
-            elif surname and len(surname) >= 4 and surname in nnorm:
-                sc, reason = max(85, fs), "фамилия внутри ФИО"
-            else:
-                sc, reason = fs, None
-            if sc > best[0]:
-                best = (sc, u, reason)
-        return best
+    def _parts(s: str):
+        # ФИО → [фамилия, имя, отчество]: lower, ё→е, точки как разделители.
+        t = (s or "").lower().replace("ё", "е").replace(".", " ")
+        return t.split()
 
-    cats = {"near": 0, "weak": 0, "absent": 0}
+    def _pm(a: str, b: str) -> bool:
+        # Совпадение части ФИО: равны / инициал (одна буква совпала) / опечатка.
+        if not a or not b:
+            return False
+        if a == b:
+            return True
+        if len(a) == 1 or len(b) == 1:
+            return a[0] == b[0]
+        return fuzz.ratio(a, b) >= 88
+
+    # Пер-categories. ВАЖНО: «тот же человек» = совпали ВСЕ три части (фамилия+
+    # имя+отчество), а не только фамилия. Иначе «Верхозин Владимир» матчился бы
+    # на «Верхозин Артём» (однофамилец) с виду «привязать в 1 клик» — и долг ушёл
+    # бы чужому. Однофамилец/совпавшее имя-отчество = РАЗНЫЙ человек, не привязка.
+    cats = {"same": 0, "namesake": 0, "absent": 0}
     items = []
     for fio, debt, overpay in fios:
-        score, u, reason = _best(fio)
-        if score >= 70:
-            cat = "near"
-        elif score >= 50:
-            cat = "weak"
+        fp = _parts(fio)
+        best_u = None
+        best_key = (-1, -1)   # (совпавших_частей, fuzzy)
+        best_flags = (False, False, False)
+        best_fuzzy = 0
+        for u, _nn in user_norm:
+            cp = _parts(u.username)
+            if not fp or not cp:
+                continue
+            s = _pm(fp[0], cp[0])
+            n = _pm(fp[1] if len(fp) > 1 else "", cp[1] if len(cp) > 1 else "")
+            p = _pm(fp[2] if len(fp) > 2 else "", cp[2] if len(cp) > 2 else "")
+            fz = fuzz.token_sort_ratio(" ".join(fp), " ".join(cp))
+            key = (int(s) + int(n) + int(p), fz)
+            if key > best_key:
+                best_key, best_u, best_flags, best_fuzzy = key, u, (s, n, p), fz
+        s, n, p = best_flags
+        if best_u is None:
+            cat, reason = "absent", None
+        elif s and n and p:
+            cat, reason = "same", "фамилия+имя+отчество совпали"
+        elif s:
+            cat, reason = "namesake", "та же фамилия, имя/отчество другие"
+        elif n and p:
+            cat, reason = "namesake", "совпали имя+отчество, фамилия другая"
+        elif best_fuzzy >= 60:
+            cat, reason = "namesake", "частичное совпадение"
         else:
-            cat = "absent"
+            cat, reason = "absent", None
         cats[cat] += 1
         cand = None
-        if u is not None and score >= 50:
+        if best_u is not None and cat != "absent":
             cand = {
-                "id": u.id,
-                "username": u.username,
-                "room": (u.room.format_address if u.room else None),
+                "id": best_u.id,
+                "username": best_u.username,
+                "room": (best_u.room.format_address if best_u.room else None),
             }
         items.append({
             "fio": fio,
             "debt": debt,
             "overpayment": overpay,
-            "best_score": int(score),
+            "best_score": int(best_fuzzy),
             "category": cat,
             "reason": reason,
             "candidate": cand,
