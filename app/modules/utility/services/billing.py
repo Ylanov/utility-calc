@@ -122,6 +122,11 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
     # Оставляем только одного представителя на комнату (чтобы не генерить 2 счета на одну комнату)
     unique_rooms_map = {}
     for u in all_users_to_process:
+        # Вакантные комнаты (is_vacant=True — никто не живёт) пропускаем:
+        # авто-генерация при закрытии периода НЕ должна начислять пустой
+        # комнате ничего (ни норматив, ни санкцию). Комната помнит прошлое.
+        if u.room and u.room.is_vacant:
+            continue
         if u.room_id not in unique_rooms_map:
             unique_rooms_map[u.room_id] = u
 
@@ -360,7 +365,12 @@ async def auto_fill_period_readings(
             User.room_id.is_not(None),
         )
     )).scalars().all()
-    users_to_process = [u for u in users_to_process if u.id not in existing_user_ids]
+    # Вакантные комнаты (is_vacant=True — никто не живёт) НЕ начисляем вообще:
+    # ни по нормативу, ни по среднему. Комната просто помнит прошлое показание.
+    users_to_process = [
+        u for u in users_to_process
+        if u.id not in existing_user_ids and not (u.room and u.room.is_vacant)
+    ]
 
     if not users_to_process:
         return {

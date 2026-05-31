@@ -96,10 +96,19 @@ async def update_submission_period(
     Ранее если commit падал (например, конкурентная запись или constraint),
     клиент получал голый 500 без логирования.
     """
-    if data.start_day >= data.end_day:
+    # Окно подачи МОЖЕТ переходить через границу месяца: start > end означает
+    # «с 15 числа по 3 число СЛЕДУЮЩЕГО месяца» (московский стандарт, дефолт
+    # 15/3). Поэтому start > end — ВАЛИДНО. Запрещаем только вырожденный случай
+    # start == end (окно в один день/неоднозначно) и выход за 1..28.
+    if not (1 <= data.start_day <= 28) or not (1 <= data.end_day <= 28):
         raise HTTPException(
             status_code=400,
-            detail="День начала должен быть раньше дня окончания"
+            detail="День начала и окончания должны быть в диапазоне 1–28",
+        )
+    if data.start_day == data.end_day:
+        raise HTTPException(
+            status_code=400,
+            detail="День начала и день окончания не могут совпадать",
         )
 
     try:

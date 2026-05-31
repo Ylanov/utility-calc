@@ -9,6 +9,9 @@ import redis.asyncio as redis
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import FileResponse, ORJSONResponse
+from fastapi.exceptions import RequestValidationError
+from fastapi.encoders import jsonable_encoder
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -312,6 +315,70 @@ app.add_middleware(RequestIdMiddleware)
 # (их FastAPI обрабатывает через exception_handler) — для 4xx есть
 # отдельный хук ниже по флагу analyzer_config.
 app.add_middleware(ErrorCaptureMiddleware)
+
+
+# =====================================================================
+# 4xx → копилка (E3-B, 31.05.2026)
+# =====================================================================
+# ErrorCaptureMiddleware ловит только 500 (unhandled). HTTPException и
+# ошибки валидации FastAPI обрабатывает СВОИМИ дефолтными хендлерами —
+# раньше они НИКУДА не писались, поэтому копилка показывала ~0, не ловя
+# даже банальный 400 «День начала должен быть раньше». Регистрируем свои
+# хендлеры: значимые 4xx → error_log, ответ клиенту — как у дефолта.
+# Шум (401/403/404/405/429 — нормальная работа auth/раутинга) не пишем.
+_LOG_4XX_STATUSES = {400, 402, 409, 413, 422}
+
+
+async def _persist_http_error(request: Request, status_code: int,
+                              message: str, exc_type: str, extra=None) -> None:
+    """Best-effort запись 4xx в копилку (отдельная сессия, не валит ответ)."""
+    try:
+        from app.core.database import AsyncSessionLocal
+        from app.core.error_logger import log_error
+        from app.core.middleware.error_capture import (
+            _read_safe_body, _extract_user, _should_skip,
+        )
+        if _should_skip(request.url.path):
+            return
+        body = await _read_safe_body(request)
+        uid, uname = _extract_user(request)
+        async with AsyncSessionLocal() as db:
+            await log_error(
+                db, source="backend", level="warning",
+                http_method=request.method, http_path=request.url.path,
+                http_status=status_code, exc_type=exc_type,
+                exc_message=message[:5000], request_body=body,
+                user_id=uid, user_username=uname,
+                request_id=request.headers.get("X-Request-ID"),
+                extra=extra,
+            )
+    except Exception as _e:  # pragma: no cover
+        logger.warning("[4xx-log] failed to persist: %s", _e)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def _http_exception_handler(request: Request, exc: StarletteHTTPException):
+    if exc.status_code in _LOG_4XX_STATUSES:
+        detail = exc.detail
+        msg = detail if isinstance(detail, str) else str(detail)
+        await _persist_http_error(request, exc.status_code, msg, "HTTPException")
+    # Ответ — как у дефолтного хендлера FastAPI (ничего не меняем для клиента).
+    return ORJSONResponse(
+        status_code=exc.status_code,
+        content={"detail": exc.detail},
+        headers=getattr(exc, "headers", None),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def _validation_exception_handler(request: Request, exc: RequestValidationError):
+    errors = exc.errors()
+    await _persist_http_error(
+        request, 422, "Ошибка валидации запроса", "RequestValidationError",
+        extra={"errors": jsonable_encoder(errors)},
+    )
+    return ORJSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+
 
 app.add_middleware(
     TrustedHostMiddleware,

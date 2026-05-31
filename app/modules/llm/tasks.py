@@ -191,6 +191,27 @@ async def _daily_briefing_run() -> dict:
             )
             .group_by(ErrorLog.source)
         )).all())
+        # Топ-5 свежих ошибок из копилки (детали) — кормим ИИ, чтобы он
+        # предложил вероятную причину и КОНКРЕТНОЕ решение, а не просто
+        # констатировал «есть ошибки». Берём последние по времени.
+        recent_error_rows = (await db.execute(
+            select(ErrorLog)
+            .order_by(ErrorLog.occurred_at.desc())
+            .limit(5)
+        )).scalars().all()
+        top_errors = [
+            {
+                "id": e.id,
+                "source": e.source,
+                "status": e.http_status,
+                "method": e.http_method,
+                "path": e.http_path,
+                "type": e.exc_type,
+                "message": (e.exc_message or "")[:300],
+                "occurred_at": e.occurred_at.isoformat() if e.occurred_at else None,
+            }
+            for e in recent_error_rows
+        ]
         open_gsheets_conflicts = (await db.execute(
             select(func.count(GSheetsImportRow.id)).where(
                 GSheetsImportRow.status == "conflict"
@@ -204,12 +225,17 @@ async def _daily_briefing_run() -> dict:
         )).scalar_one()
 
         # ─── Блок аномалий за вчера (раздел «⚠ На что обратить внимание») ───
+        # ВАЖНО: считаем ТОЛЬКО реальные аномалии — по anomaly_score>=80
+        # (высокий риск, тот же порог что у авто-approve gate). Раньше
+        # считали любой anomaly_flags!=NULL, но это ловило служебные маркеры
+        # (GSHEETS_IMPORT, AUTO_GENERATED, BASELINE, PENDING…) и давало
+        # бессмысленные 155/155 «все показания = аномалия». score>=80 = то,
+        # что действительно требует ручной проверки.
         anomaly_count = (await db.execute(
             select(func.count(MeterReading.id)).where(
                 MeterReading.created_at >= yesterday_start,
                 MeterReading.created_at < yesterday_end,
-                MeterReading.anomaly_flags.isnot(None),
-                MeterReading.anomaly_flags != "",
+                MeterReading.anomaly_score >= 80,
             )
         )).scalar_one()
         format_suspect_count = (await db.execute(
@@ -246,6 +272,7 @@ async def _daily_briefing_run() -> dict:
             "anomaly_readings_yesterday": anomaly_count,
             "format_suspect_yesterday": format_suspect_count,
             "high_cost_readings_yesterday": high_cost_list,
+            "top_errors": top_errors,
         }
 
         messages = build_daily_briefing_prompt(metrics)
