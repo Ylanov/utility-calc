@@ -71,6 +71,9 @@
                         <option value="100">100 строк</option>
                     </select>
                     <input type="text" id="roomsSearchInput" placeholder="Поиск (№ комн., № счетчика)...">
+                    <button id="btnDormSettings" class="action-btn primary-btn" style="padding:5px 10px; font-size:12px; white-space:nowrap;" title="Настройки выбранного в фильтре слева дома: тариф (что начисляется), счётчики (что подают), статистика. Применяется ко всем комнатам.">
+                        <i class="fa-solid fa-gear"></i> Настройки дома
+                    </button>
                     <button id="btnNormalizeSerialsList" class="action-btn secondary-btn" style="padding:5px 10px; font-size:12px; white-space:nowrap;" title="Привести серийники счётчиков к шаблону «тип-дом-комната» (напр. хвс-32.90-101) по выбранному в фильтре слева дому. С предпросмотром.">
                         <i class="fa-solid fa-wand-magic-sparkles"></i> Норм. серийники
                     </button>
@@ -432,6 +435,39 @@
                     <button type="submit" class="action-btn success-btn" id="btnSubmitMeter">Оформить замену</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- ============================================
+         НАСТРОЙКИ ДОМА/ОБЩАГИ — тариф + счётчики + статистика, на весь дом
+         ============================================ -->
+    <div id="dormSettingsModal" class="modal-overlay">
+        <div class="modal-window" style="width: 660px; max-height: 88vh; overflow-y: auto;">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-gear" style="margin-right:8px;"></i> Настройки дома: <span id="dormSettingsTitle">—</span></h3>
+                <button class="close-btn" data-dorm-close>&times;</button>
+            </div>
+            <div class="modal-form" style="padding: 16px 18px;">
+                <div id="dormSettingsStats" style="margin-bottom: 16px;"></div>
+
+                <h4 style="margin: 0 0 8px; font-size: 14px; border-bottom: 1px solid var(--border-color); padding-bottom: 6px;">
+                    <i class="fa-solid fa-receipt" style="color:#7c3aed;"></i> Тариф дома — что начисляется
+                </h4>
+                <div id="dormSettingsTariff" style="margin-bottom: 18px;"></div>
+
+                <h4 style="margin: 0 0 8px; font-size: 14px; border-bottom: 1px solid var(--border-color); padding-bottom: 6px;">
+                    <i class="fa-solid fa-gauge-high" style="color:#0ea5e9;"></i> Счётчики дома — что подают жильцы
+                </h4>
+                <div id="dormSettingsMeters" style="margin-bottom: 12px;"></div>
+
+                <p class="hint-text" style="font-size: 12px; margin: 0;">
+                    💡 Холостяцкие квартиры считаются по-своему (найм/ТКО/отопление = площадь ÷ вместимость,
+                    счётчики делятся на число жильцов) — это настраивается на конкретной комнате, тариф дома их не ломает.
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="action-btn secondary-btn" data-dorm-close>Закрыть</button>
+            </div>
         </div>
     </div>
 </div>

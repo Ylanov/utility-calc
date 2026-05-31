@@ -42,6 +42,12 @@ export const HousingModule = {
             btnRefresh: document.getElementById('btnRefreshRooms'),
             btnExport: document.getElementById('btnExportRooms'),
             btnNormalizeList: document.getElementById('btnNormalizeSerialsList'),
+            btnDormSettings: document.getElementById('btnDormSettings'),
+            dormSettingsModal: document.getElementById('dormSettingsModal'),
+            dormSettingsTitle: document.getElementById('dormSettingsTitle'),
+            dormSettingsStats: document.getElementById('dormSettingsStats'),
+            dormSettingsTariff: document.getElementById('dormSettingsTariff'),
+            dormSettingsMeters: document.getElementById('dormSettingsMeters'),
 
             // Новые фильтры
             filterOccupancy: document.getElementById('filterOccupancy'),
@@ -156,6 +162,16 @@ export const HousingModule = {
         }
         if (this.dom.btnNormalizeList) {
             this.dom.btnNormalizeList.addEventListener('click', () => this.normalizeSerialsByFilter());
+        }
+        if (this.dom.btnDormSettings) {
+            this.dom.btnDormSettings.addEventListener('click', () => this.openDormSettings());
+        }
+        if (this.dom.dormSettingsModal) {
+            this.dom.dormSettingsModal.addEventListener('click', (e) => {
+                if (e.target === this.dom.dormSettingsModal || e.target.closest('[data-dorm-close]')) {
+                    this.dom.dormSettingsModal.classList.remove('open');
+                }
+            });
         }
 
         if (this.dom.btnOpenAdd) {
@@ -930,6 +946,135 @@ export const HousingModule = {
         } catch (e) {
             toast('Ошибка применения: ' + (e.message || ''), 'error');
         }
+    },
+
+    // ── НАСТРОЙКИ ДОМА: тариф + счётчики + статистика, на весь дом ──────────
+    async openDormSettings() {
+        const dorm = (this.dom.dormFilterSelect?.value || '').trim();
+        if (!dorm) {
+            return toast('Выберите дом/общежитие в фильтре слева, затем «Настройки дома».', 'warning');
+        }
+        this._dormSettingsName = dorm;
+        if (this.dom.dormSettingsTitle) this.dom.dormSettingsTitle.textContent = dorm;
+        const spin = '<div style="padding:14px; text-align:center; color:var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка…</div>';
+        [this.dom.dormSettingsStats, this.dom.dormSettingsTariff, this.dom.dormSettingsMeters].forEach(b => { if (b) b.innerHTML = spin; });
+        this.dom.dormSettingsModal?.classList.add('open');
+        try {
+            const data = await api.get(`/rooms/dormitory-overview?dormitory_name=${encodeURIComponent(dorm)}`);
+            this._renderDormSettings(data);
+        } catch (e) {
+            if (this.dom.dormSettingsStats) this.dom.dormSettingsStats.innerHTML = `<div style="color:var(--danger-color); padding:14px;">Ошибка: ${escapeHtml(e.message)}</div>`;
+            if (this.dom.dormSettingsTariff) this.dom.dormSettingsTariff.innerHTML = '';
+            if (this.dom.dormSettingsMeters) this.dom.dormSettingsMeters.innerHTML = '';
+        }
+    },
+
+    _renderDormSettings(data) {
+        const s = data.stats || {};
+        const tile = (label, val, color) => `<div style="flex:1; min-width:88px; background:var(--bg-page); border-radius:8px; padding:8px 10px; text-align:center;"><div style="font-size:18px; font-weight:700; color:${color};">${val}</div><div style="font-size:10px; color:var(--text-secondary);">${label}</div></div>`;
+        this.dom.dormSettingsStats.innerHTML = `
+            <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+                ${tile('Комнат', s.total_rooms, '#2563eb')}
+                ${tile('Жильцов', `${s.total_residents}/${s.total_capacity}`, '#4338ca')}
+                ${tile('Заполнено', s.occupancy_pct + '%', '#059669')}
+                ${tile('Семейных', s.family, '#7c3aed')}
+                ${tile('Холостяков', s.single, '#ea580c')}
+                ${tile('Хол. квартир', s.singles_apartments, '#ea580c')}
+            </div>
+            <div style="font-size:12px; color:var(--text-secondary);">Пустых: ${s.empty} · частичных: ${s.partial} · полных: ${s.full} · переполнено: ${s.overcrowded}</div>
+            ${(data.by_tariff || []).length ? `<div style="margin-top:8px; font-size:12px;"><b>По тарифам:</b> ${data.by_tariff.map(t => `${escapeHtml(t.tariff_name)} — ${t.rooms}`).join(' · ')}</div>` : ''}
+            <div style="margin-top:4px; font-size:12px;"><b>Счётчики:</b> ГВС ${data.by_meter.hw} · ХВС ${data.by_meter.cw} · эл ${data.by_meter.el} · без счётчиков ${data.by_meter.none} (из ${data.by_meter.total})</div>
+        `;
+        // Тариф
+        const tariffs = data.available_tariffs || [];
+        const opts = ['<option value="">— Не менять —</option>']
+            .concat(tariffs.map(t => `<option value="${t.id}" ${data.current_tariff_id === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`)).join('');
+        const curMixed = data.current_tariff_id === null && (data.by_tariff || []).length > 1;
+        this.dom.dormSettingsTariff.innerHTML = `
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                <select id="dormTariffSelect" style="flex:1; min-width:220px; padding:6px 8px;">${opts}</select>
+                <button id="btnApplyDormTariff" class="action-btn primary-btn" style="padding:6px 12px; font-size:12px;">Применить тариф</button>
+            </div>
+            ${curMixed ? '<div style="font-size:11px; color:#b45309; margin-top:4px;">⚠ Сейчас у комнат РАЗНЫЕ тарифы.</div>' : ''}
+            <div id="dormTariffCharges" style="margin-top:8px;"></div>
+        `;
+        const sel = document.getElementById('dormTariffSelect');
+        const chargesBox = document.getElementById('dormTariffCharges');
+        const renderCharges = () => {
+            const t = tariffs.find(x => String(x.id) === sel.value);
+            if (!t) { chargesBox.innerHTML = ''; return; }
+            const chips = (t.charges || []).length
+                ? t.charges.map(c => `<span style="background:#ede9fe; color:#5b21b6; padding:2px 8px; border-radius:8px; font-size:11px; margin-right:4px;">${escapeHtml(c)}</span>`).join('')
+                : '<span style="color:var(--text-secondary);">ничего не начисляет</span>';
+            chargesBox.innerHTML = `<div style="font-size:12px;">Начисляет: ${chips}</div>`;
+        };
+        sel.addEventListener('change', renderCharges);
+        renderCharges();
+        document.getElementById('btnApplyDormTariff').addEventListener('click', () => this.applyDormTariff(sel.value));
+        // Счётчики
+        const m = data.current_meters || { has_hw_meter: true, has_cw_meter: true, has_el_meter: true };
+        const mixedMeters = !data.current_meters;
+        const cb = (id, label, checked) => `<label style="display:inline-flex; align-items:center; gap:6px; cursor:pointer; font-size:13px;"><input type="checkbox" id="${id}" ${checked ? 'checked' : ''}> ${label}</label>`;
+        this.dom.dormSettingsMeters.innerHTML = `
+            <div style="display:flex; gap:18px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
+                ${cb('dormHasHw', '🔥 ГВС', m.has_hw_meter)}
+                ${cb('dormHasCw', '❄ ХВС', m.has_cw_meter)}
+                ${cb('dormHasEl', '⚡ Электр.', m.has_el_meter)}
+                <button id="btnApplyDormMeters" class="action-btn primary-btn" style="margin-left:auto; padding:6px 12px; font-size:12px;">Применить счётчики</button>
+            </div>
+            <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                <button type="button" class="action-btn secondary-btn dorm-meter-preset" data-preset="all" style="padding:3px 8px; font-size:11px;">Все</button>
+                <button type="button" class="action-btn secondary-btn dorm-meter-preset" data-preset="water" style="padding:3px 8px; font-size:11px;">Только вода</button>
+                <button type="button" class="action-btn secondary-btn dorm-meter-preset" data-preset="none" style="padding:3px 8px; font-size:11px;">Ничего</button>
+            </div>
+            ${mixedMeters ? '<div style="font-size:11px; color:#b45309; margin-top:4px;">⚠ Сейчас у комнат РАЗНЫЙ набор счётчиков.</div>' : ''}
+        `;
+        this.dom.dormSettingsMeters.querySelectorAll('.dorm-meter-preset').forEach(btn => {
+            btn.addEventListener('click', () => {
+                const p = btn.dataset.preset;
+                document.getElementById('dormHasHw').checked = (p === 'all' || p === 'water');
+                document.getElementById('dormHasCw').checked = (p === 'all' || p === 'water');
+                document.getElementById('dormHasEl').checked = (p === 'all');
+            });
+        });
+        document.getElementById('btnApplyDormMeters').addEventListener('click', () => this.applyDormMeters());
+    },
+
+    async applyDormTariff(tariffIdStr) {
+        const dorm = this._dormSettingsName;
+        if (!dorm) return;
+        if (!tariffIdStr) return toast('Выберите тариф', 'info');
+        const tariffId = Number(tariffIdStr);
+        if (!await showConfirm(
+            `Назначить выбранный тариф ВСЕМ комнатам дома «${dorm}»?\nПрименится к каждому жильцу автоматически.`,
+            { title: 'Тариф дома', confirmText: 'Применить' }
+        )) return;
+        try {
+            const res = await api.post('/tariffs/assign-to-dormitory', { dormitory_name: dorm, tariff_id: tariffId });
+            toast(`Тариф назначен. Комнат: ${res.rooms_affected ?? '—'}`, 'success');
+            this.openDormSettings();
+            this.table.load();
+        } catch (e) { toast('Ошибка: ' + (e.message || ''), 'error'); }
+    },
+
+    async applyDormMeters() {
+        const dorm = this._dormSettingsName;
+        if (!dorm) return;
+        const body = {
+            dormitory_name: dorm,
+            has_hw_meter: document.getElementById('dormHasHw').checked,
+            has_cw_meter: document.getElementById('dormHasCw').checked,
+            has_el_meter: document.getElementById('dormHasEl').checked,
+        };
+        const on = [body.has_hw_meter && 'ГВС', body.has_cw_meter && 'ХВС', body.has_el_meter && 'электр']
+            .filter(Boolean).join(', ') || 'нет счётчиков';
+        if (!await showConfirm(`Применить счётчики (${on}) ко ВСЕМ комнатам дома «${dorm}»?`, { title: 'Счётчики дома', confirmText: 'Применить' })) return;
+        try {
+            const res = await api.post('/rooms/bulk-meter-config', body);
+            toast(`Обновлено комнат: ${res.updated_rooms}`, 'success');
+            this.openDormSettings();
+            this.table.load();
+        } catch (e) { toast('Ошибка: ' + (e.message || ''), 'error'); }
     },
 
     async handleSave(e) {

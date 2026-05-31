@@ -25,6 +25,7 @@
 4. **Долг требует комнату**: `MeterReading.room_id` NOT NULL. Жилец без комнаты → импорт кладёт в not_found. Неразнесённый долг виден отдельным блоком в «Долги 1С».
 5. **Окно подачи может переходить через месяц** (start>end, напр. 15→3 следующего). Дефолт 15/3. Логика wrap во ВСЕХ точках (`_is_submission_day_open`, `check_auto_period_task`, `remind_submit_readings_task`, `readings.js`).
 6. **Холостяцкая квартира**: `is_singles_apartment=True` → жильцы `resident_type='single'`, найм/ТКО/отопление = площадь÷`max_capacity`, счётчики делятся на факт. число жильцов. Перевод одной кнопкой: `POST /rooms/{id}/make-singles` (флаг+площадь+вместимость+синк жильцов).
+6a. **Настройки дома/общаги** (Жилфонд → кнопка «⚙ Настройки дома», берёт дом из фильтра слева): единое окно — тариф дома (`POST /tariffs/assign-to-dormitory` → Room.tariff_id всем; «на что начисляется» = `Tariff.charge_*` флаги, выбор тарифа-пресета), счётчики дома (`POST /rooms/bulk-meter-config`), статистика (`GET /rooms/dormitory-overview`: комнаты/жильцы/семейные/холостяки/по тарифам/счётчикам). Холостяцкие — исключение per-room.
 7. **Валидация показаний** — единый источник `services/reading_validators.py` (потолки: вода 10000 м³, total_cost 100k ₽). Был инцидент 1.48 млрд ₽ из-за потери десятичной точки.
 8. **UI: никаких нативных `confirm/prompt/alert`** — только `showConfirm/showPrompt/showAlert/showDialog` из `core/dom.js` (функция → `async`).
 

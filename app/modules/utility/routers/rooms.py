@@ -806,6 +806,128 @@ async def bulk_meter_config(
     return {"status": "ok", "updated_rooms": result.rowcount}
 
 
+@router.get("/dormitory-overview", dependencies=[Depends(allow_management)])
+async def dormitory_overview(
+    dormitory_name: str = Query(..., description="Название общежития/дома"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Сводка по дому/общаге для окна «Настройки дома» (Жилфонд): статистика
+    (комнаты/жильцы/заполненность, семейные/холостяки), разбивка по тарифам и
+    счётчикам, текущий единый тариф/набор счётчиков (если одинаков у всех), и
+    список доступных тарифов с профилем начислений (что начисляет). Применение
+    делают отдельные эндпоинты: /assign-to-dormitory (тариф) и
+    /bulk-meter-config (счётчики)."""
+    from collections import Counter, defaultdict
+
+    rooms = (await db.execute(
+        select(Room).where(Room.dormitory_name == dormitory_name)
+    )).scalars().all()
+    if not rooms:
+        raise HTTPException(404, f"Дом «{dormitory_name}» не найден")
+    room_ids = [r.id for r in rooms]
+
+    residents = (await db.execute(
+        select(User).where(
+            User.room_id.in_(room_ids),
+            User.is_deleted.is_(False),
+            User.role == "user",
+        )
+    )).scalars().all()
+    res_by_room: dict = defaultdict(int)
+    family = single = 0
+    for u in residents:
+        res_by_room[u.room_id] += 1
+        if (u.resident_type or "family") == "single":
+            single += 1
+        else:
+            family += 1
+
+    empty = partial = full = overcrowded = 0
+    total_capacity = 0
+    for r in rooms:
+        cnt = res_by_room.get(r.id, 0)
+        cap = r.max_capacity or r.total_room_residents or 1
+        total_capacity += cap
+        if cnt == 0:
+            empty += 1
+        elif cnt < cap:
+            partial += 1
+        elif cnt == cap:
+            full += 1
+        else:
+            overcrowded += 1
+
+    # Разбивка по тарифам (Room.tariff_id; None = тариф жильца/дефолт).
+    tariff_ids = {r.tariff_id for r in rooms if r.tariff_id}
+    tnames = {}
+    if tariff_ids:
+        tnames = {tid: nm for tid, nm in (await db.execute(
+            select(Tariff.id, Tariff.name).where(Tariff.id.in_(tariff_ids))
+        )).all()}
+    by_tariff_counter = Counter(r.tariff_id for r in rooms)
+    by_tariff = sorted([
+        {"tariff_id": tid,
+         "tariff_name": (tnames.get(tid) if tid else "По умолчанию (тариф жильца)"),
+         "rooms": cnt}
+        for tid, cnt in by_tariff_counter.items()
+    ], key=lambda x: -x["rooms"])
+    distinct_tariffs = set(by_tariff_counter.keys())
+    current_tariff_id = next(iter(distinct_tariffs)) if len(distinct_tariffs) == 1 else None
+
+    # Счётчики: единый набор только если у всех комнат одинаков.
+    meter_combos = {(r.has_hw_meter, r.has_cw_meter, r.has_el_meter) for r in rooms}
+    current_meters = None
+    if len(meter_combos) == 1:
+        hwm, cwm, elm = next(iter(meter_combos))
+        current_meters = {"has_hw_meter": hwm, "has_cw_meter": cwm, "has_el_meter": elm}
+
+    # Доступные тарифы для общаги (+ универсальные) с профилем начислений.
+    avail = (await db.execute(
+        select(Tariff).where(
+            Tariff.is_active.is_(True),
+            Tariff.applicable_to.in_(["dormitory", "both"]),
+        ).order_by(Tariff.name)
+    )).scalars().all()
+
+    def _charges(t):
+        chips = []
+        if t.charge_hot_water: chips.append("ГВС")
+        if t.charge_cold_water: chips.append("ХВС")
+        if t.charge_sewage: chips.append("водоотв.")
+        if t.charge_electricity: chips.append("электр.")
+        if t.charge_maintenance: chips.append("содерж.")
+        if t.charge_heating: chips.append("отопл.")
+        if t.charge_waste: chips.append("ТКО")
+        if t.charge_social_rent: chips.append("найм(205)")
+        return chips
+
+    return {
+        "dormitory_name": dormitory_name,
+        "stats": {
+            "total_rooms": len(rooms), "empty": empty, "partial": partial,
+            "full": full, "overcrowded": overcrowded,
+            "total_residents": len(residents), "total_capacity": total_capacity,
+            "occupancy_pct": round(len(residents) / total_capacity * 100) if total_capacity else 0,
+            "family": family, "single": single,
+            "singles_apartments": sum(1 for r in rooms if r.is_singles_apartment),
+        },
+        "by_tariff": by_tariff,
+        "by_meter": {
+            "hw": sum(1 for r in rooms if r.has_hw_meter),
+            "cw": sum(1 for r in rooms if r.has_cw_meter),
+            "el": sum(1 for r in rooms if r.has_el_meter),
+            "none": sum(1 for r in rooms if not (r.has_hw_meter or r.has_cw_meter or r.has_el_meter)),
+            "total": len(rooms),
+        },
+        "current_tariff_id": current_tariff_id,
+        "current_meters": current_meters,
+        "available_tariffs": [
+            {"id": t.id, "name": t.name, "charges": _charges(t)} for t in avail
+        ],
+    }
+
+
 # Нормализация серийников счётчиков к шаблону «<тип>-<дом>-<комната>»
 # (напр. хвс-4.8-101). Тип берётся по полю (hw=гвс / cw=хвс / el=эл), ядро
 # «дом-комната» = числовые сегменты текущего серийника; мусорный буквенный
