@@ -4,7 +4,7 @@
 // Дёргает /api/admin/analyzer/* (см. app/modules/utility/routers/admin_analyzer.py).
 
 import { api } from '../core/api.js';
-import { toast } from '../core/dom.js';
+import { toast, showDialog } from '../core/dom.js';
 import { SummaryModule } from './summary.js';
 
 const CATEGORY_META = {
@@ -221,7 +221,12 @@ export const AnalyzerModule = {
         this.dom.rtmBody?.addEventListener('click', (e) => {
             const btn = e.target.closest('button[data-make-singles]');
             if (!btn) return;
-            this.makeRoomSingles(Number(btn.dataset.makeSingles), Number(btn.dataset.residents), btn.dataset.addr || '');
+            this.makeRoomSingles(
+                Number(btn.dataset.makeSingles),
+                Number(btn.dataset.residents),
+                Number(btn.dataset.area) || 0,
+                btn.dataset.addr || '',
+            );
         });
         this.dom.rpBody?.addEventListener('click', (e) => {
             const btn = e.target.closest('button[data-rp-action]');
@@ -1773,7 +1778,7 @@ export const AnalyzerModule = {
                             <i class="fa-solid fa-lightbulb" style="color:#f59e0b;"></i> ${escapeHtml(it.recommendation || '')}
                         </div>
                         ${it.place_type !== 'house' ? `
-                        <button class="action-btn" data-make-singles="${it.room_id}" data-residents="${it.n_residents}" data-addr="${escapeHtml(it.address || ('комн. ' + (it.room_number || '')))}"
+                        <button class="action-btn" data-make-singles="${it.room_id}" data-residents="${it.n_residents}" data-area="${it.area || 0}" data-addr="${escapeHtml(it.address || ('комн. ' + (it.room_number || '')))}"
                                 title="Перевести квартиру в холостяцкую: пометит флаг + приведёт всех жильцов к холостякам (как в Жилфонде)"
                                 style="white-space:nowrap; font-size:12px; padding:6px 12px; background:#7c3aed; color:#fff; border:1px solid #7c3aed;">
                             <i class="fa-solid fa-bed"></i> Сделать холостяцкой
@@ -1785,20 +1790,30 @@ export const AnalyzerModule = {
     },
 
     // Быстрое решение из «Типы квартир»: перевод квартиры в холостяцкую
-    // (флаг + макс. вместимость + все жильцы → холостяки). Резолвит проблему.
-    async makeRoomSingles(roomId, defaultCap, addr) {
+    // (площадь + макс. вместимость + все жильцы → холостяки). Резолвит проблему.
+    // Площадь обязательна — она делится на вместимость для найма/ТКО/отопления.
+    async makeRoomSingles(roomId, defaultCap, defaultArea, addr) {
         if (!roomId) return;
-        const capStr = window.prompt(
-            `Перевести «${addr}» в холостяцкую квартиру.\n\n` +
-            `Макс. вместимость (предел квартиры — делитель площади для найма/ТКО/отопления; ` +
-            `счётчики делятся на фактическое число жильцов):`,
-            String(defaultCap || 1));
-        if (capStr === null) return;
-        const cap = parseInt(capStr, 10);
+        const res = await showDialog({
+            title: 'Перевести в холостяцкую квартиру',
+            message: `«${addr}». Холостяки делят счета: найм/ТКО/отопление = площадь ÷ вместимость, ` +
+                     `счётчики — на фактическое число жильцов. Проверьте площадь — у малых комнат она критична.`,
+            fields: [
+                { key: 'area', label: 'Площадь квартиры (м²)', type: 'number', value: defaultArea || '', min: 0.1, step: 0.1,
+                  hint: 'Делитель для найма/ТКО/отопления. Обязательно.' },
+                { key: 'capacity', label: 'Макс. вместимость (предел квартиры)', type: 'number', value: defaultCap || 1, min: 1, step: 1,
+                  hint: 'Сколько койко-мест в квартире.' },
+            ],
+            confirmText: 'Перевести в холостяцкую',
+        });
+        if (res === null) return;
+        const area = parseFloat(String(res.area).replace(',', '.'));
+        const cap = parseInt(res.capacity, 10);
+        if (!area || area <= 0) { toast('Укажите площадь (> 0 м²)', 'error'); return; }
         if (!cap || cap < 1) { toast('Вместимость должна быть числом ≥ 1', 'error'); return; }
         try {
-            const res = await api.post(`/rooms/${roomId}/make-singles?max_capacity=${cap}`);
-            toast(`Квартира стала холостяцкой. Жильцов переведено в холостяки: ${res.residents_converted}.`, 'success');
+            const r = await api.post(`/rooms/${roomId}/make-singles?max_capacity=${cap}&apartment_area=${area}`);
+            toast(`Квартира стала холостяцкой (${area} м², вместимость ${cap}). Жильцов в холостяки: ${r.residents_converted}.`, 'success');
             this.loadRoomTypeMismatches();
         } catch (e) {
             toast('Ошибка: ' + (e.message || ''), 'error');

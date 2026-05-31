@@ -895,14 +895,17 @@ async def normalize_serials(
 async def make_room_singles(
     room_id: int,
     max_capacity: int = Query(..., ge=1, description="Макс. вместимость (делитель площади)"),
+    apartment_area: Optional[float] = Query(None, gt=0, description="Площадь м² (делитель найма/ТКО/отопления). Если задана — обновим."),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """Быстрое решение из Центра анализа («Типы квартир»): перевести квартиру в
-    холостяцкую одним кликом. Ставит is_singles_apartment=True + max_capacity и
-    приводит ВСЕХ живущих жильцов к resident_type='single' (резолвит multi_family
-    /unmarked_singles/mixed_types/singles_with_family). Зеркалит логику синка из
-    update_room, но работает и когда флаг уже True (просто добивает типы)."""
+    холостяцкую одним кликом. Ставит is_singles_apartment=True + max_capacity
+    (+ площадь, если передана) и приводит ВСЕХ живущих жильцов к
+    resident_type='single' (резолвит multi_family/unmarked_singles/mixed_types/
+    singles_with_family). Зеркалит синк из update_room, но работает и когда флаг
+    уже True. Площадь у холостяцкой критична (делится на вместимость), поэтому
+    UI её спрашивает и передаёт — особенно у малых комнат."""
     room = await db.get(Room, room_id)
     if not room:
         raise HTTPException(404, "Помещение не найдено")
@@ -911,6 +914,8 @@ async def make_room_singles(
 
     room.is_singles_apartment = True
     room.max_capacity = max_capacity
+    if apartment_area is not None:
+        room.apartment_area = apartment_area
     room.updated_at = utcnow()
 
     res = await db.execute(
@@ -930,6 +935,7 @@ async def make_room_singles(
         details={
             "room": f"{room.dormitory_name} / {room.room_number}",
             "max_capacity": max_capacity,
+            "apartment_area": apartment_area,
             "residents_converted": res.rowcount,
         },
     )

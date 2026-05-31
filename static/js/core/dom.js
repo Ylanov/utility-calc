@@ -201,3 +201,123 @@ export function showPrompt(title, message, defaultValue = '', placeholder = '') 
         };
     });
 }
+
+/**
+ * Асинхронное подтверждение (красивая замена window.confirm).
+ * Возвращает Promise<boolean>. message может быть многострочным (\n).
+ */
+export function showConfirm(message, opts = {}) {
+    const {
+        title = 'Подтверждение',
+        confirmText = 'Подтвердить',
+        cancelText = 'Отмена',
+        danger = false,
+    } = opts;
+    return new Promise((resolve) => {
+        const overlay = el('div', { class: 'modal-overlay open', style: { zIndex: 10000 } });
+        const btnConfirm = el('button', {
+            class: 'action-btn primary-btn',
+            style: danger ? { background: '#dc2626', borderColor: '#dc2626' } : {},
+        }, confirmText);
+        const btnCancel = el('button', { class: 'action-btn secondary-btn' }, cancelText);
+
+        const body = el('div', { class: 'modal-form' });
+        String(message).split('\n').forEach(line => {
+            body.appendChild(el('p', {
+                style: { margin: '0 0 6px 0', color: '#374151', fontSize: '14px', whiteSpace: 'pre-wrap' },
+            }, line));
+        });
+
+        const modal = el('div', { class: 'modal-window', style: { width: '440px' } },
+            el('div', { class: 'modal-header' }, el('h3', {}, title)),
+            body,
+            el('div', { class: 'modal-footer' }, btnCancel, btnConfirm)
+        );
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+        setTimeout(() => btnConfirm.focus(), 50);
+
+        const close = (v) => {
+            if (document.body.contains(overlay)) document.body.removeChild(overlay);
+            resolve(v);
+        };
+        btnConfirm.onclick = () => close(true);
+        btnCancel.onclick = () => close(false);
+        overlay.onmousedown = (e) => { if (e.target === overlay) close(false); };
+        const onKey = (e) => {
+            if (!document.body.contains(overlay)) { document.removeEventListener('keydown', onKey); return; }
+            if (e.key === 'Escape') { e.preventDefault(); close(false); }
+            else if (e.key === 'Enter') { e.preventDefault(); close(true); }
+        };
+        document.addEventListener('keydown', onKey);
+    });
+}
+
+/**
+ * Многополевой диалог ввода (красивая замена нескольких prompt сразу).
+ *   fields: [{ key, label, type='number'|'text', value, hint, min, step }]
+ * Возвращает Promise<object|null> — { key: value, ... } (строки) или null при отмене.
+ */
+export function showDialog(opts = {}) {
+    const {
+        title = 'Ввод данных',
+        message = '',
+        fields = [],
+        confirmText = 'Сохранить',
+        cancelText = 'Отмена',
+    } = opts;
+    return new Promise((resolve) => {
+        const overlay = el('div', { class: 'modal-overlay open', style: { zIndex: 10000 } });
+        const inputs = {};
+
+        const submit = () => {
+            const result = {};
+            for (const f of fields) result[f.key] = (inputs[f.key].value || '').trim();
+            close(result);
+        };
+        const close = (v) => {
+            if (document.body.contains(overlay)) document.body.removeChild(overlay);
+            resolve(v);
+        };
+
+        const fieldNodes = fields.map(f => {
+            const input = el('input', {
+                type: f.type || 'text',
+                value: (f.value !== undefined && f.value !== null) ? String(f.value) : '',
+                style: { width: '100%', fontSize: '15px' },
+            });
+            if (f.min !== undefined) input.setAttribute('min', String(f.min));
+            if (f.step !== undefined) input.setAttribute('step', String(f.step));
+            input.onkeydown = (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); submit(); }
+                if (e.key === 'Escape') { e.preventDefault(); close(null); }
+            };
+            inputs[f.key] = input;
+            return el('div', { class: 'form-group', style: { marginBottom: '14px' } },
+                el('label', { style: { display: 'block', fontSize: '13px', fontWeight: '600', marginBottom: '4px' } }, f.label || f.key),
+                input,
+                f.hint ? el('div', { style: { fontSize: '11px', color: '#6b7280', marginTop: '4px' } }, f.hint) : null
+            );
+        });
+
+        const btnConfirm = el('button', { class: 'action-btn primary-btn' }, confirmText);
+        const btnCancel = el('button', { class: 'action-btn secondary-btn' }, cancelText);
+
+        const form = el('div', { class: 'modal-form' },
+            message ? el('p', { style: { margin: '0 0 14px 0', color: '#374151', fontSize: '14px', whiteSpace: 'pre-wrap' } }, message) : null,
+            ...fieldNodes
+        );
+        const modal = el('div', { class: 'modal-window', style: { width: '440px' } },
+            el('div', { class: 'modal-header' }, el('h3', {}, title)),
+            form,
+            el('div', { class: 'modal-footer' }, btnCancel, btnConfirm)
+        );
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+        setTimeout(() => { const f0 = fieldNodes[0] && fieldNodes[0].querySelector('input'); if (f0) f0.focus(); }, 50);
+
+        btnConfirm.onclick = submit;
+        btnCancel.onclick = () => close(null);
+        overlay.onmousedown = (e) => { if (e.target === overlay) close(null); };
+    });
+}
