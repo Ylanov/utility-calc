@@ -614,6 +614,18 @@ async def get_manual_state(db: AsyncSession, user_id: int):
         "has_el_meter": _room_meter("has_el_meter"),
     }
 
+    # Нужно ли вообще подавать показания этому жильцу: есть хотя бы один
+    # счётчик И режим не per_capita (койко-место/норматив). Для холостяка
+    # (per_capita) и для комнат без счётчиков показания не требуются —
+    # мобильный ручной ввод покажет предупреждение.
+    _billing_mode = getattr(user, "billing_mode", None) or "by_meter"
+    _resident_type = getattr(user, "resident_type", None) or "family"
+    submission_required = bool(
+        (meter_config["has_hw_meter"] or meter_config["has_cw_meter"]
+         or meter_config["has_el_meter"])
+        and _billing_mode != "per_capita"
+    )
+
     if not user.room:
         return {
             "user_id": user.id,
@@ -624,6 +636,9 @@ async def get_manual_state(db: AsyncSession, user_id: int):
             "prev_elect": ZERO,
             "has_draft": False,
             "has_approved_current": False,
+            "billing_mode": _billing_mode,
+            "resident_type": _resident_type,
+            "submission_required": submission_required,
             **meter_config,
         }
 
@@ -684,5 +699,8 @@ async def get_manual_state(db: AsyncSession, user_id: int):
         "approved_elect": approved_current.electricity if approved_current else None,
         "approved_flags": approved_current.anomaly_flags if approved_current else None,
         "approved_total": float(approved_current.total_cost or 0) if approved_current else None,
+        "billing_mode": _billing_mode,
+        "resident_type": _resident_type,
+        "submission_required": submission_required,
         **meter_config,
     }

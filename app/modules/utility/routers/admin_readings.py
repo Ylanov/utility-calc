@@ -82,6 +82,18 @@ async def approve_reading(
     return await admin_readings_approve.approve_single(db, reading_id, correction_data, current_user)
 
 
+@router.post("/api/admin/readings/{reading_id}/unapprove")
+async def unapprove_reading(
+        reading_id: int,
+        current_user: User = Depends(allow_readings_manage),
+        db: AsyncSession = Depends(get_db)
+):
+    """Отмена ошибочного утверждения — возврат показания в черновик с
+    восстановлением room.last_* из предыдущего утверждённого. Используется
+    кнопкой «Отменить» в мобильной сверке сразу после ошибочного approve."""
+    return await admin_readings_approve.unapprove_single(db, reading_id, current_user)
+
+
 @router.delete("/api/admin/readings/{reading_id}")
 async def delete_reading_record(
         reading_id: int,

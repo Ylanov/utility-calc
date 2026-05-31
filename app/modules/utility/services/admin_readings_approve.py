@@ -520,6 +520,81 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
     return {"status": "approved", "new_total": final_sum}
 
 
+async def unapprove_single(db: AsyncSession, reading_id: int, current_user=None):
+    """Отмена ошибочного утверждения — возврат показания в черновик.
+
+    Approve_single делает три вещи: ставит is_approved=True + пишет итоги,
+    и ПЕРЕЗАПИСЫВАЕТ room.last_* значениями этого показания (они становятся
+    «предыдущим» для следующего периода). Поэтому простой is_approved=False
+    недостаточно: надо ВОССТАНОВИТЬ room.last_* из предыдущего утверждённого
+    показания комнаты, иначе дельта следующего периода посчитается от
+    «висящих» значений ошибочной подачи.
+
+    Делаем:
+      1) FOR UPDATE на показание (как approve — защита от гонки).
+      2) is_approved=False, обнуляем total_209/205/total_cost (черновик не
+         должен «светить» утверждённую сумму). Сырые hot/cold/electricity
+         сохраняем — админ сможет переутвердить.
+      3) anomaly_flags='ADMIN_UNAPPROVED' — чтобы было видно в реестре, что
+         это возврат, а не свежая подача.
+      4) room.last_* = значения последнего ОСТАВШЕГОСЯ утверждённого
+         показания комнаты (или 0, если других нет).
+
+    Ретроактивный пересчёт НЕ запускается (он и так выключен, финал 29.05).
+    После отмены рекомендуется перепроверить и заново утвердить корректные
+    показания, либо удалить запись.
+    """
+    reading = (await db.execute(
+        select(MeterReading)
+        .options(selectinload(MeterReading.user).selectinload(User.room))
+        .where(MeterReading.id == reading_id)
+        .with_for_update()
+    )).scalars().first()
+
+    if not reading:
+        raise HTTPException(status_code=404, detail="Показания не найдены")
+    if not reading.is_approved:
+        raise HTTPException(status_code=400, detail="Показание не утверждено — отменять нечего")
+
+    room = reading.user.room if reading.user else None
+
+    reading.is_approved = False
+    reading.total_209 = ZERO
+    reading.total_205 = ZERO
+    reading.total_cost = ZERO
+    reading.anomaly_flags = "ADMIN_UNAPPROVED"
+    reading.anomaly_score = 0
+
+    # Восстанавливаем room.last_* из последнего ОСТАВШЕГОСЯ утверждённого
+    # показания комнаты (исключая текущее, которое уже is_approved=False).
+    if room:
+        prev_approved = (await db.execute(
+            select(MeterReading)
+            .where(
+                MeterReading.room_id == room.id,
+                MeterReading.is_approved.is_(True),
+                MeterReading.id != reading.id,
+            )
+            .order_by(MeterReading.created_at.desc())
+            .limit(1)
+        )).scalars().first()
+        room.last_hot_water = prev_approved.hot_water if prev_approved else ZERO
+        room.last_cold_water = prev_approved.cold_water if prev_approved else ZERO
+        room.last_electricity = prev_approved.electricity if prev_approved else ZERO
+        db.add(room)
+
+    uid = current_user.id if current_user else None
+    uname = current_user.username if current_user else "Бухгалтер"
+    await write_audit_log(
+        db, user_id=uid, username=uname,
+        action="unapprove", entity_type="reading", entity_id=reading.id,
+        details={"owner": reading.user.username if reading.user else None},
+    )
+
+    await db.commit()
+    return {"status": "unapproved", "reading_id": reading.id}
+
+
 async def _send_push_background(user_id: int, title: str, body: str):
     """Открывает собственную AsyncSession для фоновой отправки пуша.
 
