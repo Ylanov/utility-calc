@@ -41,6 +41,7 @@ export const HousingModule = {
             btnOpenAdd: document.getElementById('btnOpenAddRoom'),
             btnRefresh: document.getElementById('btnRefreshRooms'),
             btnExport: document.getElementById('btnExportRooms'),
+            btnNormalizeList: document.getElementById('btnNormalizeSerialsList'),
 
             // Новые фильтры
             filterOccupancy: document.getElementById('filterOccupancy'),
@@ -152,6 +153,9 @@ export const HousingModule = {
 
         if (this.dom.btnExport) {
             this.dom.btnExport.addEventListener('click', () => this.exportExcel());
+        }
+        if (this.dom.btnNormalizeList) {
+            this.dom.btnNormalizeList.addEventListener('click', () => this.normalizeSerialsByFilter());
         }
 
         if (this.dom.btnOpenAdd) {
@@ -881,6 +885,43 @@ export const HousingModule = {
             `Изменится комнат: ${preview.changed_rooms} из ${preview.total_rooms}.\n\n` +
             `Примеры:\n${sample}${more}`,
             { confirmText: 'Нормализовать' }
+        )) return;
+        try {
+            const res = await api.post(`/rooms/normalize-serials?${params}&dry_run=false`);
+            toast(`Нормализовано комнат: ${res.changed_rooms}`, 'success');
+            this.table.load();
+        } catch (e) {
+            toast('Ошибка применения: ' + (e.message || ''), 'error');
+        }
+    },
+
+    // Bulk-нормализация серийников ИЗ СПИСКА (кнопка в тулбаре): берёт дом из
+    // фильтра слева — не нужно открывать комнату. Предпросмотр → подтверждение.
+    async normalizeSerialsByFilter() {
+        const dorm = (this.dom.dormFilterSelect?.value || '').trim();
+        if (!dorm) {
+            return toast('Выберите дом/общежитие в фильтре слева, затем нажмите «Норм. серийники».', 'warning');
+        }
+        const params = new URLSearchParams({ dormitory_name: dorm });
+        let preview;
+        try {
+            preview = await api.post(`/rooms/normalize-serials?${params}&dry_run=true`);
+        } catch (e) {
+            return toast('Ошибка предпросмотра: ' + (e.message || ''), 'error');
+        }
+        if (!preview.changed_rooms) {
+            return toast(`По «${dorm}» нечего нормализовать (всё уже в формате).`, 'info');
+        }
+        const sample = (preview.changes || []).slice(0, 5).map(c => {
+            const parts = Object.values(c.fields).map(v => `${v.old} → ${v.new}`);
+            return `  комн. ${c.room_number}: ${parts.join('; ')}`;
+        }).join('\n');
+        const more = preview.changed_rooms > 5 ? `\n  …и ещё ${preview.changed_rooms - 5} комнат` : '';
+        if (!await showConfirm(
+            `Нормализовать серийники по «${dorm}»?\n\n` +
+            `Изменится комнат: ${preview.changed_rooms} из ${preview.total_rooms}.\n\n` +
+            `Примеры:\n${sample}${more}`,
+            { title: 'Нормализация серийников', confirmText: 'Нормализовать' }
         )) return;
         try {
             const res = await api.post(`/rooms/normalize-serials?${params}&dry_run=false`);
