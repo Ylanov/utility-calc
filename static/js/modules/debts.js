@@ -215,7 +215,15 @@ export const DebtsModule = {
             + `<tbody>${rows || '<tr><td colspan="8" class="text-center">по этой фамилии ничего</td></tr>'}</tbody></table></div>`;
     },
 
-    // Сверка ГИС ГМП ↔ долги 1С: один жилец = одна строка (209 и 205 сразу).
+    // Сверка ГИС ГМП ↔ долги 1С: жилец = строка + авто-флаги проблем + фильтры.
+    _RECON_LAB: {
+        ok: ['ок', '#047857'],
+        only_1c: ['нет в ГИС', '#2563eb'],
+        only_gis: ['нет в 1С', '#d97706'],
+        gis_more: ['ГИС > 1С', '#b91c1c'],
+        c1_more: ['1С > ГИС', '#7c3aed'],
+    },
+
     async openGisgmpReconcile() {
         const body = this.dom.gisgmpReconcileBody;
         if (!body) return;
@@ -228,17 +236,35 @@ export const DebtsModule = {
                 body.innerHTML = '<span style="color:#92400e;">Нет находок ГИС ГМП — сначала «Запустить сейчас».</span>';
                 return;
             }
-            this._recon = d;
+            this._recon = d; this._reconFlag = '';
             const fmt = (v) => (Number(v) || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
             const a9 = d.accounts['209'] || {}, a5 = d.accounts['205'] || {};
+            const src = (s) => s ? `${esc(s.file || '?')}${s.at ? ' от ' + new Date(s.at).toLocaleString('ru-RU') : ''}` : '<span style="color:#b91c1c">нет импорта</span>';
+            const LAB = this._RECON_LAB, pr = d.problems || {};
+            let chips = `<button class="action-btn primary-btn" data-rflag="" style="font-size:12px;padding:4px 10px;">Все</button> `;
+            for (const k of ['gis_more', 'c1_more', 'only_1c', 'only_gis']) {
+                const x = pr[k]; if (!x) continue;
+                chips += `<button class="action-btn secondary-btn" data-rflag="${k}" style="font-size:12px;padding:4px 10px;border-left:3px solid ${LAB[k][1]};">`
+                    + `${LAB[k][0]}: ${x.count} (${fmt(x.sum_abs)}₽${x.high ? ', крит ' + x.high : ''})</button> `;
+            }
             body.innerHTML =
-                `<div style="font-size:12px; color:var(--text-secondary); margin-bottom:6px;">`
-                + `Период: <b>${esc(d.period_name || '—')}</b>. 1С-сторона = текущий список долгов (для актуальности загрузи свежий Excel-ОСВ).</div>`
-                + `<div style="font-size:12px; margin-bottom:8px;">`
-                + `<b>209:</b> ГИС ${fmt(a9.sum_gisgmp)} / 1С ${fmt(a9.sum_1c)} (Δ ${fmt(a9.delta_total)}, совпало ${a9.matched || 0}) &nbsp;·&nbsp; `
-                + `<b>205:</b> ГИС ${fmt(a5.sum_gisgmp)} / 1С ${fmt(a5.sum_1c)} (Δ ${fmt(a5.delta_total)}, совпало ${a5.matched || 0})</div>`
-                + `<input type="text" id="reconSearch" placeholder="Фильтр по фамилии…" style="width:260px; padding:6px 8px; margin-bottom:8px;">`
+                `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:6px;">`
+                + `Источник 1С: <b>209</b> — ${src(d.source_1c && d.source_1c['209'])}; <b>205</b> — ${src(d.source_1c && d.source_1c['205'])}. `
+                + `Синк ГИС: ${d.findings_at ? new Date(d.findings_at).toLocaleString('ru-RU') : '—'}.</div>`
+                + `<div style="font-size:12px;margin-bottom:8px;"><b>209:</b> ГИС ${fmt(a9.sum_gisgmp)} / 1С ${fmt(a9.sum_1c)} (Δ ${fmt(a9.delta_total)}) &nbsp;·&nbsp; `
+                + `<b>205:</b> ГИС ${fmt(a5.sum_gisgmp)} / 1С ${fmt(a5.sum_1c)} (Δ ${fmt(a5.delta_total)}) &nbsp;·&nbsp; совпало: ${d.matched_count || 0}</div>`
+                + `<div style="margin-bottom:8px;display:flex;flex-wrap:wrap;gap:6px;">${chips}</div>`
+                + `<input type="text" id="reconSearch" placeholder="Фильтр по фамилии…" style="width:240px;padding:6px 8px;margin-bottom:8px;">`
                 + `<div id="reconResult"></div>`;
+            body.querySelectorAll('[data-rflag]').forEach(b => b.addEventListener('click', () => {
+                this._reconFlag = b.getAttribute('data-rflag');
+                body.querySelectorAll('[data-rflag]').forEach(x => {
+                    const on = x.getAttribute('data-rflag') === this._reconFlag;
+                    x.classList.toggle('primary-btn', on);
+                    x.classList.toggle('secondary-btn', !on);
+                });
+                this.renderGisgmpReconcile();
+            }));
             document.getElementById('reconSearch')?.addEventListener('input', () => this.renderGisgmpReconcile());
             this.renderGisgmpReconcile();
         } catch (e) {
@@ -247,10 +273,11 @@ export const DebtsModule = {
     },
 
     renderGisgmpReconcile() {
-        const d = this._recon;
-        const res = document.getElementById('reconResult');
+        const d = this._recon, res = document.getElementById('reconResult');
         if (!d || !res) return;
         const q = (document.getElementById('reconSearch')?.value || '').trim().toLowerCase();
+        const flt = this._reconFlag || '';
+        const LAB = this._RECON_LAB;
         const fmt = (v) => { const n = Number(v) || 0; return n ? n.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'; };
         const dcell = (v) => {
             const n = Number(v) || 0;
@@ -259,18 +286,21 @@ export const DebtsModule = {
             return `<td class="text-right" style="color:${c}">${n > 0 ? '+' : ''}${fmt(n)}</td>`;
         };
         let list = d.residents || [];
+        if (flt) list = list.filter(r => r.flag === flt);
         if (q) list = list.filter(r => (r.username || '').toLowerCase().includes(q));
-        const rows = list.map(r => `<tr><td>${esc(r.username)}</td>`
-            + `<td class="text-right">${fmt(r.g209)}</td><td class="text-right">${fmt(r.c209)}</td>${dcell(r.d209)}`
-            + `<td class="text-right">${fmt(r.g205)}</td><td class="text-right">${fmt(r.c205)}</td>${dcell(r.d205)}`
-            + `<td class="text-right"><b>${fmt(r.delta)}</b></td></tr>`).join('');
-        res.innerHTML = `<div style="font-size:12px; color:var(--text-secondary); margin-bottom:4px;">`
-            + `Жильцов: ${list.length}. Сортировка по |разнице|. `
-            + `<span style="color:#b91c1c">красный Δ</span> = ГИС больше, <span style="color:#2563eb">синий</span> = 1С больше.</div>`
+        const rows = list.map(r => {
+            const L = LAB[r.flag] || ['', '#666'];
+            return `<tr><td>${esc(r.username)}</td>`
+                + `<td class="text-right">${fmt(r.g209)}</td><td class="text-right">${fmt(r.c209)}</td>${dcell(r.d209)}`
+                + `<td class="text-right">${fmt(r.g205)}</td><td class="text-right">${fmt(r.c205)}</td>${dcell(r.d205)}`
+                + `<td class="text-right"><b>${fmt(r.delta)}</b></td>`
+                + `<td><span style="color:${L[1]};font-size:11px;">${L[0]}${r.severity === 'high' ? ' ⚠' : ''}</span></td></tr>`;
+        }).join('');
+        res.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;">Показано: ${list.length}. ⚠ = крупное расхождение (≥20k). Красный Δ = ГИС больше, синий = 1С больше.</div>`
             + `<div class="table-responsive"><table class="sticky-header-table" style="font-size:12px;">`
             + `<thead><tr><th>Жилец</th><th class="text-right">209 ГИС</th><th class="text-right">209 1С</th><th class="text-right">Δ209</th>`
-            + `<th class="text-right">205 ГИС</th><th class="text-right">205 1С</th><th class="text-right">Δ205</th><th class="text-right">Σ Δ</th></tr></thead>`
-            + `<tbody>${rows || '<tr><td colspan="8" class="text-center">нет данных</td></tr>'}</tbody></table></div>`;
+            + `<th class="text-right">205 ГИС</th><th class="text-right">205 1С</th><th class="text-right">Δ205</th><th class="text-right">Σ Δ</th><th>Флаг</th></tr></thead>`
+            + `<tbody>${rows || '<tr><td colspan="9" class="text-center">нет</td></tr>'}</tbody></table></div>`;
     },
 
     cacheDOM() {

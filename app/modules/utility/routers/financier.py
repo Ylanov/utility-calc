@@ -763,21 +763,38 @@ async def gisgmp_reconcile(
                 "username": row.get("matched_username") or row.get("fio"),
             }
 
-    period = await _resolve_view_period(db, period_id)
-    pid = period.id if period else None
+    # 1С-сторона = ПОСЛЕДНИЙ Excel-импорт по каждому счёту (applied_state),
+    # а не живой MeterReading — так видно КАКОЙ файл сверяем и нет примеси от
+    # старого ГИС-прогона (он писал в показания на старом коде).
+    from app.modules.utility.services.gisgmp_import import GISGMP_SOURCE_LABEL
+
+    async def _last_excel_imp(acc):
+        return (await db.execute(
+            select(DebtImportLog).where(
+                DebtImportLog.account_type == acc,
+                DebtImportLog.status == "completed",
+                DebtImportLog.file_name != GISGMP_SOURCE_LABEL,
+            ).order_by(desc(DebtImportLog.started_at)).limit(1)
+        )).scalars().first()
+
     mr: dict[int, dict] = {}
-    if pid:
-        rows = (await db.execute(
-            select(
-                MeterReading.user_id,
-                func.coalesce(func.sum(MeterReading.debt_209), 0),
-                func.coalesce(func.sum(MeterReading.debt_205), 0),
-            ).where(MeterReading.period_id == pid).group_by(MeterReading.user_id)
-        )).all()
-        for uid, d209, d205 in rows:
-            if uid is None:
-                continue
-            mr[int(uid)] = {"209": Decimal(str(d209 or 0)), "205": Decimal(str(d205 or 0))}
+    source_1c = {}
+    for acc in ("209", "205"):
+        log = await _last_excel_imp(acc)
+        source_1c[acc] = ({"file": log.file_name,
+                           "at": log.started_at.isoformat() if log.started_at else None,
+                           "log_id": log.id} if log else None)
+        if log and log.applied_state:
+            key = f"debt_{acc}"
+            for uid_s, st in log.applied_state.items():
+                if not str(uid_s).isdigit():
+                    continue
+                try:
+                    val = Decimal(str(st.get(key) or 0))
+                except Exception:
+                    val = Decimal("0")
+                if val:
+                    mr.setdefault(int(uid_s), {})[acc] = val
 
     ids = set(gis) | set(mr)
     unames: dict[int, str] = {}
@@ -788,11 +805,14 @@ async def gisgmp_reconcile(
             unames[uid] = uname
 
     eps = Decimal("0.01")
-    out = {"period_id": pid, "period_name": period.name if period else None,
-           "has_findings": bool(findings), "accounts": {}}
+    out = {
+        "has_findings": bool(findings),
+        "findings_at": (findings or {}).get("synced_at"),
+        "source_1c": source_1c,
+        "accounts": {},
+    }
     for acc in ("209", "205"):
         matched = 0
-        drift, gis_only, c1_only = [], [], []
         sum_gis = sum_1c = Decimal("0")
         for uid in ids:
             g = gis.get(uid, {}).get(acc, Decimal("0"))
@@ -801,32 +821,28 @@ async def gisgmp_reconcile(
                 continue
             sum_gis += g
             sum_1c += m
-            name = unames.get(uid) or gis.get(uid, {}).get("username") or str(uid)
-            e = {"user_id": uid, "username": name,
-                 "gisgmp": float(g), "debt_1c": float(m), "delta": float(g - m)}
             if abs(g - m) <= eps:
                 matched += 1
-            elif m == 0:
-                gis_only.append(e)
-            elif g == 0:
-                c1_only.append(e)
-            else:
-                drift.append(e)
-        drift.sort(key=lambda x: -abs(x["delta"]))
-        gis_only.sort(key=lambda x: -x["gisgmp"])
-        c1_only.sort(key=lambda x: -x["debt_1c"])
         out["accounts"][acc] = {
             "matched": matched,
             "sum_gisgmp": float(sum_gis),
             "sum_1c": float(sum_1c),
             "delta_total": float(sum_gis - sum_1c),
-            "drift": drift[:300],
-            "gisgmp_only": gis_only[:300],
-            "c1_only": c1_only[:300],
         }
 
-    # Единый разрез по жильцу: 209 и 205 в одной строке (компактная таблица в UI).
+    # Единый разрез по жильцу + авто-флаги (анализатор сам сигналит проблемы).
+    def _flag(sg, sc, d):
+        if abs(d) <= eps:
+            return "ok"
+        if sc == 0:
+            return "only_gis"      # есть в ГИС, в 1С долга нет
+        if sg == 0:
+            return "only_1c"       # есть в 1С, ГИС не нашёл
+        return "gis_more" if d > 0 else "c1_more"
+
     residents = []
+    problems: dict[str, dict] = {}
+    matched_total = 0
     for uid in ids:
         g9 = gis.get(uid, {}).get("209", Decimal("0"))
         c9 = mr.get(uid, {}).get("209", Decimal("0"))
@@ -836,14 +852,28 @@ async def gisgmp_reconcile(
             continue
         name = unames.get(uid) or gis.get(uid, {}).get("username") or str(uid)
         sg, sc = g9 + g5, c9 + c5
+        d = sg - sc
+        flag = _flag(sg, sc, d)
+        sev = "high" if abs(d) >= 20000 else ("mid" if abs(d) >= 5000 else "low")
+        if flag == "ok":
+            matched_total += 1
+        else:
+            pr = problems.setdefault(flag, {"count": 0, "sum_abs": 0.0, "high": 0})
+            pr["count"] += 1
+            pr["sum_abs"] += float(abs(d))
+            if sev == "high":
+                pr["high"] += 1
         residents.append({
             "user_id": uid, "username": name,
             "g209": float(g9), "c209": float(c9), "d209": float(g9 - c9),
             "g205": float(g5), "c205": float(c5), "d205": float(g5 - c5),
-            "sum_gis": float(sg), "sum_1c": float(sc), "delta": float(sg - sc),
+            "sum_gis": float(sg), "sum_1c": float(sc), "delta": float(d),
+            "flag": flag, "severity": sev,
         })
     residents.sort(key=lambda r: -abs(r["delta"]))
     out["residents"] = residents[:1000]
+    out["problems"] = problems
+    out["matched_count"] = matched_total
     return out
 
 
