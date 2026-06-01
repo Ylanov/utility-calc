@@ -145,10 +145,22 @@ def scrape(s, months_back, since):
 
 
 def push(charges):
-    r = requests.post(f"{JKH_URL}/api/financier/gisgmp/sync",
-                      headers=_auth(), json={"charges": charges}, timeout=180)
-    r.raise_for_status()
-    return r.json()
+    # asy-tk.ru флапает (502) — ретраим большой POST, чтобы не потерять сбор.
+    last = ""
+    for attempt in range(4):
+        try:
+            r = requests.post(f"{JKH_URL}/api/financier/gisgmp/sync",
+                              headers=_auth(), json={"charges": charges}, timeout=300)
+            if r.status_code >= 500:
+                last = f"HTTP {r.status_code}"
+                time.sleep(5 * (attempt + 1))
+                continue
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            last = str(e)
+            time.sleep(5 * (attempt + 1))
+    raise RuntimeError(f"отправка в ЖКХ не удалась после ретраев: {last}")
 
 
 def get_config():
