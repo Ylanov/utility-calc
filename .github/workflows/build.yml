@@ -371,23 +371,36 @@ jobs:
           docker cp utility_calc_web_jkh:/app/static/. /opt/utility_calc/static/
           echo "Static sync done."
 
-      # 🔥 КЛЮЧЕВОЙ ФИКС (против 502)
-      - name: Restart nginx after backend startup
+      # 🔥 КЛЮЧЕВОЙ ФИКС (против 502): при пересоздании web_jkh получает НОВЫЙ IP в
+      # docker-сети, а nginx держит старый (upstream `server web_jkh` резолвится на
+      # старте/релоаде) → 502, пока не перерезолвит. РАНЬШЕ чинили тяжёлым
+      # force-recreate контейнера + слепым sleep 15 (~2 мин на шаг). Теперь легко:
+      #   1) ждём ГОТОВНОСТИ бэкенда опросом (а не вслепую) — чтобы nginx переключился
+      #      сразу на живой backend;
+      #   2) graceful `nginx -s reload`: перечитывает конфиг, ПЕРЕРЕЗОЛВИТ upstream и
+      #      сбрасывает старые keepalive — ~1с, без пересоздания и без простоя (старые
+      #      воркеры дорабатывают). Фолбэк на recreate, если reload не прошёл.
+      - name: Reload nginx after backend ready
         working-directory: /opt/utility_calc
         run: |
-          echo "Waiting for backend to stabilize..."
-          sleep 15
-          # Очищаем nginx proxy-кеш на случай если он держит старые версии
-          # (не критично — контейнер мог быть недоступен).
+          echo "Ждём готовности бэкенда web_jkh…"
+          for i in $(seq 1 45); do
+            if docker exec utility_calc_web_jkh python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" >/dev/null 2>&1; then
+              echo "[backend] готов на попытке $i"
+              break
+            fi
+            sleep 2
+          done
           docker exec utility_nginx find /var/cache/nginx -type f -delete 2>/dev/null || true
-          # force-recreate надёжнее restart: пересоздаёт контейнер, а не пытается
-          # «оживить» возможно зависший (инцидент 31.05.2026 — restart упал с
-          # «did not receive an exit event»). Фолбэк: снести и поднять заново.
-          docker compose up -d --force-recreate --no-deps nginx || {
-            echo "[nginx] recreate failed — force remove + up"
-            docker rm -f utility_nginx || true
-            docker compose up -d --no-deps nginx
-          }
+          if docker exec utility_nginx nginx -s reload 2>/dev/null; then
+            echo "[nginx] reload OK (upstream перерезолвлен)"
+          else
+            echo "[nginx] reload не удался — фолбэк на пересоздание"
+            docker compose up -d --force-recreate --no-deps nginx || {
+              docker rm -f utility_nginx || true
+              docker compose up -d --no-deps nginx
+            }
+          fi
 
       - name: Health check
         working-directory: /opt/utility_calc
