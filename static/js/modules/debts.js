@@ -215,7 +215,7 @@ export const DebtsModule = {
             + `<tbody>${rows || '<tr><td colspan="8" class="text-center">по этой фамилии ничего</td></tr>'}</tbody></table></div>`;
     },
 
-    // Сверка ГИС ГМП ↔ долги 1С (Excel) по счетам 209/205.
+    // Сверка ГИС ГМП ↔ долги 1С: один жилец = одна строка (209 и 205 сразу).
     async openGisgmpReconcile() {
         const body = this.dom.gisgmpReconcileBody;
         if (!body) return;
@@ -225,44 +225,52 @@ export const DebtsModule = {
         try {
             const d = await api.get('/financier/gisgmp/reconcile');
             if (!d.has_findings) {
-                body.innerHTML = '<span style="color:#92400e;">Нет находок ГИС ГМП — сначала «Запустить сейчас» (раздельный режим).</span>';
+                body.innerHTML = '<span style="color:#92400e;">Нет находок ГИС ГМП — сначала «Запустить сейчас».</span>';
                 return;
             }
+            this._recon = d;
             const fmt = (v) => (Number(v) || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-            const sign = (v) => ((Number(v) || 0) > 0 ? '+' : '');
-            const col = (v) => ((Number(v) || 0) > 0 ? '#b91c1c' : '#047857');
-            const driftTable = (arr) => `<div class="table-responsive"><table class="sticky-header-table" style="font-size:12px;">`
-                + `<thead><tr><th>Жилец</th><th class="text-right">ГИС ГМП</th><th class="text-right">1С (Excel)</th><th class="text-right">Δ</th></tr></thead><tbody>`
-                + arr.map(e => `<tr><td>${esc(e.username)}</td><td class="text-right">${fmt(e.gisgmp)}</td>`
-                    + `<td class="text-right">${fmt(e.debt_1c)}</td>`
-                    + `<td class="text-right" style="color:${col(e.delta)}">${sign(e.delta)}${fmt(e.delta)}</td></tr>`).join('')
-                + `</tbody></table></div>`;
-            const oneCol = (arr, key, head) => `<div class="table-responsive"><table class="sticky-header-table" style="font-size:12px;">`
-                + `<thead><tr><th>Жилец</th><th class="text-right">${head}</th></tr></thead><tbody>`
-                + arr.map(e => `<tr><td>${esc(e.username)}</td><td class="text-right">${fmt(e[key])}</td></tr>`).join('')
-                + `</tbody></table></div>`;
-            const block = (acc, label) => {
-                const a = d.accounts[acc] || {};
-                let h = `<div style="margin-bottom:16px;"><h4 style="margin:6px 0;">Счёт ${acc} (${label})</h4>`
-                    + `<div style="font-size:12px; color:var(--text-secondary); margin-bottom:6px;">`
-                    + `ГИС ГМП: <b>${fmt(a.sum_gisgmp)}</b> · 1С: <b>${fmt(a.sum_1c)}</b> · `
-                    + `разница: <b style="color:${col(a.delta_total)}">${sign(a.delta_total)}${fmt(a.delta_total)}</b> · совпало: ${a.matched || 0}</div>`;
-                h += (a.drift && a.drift.length)
-                    ? `<div style="font-size:12px; margin:4px 0;">🔸 Расхождения (${a.drift.length}):</div>${driftTable(a.drift)}`
-                    : '<div style="font-size:12px; color:#047857;">✅ расхождений нет</div>';
-                if (a.gisgmp_only && a.gisgmp_only.length)
-                    h += `<div style="font-size:12px; margin:6px 0 2px;">🔵 Только в ГИС ГМП (${a.gisgmp_only.length}) — в 1С долга нет:</div>${oneCol(a.gisgmp_only, 'gisgmp', 'ГИС ГМП')}`;
-                if (a.c1_only && a.c1_only.length)
-                    h += `<div style="font-size:12px; margin:6px 0 2px;">🟠 Только в 1С (${a.c1_only.length}) — ГИС ГМП не нашёл:</div>${oneCol(a.c1_only, 'debt_1c', '1С')}`;
-                return h + '</div>';
-            };
-            body.innerHTML = `<div style="font-size:12px; color:var(--text-secondary); margin-bottom:8px;">`
-                + `Период: <b>${esc(d.period_name || '—')}</b>. Сверяем находки ГИС ГМП с долгами в показаниях (Excel-ОСВ). `
-                + `Окно ГИС влияет на полноту — для честной сверки ставь окно побольше.</div>`
-                + block('209', 'коммуслуги') + block('205', 'наём');
+            const a9 = d.accounts['209'] || {}, a5 = d.accounts['205'] || {};
+            body.innerHTML =
+                `<div style="font-size:12px; color:var(--text-secondary); margin-bottom:6px;">`
+                + `Период: <b>${esc(d.period_name || '—')}</b>. 1С-сторона = текущий список долгов (для актуальности загрузи свежий Excel-ОСВ).</div>`
+                + `<div style="font-size:12px; margin-bottom:8px;">`
+                + `<b>209:</b> ГИС ${fmt(a9.sum_gisgmp)} / 1С ${fmt(a9.sum_1c)} (Δ ${fmt(a9.delta_total)}, совпало ${a9.matched || 0}) &nbsp;·&nbsp; `
+                + `<b>205:</b> ГИС ${fmt(a5.sum_gisgmp)} / 1С ${fmt(a5.sum_1c)} (Δ ${fmt(a5.delta_total)}, совпало ${a5.matched || 0})</div>`
+                + `<input type="text" id="reconSearch" placeholder="Фильтр по фамилии…" style="width:260px; padding:6px 8px; margin-bottom:8px;">`
+                + `<div id="reconResult"></div>`;
+            document.getElementById('reconSearch')?.addEventListener('input', () => this.renderGisgmpReconcile());
+            this.renderGisgmpReconcile();
         } catch (e) {
             body.innerHTML = 'Ошибка сверки: ' + esc(e?.message || String(e));
         }
+    },
+
+    renderGisgmpReconcile() {
+        const d = this._recon;
+        const res = document.getElementById('reconResult');
+        if (!d || !res) return;
+        const q = (document.getElementById('reconSearch')?.value || '').trim().toLowerCase();
+        const fmt = (v) => { const n = Number(v) || 0; return n ? n.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'; };
+        const dcell = (v) => {
+            const n = Number(v) || 0;
+            if (Math.abs(n) < 0.01) return '<td class="text-right" style="color:#047857">0</td>';
+            const c = n > 0 ? '#b91c1c' : '#2563eb';
+            return `<td class="text-right" style="color:${c}">${n > 0 ? '+' : ''}${fmt(n)}</td>`;
+        };
+        let list = d.residents || [];
+        if (q) list = list.filter(r => (r.username || '').toLowerCase().includes(q));
+        const rows = list.map(r => `<tr><td>${esc(r.username)}</td>`
+            + `<td class="text-right">${fmt(r.g209)}</td><td class="text-right">${fmt(r.c209)}</td>${dcell(r.d209)}`
+            + `<td class="text-right">${fmt(r.g205)}</td><td class="text-right">${fmt(r.c205)}</td>${dcell(r.d205)}`
+            + `<td class="text-right"><b>${fmt(r.delta)}</b></td></tr>`).join('');
+        res.innerHTML = `<div style="font-size:12px; color:var(--text-secondary); margin-bottom:4px;">`
+            + `Жильцов: ${list.length}. Сортировка по |разнице|. `
+            + `<span style="color:#b91c1c">красный Δ</span> = ГИС больше, <span style="color:#2563eb">синий</span> = 1С больше.</div>`
+            + `<div class="table-responsive"><table class="sticky-header-table" style="font-size:12px;">`
+            + `<thead><tr><th>Жилец</th><th class="text-right">209 ГИС</th><th class="text-right">209 1С</th><th class="text-right">Δ209</th>`
+            + `<th class="text-right">205 ГИС</th><th class="text-right">205 1С</th><th class="text-right">Δ205</th><th class="text-right">Σ Δ</th></tr></thead>`
+            + `<tbody>${rows || '<tr><td colspan="8" class="text-center">нет данных</td></tr>'}</tbody></table></div>`;
     },
 
     cacheDOM() {

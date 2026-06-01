@@ -824,6 +824,26 @@ async def gisgmp_reconcile(
             "gisgmp_only": gis_only[:300],
             "c1_only": c1_only[:300],
         }
+
+    # Единый разрез по жильцу: 209 и 205 в одной строке (компактная таблица в UI).
+    residents = []
+    for uid in ids:
+        g9 = gis.get(uid, {}).get("209", Decimal("0"))
+        c9 = mr.get(uid, {}).get("209", Decimal("0"))
+        g5 = gis.get(uid, {}).get("205", Decimal("0"))
+        c5 = mr.get(uid, {}).get("205", Decimal("0"))
+        if g9 == 0 and c9 == 0 and g5 == 0 and c5 == 0:
+            continue
+        name = unames.get(uid) or gis.get(uid, {}).get("username") or str(uid)
+        sg, sc = g9 + g5, c9 + c5
+        residents.append({
+            "user_id": uid, "username": name,
+            "g209": float(g9), "c209": float(c9), "d209": float(g9 - c9),
+            "g205": float(g5), "c205": float(c5), "d205": float(g5 - c5),
+            "sum_gis": float(sg), "sum_1c": float(sc), "delta": float(sg - sc),
+        })
+    residents.sort(key=lambda r: -abs(r["delta"]))
+    out["residents"] = residents[:1000]
     return out
 
 
