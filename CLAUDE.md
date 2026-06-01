@@ -37,5 +37,25 @@
 ## Коммиты
 Русское описание, в конце: `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>`. Коммит в main напрямую (Ylanov не использует PR). py_compile + ruff перед коммитом backend; `node --check` (как .mjs) для JS-модулей.
 
+## ГИС ГМП → долги (релей + находки)
+Авто-подгрузка долгов жильцов из реестра **ГИС ГМП** (`gisgmp.cgu.mchs.ru`, корп-сеть
+МЧС, OAuth2 через `passport.cgu.mchs.ru`, логин/пароль — не ЭЦП). Реестр виден ТОЛЬКО
+из корп-сети, поэтому его читает **серверный релей-демон на ВМ PODS2** (НЕ на этом
+сервере!) — код в `relay/gisgmp/` (`relay.py` — pull: раз в ~2 мин опрашивает ЖКХ,
+по команде логинится, постранично парсит «Начисления» за окно последних N мес,
+шлёт в ЖКХ). Бэкенд приёма — `routers/financier.py`, эндпоинты `/api/financier/gisgmp/*`
+(auth статическим `GISGMP_SYNC_TOKEN` из .env): `sync` (приём начислений),
+`relay-config`/`relay-report` (pull-управление релеем), `run-now`, `findings`, `status`.
+Сервис — `services/gisgmp_import.py`. UI — карточка «Авто-подгрузка из ГИС ГМП» во
+вкладке «Долги 1С» (вкл/выкл, окно мес, интервал, «Запустить сейчас», «Показать найденное»).
+Конфиг/статус/находки релея хранятся в `SystemSetting` (`gisgmp_relay`, `gisgmp_findings`).
+**Сейчас РАЗДЕЛЬНЫЙ режим (отладка):** находки НЕ пишутся в долги показаний, лежат
+отдельно (`gisgmp_findings`) и показываются для сверки. Долг = «Не сквитировано» И
+не «аннулирование»; «наем»→205, «комуслуги»→209. Окно мало для хронических должников
+(старые неоплаченные не попадут) — увеличивать в панели.
+Диагностика по человеку: `relay/gisgmp/check_payer.py` на ВМ PODS2
+(`sudo python3 /opt/gisgmp-relay/check_payer.py "Фамилия"`) — все начисления + как
+сложился долг. Реестр недоступен из интернета и из CI.
+
 ## Где детальная память
 Подробные заметки по фичам/багам — в auto-memory сессий (`~/.claude/.../memory/*.md`): `room_static_architecture`, `debts_per_user`, `meter_reading_validation`, `singles_apartment`, `tech_gotchas_devops/python`, `deploy_environment`, `llm_pilot_gigachat`. Этот CLAUDE.md — точка входа, там — детали.
