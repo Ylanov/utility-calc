@@ -95,6 +95,10 @@ COPY --chown=appuser:appuser \
 # /api/financier/gisgmp/bridge.zip (кнопка «Скачать расширение» в «Долги 1С»).
 COPY --chown=appuser:appuser extension/ extension/
 
+# Серверный релей ГИС ГМП — чтобы ВМ могла самообновляться через
+# /api/financier/gisgmp/relay.py (свежий код одной командой).
+COPY --chown=appuser:appuser relay/ relay/
+
 # Копируем наш entrypoint-скрипт и делаем его исполняемым.
 COPY --chown=appuser:appuser entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

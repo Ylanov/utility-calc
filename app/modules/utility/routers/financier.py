@@ -827,6 +827,21 @@ async def gisgmp_reconcile(
     return out
 
 
+@router.get("/gisgmp/relay.py", summary="Отдать актуальный relay.py (самообновление релея на ВМ)")
+async def gisgmp_relay_py(authorization: Optional[str] = Header(None)):
+    """Релей на ВМ берёт свежий код одной командой (token-auth), чтобы не
+    вставлять его вручную при каждом апгрейде."""
+    _check_gisgmp_token(authorization)
+    p = Path(__file__).resolve().parents[4] / "relay" / "gisgmp" / "relay.py"
+    if not p.is_file():
+        raise HTTPException(404, "relay.py не найден в образе")
+    return Response(
+        content=p.read_text(encoding="utf-8"),
+        media_type="text/x-python; charset=utf-8",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 # Каталог расширения в репозитории. financier.py лежит в
 # app/modules/utility/routers/ → parents[4] = корень репо (в Docker это /app,
 # куда Dockerfile COPY кладёт extension/). Внутри — папка gisgmp-bridge.
