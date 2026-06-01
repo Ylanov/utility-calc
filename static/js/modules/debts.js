@@ -101,6 +101,16 @@ export const DebtsModule = {
                     + `сопоставлено <b>${f.matched ?? 0}</b>, не найдено <b>${f.not_found ?? 0}</b>`
                     + (f.synced_at ? ` (${new Date(f.synced_at).toLocaleString('ru-RU')})` : ''));
             }
+            if (r.passport_username) {
+                parts.push(`Учётка реестра: <b>${esc(r.passport_username)}</b>`);
+                if (this.dom.relayUser && !this.dom.relayUser.value) this.dom.relayUser.value = r.passport_username;
+            }
+            const pend = r.pending || {};
+            const pl = [];
+            if (pend.self_update) pl.push('обновление');
+            if (pend.restart) pl.push('перезапуск');
+            if (pend.credentials) pl.push('смена учётки');
+            if (pl.length) parts.push(`<span style="color:#d97706;">⏳ В очереди для релея: ${pl.join(', ')} — применится на ближайшем опросе (~2 мин)</span>`);
             box.innerHTML = parts.join('<br>');
         } catch (e) {
             box.textContent = 'Не удалось загрузить статус ГИС ГМП.';
@@ -225,6 +235,38 @@ export const DebtsModule = {
         } catch (e) {
             toast('Ошибка: ' + (e?.message || e), 'error');
         }
+    },
+
+    // Управление демоном релея из UI (применяется на ближайшем опросе ~2 мин).
+    async relayUpdate() {
+        if (!await showConfirm('Обновить код релея до последней версии и перезапустить его? Релей подтянет свежий relay.py с сервера на ближайшем опросе (~2 мин).')) return;
+        try {
+            await api.post('/financier/gisgmp/relay-update', {});
+            toast('Команда обновления поставлена. Релей применит и перезапустится (~2 мин).', 'info');
+            this.loadGisgmpStatus();
+        } catch (e) { toast('Ошибка: ' + (e?.message || e), 'error'); }
+    },
+
+    async relayRestart() {
+        if (!await showConfirm('Перезапустить демон релея?')) return;
+        try {
+            await api.post('/financier/gisgmp/relay-restart', {});
+            toast('Команда перезапуска поставлена (~2 мин).', 'info');
+            this.loadGisgmpStatus();
+        } catch (e) { toast('Ошибка: ' + (e?.message || e), 'error'); }
+    },
+
+    async relaySaveCreds() {
+        const u = (this.dom.relayUser?.value || '').trim();
+        const p = this.dom.relayPass?.value || '';
+        if (!u || !p) { toast('Укажи логин и пароль', 'warning'); return; }
+        if (!await showConfirm('Сменить учётку входа в реестр (passport) для релея? Релей запишет её в свой relay.env и перезапустится (~2 мин).')) return;
+        try {
+            await api.post('/financier/gisgmp/relay-credentials', { username: u, password: p });
+            if (this.dom.relayPass) this.dom.relayPass.value = '';
+            toast('Учётка сохранена (зашифровано). Релей применит на ближайшем опросе (~2 мин).', 'info');
+            this.loadGisgmpStatus();
+        } catch (e) { toast('Ошибка: ' + (e?.message || e), 'error'); }
     },
 
     // Сверка ГИС ГМП ↔ долги 1С: жилец = строка + авто-флаги проблем + фильтры.
@@ -412,6 +454,11 @@ td.r,th.r{text-align:right;white-space:nowrap;} tr:nth-child(even){background:#f
             btnGisgmpReconcile: document.getElementById('btnGisgmpReconcile'),
             gisgmpReconcileBody: document.getElementById('gisgmpReconcileBody'),
             btnGisgmpRecheck: document.getElementById('btnGisgmpRecheck'),
+            btnRelayUpdate: document.getElementById('btnRelayUpdate'),
+            btnRelayRestart: document.getElementById('btnRelayRestart'),
+            btnRelayCreds: document.getElementById('btnRelayCreds'),
+            relayUser: document.getElementById('relayUser'),
+            relayPass: document.getElementById('relayPass'),
             // Модалка корректировки
             adjustModal: document.getElementById('debtAdjustModal'),
             adjustForm: document.getElementById('debtAdjustForm'),
@@ -457,6 +504,9 @@ td.r,th.r{text-align:right;white-space:nowrap;} tr:nth-child(even){background:#f
         this.dom.btnGisgmpFindings?.addEventListener('click', () => this.openGisgmpFindings());
         this.dom.btnGisgmpReconcile?.addEventListener('click', () => this.openGisgmpReconcile());
         this.dom.btnGisgmpRecheck?.addEventListener('click', () => this.recheckGisgmp());
+        this.dom.btnRelayUpdate?.addEventListener('click', () => this.relayUpdate());
+        this.dom.btnRelayRestart?.addEventListener('click', () => this.relayRestart());
+        this.dom.btnRelayCreds?.addEventListener('click', () => this.relaySaveCreds());
         this.dom.btnUpload?.addEventListener('click', () => this.handleUpload());
 
         // Авто-предпросмотр при выборе файла (Bug T)

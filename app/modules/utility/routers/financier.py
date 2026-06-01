@@ -22,6 +22,7 @@ from app.core.database import get_db
 # Добавлен импорт модели Room
 from app.modules.utility.models import User, MeterReading, BillingPeriod, Room, DebtImportLog, SystemSetting
 from app.core.dependencies import get_current_user
+from app.core.auth import fernet
 from app.modules.utility.schemas import PaginatedResponse, UserDebtResponse
 from app.modules.utility.tasks import import_debts_task
 
@@ -536,6 +537,12 @@ async def gisgmp_status(
             "last_status": relay.get("last_status"),
             "last_message": relay.get("last_message"),
             "last_count": relay.get("last_count", 0),
+            "passport_username": relay.get("passport_username"),
+            "pending": {
+                "self_update": bool(relay.get("self_update")),
+                "restart": bool(relay.get("restart")),
+                "credentials": bool(relay.get("creds_pending")),
+            },
         },
         # Сводка последних находок (ГИС ГМП пока хранится ОТДЕЛЬНО от долгов).
         "findings": fsum,
@@ -561,6 +568,12 @@ _GISGMP_RELAY_DEFAULTS = {
     "last_updated": 0,
     "last_created": 0,
     "last_not_found": 0,
+    # Управление демоном из UI (релей применяет на опросе, claim-на-выдаче):
+    "self_update": False,            # подтянуть свежий relay.py и перезапуститься
+    "restart": False,                # просто перезапуститься
+    "passport_username": None,       # логин входа в реестр (показываем в статусе)
+    "passport_password_enc": None,   # пароль, Fernet-шифр (в статус НЕ отдаём)
+    "creds_pending": False,          # есть неотданная смена учётки
 }
 
 
@@ -665,6 +678,31 @@ async def gisgmp_relay_config(
             rc_row.value = json.dumps({}, ensure_ascii=False)
             await db.commit()
 
+    # Команды управления демоном из UI: отдаём и сразу гасим (claim-на-выдаче),
+    # чтобы выполнились РОВНО один раз. Релей применит и перезапустится (execv).
+    control = {}
+    ctrl_changed = False
+    if cfg.get("self_update"):
+        control["self_update"] = True
+        cfg["self_update"] = False
+        ctrl_changed = True
+    if cfg.get("restart"):
+        control["restart"] = True
+        cfg["restart"] = False
+        ctrl_changed = True
+    if cfg.get("creds_pending") and cfg.get("passport_username") and cfg.get("passport_password_enc"):
+        try:
+            control["credentials"] = {
+                "username": cfg["passport_username"],
+                "password": fernet.decrypt(cfg["passport_password_enc"].encode()).decode(),
+            }
+            cfg["creds_pending"] = False
+            ctrl_changed = True
+        except Exception:
+            pass
+    if ctrl_changed:
+        await _save_relay_cfg(db, cfg)
+
     return {
         "enabled": cfg.get("enabled", True),
         "months_back": cfg.get("months_back", 36),
@@ -672,6 +710,7 @@ async def gisgmp_relay_config(
         "reason": reason,
         "since": since,
         "recheck": recheck,
+        "control": control or None,
     }
 
 
@@ -735,6 +774,58 @@ async def gisgmp_run_now(
     _require_finance(current_user)
     cfg = await _load_relay_cfg(db)
     cfg["run_now"] = True
+    await _save_relay_cfg(db, cfg)
+    return {"ok": True, "queued": True}
+
+
+@router.post("/gisgmp/relay-update", summary="Админ: релей подтянет свежий код и перезапустится")
+async def gisgmp_relay_update(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_finance(current_user)
+    cfg = await _load_relay_cfg(db)
+    cfg["self_update"] = True
+    await _save_relay_cfg(db, cfg)
+    return {"ok": True, "queued": True}
+
+
+@router.post("/gisgmp/relay-restart", summary="Админ: перезапустить демон релея")
+async def gisgmp_relay_restart(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_finance(current_user)
+    cfg = await _load_relay_cfg(db)
+    cfg["restart"] = True
+    await _save_relay_cfg(db, cfg)
+    return {"ok": True, "queued": True}
+
+
+class GisgmpRelayCredsIn(BaseModel):
+    username: str
+    password: str
+
+
+@router.post("/gisgmp/relay-credentials", summary="Админ: сменить логин/пароль входа в реестр")
+async def gisgmp_relay_credentials(
+    payload: GisgmpRelayCredsIn,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Логин/пароль passport для релея. Пароль шифруется (Fernet, ключ
+    ENCRYPTION_KEY) и хранится в SystemSetting; релей заберёт его ОДИН раз через
+    relay-config (token+HTTPS), запишет в свой relay.env и перезапустится.
+    В статус пароль не отдаётся — только логин."""
+    _require_finance(current_user)
+    u = (payload.username or "").strip()
+    p = payload.password or ""
+    if not u or not p:
+        raise HTTPException(status_code=400, detail="Укажите логин и пароль")
+    cfg = await _load_relay_cfg(db)
+    cfg["passport_username"] = u
+    cfg["passport_password_enc"] = fernet.encrypt(p.encode()).decode()
+    cfg["creds_pending"] = True
     await _save_relay_cfg(db, cfg)
     return {"ok": True, "queued": True}
 

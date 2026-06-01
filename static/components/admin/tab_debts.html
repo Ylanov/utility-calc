@@ -96,6 +96,30 @@
             Пока в отладке: найденное хранится <b>отдельно</b> и в долги 1С (Excel) не пишется — смотри в «Показать найденное».
         </p>
         <div id="gisgmpStatus" style="font-size:13px; color:var(--text-secondary);">Загрузка статуса…</div>
+
+        <!-- Управление демоном релея прямо из UI (pull: применяется на ближайшем опросе ~2 мин) -->
+        <div style="margin-top:12px; padding-top:10px; border-top:1px dashed var(--border-color, #ddd);">
+            <div style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:6px;">
+                <i class="fa-solid fa-gears"></i> Управление релеем (ВМ PODS2)
+            </div>
+            <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:flex-end;">
+                <button id="btnRelayUpdate" class="action-btn secondary-btn" style="font-size:13px;" title="Релей подтянет свежий relay.py с сервера и перезапустится"><i class="fa-solid fa-cloud-arrow-down"></i> Обновить релей</button>
+                <button id="btnRelayRestart" class="action-btn secondary-btn" style="font-size:13px;" title="Перезапустить демон"><i class="fa-solid fa-power-off"></i> Перезапустить</button>
+                <div>
+                    <label style="display:block; font-size:11px; color:var(--text-secondary); margin-bottom:3px;">Логин passport</label>
+                    <input type="text" id="relayUser" autocomplete="off" placeholder="Фамилия И.О." style="width:200px; padding:5px 7px;">
+                </div>
+                <div>
+                    <label style="display:block; font-size:11px; color:var(--text-secondary); margin-bottom:3px;">Пароль passport</label>
+                    <input type="password" id="relayPass" autocomplete="new-password" placeholder="••••••••" style="width:170px; padding:5px 7px;">
+                </div>
+                <button id="btnRelayCreds" class="action-btn secondary-btn" style="font-size:13px;"><i class="fa-solid fa-key"></i> Сохранить учётку</button>
+            </div>
+            <p class="hint-text" style="font-size:11px; margin:6px 0 0; color:#92400e;">
+                Команды применяются на ближайшем опросе релея (~2 мин), затем демон перезапускается. Пароль хранится зашифрованным (Fernet) и в статусе не показывается.
+            </p>
+        </div>
+
         <div id="gisgmpFindingsBody" style="display:none; margin-top:12px;"></div>
         <div id="gisgmpReconcileBody" style="display:none; margin-top:12px;"></div>
     </div>

@@ -229,6 +229,82 @@ def do_recheck(surnames, deep_months):
         report(True, 0, message="дотягивание: ничего не найдено")
 
 
+def _reexec():
+    """Перезапуск процесса на месте (execv) — мгновенно, без 30с паузы systemd.
+    Подхватывает свежий relay.py и обновлённое окружение (PASSPORT_*)."""
+    log("[relay] перезапуск (применяю изменения)…")
+    os.execv(sys.executable, [sys.executable] + sys.argv)
+
+
+def _set_env_line(lines, key, val):
+    pref = key + "="
+    for i, ln in enumerate(lines):
+        if ln.startswith(pref):
+            lines[i] = pref + val
+            return lines
+    lines.append(pref + val)
+    return lines
+
+
+def _write_env_creds(username, password):
+    """Обновляет PASSPORT_USERNAME/PASSWORD в relay.env (остальные строки целы)
+    и в текущем окружении — чтобы после execv новые значения подхватились."""
+    path = os.environ.get("RELAY_ENV_FILE", "/opt/gisgmp-relay/relay.env")
+    try:
+        with open(path, encoding="utf-8") as f:
+            lines = f.read().splitlines()
+    except FileNotFoundError:
+        lines = []
+    lines = _set_env_line(lines, "PASSPORT_USERNAME", username)
+    lines = _set_env_line(lines, "PASSPORT_PASSWORD", password)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    os.environ["PASSPORT_USERNAME"] = username
+    os.environ["PASSPORT_PASSWORD"] = password
+
+
+def _install_new_relay():
+    """Качает свежий relay.py из ЖКХ, ВАЛИДИРУЕТ синтаксис, ставит на место.
+    True — если установлен. Битый код не ставим (остаёмся на рабочем)."""
+    r = requests.get(f"{JKH_URL}/api/financier/gisgmp/relay.py", headers=_auth(), timeout=60)
+    r.raise_for_status()
+    src = r.text
+    compile(src, "relay.py", "exec")  # SyntaxError → исключение, файл не трогаем
+    path = os.path.abspath(sys.argv[0]) if sys.argv and sys.argv[0] else os.path.abspath(__file__)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(src)
+    return True
+
+
+def handle_control(ctrl):
+    """Команды из ЖКХ: смена учётки passport / самообновление / перезапуск.
+    Применяет накопленное и перезапускается одним execv (если было что делать)."""
+    need = False
+    creds = ctrl.get("credentials")
+    if creds and creds.get("username") and creds.get("password"):
+        try:
+            _write_env_creds(creds["username"], creds["password"])
+            log("[relay] учётка passport обновлена из ЖКХ")
+            report(True, message="учётка passport обновлена")
+            need = True
+        except Exception as e:
+            log("[relay] не смог записать учётку:", e)
+            report(False, message="смена учётки: " + str(e)[:200])
+    if ctrl.get("self_update"):
+        try:
+            if _install_new_relay():
+                log("[relay] установлен свежий relay.py")
+                report(True, message="релей обновлён из ЖКХ")
+                need = True
+        except Exception as e:
+            log("[relay] самообновление не удалось:", e)
+            report(False, message="самообновление: " + str(e)[:200])
+    if ctrl.get("restart"):
+        need = True
+    if need:
+        _reexec()
+
+
 def main():
     miss = [k for k in ("GISGMP_SYNC_TOKEN", "PASSPORT_USERNAME", "PASSPORT_PASSWORD")
             if not os.environ.get(k)]
@@ -257,6 +333,11 @@ def main():
                 except Exception as e:
                     log("[relay] ошибка прогона:", e)
                     report(False, message=str(e)[:400])
+            # Команды управления из ЖКХ (обновление/рестарт/смена учётки).
+            # ПОСЛЕ прогона — чтобы плановый запуск этого цикла не потерялся.
+            ctrl = cfg.get("control")
+            if ctrl:
+                handle_control(ctrl)   # применит и перезапустится (execv, не вернётся)
         except Exception as e:
             log("[relay] ошибка опроса конфига:", e)
         time.sleep(POLL_SECONDS)
