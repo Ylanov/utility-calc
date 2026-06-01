@@ -187,15 +187,9 @@ def sync_import_gisgmp_charges(
                     "debt_205": str(reading.debt_205 or 0),
                     "overpayment_205": str(reading.overpayment_205 or 0),
                 }
-            # ГИС ГМП — источник истины: ставим долг, обнуляем переплату/обороты.
-            reading.debt_209 = debt_209
-            reading.overpayment_209 = Decimal("0.00")
-            reading.obor_debit_209 = Decimal("0.00")
-            reading.obor_credit_209 = Decimal("0.00")
-            reading.debt_205 = debt_205
-            reading.overpayment_205 = Decimal("0.00")
-            reading.obor_debit_205 = Decimal("0.00")
-            reading.obor_credit_205 = Decimal("0.00")
+            # НЕ мутируем ORM-объект: readings партиционирована (PK id+created_at),
+            # ORM-UPDATE по ней не пишет, а db.get по одному id падает. Обновим
+            # явным UPDATE по id ниже. Здесь только запоминаем что и куда писать.
             touched_meta.append({
                 "id": reading.id, "user_id": user_id, "room_id": room_id,
                 "debt_209": debt_209, "debt_205": debt_205,
@@ -227,28 +221,20 @@ def sync_import_gisgmp_charges(
         for meta, r in zip(insert_meta, inserts):
             meta["id"] = r.id
 
-    if touched_meta:
-        # MeterReading партиционирована — bulk_update тихо не пишет; используем
-        # explicit per-row UPDATE по id (см. Bug в debt_import: Лучка А.П.).
-        # Отвязываем объекты от сессии, чтобы ORM-flush не перезаписал UPDATE.
-        for m in touched_meta:
-            obj = db.get(MeterReading, m["id"])
-            if obj is not None:
-                try:
-                    db.expunge(obj)
-                except Exception:
-                    pass
-        for m in touched_meta:
-            db.execute(
-                sa_update(MeterReading)
-                .where(MeterReading.id == m["id"])
-                .values(
-                    debt_209=m["debt_209"], overpayment_209=Decimal("0.00"),
-                    obor_debit_209=Decimal("0.00"), obor_credit_209=Decimal("0.00"),
-                    debt_205=m["debt_205"], overpayment_205=Decimal("0.00"),
-                    obor_debit_205=Decimal("0.00"), obor_credit_205=Decimal("0.00"),
-                )
+    # Существующие показания НЕ мутировали (см. выше) — пишем явным UPDATE по id.
+    # PK readings составной (id, created_at), поэтому db.get/ORM по одному id не
+    # годится; UPDATE ... WHERE id=... корректно находит строку в партициях.
+    for m in touched_meta:
+        db.execute(
+            sa_update(MeterReading)
+            .where(MeterReading.id == m["id"])
+            .values(
+                debt_209=m["debt_209"], overpayment_209=Decimal("0.00"),
+                obor_debit_209=Decimal("0.00"), obor_credit_209=Decimal("0.00"),
+                debt_205=m["debt_205"], overpayment_205=Decimal("0.00"),
+                obor_debit_205=Decimal("0.00"), obor_credit_205=Decimal("0.00"),
             )
+        )
 
     # ─── applied_state (state ПОСЛЕ, denormalized для diff/истории) ─────────
     all_meta = touched_meta + insert_meta
