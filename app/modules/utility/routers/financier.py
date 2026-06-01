@@ -7,7 +7,7 @@ import io
 import json
 import zipfile
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from app.core.time_utils import utcnow
 from typing import Optional
@@ -531,6 +531,7 @@ async def gisgmp_status(
             "enabled": relay.get("enabled", True),
             "months_back": relay.get("months_back", 2),
             "interval_hours": relay.get("interval_hours", 12),
+            "daily_hour": relay.get("daily_hour", 22),
             "run_now": relay.get("run_now", False),
             "last_run_at": relay.get("last_run_at"),
             "last_report_at": relay.get("last_report_at"),
@@ -559,6 +560,7 @@ _GISGMP_RELAY_DEFAULTS = {
     "enabled": True,
     "months_back": 36,
     "interval_hours": 12,
+    "daily_hour": 22,                # час ежедневного авто-запуска по МСК (вечер)
     "run_now": False,
     "last_run_at": None,
     "last_report_at": None,
@@ -633,17 +635,23 @@ async def gisgmp_relay_config(
         if cfg.get("run_now"):
             should_run, reason = True, "run_now"
         else:
+            # Раз в сутки вечером, когда нет нагрузки. Час задаётся по МСК
+            # (Москва = UTC+3 круглый год, без перехода). Запуск на ПЕРВОМ опросе
+            # после daily_hour, если сегодня ещё не запускались.
+            msk = timedelta(hours=3)
+            now_msk = utcnow() + msk
+            daily_hour = max(0, min(23, int(cfg.get("daily_hour", 22))))
+            target = now_msk.replace(hour=daily_hour, minute=0, second=0, microsecond=0)
             last = cfg.get("last_run_at")
-            interval = float(cfg.get("interval_hours", 12)) * 3600
-            if not last:
-                should_run, reason = True, "first_run"
-            else:
-                try:
-                    elapsed = (utcnow() - datetime.fromisoformat(last)).total_seconds()
-                    if elapsed >= interval:
-                        should_run, reason = True, "interval"
-                except Exception:
-                    should_run, reason = True, "bad_last_run"
+            if now_msk >= target:
+                if not last:
+                    should_run, reason = True, "daily_first"
+                else:
+                    try:
+                        if datetime.fromisoformat(last) + msk < target:
+                            should_run, reason = True, "daily"
+                    except Exception:
+                        should_run, reason = True, "bad_last_run"
 
     if should_run:
         cfg["run_now"] = False
@@ -746,6 +754,7 @@ class GisgmpRelaySettingsIn(BaseModel):
     enabled: Optional[bool] = None
     months_back: Optional[int] = None
     interval_hours: Optional[int] = None
+    daily_hour: Optional[int] = None
 
 
 @router.put("/gisgmp/relay-config", summary="Админ меняет настройки релея")
@@ -762,6 +771,8 @@ async def gisgmp_relay_set(
         cfg["months_back"] = max(1, min(60, int(payload.months_back)))
     if payload.interval_hours is not None:
         cfg["interval_hours"] = max(1, min(168, int(payload.interval_hours)))
+    if payload.daily_hour is not None:
+        cfg["daily_hour"] = max(0, min(23, int(payload.daily_hour)))
     await _save_relay_cfg(db, cfg)
     return cfg
 
@@ -828,6 +839,80 @@ async def gisgmp_relay_credentials(
     cfg["creds_pending"] = True
     await _save_relay_cfg(db, cfg)
     return {"ok": True, "queued": True}
+
+
+@router.get("/gisgmp/payer-charges", summary="Все начисления одного плательщика (клик по ФИО)")
+async def gisgmp_payer_charges(
+    q: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """По фамилии (первое слово q) — ВСЕ начисления человека из кэша ГИС ГМП
+    с разбивкой: долг (не сквитировано) / оплачено / аннулировано."""
+    _require_finance(current_user)
+    from app.modules.utility.services.gisgmp_import import (
+        classify_account, is_unpaid, is_annulled, parse_reg_dt, GISGMP_CACHE_KEY,
+    )
+    from app.modules.utility.services.debt_import import clean_decimal
+
+    parts = (q or "").strip().split()
+    surname = parts[0].lower() if parts else ""
+    if not surname:
+        return {"query": q, "count": 0, "charges": [], "totals": {}}
+
+    row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_CACHE_KEY)
+    )).scalars().first()
+    cache = {}
+    if row and row.value:
+        try:
+            cache = json.loads(row.value)
+        except Exception:
+            cache = {}
+
+    out = []
+    tot = {"debt_209": 0.0, "debt_205": 0.0, "paid": 0.0, "annulled": 0, "count": 0}
+    for ch in cache.values():
+        name = (ch.get("payer_name") or "").strip()
+        if surname not in name.lower():
+            continue
+        acc = classify_account(ch.get("purpose"))
+        annul = is_annulled(ch.get("change_status"))
+        unpaid = is_unpaid(ch.get("ack_status"))
+        amt = float(clean_decimal(ch.get("amount")))
+        status = "annulled" if annul else ("unpaid" if unpaid else "paid")
+        out.append({
+            "payer_name": name,
+            "account_type": acc,
+            "account": ch.get("account"),
+            "amount": amt,
+            "bill_date": ch.get("bill_date"),
+            "actualize_date": ch.get("actualize_date"),
+            "purpose": ch.get("purpose"),
+            "ack_status": ch.get("ack_status"),
+            "status": status,
+            "uin": ch.get("uin"),
+        })
+        tot["count"] += 1
+        if annul:
+            tot["annulled"] += 1
+        elif unpaid:
+            if acc == "209":
+                tot["debt_209"] += amt
+            elif acc == "205":
+                tot["debt_205"] += amt
+        else:
+            tot["paid"] += amt
+
+    _order = {"unpaid": 0, "paid": 1, "annulled": 2}
+
+    def _sk(c):
+        d = parse_reg_dt(c.get("bill_date"))
+        return (_order.get(c["status"], 3), -(d.toordinal() if d else 0))
+
+    out.sort(key=_sk)
+    return {"query": q, "surname": surname, "count": len(out),
+            "charges": out[:500], "totals": tot}
 
 
 @router.get("/gisgmp/findings", summary="Что нашёл ГИС ГМП (отладка, хранится отдельно)")

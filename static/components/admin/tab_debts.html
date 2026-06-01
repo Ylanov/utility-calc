@@ -83,8 +83,8 @@
                 <input type="number" id="gisgmpMonths" min="1" max="60" style="width:90px;" title="Глубина истории в месяцах (для хроников ставь 36+). Инкремент после первого прохода — быстрый">
             </div>
             <div>
-                <label style="display:block; font-size:12px; color:var(--text-secondary); margin-bottom:3px;">Интервал, ч</label>
-                <input type="number" id="gisgmpInterval" min="1" max="168" style="width:90px;" title="Как часто запускать релей">
+                <label style="display:block; font-size:12px; color:var(--text-secondary); margin-bottom:3px;">Час запуска (МСК)</label>
+                <input type="number" id="gisgmpHour" min="0" max="23" style="width:90px;" title="Во сколько по Москве делать ежедневный авто-сбор (вечером, когда нет нагрузки)">
             </div>
             <button id="btnGisgmpSave" class="action-btn secondary-btn" style="font-size:13px;"><i class="fa-solid fa-floppy-disk"></i> Сохранить</button>
             <button id="btnGisgmpRunNow" class="action-btn primary-btn" style="font-size:13px; background:#0ea5e9; border-color:#0ea5e9;"><i class="fa-solid fa-play"></i> Запустить сейчас</button>

@@ -84,7 +84,7 @@ export const DebtsModule = {
             const r = s.relay || {};
             if (this.dom.gisgmpEnabled) this.dom.gisgmpEnabled.checked = r.enabled !== false;
             if (this.dom.gisgmpMonths) this.dom.gisgmpMonths.value = r.months_back ?? 2;
-            if (this.dom.gisgmpInterval) this.dom.gisgmpInterval.value = r.interval_hours ?? 12;
+            if (this.dom.gisgmpHour) this.dom.gisgmpHour.value = r.daily_hour ?? 22;
 
             const parts = [];
             parts.push(r.last_run_at
@@ -119,10 +119,11 @@ export const DebtsModule = {
 
     async saveGisgmpRelay() {
         try {
+            const dh = parseInt(this.dom.gisgmpHour?.value, 10);
             await api.put('/financier/gisgmp/relay-config', {
                 enabled: !!this.dom.gisgmpEnabled?.checked,
                 months_back: parseInt(this.dom.gisgmpMonths?.value, 10) || 2,
-                interval_hours: parseInt(this.dom.gisgmpInterval?.value, 10) || 12,
+                daily_hour: Number.isNaN(dh) ? 22 : dh,
             });
             toast('Настройки релея сохранены', 'info');
             this.loadGisgmpStatus();
@@ -345,7 +346,7 @@ export const DebtsModule = {
         if (q) list = list.filter(r => (r.username || '').toLowerCase().includes(q));
         const rows = list.map(r => {
             const L = LAB[r.flag] || ['', '#666'];
-            return `<tr><td>${esc(r.username)}</td>`
+            return `<tr><td><a href="#" class="recon-payer" data-fio="${esc(r.username)}" style="color:#2563eb;cursor:pointer;">${esc(r.username)}</a></td>`
                 + `<td class="text-right">${fmt(r.g209)}</td><td class="text-right">${fmt(r.c209)}</td>${dcell(r.d209)}`
                 + `<td class="text-right">${fmt(r.g205)}</td><td class="text-right">${fmt(r.c205)}</td>${dcell(r.d205)}`
                 + `<td class="text-right"><b>${fmt(r.delta)}</b></td>`
@@ -356,6 +357,10 @@ export const DebtsModule = {
             + `<thead><tr><th>Жилец</th><th class="text-right">209 ГИС</th><th class="text-right">209 1С</th><th class="text-right">Δ209</th>`
             + `<th class="text-right">205 ГИС</th><th class="text-right">205 1С</th><th class="text-right">Δ205</th><th class="text-right">Σ Δ</th><th>Флаг</th></tr></thead>`
             + `<tbody>${rows || '<tr><td colspan="9" class="text-center">нет</td></tr>'}</tbody></table></div>`;
+        res.querySelectorAll('.recon-payer').forEach(a => a.addEventListener('click', (e) => {
+            e.preventDefault();
+            this.openPayerCharges(a.getAttribute('data-fio'));
+        }));
     },
 
     // Печатный отчёт сверки — чистый документ в новом окне → печать/PDF из браузера.
@@ -404,6 +409,66 @@ td.r,th.r{text-align:right;white-space:nowrap;} tr:nth-child(even){background:#f
         w.document.close();
     },
 
+    // Клик по ФИО → модал со ВСЕМИ начислениями человека (долг/оплачено/аннулир.).
+    async openPayerCharges(fio) {
+        let modal = document.getElementById('payerChargesModal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'payerChargesModal';
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:9999;display:flex;align-items:flex-start;justify-content:center;padding:36px 16px;overflow:auto;';
+            modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+            document.body.appendChild(modal);
+        }
+        modal.innerHTML = `<div style="background:var(--bg-primary,#fff);color:var(--text-primary,#111);border-radius:10px;max-width:940px;width:100%;padding:18px 20px;box-shadow:0 12px 48px rgba(0,0,0,.35);">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+              <div style="font-size:15px;font-weight:600;">Начисления ГИС ГМП: ${esc(fio)}</div>
+              <button id="payerClose" class="action-btn secondary-btn" style="font-size:13px;">✕ Закрыть</button>
+            </div>
+            <div id="payerBody"><i class="fa-solid fa-spinner fa-spin"></i> Загружаю…</div>
+          </div>`;
+        modal.querySelector('#payerClose').addEventListener('click', () => modal.remove());
+        try {
+            const d = await api.get('/financier/gisgmp/payer-charges?q=' + encodeURIComponent(fio));
+            this.renderPayerCharges(modal.querySelector('#payerBody'), d);
+        } catch (e) {
+            const b = modal.querySelector('#payerBody');
+            if (b) b.innerHTML = 'Ошибка: ' + esc(e?.message || String(e));
+        }
+    },
+
+    renderPayerCharges(box, d) {
+        if (!box) return;
+        const fmt = (v) => (Number(v) || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        if (!d.count) {
+            box.innerHTML = '<span style="color:#92400e;">В кэше ГИС ГМП начислений по этой фамилии нет — возможно, не дотянуто (нажми «Дотянуть расхождения»).</span>';
+            return;
+        }
+        const t = d.totals || {};
+        const ST = {
+            unpaid: ['Не сквитировано (долг)', '#b91c1c'],
+            paid: ['Сквитировано', '#047857'],
+            annulled: ['Аннулировано', '#6b7280'],
+        };
+        const rows = (d.charges || []).map(c => {
+            const s = ST[c.status] || ['—', '#666'];
+            return `<tr>
+                <td>${esc(c.bill_date || '—')}</td>
+                <td style="text-align:center;">${c.account_type || '—'}</td>
+                <td class="text-right">${fmt(c.amount)}</td>
+                <td><span style="color:${s[1]};font-weight:600;">${s[0]}</span></td>
+                <td style="font-size:11px;color:var(--text-secondary,#666);">${esc(c.purpose || '')}</td>
+                <td style="font-size:11px;color:#999;">${esc(c.actualize_date || '')}</td>
+            </tr>`;
+        }).join('');
+        box.innerHTML = `<div style="font-size:13px;margin-bottom:10px;line-height:1.6;">
+                Долг <b>209</b> (комуслуги): <b style="color:#b91c1c">${fmt(t.debt_209)}</b> &nbsp;·&nbsp;
+                Долг <b>205</b> (наём): <b style="color:#b91c1c">${fmt(t.debt_205)}</b><br>
+                Оплачено (сквитировано): ${fmt(t.paid)} &nbsp;·&nbsp; аннулировано строк: ${t.annulled || 0} &nbsp;·&nbsp; всего строк: ${t.count || 0}</div>
+            <div class="table-responsive" style="max-height:60vh;overflow:auto;"><table class="sticky-header-table" style="font-size:12px;width:100%;">
+                <thead><tr><th>Период (нач.)</th><th>Счёт</th><th class="text-right">Сумма</th><th>Статус</th><th>Назначение</th><th>Актуализация</th></tr></thead>
+                <tbody>${rows}</tbody></table></div>`;
+    },
+
     cacheDOM() {
         this.dom = {
             // Таблица
@@ -446,7 +511,7 @@ td.r,th.r{text-align:right;white-space:nowrap;} tr:nth-child(even){background:#f
             gisgmpStatus: document.getElementById('gisgmpStatus'),
             gisgmpEnabled: document.getElementById('gisgmpEnabled'),
             gisgmpMonths: document.getElementById('gisgmpMonths'),
-            gisgmpInterval: document.getElementById('gisgmpInterval'),
+            gisgmpHour: document.getElementById('gisgmpHour'),
             btnGisgmpSave: document.getElementById('btnGisgmpSave'),
             btnGisgmpRunNow: document.getElementById('btnGisgmpRunNow'),
             btnGisgmpFindings: document.getElementById('btnGisgmpFindings'),
