@@ -1,39 +1,30 @@
 # app/modules/utility/services/gisgmp_import.py
 """
-Авто-подгрузка долгов из реестра ГИС ГМП (gisgmp.cgu.mchs.ru).
+Приём находок ГИС ГМП от релея — РАЗДЕЛЬНЫЙ режим (отладка).
 
-Браузерное расширение `gisgmp-bridge` под ЭЦП-сессией пользователя раз в ~12 ч
-обходит раздел «Начисления», парсит строки и POST'ит сюда массив начислений
-(см. financier.gisgmp_sync). Здесь мы:
-  • отбрасываем аннулированные начисления;
-  • берём только «Не сквитировано» (непогашенный остаток = долг);
-  • разносим по счетам 1С по «Назначению»: «наем» → 205, «комуслуги» → 209;
+ВАЖНО (пока): данные ГИС ГМП НЕ пишутся в долги показаний (MeterReading) и НЕ
+смешиваются с ручным импортом Excel. Релей присылает распарсенные начисления,
+мы:
+  • отбрасываем аннулированные, берём «Не сквитировано» (= долг);
+  • разносим по счетам: «наем» → 205, «комуслуги» → 209;
   • суммируем по ФИО плательщика;
-  • матчим жильца тем же матчером, что и Google-Sheets-импорт
-    (точное ФИО → инициалы → fuzzy → алиасы);
-  • пишем debt_209/debt_205 в MeterReading активного периода;
-  • создаём пару DebtImportLog (209 + 205) — те же история/diff/откат, что у Excel.
+  • сопоставляем ФИО с жильцом в базе (как Google-Sheets-импорт) — ТОЛЬКО для
+    показа (кого нашли/не нашли);
+  • складываем всё в отдельное хранилище (SystemSetting 'gisgmp_findings') —
+    его показывает отдельное окно во вкладке «Долги 1С» для отладки.
 
-Договорённость «только долги»: overpayment_* и обороты для затронутых жильцов
-обнуляются — реестр пока не отдаёт переплат. Прежние значения сохраняются в
-snapshot_data, поэтому откат импорта (undo) их восстановит.
-
-ГИС ГМП — источник истины по долгу для тех ФИО, что в неё попали. Жильцы,
-которых в выгрузке нет, остаются с прежним сальдо (как и при Excel-импорте;
-«зомби»-долги ловит отдельная проверка во вкладке «Долги 1С»).
+Когда отладим и решим — подключим запись в долги. Сейчас задача: видеть, что
+именно находит система, отдельно от Excel.
 """
+import json
 import logging
-import uuid as _uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Optional
 
-from sqlalchemy import select, update as sa_update
 from sqlalchemy.orm import Session
 
-from app.modules.utility.models import (
-    MeterReading, BillingPeriod, DebtImportLog, Room,
-)
+from app.modules.utility.models import SystemSetting
 from app.modules.utility.services.debt_import import clean_decimal
 from app.modules.utility.services.gsheets_sync import (
     build_users_index, build_aliases_index, match_user,
@@ -41,17 +32,16 @@ from app.modules.utility.services.gsheets_sync import (
 
 logger = logging.getLogger(__name__)
 
-# Источник в file_name/started_by_username — по нему GET /gisgmp/status находит
-# последний синк и UI отличает авто-подгрузку от ручного Excel-импорта.
+# Метка источника (для совместимости со старым кодом, если где-то ссылается).
 GISGMP_SOURCE_LABEL = "ГИС ГМП (авто)"
+# Ключ хранилища находок (отдельно от долгов).
+GISGMP_FINDINGS_KEY = "gisgmp_findings"
+# Сколько сырых начислений хранить для показа (защита от разрастания).
+_RAW_CAP = 3000
 
 
 def classify_account(purpose: str) -> Optional[str]:
-    """«наем/найм» → 205 (найм), «комуслуги/коммунальные» → 209 (коммуналка).
-
-    None — назначение не распознано, такое начисление не разносим (попадёт
-    в диагностику unknown_account, деньги не теряются — видно в отчёте синка).
-    """
+    """«наем/найм» → 205 (найм), «комуслуги/коммунальные» → 209 (коммуналка)."""
     p = (purpose or "").lower()
     if "наем" in p or "найм" in p or "наём" in p:
         return "205"
@@ -61,34 +51,19 @@ def classify_account(purpose: str) -> Optional[str]:
 
 
 def is_unpaid(ack_status: str) -> bool:
-    """Долг = начисление со статусом квитирования «Не сквитировано».
-
-    Все варианты «...сквитировано» (Предварительно/Принудительно/с зачислением)
-    означают, что платёж найден → начисление погашено, в долг не идёт.
-    Подстрока «не сквитировано» не встречается ни в одном из «оплачено»-статусов.
-    """
+    """Долг = начисление со статусом «Не сквитировано» (остальные «...сквитировано» = оплачено)."""
     return "не сквитировано" in (ack_status or "").lower()
 
 
 def is_annulled(change_status: str) -> bool:
-    """«аннулирование» — отменённое начисление (исключаем из долга).
-
-    ВАЖНО: «деаннулирование» означает обратное (начисление снова действует),
-    поэтому сверяем строго по равенству, а не по подстроке «аннул».
-    """
+    """«аннулирование» — отменённое (не «деаннулирование»), в долг не идёт."""
     return (change_status or "").strip().lower() == "аннулирование"
 
 
 def aggregate_charges(charges: list[dict]) -> tuple[dict, dict]:
-    """Сворачивает начисления в {fio: {"209": Decimal, "205": Decimal}}.
-
-    Возвращает (fio_map, diag), где diag — счётчики для отчёта синка.
-    """
+    """Сворачивает начисления в {fio: {"209": Decimal, "205": Decimal}} + диагностика."""
     fio_map: dict[str, dict[str, Decimal]] = {}
-    diag = {
-        "total": 0, "annulled": 0, "paid": 0,
-        "unknown_account": 0, "no_fio": 0, "counted": 0,
-    }
+    diag = {"total": 0, "annulled": 0, "paid": 0, "unknown_account": 0, "no_fio": 0, "counted": 0}
     for ch in charges:
         diag["total"] += 1
         fio = (ch.get("payer_name") or "").strip()
@@ -121,182 +96,62 @@ def sync_import_gisgmp_charges(
     started_by_username: str = GISGMP_SOURCE_LABEL,
     started_by_id: Optional[int] = None,
 ) -> dict:
-    """Главный вход: пишет долги ГИС ГМП в активный период.
-
-    Создаёт ПАРУ DebtImportLog (209 + 205) под одним batch_id — так вкладка
-    «Долги 1С» (история, diff, откат, «не найдены») работает без изменений.
-    Возвращает сводку для расширения и UI.
-    """
+    """Раздельный режим: сворачивает находки, сопоставляет жильцов (для показа),
+    складывает в SystemSetting('gisgmp_findings'). В долги/показания НЕ пишет."""
     fio_map, diag = aggregate_charges(charges)
 
-    active_period = db.execute(
-        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
-    ).scalars().first()
-    if not active_period:
-        return {
-            "status": "error",
-            "message": "Нет активного периода для загрузки долгов",
-            "diag": diag,
-        }
-
-    # Индексы жильцов + алиасы — тот же матчер, что и Google-Sheets-импорт.
+    # Индексы жильцов + алиасы — тот же матчер, что Google-Sheets-импорт.
     users_map, users_keys, users_by_id = build_users_index(db)
     aliases_map = build_aliases_index(db)
 
-    # Показания активного периода: ключ — user_id (как в долговом импорте).
-    readings_raw = db.execute(
-        select(MeterReading).where(MeterReading.period_id == active_period.id)
-    ).scalars().all()
-    readings_map = {r.user_id: r for r in readings_raw if r.user_id is not None}
-
-    snapshot_before: dict[int, dict] = {}          # reading_id -> до-состояние (для undo)
-    not_found = {"209": [], "205": []}             # ФИО без привязки, по счетам
-    touched_meta: list[dict] = []                  # затронутые existing (до expunge)
-    inserts: list[MeterReading] = []
-    insert_meta: list[dict] = []
-    stats = {"matched": 0, "created": 0, "updated": 0}
-
+    summary = []
+    matched = 0
     for fio, debts in fio_map.items():
-        debt_209 = debts.get("209", Decimal("0"))
-        debt_205 = debts.get("205", Decimal("0"))
-
-        user_info, _score, _conflict = match_user(
+        info, score, _conflict = match_user(
             fio, None, users_map, users_keys, users_by_id, aliases_map,
         )
-        if not user_info or not user_info.get("room_id"):
-            # Не привязали (нет жильца / нет комнаты) — долг учитываем
-            # отдельно в «Неразнесённых», деньги не теряются.
-            if debt_209 > 0:
-                not_found["209"].append(
-                    {"fio": fio, "debt": str(debt_209), "overpayment": "0"})
-            if debt_205 > 0:
-                not_found["205"].append(
-                    {"fio": fio, "debt": str(debt_205), "overpayment": "0"})
-            continue
+        d209 = debts.get("209", Decimal("0"))
+        d205 = debts.get("205", Decimal("0"))
+        if info:
+            matched += 1
+        summary.append({
+            "fio": fio,
+            "debt_209": str(d209),
+            "debt_205": str(d205),
+            "total": str(d209 + d205),
+            "matched_user_id": info["id"] if info else None,
+            "matched_username": info.get("username") if info else None,
+            "room_number": info.get("room_number") if info else None,
+            "score": int(score),
+        })
+    summary.sort(key=lambda r: -float(r["total"]))
 
-        user_id = user_info["id"]
-        room_id = user_info["room_id"]
-        stats["matched"] += 1
+    findings = {
+        "synced_at": datetime.now(timezone.utc).isoformat(),
+        "total_charges": len(charges),
+        "residents": len(fio_map),
+        "matched": matched,
+        "not_found": len(fio_map) - matched,
+        "diag": diag,
+        "summary": summary,
+        "charges": charges[:_RAW_CAP],
+    }
 
-        reading = readings_map.get(user_id)
-        if reading is not None:
-            if reading.id not in snapshot_before:
-                snapshot_before[reading.id] = {
-                    "debt_209": str(reading.debt_209 or 0),
-                    "overpayment_209": str(reading.overpayment_209 or 0),
-                    "debt_205": str(reading.debt_205 or 0),
-                    "overpayment_205": str(reading.overpayment_205 or 0),
-                }
-            # НЕ мутируем ORM-объект: readings партиционирована (PK id+created_at),
-            # ORM-UPDATE по ней не пишет, а db.get по одному id падает. Обновим
-            # явным UPDATE по id ниже. Здесь только запоминаем что и куда писать.
-            touched_meta.append({
-                "id": reading.id, "user_id": user_id, "room_id": room_id,
-                "debt_209": debt_209, "debt_205": debt_205,
-            })
-            stats["updated"] += 1
-        else:
-            reading = MeterReading(
-                user_id=user_id, room_id=room_id, period_id=active_period.id,
-                is_approved=False,
-                debt_209=debt_209, overpayment_209=Decimal("0.00"),
-                debt_205=debt_205, overpayment_205=Decimal("0.00"),
-                obor_debit_209=Decimal("0.00"), obor_credit_209=Decimal("0.00"),
-                obor_debit_205=Decimal("0.00"), obor_credit_205=Decimal("0.00"),
-            )
-            inserts.append(reading)
-            insert_meta.append({
-                "user_id": user_id, "room_id": room_id,
-                "debt_209": debt_209, "debt_205": debt_205,
-            })
-            readings_map[user_id] = reading
-            stats["created"] += 1
-
-    # ─── Запись в БД ────────────────────────────────────────────────────────
-    inserted_ids: list[int] = []
-    if inserts:
-        db.add_all(inserts)
-        db.flush()
-        inserted_ids = [r.id for r in inserts]
-        for meta, r in zip(insert_meta, inserts):
-            meta["id"] = r.id
-
-    # Существующие показания НЕ мутировали (см. выше) — пишем явным UPDATE по id.
-    # PK readings составной (id, created_at), поэтому db.get/ORM по одному id не
-    # годится; UPDATE ... WHERE id=... корректно находит строку в партициях.
-    for m in touched_meta:
-        db.execute(
-            sa_update(MeterReading)
-            .where(MeterReading.id == m["id"])
-            .values(
-                debt_209=m["debt_209"], overpayment_209=Decimal("0.00"),
-                obor_debit_209=Decimal("0.00"), obor_credit_209=Decimal("0.00"),
-                debt_205=m["debt_205"], overpayment_205=Decimal("0.00"),
-                obor_debit_205=Decimal("0.00"), obor_credit_205=Decimal("0.00"),
-            )
-        )
-
-    # ─── applied_state (state ПОСЛЕ, denormalized для diff/истории) ─────────
-    all_meta = touched_meta + insert_meta
-    room_ids = list({m["room_id"] for m in all_meta if m.get("room_id")})
-    rooms_label: dict[int, str] = {}
-    if room_ids:
-        for room in db.execute(select(Room).where(Room.id.in_(room_ids))).scalars().all():
-            rooms_label[room.id] = room.format_address
-
-    applied_state: dict[str, dict] = {}
-    for m in all_meta:
-        uid = m["user_id"]
-        info = users_by_id.get(uid) or {}
-        applied_state[str(uid)] = {
-            "debt_209": str(m.get("debt_209") or 0),
-            "overpayment_209": "0",
-            "debt_205": str(m.get("debt_205") or 0),
-            "overpayment_205": "0",
-            "username": info.get("username"),
-            "room_id": m.get("room_id"),
-            "room_label": rooms_label.get(m.get("room_id")),
-        }
-
-    # ─── Пара DebtImportLog (209 + 205) под одним batch_id ──────────────────
-    batch_id = str(_uuid.uuid4())
-    now = datetime.now(timezone.utc).replace(tzinfo=None)
-    for account in ("209", "205"):
-        log = DebtImportLog(
-            account_type=account,
-            period_id=active_period.id,
-            file_name=GISGMP_SOURCE_LABEL,
-            status="completed",
-            started_by_id=started_by_id,
-            started_by_username=started_by_username,
-            processed=len(fio_map),
-            updated=stats["updated"],
-            created=stats["created"],
-            not_found_count=len(not_found[account]),
-            not_found_users=not_found[account][:2000],
-            snapshot_data={
-                "before": {str(k): v for k, v in snapshot_before.items()},
-                "inserted_reading_ids": inserted_ids,
-            },
-            applied_state=applied_state,
-            batch_id=batch_id,
-            completed_at=now,
-        )
-        db.add(log)
-
+    row = db.query(SystemSetting).filter(SystemSetting.key == GISGMP_FINDINGS_KEY).first()
+    if row is None:
+        row = SystemSetting(key=GISGMP_FINDINGS_KEY, value="{}",
+                            description="Находки релея ГИС ГМП (отладка, отдельно от долгов)")
+        db.add(row)
+    row.value = json.dumps(findings, ensure_ascii=False)
     db.commit()
 
     result = {
         "status": "ok",
-        "period_id": active_period.id,
-        "period_name": active_period.name,
-        "batch_id": batch_id,
-        "matched": stats["matched"],
-        "updated": stats["updated"],
-        "created": stats["created"],
-        "not_found_209": len(not_found["209"]),
-        "not_found_205": len(not_found["205"]),
+        "total_charges": len(charges),
+        "residents": len(fio_map),
+        "matched": matched,
+        "not_found": len(fio_map) - matched,
         "diag": diag,
     }
-    logger.info("[GISGMP] sync done: %s", result)
+    logger.info("[GISGMP] findings stored: %s", result)
     return result

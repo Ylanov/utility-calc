@@ -515,24 +515,15 @@ async def gisgmp_status(
     """Для карточки «Авто-подгрузка ГИС ГМП» во вкладке «Долги 1С»: когда был
     последний синк, сколько жильцов затронуто, не настроен ли токен."""
     _require_finance(current_user)
-    from app.modules.utility.services.gisgmp_import import GISGMP_SOURCE_LABEL
-
-    last = (await db.execute(
-        select(DebtImportLog)
-        .where(DebtImportLog.file_name == GISGMP_SOURCE_LABEL)
-        .order_by(desc(DebtImportLog.started_at))
-        .limit(1)
-    )).scalars().first()
-
     relay = await _load_relay_cfg(db)
+    findings = await _load_findings(db)
+    fsum = None
+    if findings:
+        fsum = {k: findings.get(k) for k in
+                ("synced_at", "total_charges", "residents", "matched", "not_found")}
 
     return {
         "configured": bool((settings.GISGMP_SYNC_TOKEN or "").strip()),
-        "last_sync_at": last.started_at.isoformat() if last and last.started_at else None,
-        "last_batch_id": last.batch_id if last else None,
-        "last_updated": last.updated if last else None,
-        "last_created": last.created if last else None,
-        "last_not_found": last.not_found_count if last else None,
         "registry_url": "https://gisgmp.cgu.mchs.ru/charge/",
         # Состояние релея — управляется из этой же вкладки (pull-модель).
         "relay": {
@@ -546,6 +537,8 @@ async def gisgmp_status(
             "last_message": relay.get("last_message"),
             "last_count": relay.get("last_count", 0),
         },
+        # Сводка последних находок (ГИС ГМП пока хранится ОТДЕЛЬНО от долгов).
+        "findings": fsum,
     }
 
 
@@ -594,6 +587,21 @@ async def _save_relay_cfg(db: AsyncSession, cfg: dict) -> None:
         db.add(row)
     row.value = json.dumps(cfg, ensure_ascii=False)
     await db.commit()
+
+
+GISGMP_FINDINGS_KEY = "gisgmp_findings"
+
+
+async def _load_findings(db: AsyncSession) -> Optional[dict]:
+    row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_FINDINGS_KEY)
+    )).scalars().first()
+    if row and row.value:
+        try:
+            return json.loads(row.value)
+        except Exception:
+            return None
+    return None
 
 
 @router.get("/gisgmp/relay-config", summary="Релей берёт свой конфиг (token-auth)")
@@ -699,6 +707,19 @@ async def gisgmp_run_now(
     cfg["run_now"] = True
     await _save_relay_cfg(db, cfg)
     return {"ok": True, "queued": True}
+
+
+@router.get("/gisgmp/findings", summary="Что нашёл ГИС ГМП (отладка, хранится отдельно)")
+async def gisgmp_findings(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Полные находки последнего прогона релея: сводка по жильцам + сырые
+    начисления. Пока ОТДЕЛЬНО от долгов 1С (Excel), в показания не пишется —
+    показываем для отладки в отдельном окне «Долги 1С»."""
+    _require_finance(current_user)
+    findings = await _load_findings(db)
+    return findings or {"empty": True}
 
 
 # Каталог расширения в репозитории. financier.py лежит в

@@ -95,9 +95,11 @@ export const DebtsModule = {
                 parts.push(`Результат: <b style="color:${ok ? '#047857' : '#b91c1c'}">${ok ? 'успех' : 'ошибка'}</b>`
                     + (r.last_message ? ` — ${esc(r.last_message)}` : ''));
             }
-            if (s.last_sync_at) {
-                parts.push(`Долги обновлены: <b>${new Date(s.last_sync_at).toLocaleString('ru-RU')}</b> `
-                    + `(жильцов: ${s.last_updated ?? 0}, создано: ${s.last_created ?? 0}, не найдено: ${s.last_not_found ?? 0})`);
+            const f = s.findings;
+            if (f) {
+                parts.push(`Найдено: начислений <b>${f.total_charges ?? 0}</b>, жильцов с долгом <b>${f.residents ?? 0}</b>, `
+                    + `сопоставлено <b>${f.matched ?? 0}</b>, не найдено <b>${f.not_found ?? 0}</b>`
+                    + (f.synced_at ? ` (${new Date(f.synced_at).toLocaleString('ru-RU')})` : ''));
             }
             box.innerHTML = parts.join('<br>');
         } catch (e) {
@@ -125,6 +127,46 @@ export const DebtsModule = {
             toast('Команда отправлена — релей запустится в течение пары минут', 'info');
         } catch (e) {
             toast('Ошибка: ' + (e?.message || e), 'error');
+        }
+    },
+
+    // Раздельное окно отладки: что нашёл ГИС ГМП (в долги пока не пишется).
+    async openGisgmpFindings() {
+        const body = this.dom.gisgmpFindingsBody;
+        if (!body) return;
+        if (body.style.display !== 'none') { body.style.display = 'none'; return; }
+        body.style.display = 'block';
+        body.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Загрузка…';
+        try {
+            const f = await api.get('/financier/gisgmp/findings');
+            if (!f || f.empty) {
+                body.innerHTML = '<span style="color:var(--text-secondary)">Пока ничего не найдено — релей ещё не отработал успешно.</span>';
+                return;
+            }
+            const fmt = (v) => (Number(v) || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            const rows = (f.summary || []).map(r => {
+                const m = r.matched_username
+                    ? `<span style="color:#047857">${esc(r.matched_username)}</span>` + (r.room_number ? ` <span style="color:var(--text-secondary)">(${esc(String(r.room_number))})</span>` : '')
+                    : '<span style="color:#b91c1c">не найден</span>';
+                return `<tr><td>${esc(r.fio)}</td><td>${m}</td>`
+                    + `<td class="text-right">${fmt(r.debt_209)}</td>`
+                    + `<td class="text-right">${fmt(r.debt_205)}</td>`
+                    + `<td class="text-right"><b>${fmt(r.total)}</b></td></tr>`;
+            }).join('');
+            const d = f.diag || {};
+            body.innerHTML =
+                `<div style="font-size:12px; color:var(--text-secondary); margin-bottom:8px;">`
+                + `Синхронизация: <b>${f.synced_at ? new Date(f.synced_at).toLocaleString('ru-RU') : '—'}</b> · `
+                + `начислений получено: ${f.total_charges ?? 0} · в долг засчитано: ${d.counted ?? '—'} · `
+                + `оплачено (пропущено): ${d.paid ?? '—'} · аннулировано: ${d.annulled ?? '—'}<br>`
+                + `Жильцов с долгом: <b>${f.residents ?? 0}</b> · сопоставлено: <b style="color:#047857">${f.matched ?? 0}</b> · `
+                + `не найдено в базе: <b style="color:#b91c1c">${f.not_found ?? 0}</b></div>`
+                + `<div class="table-responsive"><table class="sticky-header-table" style="font-size:13px;">`
+                + `<thead><tr><th>ФИО (реестр)</th><th>Жилец в базе</th>`
+                + `<th class="text-right">Долг 209</th><th class="text-right">Долг 205</th><th class="text-right">Σ долг</th></tr></thead>`
+                + `<tbody>${rows || '<tr><td colspan="5" class="text-center">пусто</td></tr>'}</tbody></table></div>`;
+        } catch (e) {
+            body.innerHTML = 'Ошибка загрузки находок: ' + esc(e?.message || String(e));
         }
     },
 
@@ -173,6 +215,8 @@ export const DebtsModule = {
             gisgmpInterval: document.getElementById('gisgmpInterval'),
             btnGisgmpSave: document.getElementById('btnGisgmpSave'),
             btnGisgmpRunNow: document.getElementById('btnGisgmpRunNow'),
+            btnGisgmpFindings: document.getElementById('btnGisgmpFindings'),
+            gisgmpFindingsBody: document.getElementById('gisgmpFindingsBody'),
             // Модалка корректировки
             adjustModal: document.getElementById('debtAdjustModal'),
             adjustForm: document.getElementById('debtAdjustForm'),
@@ -215,6 +259,7 @@ export const DebtsModule = {
         this.dom.btnGisgmpSave?.addEventListener('click', () => this.saveGisgmpRelay());
         this.dom.btnGisgmpRunNow?.addEventListener('click', () => this.runGisgmpNow());
         this.dom.gisgmpEnabled?.addEventListener('change', () => this.saveGisgmpRelay());
+        this.dom.btnGisgmpFindings?.addEventListener('click', () => this.openGisgmpFindings());
         this.dom.btnUpload?.addEventListener('click', () => this.handleUpload());
 
         // Авто-предпросмотр при выборе файла (Bug T)
