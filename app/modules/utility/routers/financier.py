@@ -550,7 +550,7 @@ async def gisgmp_status(
 GISGMP_RELAY_KEY = "gisgmp_relay"
 _GISGMP_RELAY_DEFAULTS = {
     "enabled": True,
-    "months_back": 2,
+    "months_back": 36,
     "interval_hours": 12,
     "run_now": False,
     "last_run_at": None,
@@ -637,11 +637,24 @@ async def gisgmp_relay_config(
         cfg["last_run_at"] = utcnow().isoformat()
         await _save_relay_cfg(db, cfg)
 
+    # Курсор инкремента: релей дотягивает только начисления новее этой даты
+    # актуализации (всё, что старше, уже в кэше). None → первый полный проход.
+    cursor_row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == "gisgmp_cursor")
+    )).scalars().first()
+    since = None
+    if cursor_row and cursor_row.value:
+        try:
+            since = json.loads(cursor_row.value).get("since")
+        except Exception:
+            since = None
+
     return {
         "enabled": cfg.get("enabled", True),
-        "months_back": cfg.get("months_back", 2),
+        "months_back": cfg.get("months_back", 36),
         "should_run": should_run,
         "reason": reason,
+        "since": since,
     }
 
 
@@ -690,7 +703,7 @@ async def gisgmp_relay_set(
     if payload.enabled is not None:
         cfg["enabled"] = bool(payload.enabled)
     if payload.months_back is not None:
-        cfg["months_back"] = max(1, min(24, int(payload.months_back)))
+        cfg["months_back"] = max(1, min(60, int(payload.months_back)))
     if payload.interval_hours is not None:
         cfg["interval_hours"] = max(1, min(168, int(payload.interval_hours)))
     await _save_relay_cfg(db, cfg)

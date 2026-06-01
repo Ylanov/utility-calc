@@ -1,30 +1,24 @@
 #!/usr/bin/env python3
 # relay/gisgmp/relay.py
 #
-# Мост ГИС ГМП → ЖКХ. Демон на ВМ PODS2 (единственная машина, которая видит
-# И корп-сеть с реестром gisgmp.cgu.mchs.ru, И интернет с asy-tk.ru).
+# Мост ГИС ГМП → ЖКХ. Демон на ВМ PODS2 (видит И корп-сеть с реестром, И интернет).
+# Управление из ЖКХ (pull): релей раз в ~2 мин опрашивает конфиг; по should_run
+# логинится в реестр и ИНКРЕМЕНТАЛЬНО собирает начисления.
 #
-# Управление — из ЖКХ (pull-модель): релей за NAT, ЖКХ к нему внутрь не
-# достучится, поэтому релей сам раз в ~2 мин опрашивает ЖКХ
-# (GET /api/financier/gisgmp/relay-config). Если ЖКХ говорит should_run
-# (нажали «Запустить сейчас» или истёк интервал) — релей:
-#   1) логинится в реестр (OAuth2/passport: логин/пароль + _csrf_token);
-#   2) читает «Начисления» за скользящее окно (последние months_back месяцев,
-#      фильтр по дате начисления) постранично, парсит (15 ячеек/строка);
-#   3) шлёт строки в ЖКХ POST /gisgmp/sync;
-#   4) отчитывается POST /gisgmp/relay-report (статус/счётчики).
-# Классификацию (наем→205 / комуслуги→209, «Не сквитировано»=долг,
-# «аннулирование»→мимо) и матч ФИО→жилец делает бэкенд ЖКХ.
-#
-# Креды/токен — из EnvironmentFile (relay.env). Окно/интервал/вкл-выкл —
-# из ЖКХ (меняются в панели, релей подхватывает на следующем опросе).
+# ИНКРЕМЕНТ (сервер ГИС медленный — не тянем всё каждый раз):
+#   • сортируем реестр по дате актуализации DESC (новое/изменённое сверху);
+#   • идём по страницам и ОСТАНАВЛИВАЕМСЯ, как только дата актуализации стала
+#     старше курсора `since` (это уже в кэше ЖКХ) — шлём только новое/изменённое;
+#   • первый прогон (since пустой) — полный проход в пределах окна months_back;
+#   • ретраи страниц при 5xx/таймаутах, чтобы один сбой не рушил весь сбор.
+# Долг копится на стороне ЖКХ (кэш по УИН), здесь только сбор+отправка.
 
 import html
 import os
 import re
 import sys
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import requests
 
@@ -34,11 +28,10 @@ JKH_URL = os.environ.get("JKH_URL", "https://asy-tk.ru").rstrip("/")
 JKH_TOKEN = os.environ.get("GISGMP_SYNC_TOKEN", "")
 USERNAME = os.environ.get("PASSPORT_USERNAME", "")
 PASSWORD = os.environ.get("PASSPORT_PASSWORD", "")
-MAX_PAGES = int(os.environ.get("MAX_PAGES", "200"))
+MAX_PAGES = int(os.environ.get("MAX_PAGES", "500"))      # потолок (первый полный проход)
 PAGE_SLEEP = float(os.environ.get("PAGE_SLEEP", "0.4"))
 POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "120"))
-ONLY_UNPAID = os.environ.get("ONLY_UNPAID", "0") == "1"
-UNPAID_STATUS_ID = "13911fbd-daac-4fb5-b996-f04c726cd030"  # «Не сквитировано»
+PAGE_RETRIES = int(os.environ.get("PAGE_RETRIES", "3"))  # ретраи страницы при сбое
 UA = "Mozilla/5.0 (gisgmp-relay)"
 
 
@@ -48,6 +41,16 @@ def log(*a):
 
 def _auth():
     return {"Authorization": f"Bearer {JKH_TOKEN}"}
+
+
+def parse_reg_dt(s):
+    s = (s or "").strip()
+    for fmt in ("%d.%m.%Y %H:%M", "%d.%m.%Y"):
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    return None
 
 
 def _txt(c):
@@ -87,40 +90,63 @@ def login(s):
     ch = re.search(r"challenge=([a-f0-9]+)", r.text)
     csrf = re.search(r'name="_csrf_token"\s+value="([^"]+)"', r.text)
     if not (ch and csrf):
-        raise RuntimeError("не нашёл форму входа (challenge/_csrf_token) — реестр изменился?")
+        raise RuntimeError("не нашёл форму входа (challenge/_csrf_token)")
     s.post(f"{PASSPORT}/oauth/login?challenge={ch.group(1)}",
            data={"username": USERNAME, "password": PASSWORD, "_csrf_token": csrf.group(1)},
            headers={"User-Agent": UA}, timeout=30)
     if 'href="/logout"' not in s.get(f"{REGISTRY}/charge/", headers={"User-Agent": UA}, timeout=30).text:
-        raise RuntimeError("вход не удался — проверь PASSPORT_USERNAME/PASSPORT_PASSWORD")
+        raise RuntimeError("вход не удался — проверь логин/пароль")
 
 
-def scrape(s, months_back):
-    # Скользящее окно: только начисления с датой начисления за последние
-    # months_back месяцев (фильтр режет «огромное кол-во записей» на порядок).
+def _fetch_page(s, params):
+    """GET страницы с ретраями (сервер ГИС флапает 5xx/таймауты)."""
+    last = ""
+    for attempt in range(PAGE_RETRIES):
+        try:
+            r = s.get(f"{REGISTRY}/charge/", params=params,
+                      headers={"User-Agent": UA}, timeout=60)
+            if r.status_code >= 500:
+                last = f"HTTP {r.status_code}"
+                time.sleep(2 * (attempt + 1))
+                continue
+            return r
+        except Exception as e:
+            last = str(e)
+            time.sleep(2 * (attempt + 1))
+    raise RuntimeError(f"страница не отдалась после {PAGE_RETRIES} попыток: {last}")
+
+
+def scrape(s, months_back, since):
+    """Инкремент: сорт по дате актуализации DESC, стоп когда дошли до курсора."""
+    since_dt = parse_reg_dt(since) if since else None
     d_from = (date.today() - timedelta(days=months_back * 31)).strftime("%d.%m.%Y")
-    charges, hit_cap = [], True
+    charges = []
     for page in range(1, MAX_PAGES + 1):
-        params = {"page": page, "filtration[billDate_from]": d_from}
-        if ONLY_UNPAID:
-            params["filtration[acknowledgmentStatus]"] = UNPAID_STATUS_ID
-        r = s.get(f"{REGISTRY}/charge/", params=params, headers={"User-Agent": UA}, timeout=30)
+        params = {"page": page, "filtration[billDate_from]": d_from,
+                  "sort": "c.actualizeDate", "direction": "desc"}
+        r = _fetch_page(s, params)
         if 'href="/logout"' not in r.text:
             raise RuntimeError("сессия отвалилась во время чтения")
         rows = parse_page(r.text)
         if not rows:
-            hit_cap = False
             break
-        charges.extend(rows)
+        hit_old = False
+        for ch in rows:
+            if since_dt is not None:
+                adt = parse_reg_dt(ch.get("actualize_date"))
+                if adt is not None and adt < since_dt:
+                    hit_old = True
+                    break
+            charges.append(ch)
+        if hit_old:
+            break          # дошли до уже известного (по дате актуализации) — стоп
         time.sleep(PAGE_SLEEP)
-    if hit_cap:
-        log(f"[relay] ВНИМАНИЕ: предел {MAX_PAGES} страниц — увеличь MAX_PAGES.")
     return charges
 
 
 def push(charges):
     r = requests.post(f"{JKH_URL}/api/financier/gisgmp/sync",
-                      headers=_auth(), json={"charges": charges}, timeout=120)
+                      headers=_auth(), json={"charges": charges}, timeout=180)
     r.raise_for_status()
     return r.json()
 
@@ -141,25 +167,25 @@ def report(ok, count=0, updated=0, created=0, not_found=0, message=""):
                             "message": (message or "")[:500]},
                       timeout=30)
     except Exception as e:
-        log("[relay] не смог отправить отчёт:", e)
+        log("[relay] отчёт не ушёл:", e)
 
 
-def run_once(months_back):
+def run_once(months_back, since):
     s = requests.Session()
-    log("[relay] логинимся в реестр…")
+    log("[relay] логинимся…")
     login(s)
-    log(f"[relay] читаем начисления (окно {months_back} мес)…")
-    charges = scrape(s, months_back)
-    log(f"[relay] собрано начислений: {len(charges)}")
+    log(f"[relay] читаем (окно {months_back} мес, since={since or 'нет — полный проход'})…")
+    charges = scrape(s, months_back, since)
+    log(f"[relay] собрано новых/изменённых: {len(charges)}")
     if not charges:
-        report(True, 0, message="пусто (нет начислений за окно)")
+        report(True, 0, message="нет изменений (инкремент пуст)")
         return
     res = push(charges)
-    log(f"[relay] ЖКХ ответил: {res}")
+    log(f"[relay] ЖКХ: {res}")
     report(True, len(charges),
-           updated=res.get("updated", 0), created=res.get("created", 0),
-           not_found=(res.get("not_found_209", 0) + res.get("not_found_205", 0)),
-           message="ok")
+           updated=res.get("matched", 0), not_found=res.get("not_found", 0),
+           message=f"получено {res.get('received', len(charges))}, "
+                   f"в кэше {res.get('cache_total', '?')}, жильцов {res.get('residents', '?')}")
 
 
 def main():
@@ -169,15 +195,16 @@ def main():
         log(f"[relay] не заданы переменные: {', '.join(miss)} (см. relay.env)")
         return 2
 
-    log(f"[relay] демон запущен, опрос ЖКХ каждые {POLL_SECONDS}с")
+    log(f"[relay] демон запущен, опрос каждые {POLL_SECONDS}с")
     while True:
         try:
             cfg = get_config()
             if cfg.get("should_run"):
-                mb = int(cfg.get("months_back", 2))
-                log(f"[relay] запуск (reason={cfg.get('reason')}), окно {mb} мес")
+                mb = int(cfg.get("months_back", 36))
+                since = cfg.get("since")
+                log(f"[relay] запуск (reason={cfg.get('reason')})")
                 try:
-                    run_once(mb)
+                    run_once(mb, since)
                 except Exception as e:
                     log("[relay] ошибка прогона:", e)
                     report(False, message=str(e)[:400])
