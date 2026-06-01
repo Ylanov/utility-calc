@@ -1,0 +1,13 @@
+[Unit]
+Description=Запуск релея ГИС ГМП -> ЖКХ каждые 12 часов
+
+[Timer]
+# Через 10 мин после загрузки, затем каждые 12 часов.
+OnBootSec=10min
+OnUnitActiveSec=12h
+# Если ВМ была выключена в момент запуска — догнать при включении.
+Persistent=true
+Unit=gisgmp-relay.service
+
+[Install]
+WantedBy=timers.target
