@@ -265,7 +265,7 @@ export const DebtsModule = {
                 + `Синк ГИС: ${d.findings_at ? new Date(d.findings_at).toLocaleString('ru-RU') : '—'}.</div>`
                 + `<div style="font-size:12px;margin-bottom:8px;"><b>209:</b> ГИС ${fmt(a9.sum_gisgmp)} / 1С ${fmt(a9.sum_1c)} (Δ ${fmt(a9.delta_total)}) &nbsp;·&nbsp; `
                 + `<b>205:</b> ГИС ${fmt(a5.sum_gisgmp)} / 1С ${fmt(a5.sum_1c)} (Δ ${fmt(a5.delta_total)}) &nbsp;·&nbsp; совпало: ${d.matched_count || 0}</div>`
-                + `<div style="margin-bottom:8px;display:flex;flex-wrap:wrap;gap:6px;">${chips}</div>`
+                + `<div style="margin-bottom:8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;">${chips}<button class="action-btn secondary-btn" id="reconPrint" style="font-size:12px;padding:4px 10px;"><i class="fa-solid fa-print"></i> Печать</button></div>`
                 + `<input type="text" id="reconSearch" placeholder="Фильтр по фамилии…" style="width:240px;padding:6px 8px;margin-bottom:8px;">`
                 + `<div id="reconResult"></div>`;
             body.querySelectorAll('[data-rflag]').forEach(b => b.addEventListener('click', () => {
@@ -277,6 +277,7 @@ export const DebtsModule = {
                 });
                 this.renderGisgmpReconcile();
             }));
+            document.getElementById('reconPrint')?.addEventListener('click', () => this.printGisgmpReconcile());
             document.getElementById('reconSearch')?.addEventListener('input', () => this.renderGisgmpReconcile());
             this.renderGisgmpReconcile();
         } catch (e) {
@@ -313,6 +314,52 @@ export const DebtsModule = {
             + `<thead><tr><th>Жилец</th><th class="text-right">209 ГИС</th><th class="text-right">209 1С</th><th class="text-right">Δ209</th>`
             + `<th class="text-right">205 ГИС</th><th class="text-right">205 1С</th><th class="text-right">Δ205</th><th class="text-right">Σ Δ</th><th>Флаг</th></tr></thead>`
             + `<tbody>${rows || '<tr><td colspan="9" class="text-center">нет</td></tr>'}</tbody></table></div>`;
+    },
+
+    // Печатный отчёт сверки — чистый документ в новом окне → печать/PDF из браузера.
+    printGisgmpReconcile() {
+        const d = this._recon;
+        if (!d) { toast('Сначала открой «Сверка с 1С»', 'info'); return; }
+        const LAB = this._RECON_LAB;
+        const fmt = (v) => (Number(v) || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const dlt = (v) => { const n = Number(v) || 0; return n ? (n > 0 ? '+' : '') + fmt(n) : '0'; };
+        const src = (s) => s ? `${s.file || '?'}${s.at ? ' от ' + new Date(s.at).toLocaleString('ru-RU') : ''}` : 'нет импорта';
+        const a9 = d.accounts['209'] || {}, a5 = d.accounts['205'] || {}, pr = d.problems || {};
+        const now = new Date().toLocaleString('ru-RU');
+        const probRows = ['gis_more', 'c1_more', 'only_1c', 'only_gis'].filter(k => pr[k])
+            .map(k => `<tr><td>${LAB[k][0]}</td><td class=r>${pr[k].count}</td><td class=r>${fmt(pr[k].sum_abs)}</td><td class=r>${pr[k].high || 0}</td></tr>`).join('');
+        const rows = (d.residents || []).map(r => {
+            const L = LAB[r.flag] || ['', ''];
+            return `<tr><td>${esc(r.username)}</td><td class=r>${fmt(r.g209)}</td><td class=r>${fmt(r.c209)}</td><td class=r>${dlt(r.d209)}</td>`
+                + `<td class=r>${fmt(r.g205)}</td><td class=r>${fmt(r.c205)}</td><td class=r>${dlt(r.d205)}</td><td class=r><b>${dlt(r.delta)}</b></td><td>${L[0]}</td></tr>`;
+        }).join('');
+        const html = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Сверка ГИС ГМП — 1С</title>
+<style>
+body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;margin:16px;}
+h1{font-size:17px;margin:0 0 2px;} h2{font-size:13px;margin:14px 0 4px;}
+.sub{color:#555;margin-bottom:8px;line-height:1.4;}
+table{border-collapse:collapse;width:100%;margin-bottom:8px;}
+th,td{border:1px solid #bbb;padding:3px 5px;} th{background:#eee;text-align:left;}
+td.r,th.r{text-align:right;white-space:nowrap;} tr:nth-child(even){background:#fafafa;}
+@media print{body{margin:8px;} tr{page-break-inside:avoid;} thead{display:table-header-group;}}
+</style></head><body>
+<h1>Сверка ГИС ГМП ↔ долги 1С (жильцы)</h1>
+<div class="sub">Сформировано: ${now} · Синк ГИС: ${d.findings_at ? new Date(d.findings_at).toLocaleString('ru-RU') : '—'}<br>
+Источник 1С: <b>209</b> — ${esc(src(d.source_1c && d.source_1c['209']))}; <b>205</b> — ${esc(src(d.source_1c && d.source_1c['205']))}</div>
+<h2>Итоги по счетам</h2>
+<table><tr><th>Счёт</th><th class=r>ГИС ГМП</th><th class=r>1С (Excel)</th><th class=r>Разница</th><th class=r>Совпало</th></tr>
+<tr><td>209 — коммуслуги</td><td class=r>${fmt(a9.sum_gisgmp)}</td><td class=r>${fmt(a9.sum_1c)}</td><td class=r>${dlt(a9.delta_total)}</td><td class=r>${a9.matched || 0}</td></tr>
+<tr><td>205 — наём</td><td class=r>${fmt(a5.sum_gisgmp)}</td><td class=r>${fmt(a5.sum_1c)}</td><td class=r>${dlt(a5.delta_total)}</td><td class=r>${a5.matched || 0}</td></tr></table>
+<h2>Проблемы (авто-флаги)</h2>
+<table><tr><th>Категория</th><th class=r>Жильцов</th><th class=r>Сумма Δ, ₽</th><th class=r>Крупных (≥20k)</th></tr>${probRows || '<tr><td colspan=4>расхождений нет</td></tr>'}</table>
+<h2>Разбор по жильцам — ${(d.residents || []).length} (сортировка по |разнице|)</h2>
+<table><thead><tr><th>Жилец</th><th class=r>209 ГИС</th><th class=r>209 1С</th><th class=r>Δ209</th><th class=r>205 ГИС</th><th class=r>205 1С</th><th class=r>Δ205</th><th class=r>Σ Δ</th><th>Флаг</th></tr></thead><tbody>${rows}</tbody></table>
+<script>window.onload=function(){setTimeout(function(){window.print();},250);};</script>
+</body></html>`;
+        const w = window.open('', '_blank');
+        if (!w) { toast('Разреши всплывающие окна для печати', 'warning'); return; }
+        w.document.write(html);
+        w.document.close();
     },
 
     cacheDOM() {
