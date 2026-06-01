@@ -215,6 +215,18 @@ export const DebtsModule = {
             + `<tbody>${rows || '<tr><td colspan="8" class="text-center">по этой фамилии ничего</td></tr>'}</tbody></table></div>`;
     },
 
+    // Дотянуть расхождения: ставит проблемных (ГИС занижен) в очередь точечного добора.
+    async recheckGisgmp() {
+        const ok = await showConfirm('Поставить в очередь дотягивания жильцов, где ГИС занижен («1С > ГИС» и «нет в ГИС»)? Релей точечно доберёт их полную историю (36 мес) за пару минут. Сошедшихся и «ГИС > 1С» не трогаем.');
+        if (!ok) return;
+        try {
+            const r = await api.post('/financier/gisgmp/recheck-build', {});
+            toast(`В очередь: ${r.queued} фамилий. Релей дотянет в течение ~2 мин — потом обнови «Сверку с 1С».`, 'info');
+        } catch (e) {
+            toast('Ошибка: ' + (e?.message || e), 'error');
+        }
+    },
+
     // Сверка ГИС ГМП ↔ долги 1С: жилец = строка + авто-флаги проблем + фильтры.
     _RECON_LAB: {
         ok: ['ок', '#047857'],
@@ -352,6 +364,7 @@ export const DebtsModule = {
             gisgmpFindingsBody: document.getElementById('gisgmpFindingsBody'),
             btnGisgmpReconcile: document.getElementById('btnGisgmpReconcile'),
             gisgmpReconcileBody: document.getElementById('gisgmpReconcileBody'),
+            btnGisgmpRecheck: document.getElementById('btnGisgmpRecheck'),
             // Модалка корректировки
             adjustModal: document.getElementById('debtAdjustModal'),
             adjustForm: document.getElementById('debtAdjustForm'),
@@ -396,6 +409,7 @@ export const DebtsModule = {
         this.dom.gisgmpEnabled?.addEventListener('change', () => this.saveGisgmpRelay());
         this.dom.btnGisgmpFindings?.addEventListener('click', () => this.openGisgmpFindings());
         this.dom.btnGisgmpReconcile?.addEventListener('click', () => this.openGisgmpReconcile());
+        this.dom.btnGisgmpRecheck?.addEventListener('click', () => this.recheckGisgmp());
         this.dom.btnUpload?.addEventListener('click', () => this.handleUpload());
 
         // Авто-предпросмотр при выборе файла (Bug T)

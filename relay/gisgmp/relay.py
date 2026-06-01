@@ -200,6 +200,35 @@ def run_once(months_back, since):
                    f"в кэше {res.get('cache_total', '?')}, жильцов {res.get('residents', '?')}")
 
 
+def do_recheck(surnames, deep_months):
+    """Точечный добор: по каждой фамилии тянем её начисления за deep_months мес
+    (фильтр payerName) и доливаем в кэш. Сошедшихся не трогаем — экономим сервер."""
+    s = requests.Session()
+    login(s)
+    d_from = (date.today() - timedelta(days=deep_months * 31)).strftime("%d.%m.%Y")
+    collected = []
+    for sn in surnames:
+        for page in range(1, 31):
+            params = {"page": page, "filtration[payerName]": sn,
+                      "filtration[billDate_from]": d_from}
+            r = _fetch_page(s, params)
+            if 'href="/logout"' not in r.text:
+                raise RuntimeError("сессия отвалилась при дотягивании")
+            rows = parse_page(r.text)
+            if not rows:
+                break
+            collected.extend(rows)
+            time.sleep(PAGE_SLEEP)
+    log(f"[relay] дотянуто {len(collected)} строк по {len(surnames)} фамилиям")
+    if collected:
+        res = push(collected)
+        log(f"[relay] ЖКХ: {res}")
+        report(True, len(collected),
+               message=f"дотягивание: {len(surnames)} фам., {len(collected)} строк, кэш {res.get('cache_total', '?')}")
+    else:
+        report(True, 0, message="дотягивание: ничего не найдено")
+
+
 def main():
     miss = [k for k in ("GISGMP_SYNC_TOKEN", "PASSPORT_USERNAME", "PASSPORT_PASSWORD")
             if not os.environ.get(k)]
@@ -211,7 +240,15 @@ def main():
     while True:
         try:
             cfg = get_config()
-            if cfg.get("should_run"):
+            recheck = cfg.get("recheck")
+            if recheck and recheck.get("surnames"):
+                log(f"[relay] дотягивание {len(recheck['surnames'])} фамилий…")
+                try:
+                    do_recheck(recheck["surnames"], int(recheck.get("deep_months", 36)))
+                except Exception as e:
+                    log("[relay] ошибка дотягивания:", e)
+                    report(False, message="дотягивание: " + str(e)[:300])
+            elif cfg.get("should_run"):
                 mb = int(cfg.get("months_back", 36))
                 since = cfg.get("since")
                 log(f"[relay] запуск (reason={cfg.get('reason')})")

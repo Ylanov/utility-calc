@@ -649,12 +649,29 @@ async def gisgmp_relay_config(
         except Exception:
             since = None
 
+    # Очередь точечного дотягивания проблемных ФИО (где ГИС занижен):
+    # отдаём список и сразу гасим (claim), чтобы не повторять.
+    rc_row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == "gisgmp_recheck")
+    )).scalars().first()
+    recheck = None
+    if rc_row and rc_row.value:
+        try:
+            rc = json.loads(rc_row.value)
+        except Exception:
+            rc = {}
+        if rc.get("surnames"):
+            recheck = {"surnames": rc["surnames"], "deep_months": int(rc.get("deep_months", 36))}
+            rc_row.value = json.dumps({}, ensure_ascii=False)
+            await db.commit()
+
     return {
         "enabled": cfg.get("enabled", True),
         "months_back": cfg.get("months_back", 36),
         "should_run": should_run,
         "reason": reason,
         "since": since,
+        "recheck": recheck,
     }
 
 
@@ -749,7 +766,10 @@ async def gisgmp_reconcile(
     На каждый счёт: совпало / расхождение (Δ) / только в ГИС / только в 1С.
     Окно ГИС влияет на полноту — для честной сверки ставь окно побольше."""
     _require_finance(current_user)
+    return await _build_reconcile(db)
 
+
+async def _build_reconcile(db: AsyncSession) -> dict:
     findings = await _load_findings(db)
     gis: dict[int, dict] = {}
     if findings:
@@ -875,6 +895,43 @@ async def gisgmp_reconcile(
     out["problems"] = problems
     out["matched_count"] = matched_total
     return out
+
+
+GISGMP_RECHECK_KEY = "gisgmp_recheck"
+
+
+@router.post("/gisgmp/recheck-build", summary="Очередь дотягивания: проблемные ФИО (ГИС<1С)")
+async def gisgmp_recheck_build(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Берёт из сверки жильцов, где ГИС занижен (флаги «1С>ГИС» и «нет в ГИС»),
+    и ставит их фамилии в очередь. Релей точечно дотянет их полную историю
+    (36 мес) по фамилии — сошедшихся и «ГИС>1С» не трогаем."""
+    _require_finance(current_user)
+    rec = await _build_reconcile(db)
+    surnames, seen = [], set()
+    for r in rec.get("residents", []):
+        if r.get("flag") not in ("c1_more", "only_1c"):
+            continue
+        parts = (r.get("username") or "").strip().split()
+        if not parts:
+            continue
+        s = parts[0]
+        if s.lower() not in seen:
+            seen.add(s.lower())
+            surnames.append(s)
+    payload = {"surnames": surnames, "deep_months": 36, "requested_at": utcnow().isoformat()}
+    row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_RECHECK_KEY)
+    )).scalars().first()
+    if row is None:
+        row = SystemSetting(key=GISGMP_RECHECK_KEY, value="{}",
+                            description="Очередь точечного дотягивания ГИС ГМП")
+        db.add(row)
+    row.value = json.dumps(payload, ensure_ascii=False)
+    await db.commit()
+    return {"queued": len(surnames)}
 
 
 @router.get("/gisgmp/relay.py", summary="Отдать актуальный relay.py (самообновление релея на ВМ)")
