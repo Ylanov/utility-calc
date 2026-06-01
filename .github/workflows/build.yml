@@ -54,6 +54,7 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.13"
+          cache: pip
 
       - name: Install dependencies
         run: pip install -r requirements.txt
@@ -75,7 +76,8 @@ jobs:
 # ==========================================
   quality-check:
     name: Code Quality and Security
-    needs: migration-check
+    # Идёт ПАРАЛЛЕЛЬНО migration-check и build — needs убран. Гейтом служит
+    # deploy.needs (см. ниже): пока quality-check не зелёный, деплоя не будет.
     runs-on: ubuntu-latest
 
     steps:
@@ -181,7 +183,10 @@ jobs:
 # ==========================================
   build:
     name: Build and Push Docker Image
-    needs: quality-check
+    # ПАРАЛЛЕЛЬНО проверкам — needs убран (ускорение пайплайна, 2026-06-01).
+    # ВНИМАНИЕ: образ соберётся и запушится в GHCR :latest даже если
+    # quality/migration упадут, НО deploy его не возьмёт (deploy гейтит все
+    # три). Следующий зелёный прогон перезапишет :latest.
     runs-on: ubuntu-latest
 
     permissions:
@@ -242,7 +247,10 @@ jobs:
 # ==========================================
   deploy:
     name: Deploy to Production
-    needs: build
+    # Деплой ждёт ВСЕ три независимые джобы (они бегут параллельно на трёх
+    # ubuntu-раннерах). Время пайплайна ≈ max(проверки) + deploy вместо суммы.
+    # Деплой стартует только когда все три зелёные.
+    needs: [migration-check, quality-check, build]
     runs-on: self-hosted
 
     steps:
