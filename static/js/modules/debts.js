@@ -346,21 +346,29 @@ export const DebtsModule = {
         if (q) list = list.filter(r => (r.username || '').toLowerCase().includes(q));
         const rows = list.map(r => {
             const L = LAB[r.flag] || ['', '#666'];
-            return `<tr><td><a href="#" class="recon-payer" data-fio="${esc(r.username)}" style="color:#2563eb;cursor:pointer;">${esc(r.username)}</a></td>`
+            const act = r.overridden
+                ? `<button class="recon-revert" data-uid="${r.user_id}" data-fio="${esc(r.username)}" style="font-size:11px;color:#7c3aed;background:none;border:1px solid #7c3aed;border-radius:4px;padding:1px 6px;cursor:pointer;">↩ Откат</button>`
+                : (r.flag !== 'ok'
+                    ? `<button class="recon-apply" data-uid="${r.user_id}" data-fio="${esc(r.username)}" style="font-size:11px;color:#fff;background:#b91c1c;border:none;border-radius:4px;padding:2px 7px;cursor:pointer;">Применить ГИС</button>`
+                    : '');
+            return `<tr${r.overridden ? ' style="background:#f5f3ff;"' : ''}><td><a href="#" class="recon-payer" data-fio="${esc(r.username)}" style="color:#2563eb;cursor:pointer;">${esc(r.username)}</a></td>`
                 + `<td class="text-right">${fmt(r.g209)}</td><td class="text-right">${fmt(r.c209)}</td>${dcell(r.d209)}`
                 + `<td class="text-right">${fmt(r.g205)}</td><td class="text-right">${fmt(r.c205)}</td>${dcell(r.d205)}`
                 + `<td class="text-right"><b>${fmt(r.delta)}</b></td>`
-                + `<td><span style="color:${L[1]};font-size:11px;">${L[0]}${r.severity === 'high' ? ' ⚠' : ''}</span></td></tr>`;
+                + `<td><span style="color:${L[1]};font-size:11px;">${L[0]}${r.severity === 'high' ? ' ⚠' : ''}${r.overridden ? ' ✔' : ''}</span></td>`
+                + `<td>${act}</td></tr>`;
         }).join('');
         res.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;">Показано: ${list.length}. ⚠ = крупное расхождение (≥20k). Красный Δ = ГИС больше, синий = 1С больше.</div>`
             + `<div class="table-responsive"><table class="sticky-header-table" style="font-size:12px;">`
             + `<thead><tr><th>Жилец</th><th class="text-right">209 ГИС</th><th class="text-right">209 1С</th><th class="text-right">Δ209</th>`
-            + `<th class="text-right">205 ГИС</th><th class="text-right">205 1С</th><th class="text-right">Δ205</th><th class="text-right">Σ Δ</th><th>Флаг</th></tr></thead>`
-            + `<tbody>${rows || '<tr><td colspan="9" class="text-center">нет</td></tr>'}</tbody></table></div>`;
+            + `<th class="text-right">205 ГИС</th><th class="text-right">205 1С</th><th class="text-right">Δ205</th><th class="text-right">Σ Δ</th><th>Флаг</th><th>Действие</th></tr></thead>`
+            + `<tbody>${rows || '<tr><td colspan="10" class="text-center">нет</td></tr>'}</tbody></table></div>`;
         res.querySelectorAll('.recon-payer').forEach(a => a.addEventListener('click', (e) => {
             e.preventDefault();
             this.openPayerCharges(a.getAttribute('data-fio'));
         }));
+        res.querySelectorAll('.recon-apply').forEach(b => b.addEventListener('click', () => this.applyGisOverride(b.getAttribute('data-uid'), b.getAttribute('data-fio'))));
+        res.querySelectorAll('.recon-revert').forEach(b => b.addEventListener('click', () => this.revertGisOverride(b.getAttribute('data-uid'), b.getAttribute('data-fio'))));
     },
 
     // Печатный отчёт сверки — чистый документ в новом окне → печать/PDF из браузера.
@@ -467,6 +475,39 @@ td.r,th.r{text-align:right;white-space:nowrap;} tr:nth-child(even){background:#f
             <div class="table-responsive" style="max-height:60vh;overflow:auto;"><table class="sticky-header-table" style="font-size:12px;width:100%;">
                 <thead><tr><th>Период (нач.)</th><th>Счёт</th><th class="text-right">Сумма</th><th>Статус</th><th>Назначение</th><th>Актуализация</th></tr></thead>
                 <tbody>${rows}</tbody></table></div>`;
+    },
+
+    // Применить/откатить ГИС-оверрайд долга жильца (база — 1С).
+    async applyGisOverride(uid, fio) {
+        const r = (this._recon?.residents || []).find(x => String(x.user_id) === String(uid));
+        const fmt = (v) => (Number(v) || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const msg = r
+            ? `Применить значения ГИС к долгу жильца «${fio}»? Долг станет: 209 = ${fmt(r.g209)}, 205 = ${fmt(r.g205)} (как в ГИС) — это увидит жилец. Действие обратимо («Откат»). Повторный импорт 1С-Excel перезапишет долг свежими данными 1С.`
+            : `Применить значения ГИС к долгу жильца «${fio}»? Обратимо.`;
+        if (!await showConfirm(msg)) return;
+        try {
+            await api.post('/financier/gisgmp/apply-override', { user_id: Number(uid) });
+            toast(`Применено к «${fio}» — жилец увидит значение ГИС.`, 'info');
+            this.reloadReconcile();
+        } catch (e) { toast('Ошибка: ' + (e?.message || e), 'error'); }
+    },
+
+    async revertGisOverride(uid, fio) {
+        if (!await showConfirm(`Откатить ГИС-оверрайд жильца «${fio}» к прежним значениям?`)) return;
+        try {
+            await api.post('/financier/gisgmp/revert-override', { user_id: Number(uid) });
+            toast(`Откат выполнен для «${fio}».`, 'info');
+            this.reloadReconcile();
+        } catch (e) { toast('Ошибка: ' + (e?.message || e), 'error'); }
+    },
+
+    // Перечитать сверку без сворачивания (после оверрайда/отката).
+    async reloadReconcile() {
+        if (!this._recon) return;
+        try {
+            const d = await api.get('/financier/gisgmp/reconcile');
+            if (d && d.has_findings) { this._recon = d; this.renderGisgmpReconcile(); }
+        } catch (e) { /* тихо */ }
     },
 
     cacheDOM() {

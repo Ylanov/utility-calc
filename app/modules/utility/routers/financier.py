@@ -16,7 +16,7 @@ from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func, or_, desc, asc
+from sqlalchemy import func, or_, desc, asc, update as _sa_update
 from app.core.config import settings
 from app.core.database import get_db
 # Добавлен импорт модели Room
@@ -915,6 +915,133 @@ async def gisgmp_payer_charges(
             "charges": out[:500], "totals": tot}
 
 
+GISGMP_OVERRIDES_KEY = "gisgmp_overrides"
+
+
+class GisgmpOverrideIn(BaseModel):
+    user_id: int
+
+
+@router.post("/gisgmp/apply-override", summary="Применить долг ГИС к жильцу (оверрайд над 1С)")
+async def gisgmp_apply_override(
+    payload: GisgmpOverrideIn,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Пишет долг ГИС (209/205) в показания жильца активного периода — это и
+    видит жилец. База остаётся 1С; явный точечный оверрайд с провенансом и
+    откатом. Долг = значение ГИС, переплата по этим счетам → 0. Прежние значения
+    сохраняются для отката. ВНИМАНИЕ: повторный импорт 1С-Excel перезапишет долг
+    свежими данными 1С (оверрайд — точечная правка на текущий момент)."""
+    _require_finance(current_user)
+    uid = int(payload.user_id)
+
+    # 1. Авторитетное значение ГИС — из сверки (НЕ с клиента).
+    rec = await _build_reconcile(db)
+    resident = next((r for r in rec.get("residents", []) if r.get("user_id") == uid), None)
+    if resident is None:
+        raise HTTPException(status_code=404, detail="Жилец не найден в сверке ГИС ГМП")
+    gis_209 = Decimal(str(resident.get("g209") or 0))
+    gis_205 = Decimal(str(resident.get("g205") or 0))
+
+    # 2. Активный период + текущее показание жильца.
+    ap = (await db.execute(
+        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
+    )).scalars().first()
+    if ap is None:
+        raise HTTPException(status_code=409, detail="Нет активного расчётного периода")
+    mr = (await db.execute(
+        select(MeterReading).where(
+            MeterReading.user_id == uid, MeterReading.period_id == ap.id
+        ).order_by(MeterReading.created_at.desc())
+    )).scalars().first()
+    if mr is None:
+        raise HTTPException(status_code=409,
+                            detail="У жильца нет показаний в активном периоде — оверрайд недоступен")
+
+    prev = {
+        "debt_209": str(mr.debt_209 or 0), "overpayment_209": str(mr.overpayment_209 or 0),
+        "debt_205": str(mr.debt_205 or 0), "overpayment_205": str(mr.overpayment_205 or 0),
+    }
+    mr_id = mr.id
+    # expunge — иначе ORM-flush ТИХО перезапишет explicit UPDATE (партиции MR).
+    db.expunge(mr)
+    await db.execute(
+        _sa_update(MeterReading).where(MeterReading.id == mr_id).values(
+            debt_209=gis_209, overpayment_209=Decimal("0.00"),
+            debt_205=gis_205, overpayment_205=Decimal("0.00"),
+        )
+    )
+
+    # 3. Провенанс + прежние значения (для отката). НЕ пишем DebtImportLog —
+    #    иначе сверка примет оверрайд за «последний Excel 1С».
+    row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_OVERRIDES_KEY)
+    )).scalars().first()
+    overrides = {}
+    if row and row.value:
+        try:
+            overrides = json.loads(row.value)
+        except Exception:
+            overrides = {}
+    if row is None:
+        row = SystemSetting(key=GISGMP_OVERRIDES_KEY, value="{}",
+                            description="ГИС-оверрайды долгов (провенанс + откат)")
+        db.add(row)
+    overrides[str(uid)] = {
+        "username": resident.get("username"),
+        "debt_209": str(gis_209), "debt_205": str(gis_205),
+        "prev": prev, "period_id": ap.id,
+        "at": utcnow().isoformat(), "by": current_user.username,
+    }
+    row.value = json.dumps(overrides, ensure_ascii=False)
+    await db.commit()
+    return {"ok": True, "user_id": uid, "debt_209": str(gis_209), "debt_205": str(gis_205)}
+
+
+@router.post("/gisgmp/revert-override", summary="Откатить ГИС-оверрайд жильца к прежним значениям")
+async def gisgmp_revert_override(
+    payload: GisgmpOverrideIn,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_finance(current_user)
+    uid = str(int(payload.user_id))
+    row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_OVERRIDES_KEY)
+    )).scalars().first()
+    overrides = {}
+    if row and row.value:
+        try:
+            overrides = json.loads(row.value)
+        except Exception:
+            overrides = {}
+    ov = overrides.get(uid)
+    if not ov:
+        raise HTTPException(status_code=404, detail="Оверрайд для жильца не найден")
+    prev = ov.get("prev") or {}
+    mr = (await db.execute(
+        select(MeterReading).where(
+            MeterReading.user_id == int(uid), MeterReading.period_id == ov.get("period_id")
+        ).order_by(MeterReading.created_at.desc())
+    )).scalars().first()
+    if mr is not None:
+        mr_id = mr.id
+        db.expunge(mr)
+        await db.execute(
+            _sa_update(MeterReading).where(MeterReading.id == mr_id).values(
+                debt_209=Decimal(prev.get("debt_209", "0")),
+                overpayment_209=Decimal(prev.get("overpayment_209", "0")),
+                debt_205=Decimal(prev.get("debt_205", "0")),
+                overpayment_205=Decimal(prev.get("overpayment_205", "0")),
+            )
+        )
+    overrides.pop(uid, None)
+    row.value = json.dumps(overrides, ensure_ascii=False)
+    await db.commit()
+    return {"ok": True, "reverted": uid}
+
+
 @router.get("/gisgmp/findings", summary="Что нашёл ГИС ГМП (отладка, хранится отдельно)")
 async def gisgmp_findings(
     current_user: User = Depends(get_current_user),
@@ -1066,10 +1193,24 @@ async def _build_reconcile(db: AsyncSession) -> dict:
             "sum_gis": float(sg), "sum_1c": float(sc), "delta": float(d),
             "flag": flag, "severity": sev,
         })
+    # Пометка активных ГИС-оверрайдов (для UI: показать «откат» вместо «применить»).
+    ovr_row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_OVERRIDES_KEY)
+    )).scalars().first()
+    ovr_ids = set()
+    if ovr_row and ovr_row.value:
+        try:
+            ovr_ids = set(json.loads(ovr_row.value).keys())
+        except Exception:
+            ovr_ids = set()
+    for r in residents:
+        r["overridden"] = str(r.get("user_id")) in ovr_ids
+
     residents.sort(key=lambda r: -abs(r["delta"]))
     out["residents"] = residents[:1000]
     out["problems"] = problems
     out["matched_count"] = matched_total
+    out["override_count"] = len(ovr_ids)
     return out
 
 
