@@ -2,6 +2,8 @@
 
 import logging
 from contextlib import contextmanager
+
+import orjson
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy import create_engine
@@ -26,6 +28,15 @@ asyncpg_connect_args = {
     "statement_cache_size": 0,
     "command_timeout": 60
 }
+
+
+# orjson как (де)сериализатор JSON/JSONB на уровне движка — быстрее stdlib json
+# на тяжёлых полях (applied_state, snapshot_data в DebtImportLog и пр.).
+# OPT_NON_STR_KEYS повторяет поведение stdlib (нестроковые ключи → строки).
+# Эти же данные orjson уже сериализует в HTTP-ответах (ORJSONResponse) —
+# совместимость доказана. dumps возвращает bytes → .decode() в str.
+def _orjson_serializer(v) -> str:
+    return orjson.dumps(v, option=orjson.OPT_NON_STR_KEYS).decode()
 
 
 # =====================================================
@@ -63,6 +74,8 @@ engine = create_async_engine(
     future=True,
     isolation_level=ISOLATION_LEVEL,
     connect_args=asyncpg_connect_args,
+    json_serializer=_orjson_serializer,
+    json_deserializer=orjson.loads,
     **_get_async_pool_kwargs()
 )
 
@@ -82,6 +95,8 @@ engine_sync = create_engine(
     echo=False,
     future=True,
     isolation_level=ISOLATION_LEVEL,
+    json_serializer=_orjson_serializer,
+    json_deserializer=orjson.loads,
     **_get_sync_pool_kwargs()
 )
 
@@ -151,6 +166,8 @@ arsenal_engine = create_async_engine(
     future=True,
     isolation_level=ISOLATION_LEVEL,
     connect_args=asyncpg_connect_args,
+    json_serializer=_orjson_serializer,
+    json_deserializer=orjson.loads,
     **_get_async_pool_kwargs()
 )
 
@@ -187,6 +204,8 @@ arsenal_engine_sync = _create_engine_arsenal(
     echo=False,
     future=True,
     isolation_level=ISOLATION_LEVEL,
+    json_serializer=_orjson_serializer,
+    json_deserializer=orjson.loads,
     **_get_sync_pool_kwargs(),
 )
 

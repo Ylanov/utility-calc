@@ -3,7 +3,7 @@
 # ==========================================
 # Используем легковесный slim-образ Python в качестве основы.
 # Этот этап ('builder') предназначен исключительно для сборки зависимостей.
-FROM python:3.13-slim-bookworm AS builder
+FROM python:3.14-slim-bookworm AS builder
 
 # Устанавливаем переменные окружения для оптимизации работы Python и pip.
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -43,7 +43,7 @@ RUN uv pip install --system --no-cache -r requirements-test.txt
 # ===== STAGE 2: FINAL =====================
 # ==========================================
 # Начинаем финальный, чистый образ с той же основы.
-FROM python:3.13-slim-bookworm
+FROM python:3.14-slim-bookworm
 
 # Устанавливаем аналогичные переменные окружения.
 ENV DEBIAN_FRONTEND=noninteractive \
