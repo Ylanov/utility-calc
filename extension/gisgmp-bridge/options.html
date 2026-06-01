@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <title>Настройки моста ГИС ГМП → ЖКХ</title>
+    <style>
+        body { font-family: system-ui, sans-serif; max-width: 640px; margin: 24px auto; padding: 0 16px; color: #1f2937; }
+        h1 { font-size: 20px; }
+        label { display: block; margin: 16px 0 4px; font-weight: 600; font-size: 14px; }
+        input { width: 100%; padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; box-sizing: border-box; }
+        .hint { color: #6b7280; font-size: 12px; margin-top: 4px; }
+        .row { display: flex; gap: 12px; }
+        .row > div { flex: 1; }
+        button { margin-top: 20px; padding: 10px 18px; border: none; border-radius: 8px; background: #8b5cf6; color: #fff; font-size: 14px; cursor: pointer; }
+        button.secondary { background: #e5e7eb; color: #1f2937; }
+        #status { margin-top: 16px; padding: 10px 12px; border-radius: 8px; background: #f3f4f6; font-size: 13px; white-space: pre-wrap; }
+        .ok { background: #ecfdf5 !important; }
+        .err { background: #fef2f2 !important; }
+    </style>
+</head>
+<body>
+    <h1>Мост ГИС ГМП → ЖКХ</h1>
+    <p class="hint">Раз в 12 часов под вашей ЭЦП-сессией читает «Начисления» реестра и отправляет долги жильцов в ЖКХ-биллинг. Только чтение реестра.</p>
+
+    <label>URL ЖКХ-биллинга</label>
+    <input id="jkh_url" placeholder="https://asy-tk.ru">
+    <div class="hint">Куда отправлять долги. Обычно https://asy-tk.ru</div>
+
+    <label>Токен синхронизации (GISGMP_SYNC_TOKEN)</label>
+    <input id="jkh_token" type="password" placeholder="вставьте токен из .env ЖКХ">
+    <div class="hint">Тот же токен, что задан в .env сервера ЖКХ в переменной GISGMP_SYNC_TOKEN.</div>
+
+    <div class="row">
+        <div>
+            <label>URL реестра ГИС ГМП</label>
+            <input id="registry_url" placeholder="https://gisgmp.cgu.mchs.ru">
+        </div>
+        <div>
+            <label>Период синка, часов</label>
+            <input id="period_hours" type="number" min="1" max="48" placeholder="12">
+        </div>
+    </div>
+
+    <div>
+        <button id="save">Сохранить</button>
+        <button id="syncNow" class="secondary">Синхронизировать сейчас</button>
+    </div>
+
+    <div id="status"></div>
+
+    <script src="options.js"></script>
+</body>
+</html>

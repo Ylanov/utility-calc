@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <style>
+        body { font-family: system-ui, sans-serif; width: 300px; margin: 0; padding: 14px; color: #1f2937; }
+        h1 { font-size: 15px; margin: 0 0 8px; }
+        #status { font-size: 12px; background: #f3f4f6; border-radius: 8px; padding: 8px 10px; white-space: pre-wrap; min-height: 36px; }
+        .ok { background: #ecfdf5 !important; }
+        .err { background: #fef2f2 !important; }
+        .row { display: flex; gap: 8px; margin-top: 10px; }
+        button { flex: 1; padding: 8px; border: none; border-radius: 8px; font-size: 13px; cursor: pointer; }
+        #syncNow { background: #8b5cf6; color: #fff; }
+        #openOptions { background: #e5e7eb; color: #1f2937; }
+    </style>
+</head>
+<body>
+    <h1>Мост ГИС ГМП → ЖКХ</h1>
+    <div id="status">Загрузка…</div>
+    <div class="row">
+        <button id="syncNow">Синхр. сейчас</button>
+        <button id="openOptions">Настройки</button>
+    </div>
+    <script src="popup.js"></script>
+</body>
+</html>

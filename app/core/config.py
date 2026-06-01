@@ -77,6 +77,16 @@ class Settings(BaseSettings):
     # 0 отключает автоочистку полностью.
     GSHEETS_CLEANUP_DAYS: int = 365
 
+    # =========================================
+    # ГИС ГМП — авто-подгрузка долгов (мост-расширение gisgmp-bridge)
+    # =========================================
+    # Статический токен, которым браузерное расширение авторизуется на
+    # эндпоинте POST /api/financier/gisgmp/sync. Машинный мост ↔ один
+    # эндпоинт, без пользовательского JWT (он короткоживущий и протух бы
+    # на фоновом синке раз в 12 ч). Пусто → эндпоинт отвечает 503.
+    # Сгенерировать: `python -c "import secrets; print(secrets.token_urlsafe(32))"`
+    GISGMP_SYNC_TOKEN: str = ""
+
     @property
     def DATABASE_URL_ASYNC(self) -> str:
         return (

@@ -68,6 +68,40 @@ export const DebtsModule = {
         this.loadDebtPeriods();
         this.loadUsers();
         this.loadImportHistory();
+        this.loadGisgmpStatus();
+    },
+
+    // ─── Авто-подгрузка ГИС ГМП (мост-расширение) ──────────────────────────
+    async loadGisgmpStatus() {
+        const box = this.dom.gisgmpStatus;
+        if (!box) return;
+        try {
+            const s = await api.get('/financier/gisgmp/status');
+            if (!s.configured) {
+                box.innerHTML = '<span style="color:#b91c1c;">⚠ Токен GISGMP_SYNC_TOKEN не задан в .env сервера — авто-подгрузка выключена.</span>';
+                return;
+            }
+            if (!s.last_sync_at) {
+                box.innerHTML = '<span style="color:#92400e;">Токен задан, синхронизаций ещё не было. Установите расширение и нажмите в нём «Синхр. сейчас».</span>';
+                return;
+            }
+            const when = new Date(s.last_sync_at).toLocaleString('ru-RU');
+            box.innerHTML =
+                `Последняя синхронизация: <b>${when}</b><br>` +
+                `Обновлено жильцов: <b>${s.last_updated ?? 0}</b>, ` +
+                `создано: <b>${s.last_created ?? 0}</b>, ` +
+                `не найдено ФИО: <b>${s.last_not_found ?? 0}</b>.`;
+        } catch (e) {
+            box.textContent = 'Не удалось загрузить статус ГИС ГМП.';
+        }
+    },
+
+    async downloadGisgmpExtension() {
+        try {
+            await api.download('/financier/gisgmp/bridge.zip', 'gisgmp-bridge.zip');
+        } catch (e) {
+            toast('Не удалось скачать расширение: ' + (e?.message || e), 'error');
+        }
     },
 
     cacheDOM() {
@@ -108,6 +142,9 @@ export const DebtsModule = {
             // История
             importHistoryList: document.getElementById('importHistoryList'),
             btnRefreshImportHistory: document.getElementById('btnRefreshImportHistory'),
+            // Авто-подгрузка ГИС ГМП (мост-расширение)
+            gisgmpStatus: document.getElementById('gisgmpStatus'),
+            btnDownloadGisgmpExt: document.getElementById('btnDownloadGisgmpExt'),
             // Модалка корректировки
             adjustModal: document.getElementById('debtAdjustModal'),
             adjustForm: document.getElementById('debtAdjustForm'),
@@ -147,6 +184,7 @@ export const DebtsModule = {
         this.dom.btnExport?.addEventListener('click', () => this.exportExcel());
         this.dom.btnZombieCheck?.addEventListener('click', () => this.openZombieModal());
         this.dom.btnIntegrityCheck?.addEventListener('click', () => this.openIntegrityModal());
+        this.dom.btnDownloadGisgmpExt?.addEventListener('click', () => this.downloadGisgmpExtension());
         this.dom.btnUpload?.addEventListener('click', () => this.handleUpload());
 
         // Авто-предпросмотр при выборе файла (Bug T)

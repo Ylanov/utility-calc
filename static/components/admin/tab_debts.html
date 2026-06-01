@@ -64,6 +64,23 @@
     </div>
 
     <!-- ============================================
+         АВТО-ПОДГРУЗКА ГИС ГМП (мост-расширение)
+         ============================================ -->
+    <div class="card mt-20" style="border-left:4px solid #0ea5e9; margin-bottom:0;">
+        <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+            <h3><i class="fa-solid fa-bolt" style="color:#0ea5e9; margin-right:8px;"></i> Авто-подгрузка из ГИС ГМП</h3>
+            <button id="btnDownloadGisgmpExt" class="action-btn secondary-btn" style="font-size:12px; padding:6px 12px;">
+                <i class="fa-solid fa-download"></i> Скачать расширение
+            </button>
+        </div>
+        <p class="hint-text" style="font-size:12px; margin:0 0 10px;">
+            Браузерное расширение под ЭЦП-сессией раз в 12 ч читает «Начисления» реестра ГИС ГМП
+            и заливает непогашенные долги жильцов (комуслуги → 209, наём → 205). Настройка — в README расширения.
+        </p>
+        <div id="gisgmpStatus" style="font-size:13px; color:var(--text-secondary);">Загрузка статуса…</div>
+    </div>
+
+    <!-- ============================================
          НЕРАЗНЕСЁННЫЕ ДОЛГИ (ФИО не сопоставлены с жильцом)
          ============================================ -->
     <div id="debtsUnassignedCard" class="card mt-20" style="display:none; border-left:4px solid #f59e0b; margin-bottom:0;">

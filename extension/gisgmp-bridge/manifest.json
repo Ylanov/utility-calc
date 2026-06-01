@@ -1,0 +1,31 @@
+{
+    "manifest_version": 3,
+    "name": "ЖКХ Лидер — мост ГИС ГМП",
+    "version": "0.1.0",
+    "description": "Раз в 12 часов под уже-залогиненной ЭЦП-сессией пользователя читает раздел «Начисления» реестра ГИС ГМП и отправляет непогашенные долги жильцов в ЖКХ-биллинг (asy-tk.ru). Только чтение начислений — никаких действий в реестре, без передачи паролей/ЭЦП.",
+
+    "permissions": [
+        "alarms",
+        "storage",
+        "notifications"
+    ],
+    "host_permissions": [
+        "https://gisgmp.cgu.mchs.ru/*",
+        "https://asy-tk.ru/*"
+    ],
+
+    "background": {
+        "service_worker": "background.js",
+        "type": "module"
+    },
+
+    "action": {
+        "default_title": "Мост ГИС ГМП → ЖКХ",
+        "default_popup": "popup.html"
+    },
+
+    "options_ui": {
+        "page": "options.html",
+        "open_in_tab": true
+    }
+}

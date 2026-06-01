@@ -2,15 +2,20 @@ import os
 import uuid
 import asyncio
 import logging
+import secrets
+import io
+import zipfile
+from pathlib import Path
 from decimal import Decimal
 from app.core.time_utils import utcnow
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, Header
+from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func, or_, desc, asc
+from app.core.config import settings
 from app.core.database import get_db
 # Добавлен импорт модели Room
 from app.modules.utility.models import User, MeterReading, BillingPeriod, Room, DebtImportLog
@@ -413,6 +418,152 @@ async def upload_debts_pair_1c(
         "batch_id": batch_id,
         "tasks": tasks_out,
     }
+
+
+# =========================================================================
+# ГИС ГМП — АВТО-ПОДГРУЗКА ДОЛГОВ (мост-расширение gisgmp-bridge)
+# =========================================================================
+# Расширение под ЭЦП-сессией пользователя парсит «Начисления» реестра
+# gisgmp.cgu.mchs.ru и POST'ит сюда массив. Авторизация — статический
+# GISGMP_SYNC_TOKEN (не пользовательский JWT: фоновый синк раз в 12 ч,
+# короткий токен протух бы). Сервис матчит ФИО → жильца и пишет долги
+# 209/205 в активный период, создавая пару DebtImportLog.
+
+class GisgmpChargeIn(BaseModel):
+    """Одна строка «Начислений» реестра (как её распарсило расширение)."""
+    uin: Optional[str] = None
+    amount: str = "0"                  # сумма начисления (строкой, чистим на бэке)
+    bill_date: Optional[str] = None    # дата начисления
+    actualize_date: Optional[str] = None
+    payer_name: str = ""               # ФИО плательщика — ключ матчинга
+    account: Optional[str] = None      # лицевой счёт (привязан к квартире)
+    purpose: str = ""                  # «Назначение» → 209/205
+    ack_status: str = ""               # статус квитирования (оплачено/нет)
+    change_status: str = ""            # статус изменения (эталонное/аннулирование/…)
+    charge_uuid: Optional[str] = None
+    source: Optional[str] = None
+
+
+class GisgmpSyncIn(BaseModel):
+    charges: list[GisgmpChargeIn]
+
+
+# Защита от случайного гигантского POST'а. Реальный объём — сотни жильцов ×
+# ~24 начисления = единицы тысяч строк; 50k берём с большим запасом.
+_GISGMP_MAX_CHARGES = 50_000
+
+
+def _check_gisgmp_token(authorization: Optional[str]) -> None:
+    """Сверяет Bearer-токен с GISGMP_SYNC_TOKEN (constant-time)."""
+    expected = (settings.GISGMP_SYNC_TOKEN or "").strip()
+    if not expected:
+        raise HTTPException(
+            status_code=503,
+            detail="Синхронизация ГИС ГМП не настроена: задайте GISGMP_SYNC_TOKEN в .env",
+        )
+    token = ""
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+    if not token or not secrets.compare_digest(token, expected):
+        raise HTTPException(status_code=401, detail="Неверный токен синхронизации ГИС ГМП")
+
+
+def _run_gisgmp_sync(charges: list[dict]) -> dict:
+    """Синхронный прогон импортёра в отдельной сессии (вызывается в потоке)."""
+    from app.core.database import sync_db_session
+    from app.modules.utility.services.gisgmp_import import sync_import_gisgmp_charges
+    with sync_db_session() as db:
+        return sync_import_gisgmp_charges(charges, db)
+
+
+@router.post("/gisgmp/sync", summary="Авто-подгрузка долгов из реестра ГИС ГМП (мост-расширение)")
+async def gisgmp_sync(
+    payload: GisgmpSyncIn,
+    authorization: Optional[str] = Header(None),
+):
+    """Принимает распарсенные начисления от расширения и заливает долги.
+
+    Авторизация — статический GISGMP_SYNC_TOKEN в заголовке Authorization:
+    Bearer. Обработка синхронная (в пуле потоков) — расширению нужен прямой
+    результат синка, а объём данных небольшой.
+    """
+    _check_gisgmp_token(authorization)
+
+    charges = [c.model_dump() for c in payload.charges]
+    if not charges:
+        raise HTTPException(status_code=400, detail="Пустой список начислений")
+    if len(charges) > _GISGMP_MAX_CHARGES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Слишком много начислений за раз (>{_GISGMP_MAX_CHARGES}). Разбейте на части.",
+        )
+
+    result = await asyncio.to_thread(_run_gisgmp_sync, charges)
+    if result.get("status") == "error":
+        # Нет активного периода и т.п. — 409, расширение покажет в статусе.
+        raise HTTPException(status_code=409, detail=result.get("message", "Импорт не выполнен"))
+    return result
+
+
+@router.get("/gisgmp/status", summary="Статус последней авто-подгрузки ГИС ГМП")
+async def gisgmp_status(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Для карточки «Авто-подгрузка ГИС ГМП» во вкладке «Долги 1С»: когда был
+    последний синк, сколько жильцов затронуто, не настроен ли токен."""
+    _require_finance(current_user)
+    from app.modules.utility.services.gisgmp_import import GISGMP_SOURCE_LABEL
+
+    last = (await db.execute(
+        select(DebtImportLog)
+        .where(DebtImportLog.file_name == GISGMP_SOURCE_LABEL)
+        .order_by(desc(DebtImportLog.started_at))
+        .limit(1)
+    )).scalars().first()
+
+    return {
+        "configured": bool((settings.GISGMP_SYNC_TOKEN or "").strip()),
+        "last_sync_at": last.started_at.isoformat() if last and last.started_at else None,
+        "last_batch_id": last.batch_id if last else None,
+        "last_updated": last.updated if last else None,
+        "last_created": last.created if last else None,
+        "last_not_found": last.not_found_count if last else None,
+        "registry_url": "https://gisgmp.cgu.mchs.ru/charge/",
+    }
+
+
+# Каталог расширения в репозитории. financier.py лежит в
+# app/modules/utility/routers/ → parents[4] = корень репо (в Docker это /app,
+# куда Dockerfile COPY кладёт extension/). Внутри — папка gisgmp-bridge.
+_GISGMP_EXT_DIR = Path(__file__).resolve().parents[4] / "extension" / "gisgmp-bridge"
+
+
+@router.get("/gisgmp/bridge.zip", summary="Скачать ZIP расширения-моста ГИС ГМП")
+async def gisgmp_bridge_zip(current_user: User = Depends(get_current_user)):
+    """Отдаёт ZIP папки gisgmp-bridge — пользователь распаковывает и грузит в
+    браузер как «распакованное расширение». Только финансист/админ."""
+    _require_finance(current_user)
+    if not _GISGMP_EXT_DIR.is_dir():
+        raise HTTPException(404, "Каталог расширения не найден на сервере.")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for root, _dirs, files in os.walk(_GISGMP_EXT_DIR):
+            for fname in files:
+                fpath = Path(root) / fname
+                rel = Path("gisgmp-bridge") / fpath.relative_to(_GISGMP_EXT_DIR)
+                zf.write(fpath, arcname=str(rel))
+    body = buf.getvalue()
+    return Response(
+        content=body,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": 'attachment; filename="gisgmp-bridge.zip"',
+            "Content-Length": str(len(body)),
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.get(

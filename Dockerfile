@@ -91,6 +91,10 @@ COPY --chown=appuser:appuser \
     alembic_arsenal/ alembic_arsenal/ \
     alembic_arsenal.ini ./
 
+# Расширение-мост ГИС ГМП — нужно для отдачи ZIP через
+# /api/financier/gisgmp/bridge.zip (кнопка «Скачать расширение» в «Долги 1С»).
+COPY --chown=appuser:appuser extension/ extension/
+
 # Копируем наш entrypoint-скрипт и делаем его исполняемым.
 COPY --chown=appuser:appuser entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
