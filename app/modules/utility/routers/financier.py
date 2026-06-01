@@ -523,6 +523,26 @@ async def gisgmp_status(
         fsum = {k: findings.get(k) for k in
                 ("synced_at", "total_charges", "residents", "matched", "not_found")}
 
+    # Онлайн релея (по последнему опросу конфига) + версия (актуальна ли она).
+    poll_s = int(relay.get("relay_poll_seconds") or 120)
+    poll_age, online = None, False
+    lp = relay.get("last_poll_at")
+    if lp:
+        try:
+            poll_age = (utcnow() - datetime.fromisoformat(lp)).total_seconds()
+            online = poll_age < max(300, poll_s * 3)
+        except Exception:
+            pass
+    relay_latest = None
+    try:
+        rp = Path(__file__).resolve().parents[4] / "relay" / "gisgmp" / "relay.py"
+        for line in rp.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("RELAY_VERSION"):
+                relay_latest = line.split("=", 1)[1].strip().strip('"').strip("'")
+                break
+    except Exception:
+        pass
+
     return {
         "configured": bool((settings.GISGMP_SYNC_TOKEN or "").strip()),
         "registry_url": "https://gisgmp.cgu.mchs.ru/charge/",
@@ -538,6 +558,12 @@ async def gisgmp_status(
             "last_status": relay.get("last_status"),
             "last_message": relay.get("last_message"),
             "last_count": relay.get("last_count", 0),
+            "online": online,
+            "last_poll_at": relay.get("last_poll_at"),
+            "poll_age_seconds": poll_age,
+            "relay_poll_seconds": poll_s,
+            "relay_version": relay.get("relay_version"),
+            "relay_latest_version": relay_latest,
             "passport_username": relay.get("passport_username"),
             "pending": {
                 "self_update": bool(relay.get("self_update")),
@@ -621,14 +647,23 @@ async def _load_findings(db: AsyncSession) -> Optional[dict]:
 
 @router.get("/gisgmp/relay-config", summary="Релей берёт свой конфиг (token-auth)")
 async def gisgmp_relay_config(
+    v: Optional[str] = None,
+    poll: Optional[int] = None,
     authorization: Optional[str] = Header(None),
     db: AsyncSession = Depends(get_db),
 ):
     """Релей опрашивает этот эндпоинт раз в ~2 мин. Если пора запускаться
     (run_now или истёк интервал) — сервер атомарно «забирает» запуск (сдвигает
-    last_run_at, гасит run_now) и возвращает should_run=true."""
+    last_run_at, гасит run_now) и возвращает should_run=true.
+    v/poll — версия релея и его интервал опроса (для индикатора онлайн/версия)."""
     _check_gisgmp_token(authorization)
     cfg = await _load_relay_cfg(db)
+    # Отметка «релей на связи» + его версия/интервал (для статуса в UI).
+    cfg["last_poll_at"] = utcnow().isoformat()
+    if v:
+        cfg["relay_version"] = v
+    if poll:
+        cfg["relay_poll_seconds"] = int(poll)
 
     should_run, reason = False, ""
     if cfg.get("enabled", True):
@@ -656,7 +691,6 @@ async def gisgmp_relay_config(
     if should_run:
         cfg["run_now"] = False
         cfg["last_run_at"] = utcnow().isoformat()
-        await _save_relay_cfg(db, cfg)
 
     # Курсор инкремента: релей дотягивает только начисления новее этой даты
     # актуализации (всё, что старше, уже в кэше). None → первый полный проход.
@@ -689,15 +723,12 @@ async def gisgmp_relay_config(
     # Команды управления демоном из UI: отдаём и сразу гасим (claim-на-выдаче),
     # чтобы выполнились РОВНО один раз. Релей применит и перезапустится (execv).
     control = {}
-    ctrl_changed = False
     if cfg.get("self_update"):
         control["self_update"] = True
         cfg["self_update"] = False
-        ctrl_changed = True
     if cfg.get("restart"):
         control["restart"] = True
         cfg["restart"] = False
-        ctrl_changed = True
     if cfg.get("creds_pending") and cfg.get("passport_username") and cfg.get("passport_password_enc"):
         try:
             control["credentials"] = {
@@ -705,11 +736,11 @@ async def gisgmp_relay_config(
                 "password": fernet.decrypt(cfg["passport_password_enc"].encode()).decode(),
             }
             cfg["creds_pending"] = False
-            ctrl_changed = True
         except Exception:
             pass
-    if ctrl_changed:
-        await _save_relay_cfg(db, cfg)
+
+    # Один сейв в конце: last_poll_at/версия + claim команд + claim запуска.
+    await _save_relay_cfg(db, cfg)
 
     return {
         "enabled": cfg.get("enabled", True),

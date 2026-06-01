@@ -87,6 +87,21 @@ export const DebtsModule = {
             if (this.dom.gisgmpHour) this.dom.gisgmpHour.value = r.daily_hour ?? 22;
 
             const parts = [];
+            // Онлайн + интервал опроса + версия релея (актуальна ли).
+            const pollS = r.relay_poll_seconds || 120;
+            let rl = r.online
+                ? 'Релей: <b style="color:#047857;">🟢 онлайн</b>'
+                : 'Релей: <b style="color:#b91c1c;">🔴 офлайн</b>';
+            if (r.poll_age_seconds != null) rl += ` · опрос каждые ${pollS}с (последний ${Math.round(r.poll_age_seconds)}с назад)`;
+            if (r.relay_version) {
+                const up = r.relay_latest_version && r.relay_latest_version !== r.relay_version;
+                rl += ` · версия <b>${esc(r.relay_version)}</b>`
+                    + (up ? ` <span style="color:#d97706;">→ доступно обновление до ${esc(r.relay_latest_version)} (жми «Обновить релей»)</span>`
+                          : (r.relay_latest_version ? ' <span style="color:#047857;">(актуальна)</span>' : ''));
+            } else {
+                rl += ' · <span style="color:#d97706;">версия неизвестна — обнови релей, чтобы он начал её сообщать</span>';
+            }
+            parts.push(rl);
             parts.push(r.last_run_at
                 ? `Последний запуск релея: <b>${new Date(r.last_run_at).toLocaleString('ru-RU')}</b>`
                 : 'Релей ещё ни разу не запускался (проверь, что он установлен на ВМ).');
@@ -194,7 +209,7 @@ export const DebtsModule = {
                     + `<td class="text-right">${fmt(r.debt_209)}</td><td class="text-right">${fmt(r.debt_205)}</td>`
                     + `<td class="text-right"><b>${fmt(r.total)}</b></td></tr>`;
             }).join('');
-            res.innerHTML = `<div class="table-responsive"><table class="sticky-header-table" style="font-size:13px;">`
+            res.innerHTML = `<div class="table-responsive" style="max-height:65vh;overflow:auto;"><table class="sticky-header-table" style="font-size:13px;">`
                 + `<thead><tr><th>ФИО (реестр)</th><th>Жилец в базе</th>`
                 + `<th class="text-right">Долг 209</th><th class="text-right">Долг 205</th><th class="text-right">Σ долг</th></tr></thead>`
                 + `<tbody>${rows || '<tr><td colspan="5" class="text-center">пусто</td></tr>'}</tbody></table></div>`;
@@ -220,7 +235,7 @@ export const DebtsModule = {
         res.innerHTML = `<div style="font-size:13px; margin-bottom:6px;">Строк: <b>${list.length}</b> · `
             + `ДОЛГ 205 (наём): <b>${fmt(t205)}</b> · ДОЛГ 209 (комуслуги): <b>${fmt(t209)}</b> `
             + `<span style="color:#9ca3af">(аннулированные не считаются)</span></div>`
-            + `<div class="table-responsive"><table class="sticky-header-table" style="font-size:12px;">`
+            + `<div class="table-responsive" style="max-height:65vh;overflow:auto;"><table class="sticky-header-table" style="font-size:12px;">`
             + `<thead><tr><th>Плательщик</th><th>Счёт</th><th class="text-right">Сумма</th><th>Дата</th>`
             + `<th>Квитирование</th><th>Изменение</th><th>Статус</th><th>Назначение</th></tr></thead>`
             + `<tbody>${rows || '<tr><td colspan="8" class="text-center">по этой фамилии ничего</td></tr>'}</tbody></table></div>`;
@@ -359,7 +374,7 @@ export const DebtsModule = {
                 + `<td>${act}</td></tr>`;
         }).join('');
         res.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;">Показано: ${list.length}. ⚠ = крупное расхождение (≥20k). Красный Δ = ГИС больше, синий = 1С больше.</div>`
-            + `<div class="table-responsive"><table class="sticky-header-table" style="font-size:12px;">`
+            + `<div class="table-responsive" style="max-height:65vh;overflow:auto;"><table class="sticky-header-table" style="font-size:12px;">`
             + `<thead><tr><th>Жилец</th><th class="text-right">209 ГИС</th><th class="text-right">209 1С</th><th class="text-right">Δ209</th>`
             + `<th class="text-right">205 ГИС</th><th class="text-right">205 1С</th><th class="text-right">Δ205</th><th class="text-right">Σ Δ</th><th>Флаг</th><th>Действие</th></tr></thead>`
             + `<tbody>${rows || '<tr><td colspan="10" class="text-center">нет</td></tr>'}</tbody></table></div>`;

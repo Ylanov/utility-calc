@@ -34,6 +34,11 @@ POLL_SECONDS = int(os.environ.get("POLL_SECONDS", "120"))
 PAGE_RETRIES = int(os.environ.get("PAGE_RETRIES", "3"))  # ретраи страницы при сбое
 UA = "Mozilla/5.0 (gisgmp-relay)"
 
+# Версия релея — отправляется при опросе конфига, ЖКХ показывает её в статусе и
+# сравнивает с актуальной (из задеплоенного relay.py) → видно «обновлён или нет».
+# БАМПАТЬ при изменении relay.py (формат YYYY-MM-DD[.N]).
+RELAY_VERSION = "2026-06-02"
+
 
 def log(*a):
     print(*a, flush=True)
@@ -164,8 +169,11 @@ def push(charges):
 
 
 def get_config():
+    # v/poll — релей сообщает свою версию и интервал опроса (для индикатора в UI).
     r = requests.get(f"{JKH_URL}/api/financier/gisgmp/relay-config",
-                     headers=_auth(), timeout=30)
+                     headers=_auth(),
+                     params={"v": RELAY_VERSION, "poll": POLL_SECONDS},
+                     timeout=30)
     r.raise_for_status()
     return r.json()
 
