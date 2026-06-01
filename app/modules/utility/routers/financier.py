@@ -722,6 +722,98 @@ async def gisgmp_findings(
     return findings or {"empty": True}
 
 
+@router.get("/gisgmp/reconcile", summary="Сверка ГИС ГМП (находки) ↔ долги 1С (Excel)")
+async def gisgmp_reconcile(
+    period_id: Optional[int] = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Сверяет два источника по жильцам и счетам 209/205:
+      • ГИС ГМП — последние находки релея (SystemSetting 'gisgmp_findings',
+        summary[].debt_209/205 по matched_user_id);
+      • 1С — текущие долги в показаниях (MeterReading.debt_209/205 за период,
+        залитые Excel-импортом ОСВ).
+    На каждый счёт: совпало / расхождение (Δ) / только в ГИС / только в 1С.
+    Окно ГИС влияет на полноту — для честной сверки ставь окно побольше."""
+    _require_finance(current_user)
+
+    findings = await _load_findings(db)
+    gis: dict[int, dict] = {}
+    if findings:
+        for row in findings.get("summary", []):
+            uid = row.get("matched_user_id")
+            if uid is None:
+                continue
+            gis[int(uid)] = {
+                "209": Decimal(str(row.get("debt_209") or 0)),
+                "205": Decimal(str(row.get("debt_205") or 0)),
+                "username": row.get("matched_username") or row.get("fio"),
+            }
+
+    period = await _resolve_view_period(db, period_id)
+    pid = period.id if period else None
+    mr: dict[int, dict] = {}
+    if pid:
+        rows = (await db.execute(
+            select(
+                MeterReading.user_id,
+                func.coalesce(func.sum(MeterReading.debt_209), 0),
+                func.coalesce(func.sum(MeterReading.debt_205), 0),
+            ).where(MeterReading.period_id == pid).group_by(MeterReading.user_id)
+        )).all()
+        for uid, d209, d205 in rows:
+            if uid is None:
+                continue
+            mr[int(uid)] = {"209": Decimal(str(d209 or 0)), "205": Decimal(str(d205 or 0))}
+
+    ids = set(gis) | set(mr)
+    unames: dict[int, str] = {}
+    if ids:
+        for uid, uname in (await db.execute(
+            select(User.id, User.username).where(User.id.in_(ids))
+        )).all():
+            unames[uid] = uname
+
+    eps = Decimal("0.01")
+    out = {"period_id": pid, "period_name": period.name if period else None,
+           "has_findings": bool(findings), "accounts": {}}
+    for acc in ("209", "205"):
+        matched = 0
+        drift, gis_only, c1_only = [], [], []
+        sum_gis = sum_1c = Decimal("0")
+        for uid in ids:
+            g = gis.get(uid, {}).get(acc, Decimal("0"))
+            m = mr.get(uid, {}).get(acc, Decimal("0"))
+            if g == 0 and m == 0:
+                continue
+            sum_gis += g
+            sum_1c += m
+            name = unames.get(uid) or gis.get(uid, {}).get("username") or str(uid)
+            e = {"user_id": uid, "username": name,
+                 "gisgmp": float(g), "debt_1c": float(m), "delta": float(g - m)}
+            if abs(g - m) <= eps:
+                matched += 1
+            elif m == 0:
+                gis_only.append(e)
+            elif g == 0:
+                c1_only.append(e)
+            else:
+                drift.append(e)
+        drift.sort(key=lambda x: -abs(x["delta"]))
+        gis_only.sort(key=lambda x: -x["gisgmp"])
+        c1_only.sort(key=lambda x: -x["debt_1c"])
+        out["accounts"][acc] = {
+            "matched": matched,
+            "sum_gisgmp": float(sum_gis),
+            "sum_1c": float(sum_1c),
+            "delta_total": float(sum_gis - sum_1c),
+            "drift": drift[:300],
+            "gisgmp_only": gis_only[:300],
+            "c1_only": c1_only[:300],
+        }
+    return out
+
+
 # Каталог расширения в репозитории. financier.py лежит в
 # app/modules/utility/routers/ → parents[4] = корень репо (в Docker это /app,
 # куда Dockerfile COPY кладёт extension/). Внутри — папка gisgmp-bridge.
