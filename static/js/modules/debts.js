@@ -71,36 +71,60 @@ export const DebtsModule = {
         this.loadGisgmpStatus();
     },
 
-    // ─── Авто-подгрузка ГИС ГМП (мост-расширение) ──────────────────────────
+    // ─── Авто-подгрузка ГИС ГМП (релей, управление отсюда) ─────────────────
     async loadGisgmpStatus() {
         const box = this.dom.gisgmpStatus;
         if (!box) return;
         try {
             const s = await api.get('/financier/gisgmp/status');
             if (!s.configured) {
-                box.innerHTML = '<span style="color:#b91c1c;">⚠ Токен GISGMP_SYNC_TOKEN не задан в .env сервера — авто-подгрузка выключена.</span>';
+                box.innerHTML = '<span style="color:#b91c1c;">⚠ Токен GISGMP_SYNC_TOKEN не задан в .env сервера ЖКХ — релей не примет данные.</span>';
                 return;
             }
-            if (!s.last_sync_at) {
-                box.innerHTML = '<span style="color:#92400e;">Токен задан, синхронизаций ещё не было. Установите расширение и нажмите в нём «Синхр. сейчас».</span>';
-                return;
+            const r = s.relay || {};
+            if (this.dom.gisgmpEnabled) this.dom.gisgmpEnabled.checked = r.enabled !== false;
+            if (this.dom.gisgmpMonths) this.dom.gisgmpMonths.value = r.months_back ?? 2;
+            if (this.dom.gisgmpInterval) this.dom.gisgmpInterval.value = r.interval_hours ?? 12;
+
+            const parts = [];
+            parts.push(r.last_run_at
+                ? `Последний запуск релея: <b>${new Date(r.last_run_at).toLocaleString('ru-RU')}</b>`
+                : 'Релей ещё ни разу не запускался (проверь, что он установлен на ВМ).');
+            if (r.last_status) {
+                const ok = r.last_status === 'ok';
+                parts.push(`Результат: <b style="color:${ok ? '#047857' : '#b91c1c'}">${ok ? 'успех' : 'ошибка'}</b>`
+                    + (r.last_message ? ` — ${esc(r.last_message)}` : ''));
             }
-            const when = new Date(s.last_sync_at).toLocaleString('ru-RU');
-            box.innerHTML =
-                `Последняя синхронизация: <b>${when}</b><br>` +
-                `Обновлено жильцов: <b>${s.last_updated ?? 0}</b>, ` +
-                `создано: <b>${s.last_created ?? 0}</b>, ` +
-                `не найдено ФИО: <b>${s.last_not_found ?? 0}</b>.`;
+            if (s.last_sync_at) {
+                parts.push(`Долги обновлены: <b>${new Date(s.last_sync_at).toLocaleString('ru-RU')}</b> `
+                    + `(жильцов: ${s.last_updated ?? 0}, создано: ${s.last_created ?? 0}, не найдено: ${s.last_not_found ?? 0})`);
+            }
+            box.innerHTML = parts.join('<br>');
         } catch (e) {
             box.textContent = 'Не удалось загрузить статус ГИС ГМП.';
         }
     },
 
-    async downloadGisgmpExtension() {
+    async saveGisgmpRelay() {
         try {
-            await api.download('/financier/gisgmp/bridge.zip', 'gisgmp-bridge.zip');
+            await api.put('/financier/gisgmp/relay-config', {
+                enabled: !!this.dom.gisgmpEnabled?.checked,
+                months_back: parseInt(this.dom.gisgmpMonths?.value, 10) || 2,
+                interval_hours: parseInt(this.dom.gisgmpInterval?.value, 10) || 12,
+            });
+            toast('Настройки релея сохранены', 'info');
+            this.loadGisgmpStatus();
         } catch (e) {
-            toast('Не удалось скачать расширение: ' + (e?.message || e), 'error');
+            toast('Ошибка сохранения: ' + (e?.message || e), 'error');
+        }
+    },
+
+    async runGisgmpNow() {
+        try {
+            await api.post('/financier/gisgmp/run-now', {});
+            toast('Команда отправлена — релей запустится в течение пары минут', 'info');
+        } catch (e) {
+            toast('Ошибка: ' + (e?.message || e), 'error');
         }
     },
 
@@ -142,9 +166,13 @@ export const DebtsModule = {
             // История
             importHistoryList: document.getElementById('importHistoryList'),
             btnRefreshImportHistory: document.getElementById('btnRefreshImportHistory'),
-            // Авто-подгрузка ГИС ГМП (мост-расширение)
+            // Авто-подгрузка ГИС ГМП (серверный релей)
             gisgmpStatus: document.getElementById('gisgmpStatus'),
-            btnDownloadGisgmpExt: document.getElementById('btnDownloadGisgmpExt'),
+            gisgmpEnabled: document.getElementById('gisgmpEnabled'),
+            gisgmpMonths: document.getElementById('gisgmpMonths'),
+            gisgmpInterval: document.getElementById('gisgmpInterval'),
+            btnGisgmpSave: document.getElementById('btnGisgmpSave'),
+            btnGisgmpRunNow: document.getElementById('btnGisgmpRunNow'),
             // Модалка корректировки
             adjustModal: document.getElementById('debtAdjustModal'),
             adjustForm: document.getElementById('debtAdjustForm'),
@@ -184,7 +212,9 @@ export const DebtsModule = {
         this.dom.btnExport?.addEventListener('click', () => this.exportExcel());
         this.dom.btnZombieCheck?.addEventListener('click', () => this.openZombieModal());
         this.dom.btnIntegrityCheck?.addEventListener('click', () => this.openIntegrityModal());
-        this.dom.btnDownloadGisgmpExt?.addEventListener('click', () => this.downloadGisgmpExtension());
+        this.dom.btnGisgmpSave?.addEventListener('click', () => this.saveGisgmpRelay());
+        this.dom.btnGisgmpRunNow?.addEventListener('click', () => this.runGisgmpNow());
+        this.dom.gisgmpEnabled?.addEventListener('change', () => this.saveGisgmpRelay());
         this.dom.btnUpload?.addEventListener('click', () => this.handleUpload());
 
         // Авто-предпросмотр при выборе файла (Bug T)
