@@ -4,8 +4,10 @@ import asyncio
 import logging
 import secrets
 import io
+import json
 import zipfile
 from pathlib import Path
+from datetime import datetime
 from decimal import Decimal
 from app.core.time_utils import utcnow
 from typing import Optional
@@ -18,7 +20,7 @@ from sqlalchemy import func, or_, desc, asc
 from app.core.config import settings
 from app.core.database import get_db
 # Добавлен импорт модели Room
-from app.modules.utility.models import User, MeterReading, BillingPeriod, Room, DebtImportLog
+from app.modules.utility.models import User, MeterReading, BillingPeriod, Room, DebtImportLog, SystemSetting
 from app.core.dependencies import get_current_user
 from app.modules.utility.schemas import PaginatedResponse, UserDebtResponse
 from app.modules.utility.tasks import import_debts_task
@@ -522,6 +524,8 @@ async def gisgmp_status(
         .limit(1)
     )).scalars().first()
 
+    relay = await _load_relay_cfg(db)
+
     return {
         "configured": bool((settings.GISGMP_SYNC_TOKEN or "").strip()),
         "last_sync_at": last.started_at.isoformat() if last and last.started_at else None,
@@ -530,7 +534,171 @@ async def gisgmp_status(
         "last_created": last.created if last else None,
         "last_not_found": last.not_found_count if last else None,
         "registry_url": "https://gisgmp.cgu.mchs.ru/charge/",
+        # Состояние релея — управляется из этой же вкладки (pull-модель).
+        "relay": {
+            "enabled": relay.get("enabled", True),
+            "months_back": relay.get("months_back", 2),
+            "interval_hours": relay.get("interval_hours", 12),
+            "run_now": relay.get("run_now", False),
+            "last_run_at": relay.get("last_run_at"),
+            "last_report_at": relay.get("last_report_at"),
+            "last_status": relay.get("last_status"),
+            "last_message": relay.get("last_message"),
+            "last_count": relay.get("last_count", 0),
+        },
     }
+
+
+# ─── Релей ГИС ГМП: конфиг и управление (pull-модель) ────────────────────────
+# Релей на ВМ PODS2 за NAT — ЖКХ не достучится к нему внутрь. Поэтому ЖКХ хранит
+# настройки/команды в SystemSetting, а релей сам их забирает (GET relay-config)
+# и шлёт отчёт (POST relay-report). Админ рулит из вкладки «Долги 1С».
+
+GISGMP_RELAY_KEY = "gisgmp_relay"
+_GISGMP_RELAY_DEFAULTS = {
+    "enabled": True,
+    "months_back": 2,
+    "interval_hours": 12,
+    "run_now": False,
+    "last_run_at": None,
+    "last_report_at": None,
+    "last_status": None,
+    "last_message": None,
+    "last_count": 0,
+    "last_updated": 0,
+    "last_created": 0,
+    "last_not_found": 0,
+}
+
+
+async def _load_relay_cfg(db: AsyncSession) -> dict:
+    row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_RELAY_KEY)
+    )).scalars().first()
+    cfg = dict(_GISGMP_RELAY_DEFAULTS)
+    if row and row.value:
+        try:
+            cfg.update(json.loads(row.value))
+        except Exception:
+            pass
+    return cfg
+
+
+async def _save_relay_cfg(db: AsyncSession, cfg: dict) -> None:
+    row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_RELAY_KEY)
+    )).scalars().first()
+    if row is None:
+        row = SystemSetting(key=GISGMP_RELAY_KEY, value="{}",
+                            description="Конфиг и статус релея ГИС ГМП")
+        db.add(row)
+    row.value = json.dumps(cfg, ensure_ascii=False)
+    await db.commit()
+
+
+@router.get("/gisgmp/relay-config", summary="Релей берёт свой конфиг (token-auth)")
+async def gisgmp_relay_config(
+    authorization: Optional[str] = Header(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Релей опрашивает этот эндпоинт раз в ~2 мин. Если пора запускаться
+    (run_now или истёк интервал) — сервер атомарно «забирает» запуск (сдвигает
+    last_run_at, гасит run_now) и возвращает should_run=true."""
+    _check_gisgmp_token(authorization)
+    cfg = await _load_relay_cfg(db)
+
+    should_run, reason = False, ""
+    if cfg.get("enabled", True):
+        if cfg.get("run_now"):
+            should_run, reason = True, "run_now"
+        else:
+            last = cfg.get("last_run_at")
+            interval = float(cfg.get("interval_hours", 12)) * 3600
+            if not last:
+                should_run, reason = True, "first_run"
+            else:
+                try:
+                    elapsed = (utcnow() - datetime.fromisoformat(last)).total_seconds()
+                    if elapsed >= interval:
+                        should_run, reason = True, "interval"
+                except Exception:
+                    should_run, reason = True, "bad_last_run"
+
+    if should_run:
+        cfg["run_now"] = False
+        cfg["last_run_at"] = utcnow().isoformat()
+        await _save_relay_cfg(db, cfg)
+
+    return {
+        "enabled": cfg.get("enabled", True),
+        "months_back": cfg.get("months_back", 2),
+        "should_run": should_run,
+        "reason": reason,
+    }
+
+
+class GisgmpRelayReportIn(BaseModel):
+    ok: bool
+    count: int = 0
+    updated: int = 0
+    created: int = 0
+    not_found: int = 0
+    message: str = ""
+
+
+@router.post("/gisgmp/relay-report", summary="Релей шлёт отчёт о прогоне (token-auth)")
+async def gisgmp_relay_report(
+    payload: GisgmpRelayReportIn,
+    authorization: Optional[str] = Header(None),
+    db: AsyncSession = Depends(get_db),
+):
+    _check_gisgmp_token(authorization)
+    cfg = await _load_relay_cfg(db)
+    cfg["last_status"] = "ok" if payload.ok else "error"
+    cfg["last_message"] = (payload.message or "")[:500]
+    cfg["last_count"] = payload.count
+    cfg["last_updated"] = payload.updated
+    cfg["last_created"] = payload.created
+    cfg["last_not_found"] = payload.not_found
+    cfg["last_report_at"] = utcnow().isoformat()
+    await _save_relay_cfg(db, cfg)
+    return {"ok": True}
+
+
+class GisgmpRelaySettingsIn(BaseModel):
+    enabled: Optional[bool] = None
+    months_back: Optional[int] = None
+    interval_hours: Optional[int] = None
+
+
+@router.put("/gisgmp/relay-config", summary="Админ меняет настройки релея")
+async def gisgmp_relay_set(
+    payload: GisgmpRelaySettingsIn,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_finance(current_user)
+    cfg = await _load_relay_cfg(db)
+    if payload.enabled is not None:
+        cfg["enabled"] = bool(payload.enabled)
+    if payload.months_back is not None:
+        cfg["months_back"] = max(1, min(24, int(payload.months_back)))
+    if payload.interval_hours is not None:
+        cfg["interval_hours"] = max(1, min(168, int(payload.interval_hours)))
+    await _save_relay_cfg(db, cfg)
+    return cfg
+
+
+@router.post("/gisgmp/run-now", summary="Админ ставит флаг «запустить релей сейчас»")
+async def gisgmp_run_now(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_finance(current_user)
+    cfg = await _load_relay_cfg(db)
+    cfg["run_now"] = True
+    await _save_relay_cfg(db, cfg)
+    return {"ok": True, "queued": True}
 
 
 # Каталог расширения в репозитории. financier.py лежит в

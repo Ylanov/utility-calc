@@ -1,13 +1,17 @@
 [Unit]
-Description=Релей ГИС ГМП -> ЖКХ (подгрузка долгов жильцов)
+Description=Релей ГИС ГМП -> ЖКХ (демон, управление из ЖКХ по pull)
 After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=oneshot
+Type=simple
 EnvironmentFile=/opt/gisgmp-relay/relay.env
 # Маршрут к корп-сети (реестр виден только через Cisco 10.23.0.1).
-# '-' и 'replace' — идемпотентно и не валит запуск, если уже есть.
+# '-' и 'replace' — идемпотентно, не валит старт, если уже есть.
 ExecStartPre=-/usr/sbin/ip route replace 10.0.0.0/8 via 10.23.0.1 dev ens19
 ExecStart=/usr/bin/python3 /opt/gisgmp-relay/relay.py
-# Логи — в journald (journalctl -u gisgmp-relay).
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
