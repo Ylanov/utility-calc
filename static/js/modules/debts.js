@@ -131,6 +131,7 @@ export const DebtsModule = {
     },
 
     // Раздельное окно отладки: что нашёл ГИС ГМП (в долги пока не пишется).
+    // Поиск по фамилии — мгновенный, по сырым начислениям из последнего синка.
     async openGisgmpFindings() {
         const body = this.dom.gisgmpFindingsBody;
         if (!body) return;
@@ -140,34 +141,78 @@ export const DebtsModule = {
         try {
             const f = await api.get('/financier/gisgmp/findings');
             if (!f || f.empty) {
-                body.innerHTML = '<span style="color:var(--text-secondary)">Пока ничего не найдено — релей ещё не отработал успешно.</span>';
+                body.innerHTML = '<span style="color:var(--text-secondary)">Пока ничего не найдено — релей ещё не отработал в раздельном режиме. Нажми «Запустить сейчас».</span>';
                 return;
             }
-            const fmt = (v) => (Number(v) || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-            const rows = (f.summary || []).map(r => {
-                const m = r.matched_username
-                    ? `<span style="color:#047857">${esc(r.matched_username)}</span>` + (r.room_number ? ` <span style="color:var(--text-secondary)">(${esc(String(r.room_number))})</span>` : '')
-                    : '<span style="color:#b91c1c">не найден</span>';
-                return `<tr><td>${esc(r.fio)}</td><td>${m}</td>`
-                    + `<td class="text-right">${fmt(r.debt_209)}</td>`
-                    + `<td class="text-right">${fmt(r.debt_205)}</td>`
-                    + `<td class="text-right"><b>${fmt(r.total)}</b></td></tr>`;
-            }).join('');
+            this._gisgmpFindings = f;
             const d = f.diag || {};
             body.innerHTML =
                 `<div style="font-size:12px; color:var(--text-secondary); margin-bottom:8px;">`
                 + `Синхронизация: <b>${f.synced_at ? new Date(f.synced_at).toLocaleString('ru-RU') : '—'}</b> · `
-                + `начислений получено: ${f.total_charges ?? 0} · в долг засчитано: ${d.counted ?? '—'} · `
-                + `оплачено (пропущено): ${d.paid ?? '—'} · аннулировано: ${d.annulled ?? '—'}<br>`
-                + `Жильцов с долгом: <b>${f.residents ?? 0}</b> · сопоставлено: <b style="color:#047857">${f.matched ?? 0}</b> · `
-                + `не найдено в базе: <b style="color:#b91c1c">${f.not_found ?? 0}</b></div>`
-                + `<div class="table-responsive"><table class="sticky-header-table" style="font-size:13px;">`
-                + `<thead><tr><th>ФИО (реестр)</th><th>Жилец в базе</th>`
-                + `<th class="text-right">Долг 209</th><th class="text-right">Долг 205</th><th class="text-right">Σ долг</th></tr></thead>`
-                + `<tbody>${rows || '<tr><td colspan="5" class="text-center">пусто</td></tr>'}</tbody></table></div>`;
+                + `начислений: ${f.total_charges ?? 0} · в долг: ${d.counted ?? '—'} · оплачено: ${d.paid ?? '—'} · аннулировано: ${d.annulled ?? '—'} · `
+                + `жильцов с долгом: <b>${f.residents ?? 0}</b> (сопоставлено ${f.matched ?? 0}, не найдено ${f.not_found ?? 0})</div>`
+                + `<input type="text" id="gisgmpSearch" placeholder="Фамилия — разбор по начислениям…" style="width:300px; padding:6px 8px; margin-bottom:10px;">`
+                + `<div id="gisgmpFindingsResult"></div>`;
+            document.getElementById('gisgmpSearch')?.addEventListener('input', () => this.renderGisgmpFindings());
+            this.renderGisgmpFindings();
         } catch (e) {
             body.innerHTML = 'Ошибка загрузки находок: ' + esc(e?.message || String(e));
         }
+    },
+
+    renderGisgmpFindings() {
+        const f = this._gisgmpFindings;
+        const res = document.getElementById('gisgmpFindingsResult');
+        if (!f || !res) return;
+        const q = (document.getElementById('gisgmpSearch')?.value || '').trim().toLowerCase();
+        const fmt = (v) => (Number(v) || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const acct = (p) => {
+            p = (p || '').toLowerCase();
+            if (p.includes('наем') || p.includes('найм') || p.includes('наём')) return '205';
+            if (p.includes('комус') || p.includes('коммунал')) return '209';
+            return '?';
+        };
+
+        if (!q) {
+            // Без поиска — сводка по жильцам (Σ долга), отсортировано.
+            const rows = (f.summary || []).map(r => {
+                const m = r.matched_username
+                    ? `<span style="color:#047857">${esc(r.matched_username)}</span>`
+                    : '<span style="color:#b91c1c">не найден</span>';
+                return `<tr><td>${esc(r.fio)}</td><td>${m}</td>`
+                    + `<td class="text-right">${fmt(r.debt_209)}</td><td class="text-right">${fmt(r.debt_205)}</td>`
+                    + `<td class="text-right"><b>${fmt(r.total)}</b></td></tr>`;
+            }).join('');
+            res.innerHTML = `<div class="table-responsive"><table class="sticky-header-table" style="font-size:13px;">`
+                + `<thead><tr><th>ФИО (реестр)</th><th>Жилец в базе</th>`
+                + `<th class="text-right">Долг 209</th><th class="text-right">Долг 205</th><th class="text-right">Σ долг</th></tr></thead>`
+                + `<tbody>${rows || '<tr><td colspan="5" class="text-center">пусто</td></tr>'}</tbody></table></div>`;
+            return;
+        }
+
+        // Поиск по фамилии — разбор по начислениям (аннулированные не считаются).
+        const list = (f.charges || []).filter(c => (c.payer_name || '').toLowerCase().includes(q));
+        let t205 = 0, t209 = 0;
+        const rows = list.map(c => {
+            const a = acct(c.purpose);
+            const unpaid = (c.ack_status || '').toLowerCase().includes('не сквитировано');
+            const annul = (c.change_status || '').trim().toLowerCase() === 'аннулирование';
+            const counted = unpaid && !annul && (a === '205' || a === '209');
+            if (counted) { if (a === '205') t205 += Number(c.amount) || 0; else t209 += Number(c.amount) || 0; }
+            const flag = annul ? '<span style="color:#9ca3af">аннулир.</span>'
+                : (counted ? '<span style="color:#b91c1c">В ДОЛГ</span>' : '<span style="color:#6b7280">оплачено</span>');
+            return `<tr style="${annul ? 'opacity:.5' : ''}"><td>${esc(c.payer_name || '')}</td><td>сч ${a}</td>`
+                + `<td class="text-right">${fmt(c.amount)}</td><td>${esc(c.bill_date || '')}</td>`
+                + `<td>${esc(c.ack_status || '')}</td><td>${esc(c.change_status || '')}</td>`
+                + `<td>${flag}</td><td>${esc((c.purpose || '').slice(0, 42))}</td></tr>`;
+        }).join('');
+        res.innerHTML = `<div style="font-size:13px; margin-bottom:6px;">Строк: <b>${list.length}</b> · `
+            + `ДОЛГ 205 (наём): <b>${fmt(t205)}</b> · ДОЛГ 209 (комуслуги): <b>${fmt(t209)}</b> `
+            + `<span style="color:#9ca3af">(аннулированные не считаются)</span></div>`
+            + `<div class="table-responsive"><table class="sticky-header-table" style="font-size:12px;">`
+            + `<thead><tr><th>Плательщик</th><th>Счёт</th><th class="text-right">Сумма</th><th>Дата</th>`
+            + `<th>Квитирование</th><th>Изменение</th><th>Статус</th><th>Назначение</th></tr></thead>`
+            + `<tbody>${rows || '<tr><td colspan="8" class="text-center">по этой фамилии ничего</td></tr>'}</tbody></table></div>`;
     },
 
     cacheDOM() {
