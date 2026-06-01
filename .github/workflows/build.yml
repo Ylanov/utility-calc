@@ -243,14 +243,43 @@ jobs:
             ${IMAGE}:latest
 
 # ==========================================
+# ===== DEPLOY-PREP (параллельно проверкам) =
+# ==========================================
+  # Прогрев self-hosted раннера, ПОКА идут migration/quality/build (они на
+  # ubuntu-latest — деплой-раннер всё это время простаивает). Делаем тут только
+  # то, что НЕ зависит от нового образа: чистим диск под будущий pull. «Главное»
+  # (pull собранного образа) остаётся в deploy и ждёт зелёного света от всех
+  # проверок — раньше образа просто не существует.
+  deploy-prep:
+    name: Warm up deploy host
+    runs-on: self-hosted
+    steps:
+      - name: Free disk space (conditional, never fails)
+        run: |
+          set +e
+          USED=$(df / --output=pcent 2>/dev/null | tail -1 | tr -dc '0-9')
+          echo "[disk] used ${USED:-?}%"
+          if [ "${USED:-0}" -ge 85 ]; then
+            echo "[disk] >=85% — чистим builder-кэш и dangling-образы"
+            docker builder prune -af || true
+            docker image prune -f || true
+          else
+            echo "[disk] места достаточно — prune пропущен"
+          fi
+          df -h / | tail -1
+          exit 0
+
+# ==========================================
 # ===== DEPLOY ==============================
 # ==========================================
   deploy:
     name: Deploy to Production
-    # Деплой ждёт ВСЕ три независимые джобы (они бегут параллельно на трёх
-    # ubuntu-раннерах). Время пайплайна ≈ max(проверки) + deploy вместо суммы.
-    # Деплой стартует только когда все три зелёные.
-    needs: [migration-check, quality-check, build]
+    # Ждёт ВСЕ три проверки + прогрев хоста. Проверки параллельны на трёх
+    # ubuntu-раннерах; deploy-prep — на self-hosted, пока они идут. Время ≈
+    # max(проверки) + deploy-без-prune. На pull образа deploy «останавливается и
+    # ждёт» — раньше билда образа не существует. deploy-prep всегда exit 0,
+    # поэтому не блокирует деплой даже если чистка чем-то не задалась.
+    needs: [migration-check, quality-check, build, deploy-prep]
     runs-on: self-hosted
 
     steps:
@@ -282,18 +311,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GH_PAT }}
 
-      - name: Free disk before pull
-        working-directory: /opt/utility_calc
-        # Хост 15G и общий на несколько стеков. При ~90%+ заполнении тяга
-        # нового образа + пересоздание контейнеров упирается в место — Docker
-        # выдаёт setns / «не смог перезапустить nginx» (инцидент 31.05.2026,
-        # диск был 93%, builder-кэш 1.4ГБ). Подчищаем кэш сборки и висячие
-        # образы ДО pull (current :latest в работе → не трогается).
-        run: |
-          docker builder prune -af || true
-          docker image prune -f || true
-          echo "[disk] after prune:"; df -h / | tail -1
-
+      # Чистка диска под pull перенесена в job deploy-prep (идёт ПАРАЛЛЕЛЬНО
+      # проверкам, пока этот раннер простаивает). Причина prune — инцидент
+      # 31.05.2026: при диске 93% pull/recreate упирался в место. Теперь это
+      # сделано заранее и условно (только при >85%), здесь сразу тянем образ.
       - name: Pull latest images
         working-directory: /opt/utility_calc
         # GHCR периодически отвечает 502 Bad Gateway на manifest GET для
