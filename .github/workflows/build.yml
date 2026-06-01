@@ -165,6 +165,23 @@ jobs:
             zricethezav/gitleaks:latest \
             detect --source=/repo --exit-code 1
 
+# ==========================================
+# ===== SONARQUBE (параллельно, НЕ блокирует деплой) =====
+# ==========================================
+  sonarqube:
+    name: SonarQube Scan (non-blocking)
+    # Только отправляет код на сервер SonarQube для анализа — деплою НЕ нужна.
+    # Отдельная джоба без needs → идёт ПАРАЛЛЕЛЬНО проверкам/билду; deploy её НЕ
+    # ждёт (нет в deploy.needs), а провал не валит прогон (continue-on-error).
+    # Раньше ~2 мин висела внутри quality-check на критическом пути. (2026-06-02)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v7
         env:
