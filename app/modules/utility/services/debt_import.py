@@ -556,7 +556,6 @@ def sync_import_debts_process(
         users_raw = db.execute(select(User).where(User.is_deleted.is_(False))).scalars().all()
         users_map = {normalize_name(u.username): {"id": u.id, "room_id": u.room_id} for u in users_raw}
         users_by_id = {u.id: {"id": u.id, "room_id": u.room_id} for u in users_raw}
-        users_keys = list(users_map.keys())
 
         # 1.1. Предзагрузка алиасов ФИО — общая таблица GSheetsAlias.
         # Если админ ранее привязал «Кондрашов ГА» → user_id=5 (через
@@ -607,7 +606,6 @@ def sync_import_debts_process(
 
         updates_dict = {}  # reading_id -> reading object (для обновления)
         inserts_dict = {}  # user_id -> reading object (для вставки) — Bug AG: ключ per-user
-        fuzzy_cache = {}
         # Bug AG: per-user обнуление — каждый жилец сбрасывает СВОЙ reading в 0
         # перед прибавлением своего долга из 1С. Раньше processed_rooms — после
         # первого жильца комнаты вторые ДОБАВЛЯЛИ к нему, не сбрасывали.
@@ -620,38 +618,25 @@ def sync_import_debts_process(
         inserts_reading_ids = []  # для undo (их создали — удалим при откате)
 
         def get_user_data_optimized(fio: str):
+            # ТОЧНЫЙ матчинг (точь-в-точь): только полное ФИО + админ-алиасы.
+            # Нечёткого (rapidfuzz) НЕТ — похожих не склеиваем (Иванов И.П. ≠
+            # Иванов И.И., Петрович ≠ Иванович). Не нашли точно → not_found.
             norm = normalize_name(fio)
-            # 1. Точное совпадение username — самое надёжное
+            # 1. Точное совпадение полного ФИО — единственный авто-матч.
             if norm in users_map:
                 return users_map[norm]
-            # 2. Алиас (запомненная админом привязка из прошлых reassign).
-            # Работает для всех типов импорта (205, 209, gsheets) через
-            # общую таблицу GSheetsAlias.
+            # 2. Алиас (запомненная админом ручная привязка из прошлых reassign).
+            # Общая таблица GSheetsAlias (работает для 205, 209, gsheets).
             if norm in aliases_map:
-                uid = aliases_map[norm]
-                cached = users_by_id.get(uid)
+                cached = users_by_id.get(aliases_map[norm])
                 if cached:
                     return cached
-            # 2b. Алиасы хранятся в gsheets-нормализации (точки/запятые убраны,
-            # ё→е). Проверяем и этот ключ — иначе reassign для ФИО с «И.И.»/«ё»
-            # не срабатывал и долг снова уходил в not_found.
+            # 2b. Алиасы в gsheets-нормализации (точки/запятые убраны, ё→е).
             norm_alias = _normalize_fio_key(fio)
             if norm_alias != norm and norm_alias in aliases_map:
                 cached = users_by_id.get(aliases_map[norm_alias])
                 if cached:
                     return cached
-            if norm in fuzzy_cache:
-                return fuzzy_cache[norm]
-
-            match = process.extractOne(norm, users_keys, scorer=fuzz.token_sort_ratio)
-            if match:
-                best_match_name, score, _ = match
-                if score >= _threshold():
-                    found_data = users_map[best_match_name]
-                    fuzzy_cache[norm] = found_data
-                    return found_data
-
-            fuzzy_cache[norm] = None
             return None
 
         # 3. Чтение строк Excel.

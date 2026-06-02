@@ -126,7 +126,10 @@ def _recompute_findings(db: Session, cache: dict) -> dict:
     charges = list(cache.values())
     fio_map, diag = aggregate_charges(charges)
 
-    users_map, users_keys, users_by_id = build_users_index(db)
+    # Строгий матчинг ГИС↔база: только полное ФИО точь-в-точь (with_initials=False
+    # + fuzzy=False) — похожих не склеиваем (Иванов Иван Петрович ≠ Иванов Иван
+    # Иванович). Не сматчилось точно → matched_user_id=None (видно в 3-сторонней сверке).
+    users_map, users_keys, users_by_id = build_users_index(db, with_initials=False)
     aliases_map = build_aliases_index(db)
 
     summary = []
@@ -134,6 +137,7 @@ def _recompute_findings(db: Session, cache: dict) -> dict:
     for fio, debts in fio_map.items():
         info, score, _conflict = match_user(
             fio, None, users_map, users_keys, users_by_id, aliases_map,
+            fuzzy=False,
         )
         d209 = debts.get("209", Decimal("0"))
         d205 = debts.get("205", Decimal("0"))

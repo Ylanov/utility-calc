@@ -279,7 +279,7 @@ def compute_row_hash(ts: Optional[datetime], fio: str, room: str,
 # Fuzzy-matcher
 # =======================================================================
 
-def build_users_index(db: Session) -> tuple[dict[str, dict], list[str], dict[int, dict]]:
+def build_users_index(db: Session, with_initials: bool = True) -> tuple[dict[str, dict], list[str], dict[int, dict]]:
     """
     Строит индексы для матчинга:
       - by_name: normalized_fio -> {id, username, room_id, room_number} (для fuzzy)
@@ -291,6 +291,10 @@ def build_users_index(db: Session) -> tuple[dict[str, dict], list[str], dict[int
       2) канонический инициальный вид: «иванов и и»
     Так матчится и полное ФИО в подаче, и короткий формат «Иванов И.И.» —
     оба дадут попадание без fuzzy.
+
+    with_initials=False — кладём ТОЛЬКО полное ФИО (без инициального ключа).
+    Для строгого режима «точь-в-точь» (импорт 1С / сверка ГИС ГМП), где
+    «Иванов И.П.» НЕ должен совпасть с «Иванов Иван Петрович».
     """
     users = db.execute(
         select(User, Room)
@@ -321,7 +325,7 @@ def build_users_index(db: Session) -> tuple[dict[str, dict], list[str], dict[int
         # short добавляем только если отличается — иначе шум в keys-списке.
         # И только если его ещё нет — полное имя в конфликте не перезапишет short
         # другого юзера.
-        if short and short != full and short not in by_name:
+        if with_initials and short and short != full and short not in by_name:
             by_name[short] = info
     return by_name, list(by_name.keys()), by_id
 
@@ -362,6 +366,7 @@ def match_user(
     users_keys: list[str],
     users_by_id: Optional[dict[int, dict]] = None,
     aliases_map: Optional[dict[str, int]] = None,
+    fuzzy: bool = True,
 ) -> tuple[Optional[dict], int, Optional[str]]:
     """
     Возвращает (user_info | None, score 0..100, conflict_reason | None).
@@ -394,11 +399,17 @@ def match_user(
                 if info:
                     return info, 100, None
 
-    # Точное совпадение по нормализованной строке ИЛИ canonical form
-    for key in (norm, canon):
+    # Точное совпадение. Строгий режим (fuzzy=False) — ТОЛЬКО полное ФИО, без
+    # canonical-инициалов: «Иванов И.П.» не совпадёт с «Иванов Иван Петрович».
+    exact_keys = (norm,) if not fuzzy else (norm, canon)
+    for key in exact_keys:
         if key and key in users_map:
             user = users_map[key]
             return user, 100, _check_room_conflict(user, raw_room)
+
+    # Строгий режим: без нечёткого матчинга — не нашли точно → not_found.
+    if not fuzzy:
+        return None, 0, None
 
     # Fuzzy: extract топ-5 кандидатов
     candidates = process.extract(
