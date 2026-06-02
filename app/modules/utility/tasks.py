@@ -787,23 +787,31 @@ def check_auto_period_task():
                         db.commit()
                         logger.info(f"[AUTO] Opened new period: {period_name}")
             elif active:
-                # Сегодня ВНЕ окна подачи, но период активен → закрываем.
-                # ИСПРАВЛЕНИЕ (apr 2026): раньше check_auto_period_task САМ ставил
-                # lock через `redis_client.set(... nx=True, ex=1800)` и потом
-                # вызывал close_period_task.delay(...). Сама close_period_task
-                # на старте делает такой же `set nx=True` — и видит уже занятый
-                # lock, возвращает skipped. Итог: автозакрытие никогда не
-                # отрабатывало, плюс lock висел 1800 сек после каждого Beat-тика.
-                # Теперь: только наблюдательная проверка (read-only `get`),
-                # реальный atomic lock делает сама close_period_task.
-                redis_client = Redis.from_url(settings.REDIS_URL)
-                if redis_client.get("lock:close_period"):
-                    logger.info("[AUTO] Close already running, skip duplicate")
+                # Сегодня ВНЕ окна подачи, но период активен.
+                # КРИТИЧНО (фикс июнь 2026): закрываем ТОЛЬКО когда окно уже
+                # ЗАКОНЧИЛОСЬ (мы ПОСЛЕ end_day), а НЕ до его открытия. Для
+                # невраппинг-окна (start<=end, напр. 15→28) дни 1..start-1 — это
+                # ещё ДО начала приёма; закрытие там выставляло бы ВСЕМ 0 (никто
+                # не подавал). Для враппинг-окна (start>end, 15→3) любой день вне
+                # окна уже после end — там закрывать корректно.
+                window_has_ended = (start_day > end_day) or (current_day > end_day)
+                if not window_has_ended:
+                    logger.info(
+                        "[AUTO] Вне окна, но ДО открытия приёма (день %d < start %d) — "
+                        "период '%s' НЕ закрываем (иначе всем 0).",
+                        current_day, start_day, active.name)
                 else:
-                    admin = db.query(User).filter_by(username="admin").first()
-                    if admin:
-                        close_period_task.delay(admin.id)
-                        logger.info(f"[AUTO] Triggered closing task for period '{active.name}'")
+                    # ИСПРАВЛЕНИЕ (apr 2026): только наблюдательная проверка lock
+                    # (read-only get), реальный atomic lock делает сама
+                    # close_period_task.
+                    redis_client = Redis.from_url(settings.REDIS_URL)
+                    if redis_client.get("lock:close_period"):
+                        logger.info("[AUTO] Close already running, skip duplicate")
+                    else:
+                        admin = db.query(User).filter_by(username="admin").first()
+                        if admin:
+                            close_period_task.delay(admin.id)
+                            logger.info(f"[AUTO] Triggered closing task for period '{active.name}'")
     except Exception:
         logger.exception("[AUTO] Automation failed")
 
