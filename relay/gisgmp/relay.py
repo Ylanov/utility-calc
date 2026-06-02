@@ -37,7 +37,10 @@ UA = "Mozilla/5.0 (gisgmp-relay)"
 # Версия релея — отправляется при опросе конфига, ЖКХ показывает её в статусе и
 # сравнивает с актуальной (из задеплоенного relay.py) → видно «обновлён или нет».
 # БАМПАТЬ при изменении relay.py (формат YYYY-MM-DD[.N]).
-RELAY_VERSION = "2026-06-02"
+RELAY_VERSION = "2026-06-02.2"
+
+# Пауза между запросами актуализации (бережём тормозной сервер реестра).
+ACTUALIZE_SLEEP = float(os.environ.get("ACTUALIZE_SLEEP", "1.2"))
 
 
 def log(*a):
@@ -237,6 +240,44 @@ def do_recheck(surnames, deep_months):
         report(True, 0, message="дотягивание: ничего не найдено")
 
 
+def actualize_progress(done, ok, fail, finished=False, message=""):
+    """Прогресс массовой актуализации → ЖКХ (индикатор в UI)."""
+    try:
+        requests.post(f"{JKH_URL}/api/financier/gisgmp/actualize-progress",
+                      headers=_auth(),
+                      json={"done": done, "ok": ok, "fail": fail,
+                            "finished": finished, "message": (message or "")[:300]},
+                      timeout=30)
+    except Exception as e:
+        log("[relay] прогресс актуализации не ушёл:", e)
+
+
+def do_actualize(uuids):
+    """Массовая актуализация: по каждому UUID дёргаем actualize-request в реестре
+    (как кнопка «Актуализировать из ГИС ГМП»), ждём отклик, шлём прогресс каждые
+    10 счетов. Долго (сервер тормозной) — фоновая задача."""
+    s = requests.Session()
+    login(s)
+    total, ok, fail = len(uuids), 0, 0
+    hdr = {"User-Agent": UA, "X-Requested-With": "XMLHttpRequest"}
+    log(f"[relay] актуализация {total} счетов…")
+    for i, u in enumerate(uuids, 1):
+        try:
+            r = s.get(f"{REGISTRY}/api/charge/{u}/actualize-request",
+                      headers=hdr, timeout=60)
+            if r.status_code < 400:
+                ok += 1
+            else:
+                fail += 1
+        except Exception:
+            fail += 1
+        time.sleep(ACTUALIZE_SLEEP)
+        if i % 10 == 0 or i == total:
+            actualize_progress(i, ok, fail, finished=(i == total),
+                               message=f"актуализировано {i}/{total} (ok {ok}, ошибок {fail})")
+    log(f"[relay] актуализация завершена: ok {ok}, ошибок {fail} из {total}")
+
+
 def _reexec():
     """Перезапуск процесса на месте (execv) — мгновенно, без 30с паузы systemd.
     Подхватывает свежий relay.py и обновлённое окружение (PASSPORT_*)."""
@@ -324,8 +365,15 @@ def main():
     while True:
         try:
             cfg = get_config()
+            actualize = cfg.get("actualize")
             recheck = cfg.get("recheck")
-            if recheck and recheck.get("surnames"):
+            if actualize and actualize.get("uuids"):
+                try:
+                    do_actualize(actualize["uuids"])
+                except Exception as e:
+                    log("[relay] ошибка актуализации:", e)
+                    actualize_progress(0, 0, 0, finished=True, message="ошибка: " + str(e)[:200])
+            elif recheck and recheck.get("surnames"):
                 log(f"[relay] дотягивание {len(recheck['surnames'])} фамилий…")
                 try:
                     do_recheck(recheck["surnames"], int(recheck.get("deep_months", 36)))

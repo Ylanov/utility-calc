@@ -126,6 +126,14 @@ export const DebtsModule = {
             if (pend.restart) pl.push('перезапуск');
             if (pend.credentials) pl.push('смена учётки');
             if (pl.length) parts.push(`<span style="color:#d97706;">⏳ В очереди для релея: ${pl.join(', ')} — применится на ближайшем опросе (~2 мин)</span>`);
+            try {
+                const act = await api.get('/financier/gisgmp/actualize-status');
+                if (act && act.total) {
+                    const pct = Math.round((act.done || 0) / act.total * 100);
+                    const st = act.running ? '⏳ идёт' : (act.finished ? '✅ готово' : 'в очереди');
+                    parts.push(`<span style="color:#2563eb;">Актуализация: <b>${st}</b> — ${act.done || 0} из ${act.total} (${pct}%, ok ${act.ok || 0}, ошибок ${act.fail || 0})</span>`);
+                }
+            } catch (e) { /* нет очереди актуализации — норм */ }
             box.innerHTML = parts.join('<br>');
         } catch (e) {
             box.textContent = 'Не удалось загрузить статус ГИС ГМП.';
@@ -251,6 +259,17 @@ export const DebtsModule = {
         } catch (e) {
             toast('Ошибка: ' + (e?.message || e), 'error');
         }
+    },
+
+    // Массовая актуализация: демон дёргает «Актуализировать из ГИС ГМП» по каждому
+    // неоплаченному счёту жильцов с расхождением. Долго → фон + прогресс в статусе.
+    async actualizeGisgmp() {
+        if (!await showConfirm('Запустить массовую актуализацию? Демон в фоне по КАЖДОМУ неоплаченному счёту жильцов с расхождением дёрнет «Актуализировать из ГИС ГМП» в реестре. Это ДОЛГО (сервер реестра медленный) — можно закрыть страницу, прогресс сохранится в «Статусе».')) return;
+        try {
+            const r = await api.post('/financier/gisgmp/actualize-build', {});
+            toast(`В очередь: ${r.queued} счетов (${r.residents} жильцов). Релей актуализирует в фоне — прогресс в карточке статуса.`, 'info');
+            this.loadGisgmpStatus();
+        } catch (e) { toast('Ошибка: ' + (e?.message || e), 'error'); }
     },
 
     // Управление демоном релея из UI (применяется на ближайшем опросе ~2 мин).
@@ -607,6 +626,7 @@ td.r,th.r{text-align:right;white-space:nowrap;} tr:nth-child(even){background:#f
             btnGisgmpReconcile: document.getElementById('btnGisgmpReconcile'),
             gisgmpReconcileBody: document.getElementById('gisgmpReconcileBody'),
             btnGisgmpRecheck: document.getElementById('btnGisgmpRecheck'),
+            btnGisgmpActualize: document.getElementById('btnGisgmpActualize'),
             btnRelayUpdate: document.getElementById('btnRelayUpdate'),
             btnRelayRestart: document.getElementById('btnRelayRestart'),
             btnRelayCreds: document.getElementById('btnRelayCreds'),
@@ -657,6 +677,7 @@ td.r,th.r{text-align:right;white-space:nowrap;} tr:nth-child(even){background:#f
         this.dom.btnGisgmpFindings?.addEventListener('click', () => this.openGisgmpFindings());
         this.dom.btnGisgmpReconcile?.addEventListener('click', () => this.openGisgmpReconcile());
         this.dom.btnGisgmpRecheck?.addEventListener('click', () => this.recheckGisgmp());
+        this.dom.btnGisgmpActualize?.addEventListener('click', () => this.actualizeGisgmp());
         this.dom.btnRelayUpdate?.addEventListener('click', () => this.relayUpdate());
         this.dom.btnRelayRestart?.addEventListener('click', () => this.relayRestart());
         this.dom.btnRelayCreds?.addEventListener('click', () => this.relaySaveCreds());

@@ -739,6 +739,24 @@ async def gisgmp_relay_config(
         except Exception:
             pass
 
+    # Очередь массовой актуализации (кнопка «Актуализировать расхождения»):
+    # отдаём полный список UUID ОДИН раз и помечаем running, пока релей идёт.
+    act_row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == "gisgmp_actualize")
+    )).scalars().first()
+    actualize = None
+    if act_row and act_row.value:
+        try:
+            av = json.loads(act_row.value)
+        except Exception:
+            av = {}
+        if av.get("uuids") and not av.get("running"):
+            actualize = {"uuids": av["uuids"]}
+            av["running"] = True
+            av["started_at"] = utcnow().isoformat()
+            act_row.value = json.dumps(av, ensure_ascii=False)
+            await db.commit()
+
     # Один сейв в конце: last_poll_at/версия + claim команд + claim запуска.
     await _save_relay_cfg(db, cfg)
 
@@ -750,6 +768,7 @@ async def gisgmp_relay_config(
         "since": since,
         "recheck": recheck,
         "control": control or None,
+        "actualize": actualize,
     }
 
 
@@ -1307,6 +1326,126 @@ async def gisgmp_recheck_build(
     row.value = json.dumps(payload, ensure_ascii=False)
     await db.commit()
     return {"queued": len(surnames)}
+
+
+GISGMP_ACTUALIZE_KEY = "gisgmp_actualize"
+
+
+@router.post("/gisgmp/actualize-build", summary="Очередь массовой актуализации: счета жильцов с расхождением")
+async def gisgmp_actualize_build(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """UUID НЕОПЛАЧЕННЫХ (не аннулированных) счетов всех жильцов с расхождением
+    (любой флаг != ok) → в очередь. Релей в фоне по каждому дёрнет
+    actualize-request в реестре (как кнопка «Актуализировать из ГИС ГМП»),
+    последовательно с ожиданием отклика, и шлёт прогресс."""
+    _require_finance(current_user)
+    rec = await _build_reconcile(db)
+    surnames = set()
+    for r in rec.get("residents", []):
+        if r.get("flag") and r["flag"] != "ok":
+            parts = (r.get("username") or "").strip().split()
+            if parts:
+                surnames.add(parts[0].lower())
+
+    from app.modules.utility.services.gisgmp_import import (
+        is_unpaid, is_annulled, GISGMP_CACHE_KEY,
+    )
+    cache_row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_CACHE_KEY)
+    )).scalars().first()
+    uuids, seen = [], set()
+    if cache_row and cache_row.value and surnames:
+        try:
+            for ch in json.loads(cache_row.value).values():
+                if is_annulled(ch.get("change_status")) or not is_unpaid(ch.get("ack_status")):
+                    continue
+                u = ch.get("charge_uuid")
+                if not u or u in seen:
+                    continue
+                nm = (ch.get("payer_name") or "").strip().split()
+                if nm and nm[0].lower() in surnames:
+                    seen.add(u)
+                    uuids.append(u)
+        except Exception:
+            pass
+
+    payload = {
+        "uuids": uuids, "total": len(uuids), "done": 0, "ok": 0, "fail": 0,
+        "running": False, "finished": False,
+        "queued_at": utcnow().isoformat(), "by": current_user.username, "message": "",
+    }
+    row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_ACTUALIZE_KEY)
+    )).scalars().first()
+    if row is None:
+        row = SystemSetting(key=GISGMP_ACTUALIZE_KEY, value="{}",
+                            description="Очередь массовой актуализации ГИС ГМП")
+        db.add(row)
+    row.value = json.dumps(payload, ensure_ascii=False)
+    await db.commit()
+    return {"queued": len(uuids), "residents": len(surnames)}
+
+
+class GisgmpActualizeProgressIn(BaseModel):
+    done: int = 0
+    ok: int = 0
+    fail: int = 0
+    finished: bool = False
+    message: str = ""
+
+
+@router.post("/gisgmp/actualize-progress", summary="Релей шлёт прогресс актуализации (token)")
+async def gisgmp_actualize_progress(
+    payload: GisgmpActualizeProgressIn,
+    authorization: Optional[str] = Header(None),
+    db: AsyncSession = Depends(get_db),
+):
+    _check_gisgmp_token(authorization)
+    row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_ACTUALIZE_KEY)
+    )).scalars().first()
+    if not row or not row.value:
+        return {"ok": True}
+    try:
+        av = json.loads(row.value)
+    except Exception:
+        av = {}
+    av["done"] = payload.done
+    av["ok"] = payload.ok
+    av["fail"] = payload.fail
+    av["last_at"] = utcnow().isoformat()
+    if payload.message:
+        av["message"] = payload.message[:300]
+    if payload.finished:
+        av["running"] = False
+        av["finished"] = True
+        av["finished_at"] = utcnow().isoformat()
+        av["uuids"] = []  # выполнено — очищаем список
+    row.value = json.dumps(av, ensure_ascii=False)
+    await db.commit()
+    return {"ok": True}
+
+
+@router.get("/gisgmp/actualize-status", summary="Прогресс массовой актуализации (для UI)")
+async def gisgmp_actualize_status(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_finance(current_user)
+    row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_ACTUALIZE_KEY)
+    )).scalars().first()
+    if not row or not row.value:
+        return {"total": 0, "done": 0, "running": False, "finished": False}
+    try:
+        av = json.loads(row.value)
+    except Exception:
+        return {"total": 0, "done": 0, "running": False, "finished": False}
+    return {k: av.get(k) for k in (
+        "total", "done", "ok", "fail", "running", "finished",
+        "queued_at", "started_at", "finished_at", "last_at", "message", "by")}
 
 
 @router.get("/gisgmp/relay.py", summary="Отдать актуальный relay.py (самообновление релея на ВМ)")
