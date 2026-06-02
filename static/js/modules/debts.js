@@ -69,6 +69,41 @@ export const DebtsModule = {
         this.loadUsers();
         this.loadImportHistory();
         this.loadGisgmpStatus();
+        this.loadStagedStatus();
+    },
+
+    // ─── Гейт «Выгрузить»: статус черновиков + публикация долгов ───────────
+    async loadStagedStatus() {
+        const box = this.dom.debtsStagedStatus;
+        if (!box) return;
+        try {
+            const s = await api.get('/financier/debts/staged-status');
+            const st = s.staged || {};
+            if (!s.has_staged) {
+                box.innerHTML = '<span style="color:#9ca3af;">Черновиков нет — загрузите Excel 1С, затем «Выгрузить».</span>';
+                if (this.dom.btnPublishDebts) this.dom.btnPublishDebts.disabled = true;
+                return;
+            }
+            const parts = [];
+            for (const acc of ['209', '205']) {
+                const d = st[acc];
+                if (d) parts.push(`<b>${acc}</b>: ${d.residents} жильцов${d.not_found ? `, не найдено ${d.not_found}` : ''} <span style="color:#9ca3af;">(${d.at ? new Date(d.at).toLocaleString('ru-RU') : '—'})</span>`);
+            }
+            box.innerHTML = `<span style="color:#16a34a;">📥 Черновик готов к выгрузке:</span><br>${parts.join('<br>')}`;
+            if (this.dom.btnPublishDebts) this.dom.btnPublishDebts.disabled = false;
+        } catch (e) {
+            box.innerHTML = '<span style="color:#9ca3af;">Статус черновиков недоступен.</span>';
+        }
+    },
+
+    async publishDebts() {
+        if (!await showConfirm('Выгрузить долги жильцам? Возьму последние черновики 1С (209/205) + активные ГИС-оверрайды и запишу долги в показания активного периода. Полная замена по выгружаемому счёту (кого нет в черновике → 0). Снимок до — для отката через историю.', { title: 'Выгрузить долги', confirmText: 'Выгрузить' })) return;
+        try {
+            const r = await api.post('/financier/debts/publish', {});
+            toast(`Выгружено: счета ${(r.accounts || []).join('+')}, обновлено ${r.updated}, создано ${r.created}, ГИС-оверрайдов ${r.overrides_applied}.`, 'success');
+            this.loadStagedStatus();
+            this.reload();
+        } catch (e) { toast('Ошибка выгрузки: ' + (e?.message || e), 'error'); }
     },
 
     // ─── Авто-подгрузка ГИС ГМП (релей, управление отсюда) ─────────────────
@@ -749,6 +784,8 @@ td.r,th.r{text-align:right;white-space:nowrap;} tr:nth-child(even){background:#f
             btnRefreshImportHistory: document.getElementById('btnRefreshImportHistory'),
             // Авто-подгрузка ГИС ГМП (серверный релей)
             gisgmpStatus: document.getElementById('gisgmpStatus'),
+            btnPublishDebts: document.getElementById('btnPublishDebts'),
+            debtsStagedStatus: document.getElementById('debtsStagedStatus'),
             gisgmpEnabled: document.getElementById('gisgmpEnabled'),
             gisgmpMonths: document.getElementById('gisgmpMonths'),
             gisgmpHour: document.getElementById('gisgmpHour'),
@@ -821,6 +858,7 @@ td.r,th.r{text-align:right;white-space:nowrap;} tr:nth-child(even){background:#f
         this.dom.btnRelayRestart?.addEventListener('click', () => this.relayRestart());
         this.dom.btnRelayCreds?.addEventListener('click', () => this.relaySaveCreds());
         this.dom.btnUpload?.addEventListener('click', () => this.handleUpload());
+        this.dom.btnPublishDebts?.addEventListener('click', () => this.publishDebts());
 
         // Авто-предпросмотр при выборе файла (Bug T)
         this.dom.inputUpload209?.addEventListener('change', () => this.previewFile('209'));

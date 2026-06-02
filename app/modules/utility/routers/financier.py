@@ -1223,6 +1223,163 @@ async def gisgmp_reconcile_fio(
     }
 
 
+@router.get("/debts/staged-status", summary="Черновики долгов 1С, ждущие выгрузки")
+async def debts_staged_status(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Для кнопки «Выгрузить»: какие черновики (status='staged') 1С готовы."""
+    _require_finance(current_user)
+    out = {"staged": {}, "has_staged": False}
+    for acc in ("209", "205"):
+        log = (await db.execute(
+            select(DebtImportLog).where(
+                DebtImportLog.account_type == acc,
+                DebtImportLog.status == "staged",
+            ).order_by(desc(DebtImportLog.started_at)).limit(1)
+        )).scalars().first()
+        if log:
+            out["staged"][acc] = {
+                "log_id": log.id, "file": log.file_name,
+                "at": log.started_at.isoformat() if log.started_at else None,
+                "residents": len(log.applied_state or {}),
+                "not_found": log.not_found_count or 0,
+                "by": log.started_by_username,
+            }
+            out["has_staged"] = True
+    return out
+
+
+@router.post("/debts/publish", summary="Выгрузить черновики долгов жильцам (1С + ГИС-оверрайды)")
+async def debts_publish(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Берёт ПОСЛЕДНИЕ черновики импорта 1С (status='staged') по 209 и 205,
+    накладывает активные ГИС-оверрайды и пишет долги в показания активного
+    периода — только теперь жильцы их видят. Полная замена по выгружаемому
+    счёту (кого нет в черновике → 0 по этому счёту). Снимок до — для отката."""
+    _require_finance(current_user)
+    from sqlalchemy import update as _sa_update
+
+    ap = (await db.execute(
+        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
+    )).scalars().first()
+    if ap is None:
+        raise HTTPException(409, "Нет активного расчётного периода")
+
+    staged = {}
+    for acc in ("209", "205"):
+        log = (await db.execute(
+            select(DebtImportLog).where(
+                DebtImportLog.account_type == acc,
+                DebtImportLog.status == "staged",
+            ).order_by(desc(DebtImportLog.started_at)).limit(1)
+        )).scalars().first()
+        if log:
+            staged[acc] = log
+    if not staged:
+        raise HTTPException(409, "Нет черновиков для выгрузки — сначала загрузите Excel 1С")
+    accts = set(staged.keys())
+
+    # Целевые долги по жильцам из черновиков (applied_state).
+    target: dict[int, dict] = {}
+    for acc, log in staged.items():
+        for uid_s, st in (log.applied_state or {}).items():
+            if not str(uid_s).isdigit():
+                continue
+            uid = int(uid_s)
+            t = target.setdefault(uid, {"room_id": st.get("room_id")})
+            t[f"debt_{acc}"] = Decimal(str(st.get(f"debt_{acc}") or 0))
+            t[f"over_{acc}"] = Decimal(str(st.get(f"overpayment_{acc}") or 0))
+            if st.get("room_id"):
+                t["room_id"] = st.get("room_id")
+
+    # ГИС-оверрайды побеждают над 1С (по выгружаемым счетам).
+    ovr_row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_OVERRIDES_KEY)
+    )).scalars().first()
+    overrides = {}
+    if ovr_row and ovr_row.value:
+        try:
+            overrides = json.loads(ovr_row.value)
+        except Exception:
+            overrides = {}
+    ovr_count = 0
+    for uid_s, ov in overrides.items():
+        if not str(uid_s).isdigit():
+            continue
+        uid = int(uid_s)
+        t = target.setdefault(uid, {"room_id": None})
+        for acc in accts:
+            t[f"debt_{acc}"] = Decimal(str(ov.get(f"debt_{acc}") or 0))
+            t[f"over_{acc}"] = Decimal("0")
+        ovr_count += 1
+
+    # Существующие показания активного периода.
+    readings = (await db.execute(
+        select(MeterReading).where(MeterReading.period_id == ap.id)
+    )).scalars().all()
+    by_user = {r.user_id: r for r in readings if r.user_id is not None}
+
+    snapshot_before: dict = {}
+    updates: list = []
+    for uid, r in by_user.items():
+        vals = {}
+        for acc in accts:
+            vals[f"debt_{acc}"] = target.get(uid, {}).get(f"debt_{acc}", Decimal("0"))
+            vals[f"overpayment_{acc}"] = target.get(uid, {}).get(f"over_{acc}", Decimal("0"))
+        snapshot_before[str(r.id)] = {
+            "debt_209": str(r.debt_209 or 0), "overpayment_209": str(r.overpayment_209 or 0),
+            "debt_205": str(r.debt_205 or 0), "overpayment_205": str(r.overpayment_205 or 0),
+        }
+        updates.append((r.id, vals))
+
+    # Создаём показания для жильцов из черновика без показания в периоде.
+    new_objs = []
+    for uid, t in target.items():
+        if uid in by_user:
+            continue
+        new_objs.append(MeterReading(
+            user_id=uid, room_id=t.get("room_id"), period_id=ap.id, is_approved=False,
+            debt_209=t.get("debt_209", Decimal("0")), overpayment_209=t.get("over_209", Decimal("0")),
+            debt_205=t.get("debt_205", Decimal("0")), overpayment_205=t.get("over_205", Decimal("0")),
+        ))
+    inserted_ids = []
+    if new_objs:
+        db.add_all(new_objs)
+        await db.flush()
+        inserted_ids = [n.id for n in new_objs]
+
+    # Партиц-безопасная запись существующих (expunge + явный UPDATE по id).
+    for r in list(by_user.values()):
+        try:
+            db.expunge(r)
+        except Exception:
+            pass
+    updated = 0
+    for rid, vals in updates:
+        res = await db.execute(
+            _sa_update(MeterReading).where(MeterReading.id == rid).values(**vals)
+        )
+        updated += res.rowcount or 0
+
+    # Помечаем черновики published + снимок до (для отката через историю импортов).
+    now = utcnow().isoformat()
+    for acc, log in staged.items():
+        log.status = "published"
+        log.snapshot_data = {"before": snapshot_before,
+                             "inserted_reading_ids": inserted_ids,
+                             "published_at": now}
+    await db.commit()
+
+    return {
+        "ok": True, "accounts": sorted(accts),
+        "updated": updated, "created": len(inserted_ids),
+        "overrides_applied": ovr_count, "residents": len(target),
+    }
+
+
 async def _build_reconcile(db: AsyncSession) -> dict:
     findings = await _load_findings(db)
     gis: dict[int, dict] = {}

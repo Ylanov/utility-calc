@@ -492,6 +492,9 @@ def import_debts_task(
             batch_id=batch_id,
             original_file_name=original_file_name,
             period_id=period_id,
+            # Гейт «Выгрузить»: импорт 1С грузит в ЧЕРНОВИК, в показания жильцов
+            # не пишет. Долги применяет отдельная кнопка (/debts/publish).
+            stage_only=True,
         )
 
     # Архивные файлы НЕ удаляем — они привязаны к DebtImportLog.archive_path

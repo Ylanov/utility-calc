@@ -260,9 +260,15 @@ def sync_import_debts_process(
     batch_id: str | None = None,
     original_file_name: str | None = None,
     period_id: int | None = None,
+    stage_only: bool = False,
 ) -> dict:
     """
     Функция массового импорта долгов.
+
+    stage_only=True — режим ЧЕРНОВИКА: парсим, матчим (точно) и считаем долги
+    в applied_state, но в MeterReading НЕ пишем (status='staged'). Долги жильцам
+    применяет отдельная кнопка «Выгрузить» (/debts/publish). Так сколько Excel'ей
+    ни грузи — без публикации residentам ничего не меняется.
     Долг из 1С привязывается к КОМНАТЕ жильца. Долги соседей по комнате суммируются.
 
     Важно: ВСЁ делается одной транзакцией. Если на 5000-й строке случится
@@ -820,13 +826,24 @@ def sync_import_debts_process(
                 processed_users.add(user_id)
                 stats["created"] += 1
 
-        # 7. Сохраняем в БД
-        if inserts_dict:
+        # 7. Сохраняем в БД — ТОЛЬКО при публикации. В режиме черновика (stage_only)
+        # MeterReading не трогаем: импорт лишь считает долги в applied_state,
+        # запись в показания делает отдельная кнопка «Выгрузить».
+        if stage_only:
+            # Отвязываем мутированные readings от session, чтобы commit их не
+            # сбросил в БД (новые inserts вообще не добавляем).
+            for _r in list(updates_dict.values()):
+                try:
+                    db.expunge(_r)
+                except Exception:
+                    pass
+
+        if not stage_only and inserts_dict:
             db.add_all(list(inserts_dict.values()))
             db.flush()  # получаем id для snapshot/undo
             inserts_reading_ids = [r.id for r in inserts_dict.values()]
 
-        if updates_dict:
+        if not stage_only and updates_dict:
             # ИСПРАВЛЕНИЕ (may 2026): раньше использовался
             # db.bulk_update_mappings(MeterReading, updates_list). Но
             # MeterReading партиционирована по created_at, и bulk_update
@@ -925,13 +942,14 @@ def sync_import_debts_process(
             key = item["fio"].strip().lower()
             seen[key] = item
         stats["not_found_users"] = list(seen.values())
-        import_log.status = "completed"
+        import_log.status = "staged" if stage_only else "completed"
         import_log.processed = stats["processed"]
         import_log.updated = stats["updated"]
         import_log.created = stats["created"]
         import_log.not_found_count = len(stats["not_found_users"])
         import_log.not_found_users = stats["not_found_users"][:2000]  # защита от гигантских файлов
-        import_log.snapshot_data = {
+        # Черновик ничего не писал в показания — откатывать нечего (snapshot пуст).
+        import_log.snapshot_data = {} if stage_only else {
             "before": snapshot_before,
             "inserted_reading_ids": inserts_reading_ids,
         }

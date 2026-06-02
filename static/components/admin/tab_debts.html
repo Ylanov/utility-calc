@@ -49,6 +49,22 @@
                 </button>
             </div>
             <div id="uploadResult" class="upload-result-box mt-20 hide"></div>
+
+            <!-- Гейт «Выгрузить»: импорт грузит в ЧЕРНОВИК; долги жильцам
+                 применяет только эта кнопка (1С + ГИС-оверрайды). -->
+            <div style="margin-top:16px; padding-top:14px; border-top:1px dashed var(--border-color);">
+                <div style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:6px;">
+                    <i class="fa-solid fa-cloud-arrow-up" style="color:#16a34a;"></i> Выгрузка долгов жильцам
+                </div>
+                <div id="debtsStagedStatus" style="font-size:12px; color:var(--text-secondary); margin-bottom:8px;">Загрузка статуса…</div>
+                <button id="btnPublishDebts" class="action-btn primary-btn" style="background:#16a34a; border-color:#16a34a; width:100%;">
+                    <i class="fa-solid fa-cloud-arrow-up"></i> Выгрузить долги жильцам
+                </button>
+                <p class="hint-text" style="font-size:11px; margin:6px 0 0; color:#92400e;">
+                    Импорт 1С грузит в ЧЕРНОВИК — жильцы долги НЕ видят, пока не нажмёшь «Выгрузить».
+                    Выгрузка пишет последний черновик 209/205 + активные ГИС-оверрайды (полная замена по счёту).
+                </p>
+            </div>
         </div>
 
         <!-- Колонка 2: История импортов -->
