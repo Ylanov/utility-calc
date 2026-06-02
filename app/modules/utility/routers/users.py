@@ -198,7 +198,8 @@ async def create_user(
         if not room_check:
             raise HTTPException(status_code=400, detail="Комната не найдена в Жилфонде")
 
-    await _validate_tariff_id(new_user.tariff_id, db)
+    # Тариф жильцу НЕ задаём — он подтягивается от дома/комнаты (Room.tariff_id),
+    # настраивается через «Настройки дома». Персональный тариф упразднён.
 
     # resident_type/billing_mode: если жилец сразу селится в комнату,
     # фактический resident_type пересчитает move_user_to_room по флагу комнаты.
@@ -211,7 +212,7 @@ async def create_user(
         hashed_password=get_password_hash(new_user.password),
         role=new_user.role,
         residents_count=new_user.residents_count,
-        tariff_id=new_user.tariff_id,
+        tariff_id=None,  # тариф от дома/комнаты, не персональный
         # room_id выставится через move_user_to_room ниже — вместе с RoomAssignment.
         room_id=None,
         resident_type=rt,
@@ -682,8 +683,9 @@ async def update_user(
         if not room_check:
             raise HTTPException(status_code=400, detail="Комната не найдена в Жилфонде")
 
-    if "tariff_id" in update_dict:
-        await _validate_tariff_id(update_dict["tariff_id"], db)
+    # Тариф больше не персональный — игнорируем tariff_id в апдейте жильца
+    # (подтягивается от дома/комнаты, настраивается через «Настройки дома»).
+    update_dict.pop("tariff_id", None)
 
     if "password" in update_dict and update_dict["password"]:
         db_user.hashed_password = get_password_hash(update_dict.pop("password"))

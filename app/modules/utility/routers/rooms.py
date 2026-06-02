@@ -3,7 +3,7 @@ from decimal import Decimal
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func, or_, update
+from sqlalchemy import func, or_, update, and_
 from typing import Optional, List
 
 from app.core.database import get_db
@@ -137,6 +137,36 @@ async def get_streets(db: AsyncSession = Depends(get_db)):
         .order_by(Room.street)
     )
     return [v for v in result.scalars().all() if v]
+
+
+@router.get("/buildings", dependencies=[Depends(allow_management)])
+async def get_buildings(db: AsyncSession = Depends(get_db)):
+    """Все ЗДАНИЯ для «Настройки дома»: общаги (dormitory_name) + дома
+    (street + house_number) с числом помещений. Выбор здания в модалке настроек —
+    тариф/счётчики ставятся на всё здание сразу (на квартире тариф read-only)."""
+    dorm_rows = (await db.execute(
+        select(Room.dormitory_name, func.count(Room.id))
+        .where(Room.place_type == "dormitory", Room.dormitory_name.is_not(None))
+        .group_by(Room.dormitory_name)
+        .order_by(Room.dormitory_name)
+    )).all()
+    house_rows = (await db.execute(
+        select(Room.street, Room.house_number, func.count(Room.id))
+        .where(Room.place_type == "house",
+               Room.street.is_not(None), Room.house_number.is_not(None))
+        .group_by(Room.street, Room.house_number)
+        .order_by(Room.street, Room.house_number)
+    )).all()
+    out = []
+    for name, cnt in dorm_rows:
+        if name:
+            out.append({"type": "dormitory", "dormitory_name": name,
+                        "label": f"🏢 {name}", "rooms": cnt})
+    for street, house, cnt in house_rows:
+        if street and house:
+            out.append({"type": "house", "street": street, "house_number": house,
+                        "label": f"🏠 ул. {street}, д. {house}", "rooms": cnt})
+    return out
 
 
 @router.get("", response_model=PaginatedResponse[RoomResponse], dependencies=[Depends(allow_management)])
@@ -812,23 +842,36 @@ async def bulk_meter_config(
 
 @router.get("/dormitory-overview", dependencies=[Depends(allow_management)])
 async def dormitory_overview(
-    dormitory_name: str = Query(..., description="Название общежития/дома"),
+    dormitory_name: Optional[str] = Query(None, description="Название общежития"),
+    street: Optional[str] = Query(None, description="Улица (для дома)"),
+    house_number: Optional[str] = Query(None, description="Номер дома (для дома)"),
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Сводка по дому/общаге для окна «Настройки дома» (Жилфонд): статистика
-    (комнаты/жильцы/заполненность, семейные/холостяки), разбивка по тарифам и
-    счётчикам, текущий единый тариф/набор счётчиков (если одинаков у всех), и
-    список доступных тарифов с профилем начислений (что начисляет). Применение
-    делают отдельные эндпоинты: /assign-to-dormitory (тариф) и
-    /bulk-meter-config (счётчики)."""
+    """Сводка по зданию (дом/общага) для окна «Настройки дома» (Жилфонд):
+    статистика, разбивка по тарифам и счётчикам, текущий единый тариф/набор
+    счётчиков (если одинаков у всех), и список доступных тарифов с профилем
+    начислений. Цель — общага (dormitory_name) ИЛИ дом (street + house_number).
+    Применение: /assign-to-dormitory (тариф) и /bulk-meter-config (счётчики)."""
     from collections import Counter, defaultdict
 
-    rooms = (await db.execute(
-        select(Room).where(Room.dormitory_name == dormitory_name)
-    )).scalars().all()
+    # Здание: общага (dormitory_name) ИЛИ дом (street + house_number).
+    if dormitory_name:
+        cond = and_(Room.place_type == "dormitory", Room.dormitory_name == dormitory_name)
+        building_label = dormitory_name
+        applicable = ["dormitory", "both"]
+    elif street and house_number:
+        cond = and_(Room.place_type == "house",
+                    Room.street == street, Room.house_number == house_number)
+        building_label = f"ул. {street}, д. {house_number}"
+        applicable = ["house", "both"]
+    else:
+        raise HTTPException(
+            400, "Укажите общежитие (dormitory_name) или дом (street + house_number)")
+
+    rooms = (await db.execute(select(Room).where(cond))).scalars().all()
     if not rooms:
-        raise HTTPException(404, f"Дом «{dormitory_name}» не найден")
+        raise HTTPException(404, f"Здание «{building_label}» не найдено")
     room_ids = [r.id for r in rooms]
 
     residents = (await db.execute(
@@ -886,11 +929,11 @@ async def dormitory_overview(
         hwm, cwm, elm = next(iter(meter_combos))
         current_meters = {"has_hw_meter": hwm, "has_cw_meter": cwm, "has_el_meter": elm}
 
-    # Доступные тарифы для общаги (+ универсальные) с профилем начислений.
+    # Доступные тарифы для типа здания (+ универсальные) с профилем начислений.
     avail = (await db.execute(
         select(Tariff).where(
             Tariff.is_active.is_(True),
-            Tariff.applicable_to.in_(["dormitory", "both"]),
+            Tariff.applicable_to.in_(applicable),
         ).order_by(Tariff.name)
     )).scalars().all()
 
@@ -907,7 +950,8 @@ async def dormitory_overview(
         return chips
 
     return {
-        "dormitory_name": dormitory_name,
+        "dormitory_name": building_label,
+        "building_label": building_label,
         "stats": {
             "total_rooms": len(rooms), "empty": empty, "partial": partial,
             "full": full, "overcrowded": overcrowded,

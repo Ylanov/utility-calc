@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func, update, text
+from sqlalchemy import func, update, text, and_
 from sqlalchemy.orm import selectinload
 from fastapi_cache import FastAPICache
 
@@ -647,47 +647,60 @@ async def tariff_usage(
 # ASSIGN-TO-DORMITORY — массовая привязка тарифа к общежитию
 # =====================================================
 class AssignToDormRequest(BaseModel):
-    dormitory_name: str
+    # Цель — общага (dormitory_name) ИЛИ дом (street + house_number).
+    dormitory_name: Optional[str] = None
+    street: Optional[str] = None
+    house_number: Optional[str] = None
     tariff_id: Optional[int] = None  # None = снять привязку (вернуться к default)
 
 
-@router.post("/assign-to-dormitory", summary="Привязать тариф ко всему общежитию")
+@router.post("/assign-to-dormitory", summary="Привязать тариф ко всему зданию (дом/общага)")
 async def assign_tariff_to_dormitory(
     data: AssignToDormRequest,
     current_user: User = Depends(allow_management_roles),
     db: AsyncSession = Depends(get_db),
 ):
     """
-    Массово проставляет Room.tariff_id всем комнатам указанного общежития.
-    Это то самое «у общежития № 5 свой тариф» одной кнопкой.
+    Массово проставляет Room.tariff_id всем помещениям ЗДАНИЯ — одной кнопкой.
+    Цель: общага (dormitory_name) ИЛИ дом (street + house_number). Тариф —
+    свойство здания, квартиры/комнаты его наследуют (на квартире read-only).
 
-    Передать tariff_id=null — снять привязку с комнат (вернутся на User.tariff_id
-    или default).
+    Передать tariff_id=null — снять привязку (помещения вернутся на default).
     """
     if data.tariff_id is not None:
         tariff = await db.get(Tariff, data.tariff_id)
         if not tariff or not tariff.is_active:
             raise HTTPException(404, "Активный тариф с таким id не найден")
 
-    # Считаем сколько комнат затронем — для аудита и подтверждения в UI
+    # Условие выборки помещений здания (дом или общага).
+    if data.dormitory_name:
+        cond = and_(Room.place_type == "dormitory",
+                    Room.dormitory_name == data.dormitory_name)
+        target = data.dormitory_name
+    elif data.street and data.house_number:
+        cond = and_(Room.place_type == "house",
+                    Room.street == data.street,
+                    Room.house_number == data.house_number)
+        target = f"{data.street}, д. {data.house_number}"
+    else:
+        raise HTTPException(
+            400, "Укажите общежитие (dormitory_name) или дом (street + house_number)")
+
+    # Считаем сколько помещений затронем — для аудита и подтверждения в UI
     affected = (await db.execute(
-        select(func.count(Room.id)).where(Room.dormitory_name == data.dormitory_name)
+        select(func.count(Room.id)).where(cond)
     )).scalar_one()
     if not affected:
-        raise HTTPException(404, f"Общежитие «{data.dormitory_name}» не найдено")
+        raise HTTPException(404, f"Здание «{target}» не найдено")
 
-    await db.execute(
-        update(Room)
-        .where(Room.dormitory_name == data.dormitory_name)
-        .values(tariff_id=data.tariff_id)
-    )
+    await db.execute(update(Room).where(cond).values(tariff_id=data.tariff_id))
 
     await write_audit_log(
         db, current_user.id, current_user.username,
         action="tariff_assign_dorm", entity_type="tariff",
         entity_id=data.tariff_id,
         details={
-            "dormitory": data.dormitory_name,
+            "building": target,
             "rooms_affected": affected,
             "tariff_id": data.tariff_id,
         },

@@ -108,18 +108,17 @@ class TariffCache:
         return self._tariffs.get(self._default_id) if self._default_id else None
 
     def get_effective_tariff(self, *, user=None, room=None):
-        """Главная функция: какой тариф РЕАЛЬНО применяется для пары (user, room).
+        """Главная функция: какой тариф РЕАЛЬНО применяется для жильца.
 
+        Тариф — свойство ЗДАНИЯ (дома/общаги), наследуется квартирой/комнатой.
         Приоритет (от сильного к слабому):
-          1. room.tariff_id        — комнатный тариф (часто общеобщежитский)
-          2. user.tariff_id        — индивидуальный тариф жильца
-          3. default               — fallback (id=1)
+          1. room.tariff_id        — тариф помещения (проставляется на всё здание
+                                      через «Настройки дома», на квартире read-only)
+          2. default               — fallback (id=1)
 
-        Это позволяет:
-          * массово сменить тариф для общежития: проставить room.tariff_id у всех
-            комнат этого общежития (есть отдельный endpoint assign-to-dormitory);
-          * для исключительных жильцов оставить персональный User.tariff_id;
-          * при удалении тарифа все автоматически падают на default.
+        Персональный тариф жильца (User.tariff_id) БОЛЬШЕ НЕ УЧИТЫВАЕТСЯ — тариф
+        подтягивается только от дома/комнаты. Параметр `user` оставлен для
+        совместимости вызовов, но на выбор тарифа не влияет.
         """
         self._ensure_loaded()
 
@@ -127,11 +126,6 @@ class TariffCache:
             rt_id = getattr(room, "tariff_id", None)
             if rt_id is not None and rt_id in self._tariffs:
                 return self._tariffs[rt_id]
-
-        if user is not None:
-            ut_id = getattr(user, "tariff_id", None)
-            if ut_id is not None and ut_id in self._tariffs:
-                return self._tariffs[ut_id]
 
         return self.get_default()
 

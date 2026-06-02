@@ -285,13 +285,13 @@
                     </div>
 
                     <div class="form-group" style="margin-bottom: 24px;">
-                        <label>Тариф (опционально — переопределяет тариф жильца)</label>
-                        <select id="roomTariffId" class="tariff-select">
-                            <option value="">— Без переопределения —</option>
+                        <label>Тариф (наследуется от дома)</label>
+                        <select id="roomTariffId" class="tariff-select" disabled style="background:var(--bg-page); cursor:not-allowed;">
+                            <option value="">— от дома (по умолчанию) —</option>
                         </select>
                         <p class="hint-text" style="font-size:11px; margin:4px 0 0; color:var(--text-secondary);">
-                            Если задан — приоритет над тарифом жильца (Room.tariff_id &gt; User.tariff_id &gt; default).
-                            Для «дом/квартира» — обычно тариф «только найм» (charge_social_rent=true, остальные false).
+                            🔒 Тариф — свойство дома, на квартире не редактируется. Менять — через «Настройки дома»
+                            (применяется ко всем квартирам/комнатам здания сразу).
                         </p>
                     </div>
 
@@ -448,6 +448,10 @@
                 <button class="close-btn" data-dorm-close>&times;</button>
             </div>
             <div class="modal-form" style="padding: 16px 18px;">
+                <div class="form-group" style="margin-bottom: 14px;">
+                    <label style="font-size:13px; font-weight:600;">Здание (дом / общага)</label>
+                    <select id="dormSettingsBuilding"></select>
+                </div>
                 <div id="dormSettingsStats" style="margin-bottom: 16px;"></div>
 
                 <h4 style="margin: 0 0 8px; font-size: 14px; border-bottom: 1px solid var(--border-color); padding-bottom: 6px;">

@@ -45,6 +45,7 @@ export const HousingModule = {
             btnDormSettings: document.getElementById('btnDormSettings'),
             dormSettingsModal: document.getElementById('dormSettingsModal'),
             dormSettingsTitle: document.getElementById('dormSettingsTitle'),
+            dormSettingsBuilding: document.getElementById('dormSettingsBuilding'),
             dormSettingsStats: document.getElementById('dormSettingsStats'),
             dormSettingsTariff: document.getElementById('dormSettingsTariff'),
             dormSettingsMeters: document.getElementById('dormSettingsMeters'),
@@ -621,7 +622,7 @@ export const HousingModule = {
     fillTariffSelect(selectedId) {
         const sel = this.modal.inputs.tariff;
         if (!sel) return;
-        sel.innerHTML = '<option value="">— Без переопределения —</option>';
+        sel.innerHTML = '<option value="">— от дома (по умолчанию) —</option>';
         // Сервер (/api/tariffs) уже возвращает ТОЛЬКО активные (WHERE is_active),
         // а response_model=TariffSchema не включает поле is_active в ответ —
         // поэтому фильтр t.is_active отбрасывал ВСЕ тарифы (undefined → falsy)
@@ -949,18 +950,55 @@ export const HousingModule = {
     },
 
     // ── НАСТРОЙКИ ДОМА: тариф + счётчики + статистика, на весь дом ──────────
+    // Открыть «Настройки дома»: грузим список ВСЕХ зданий (общаги + дома),
+    // даём выбрать любое и применить тариф/счётчики на всё здание сразу.
     async openDormSettings() {
-        const dorm = (this.dom.dormFilterSelect?.value || '').trim();
-        if (!dorm) {
-            return toast('Выберите дом/общежитие в фильтре слева, затем «Настройки дома».', 'warning');
-        }
-        this._dormSettingsName = dorm;
-        if (this.dom.dormSettingsTitle) this.dom.dormSettingsTitle.textContent = dorm;
+        this.dom.dormSettingsModal?.classList.add('open');
+        const sel = this.dom.dormSettingsBuilding;
         const spin = '<div style="padding:14px; text-align:center; color:var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка…</div>';
         [this.dom.dormSettingsStats, this.dom.dormSettingsTariff, this.dom.dormSettingsMeters].forEach(b => { if (b) b.innerHTML = spin; });
-        this.dom.dormSettingsModal?.classList.add('open');
+        if (sel) sel.innerHTML = '<option>Загрузка…</option>';
         try {
-            const data = await api.get(`/rooms/dormitory-overview?dormitory_name=${encodeURIComponent(dorm)}`);
+            const buildings = await api.get('/rooms/buildings');
+            this._dormBuildings = buildings || [];
+            if (!this._dormBuildings.length) {
+                if (sel) sel.innerHTML = '<option value="">Нет зданий</option>';
+                if (this.dom.dormSettingsStats) this.dom.dormSettingsStats.innerHTML = '<div style="padding:14px; color:var(--text-secondary);">В Жилфонде ещё нет зданий.</div>';
+                if (this.dom.dormSettingsTariff) this.dom.dormSettingsTariff.innerHTML = '';
+                if (this.dom.dormSettingsMeters) this.dom.dormSettingsMeters.innerHTML = '';
+                return;
+            }
+            if (sel) {
+                sel.innerHTML = this._dormBuildings.map((b, i) => `<option value="${i}">${escapeHtml(b.label)} (${b.rooms})</option>`).join('');
+                // По умолчанию — здание, выбранное в фильтре слева (если это общага).
+                const leftDorm = (this.dom.dormFilterSelect?.value || '').trim();
+                let idx = 0;
+                if (leftDorm) {
+                    const f = this._dormBuildings.findIndex(b => b.type === 'dormitory' && b.dormitory_name === leftDorm);
+                    if (f >= 0) idx = f;
+                }
+                sel.value = String(idx);
+                sel.onchange = () => this._loadDormOverview(this._dormBuildings[Number(sel.value)]);
+                await this._loadDormOverview(this._dormBuildings[idx]);
+            }
+        } catch (e) {
+            if (sel) sel.innerHTML = '<option value="">Ошибка загрузки зданий</option>';
+            if (this.dom.dormSettingsStats) this.dom.dormSettingsStats.innerHTML = `<div style="color:var(--danger-color); padding:14px;">Ошибка: ${escapeHtml(e.message)}</div>`;
+        }
+    },
+
+    // Сводка по выбранному зданию (дом или общага) + рендер тарифа/счётчиков.
+    async _loadDormOverview(building) {
+        if (!building) return;
+        this._dormSettingsBuilding = building;
+        if (this.dom.dormSettingsTitle) this.dom.dormSettingsTitle.textContent = building.label;
+        const spin = '<div style="padding:14px; text-align:center; color:var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка…</div>';
+        [this.dom.dormSettingsStats, this.dom.dormSettingsTariff, this.dom.dormSettingsMeters].forEach(b => { if (b) b.innerHTML = spin; });
+        const params = building.type === 'house'
+            ? `street=${encodeURIComponent(building.street)}&house_number=${encodeURIComponent(building.house_number)}`
+            : `dormitory_name=${encodeURIComponent(building.dormitory_name)}`;
+        try {
+            const data = await api.get(`/rooms/dormitory-overview?${params}`);
             this._renderDormSettings(data);
         } catch (e) {
             if (this.dom.dormSettingsStats) this.dom.dormSettingsStats.innerHTML = `<div style="color:var(--danger-color); padding:14px;">Ошибка: ${escapeHtml(e.message)}</div>`;
@@ -1041,38 +1079,43 @@ export const HousingModule = {
     },
 
     async applyDormTariff(tariffIdStr) {
-        const dorm = this._dormSettingsName;
-        if (!dorm) return;
+        const b = this._dormSettingsBuilding;
+        if (!b) return;
         if (!tariffIdStr) return toast('Выберите тариф', 'info');
         const tariffId = Number(tariffIdStr);
         if (!await showConfirm(
-            `Назначить выбранный тариф ВСЕМ комнатам дома «${dorm}»?\nПрименится к каждому жильцу автоматически.`,
+            `Назначить выбранный тариф ВСЕМ помещениям «${b.label}»?\nПрименится к каждому жильцу автоматически.`,
             { title: 'Тариф дома', confirmText: 'Применить' }
         )) return;
         try {
-            const res = await api.post('/tariffs/assign-to-dormitory', { dormitory_name: dorm, tariff_id: tariffId });
-            toast(`Тариф назначен. Комнат: ${res.rooms_affected ?? '—'}`, 'success');
-            this.openDormSettings();
+            const body = b.type === 'house'
+                ? { street: b.street, house_number: b.house_number, tariff_id: tariffId }
+                : { dormitory_name: b.dormitory_name, tariff_id: tariffId };
+            const res = await api.post('/tariffs/assign-to-dormitory', body);
+            toast(`Тариф назначен. Помещений: ${res.rooms_affected ?? '—'}`, 'success');
+            this._loadDormOverview(b);
             this.table.load();
         } catch (e) { toast('Ошибка: ' + (e.message || ''), 'error'); }
     },
 
     async applyDormMeters() {
-        const dorm = this._dormSettingsName;
-        if (!dorm) return;
-        const body = {
-            dormitory_name: dorm,
+        const b = this._dormSettingsBuilding;
+        if (!b) return;
+        const meters = {
             has_hw_meter: document.getElementById('dormHasHw').checked,
             has_cw_meter: document.getElementById('dormHasCw').checked,
             has_el_meter: document.getElementById('dormHasEl').checked,
         };
-        const on = [body.has_hw_meter && 'ГВС', body.has_cw_meter && 'ХВС', body.has_el_meter && 'электр']
+        const body = b.type === 'house'
+            ? { street: b.street, house_number: b.house_number, ...meters }
+            : { dormitory_name: b.dormitory_name, ...meters };
+        const on = [meters.has_hw_meter && 'ГВС', meters.has_cw_meter && 'ХВС', meters.has_el_meter && 'электр']
             .filter(Boolean).join(', ') || 'нет счётчиков';
-        if (!await showConfirm(`Применить счётчики (${on}) ко ВСЕМ комнатам дома «${dorm}»?`, { title: 'Счётчики дома', confirmText: 'Применить' })) return;
+        if (!await showConfirm(`Применить счётчики (${on}) ко ВСЕМ помещениям «${b.label}»?`, { title: 'Счётчики дома', confirmText: 'Применить' })) return;
         try {
             const res = await api.post('/rooms/bulk-meter-config', body);
-            toast(`Обновлено комнат: ${res.updated_rooms}`, 'success');
-            this.openDormSettings();
+            toast(`Обновлено помещений: ${res.updated_rooms}`, 'success');
+            this._loadDormOverview(b);
             this.table.load();
         } catch (e) { toast('Ошибка: ' + (e.message || ''), 'error'); }
     },
@@ -1081,7 +1124,6 @@ export const HousingModule = {
         e.preventDefault();
         const btn = this.modal.form.querySelector('.confirm-btn');
         const id = this.modal.inputs.id.value;
-        const tariffVal = this.modal.inputs.tariff?.value;
         const maxCapVal = this.modal.inputs.maxCapacity?.value;
         const isHouse = !!this.modal.inputs.placeTypeHouse?.checked;
 
@@ -1092,7 +1134,8 @@ export const HousingModule = {
             place_type: isHouse ? 'house' : 'dormitory',
             apartment_area: parseFloat(this.modal.inputs.area.value),
             total_room_residents: parseInt(this.modal.inputs.cap.value),
-            tariff_id: tariffVal ? parseInt(tariffVal) : null,
+            // Тариф НЕ шлём из формы комнаты — он свойство ДОМА (здесь read-only),
+            // ставится только через «Настройки дома» (на всё здание сразу).
             // Конфигурация счётчиков комнаты (наследуется жильцами, meters_002).
             has_hw_meter: this.modal.inputs.hasHw ? !!this.modal.inputs.hasHw.checked : true,
             has_cw_meter: this.modal.inputs.hasCw ? !!this.modal.inputs.hasCw.checked : true,

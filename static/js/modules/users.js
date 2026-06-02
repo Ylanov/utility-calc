@@ -556,7 +556,6 @@ export const UsersModule = {
     async handleAdd(event) {
         event.preventDefault();
         const button = this.dom.addForm.querySelector('button');
-        const tariffIdVal = this.dom.newTariffSelect ? this.dom.newTariffSelect.value : null;
         // room_id берём из активного пикера: общага → комната, дом → адрес.
         const placeType = this._currentNewPlaceType();
         const roomIdVal = placeType === 'house'
@@ -567,7 +566,6 @@ export const UsersModule = {
             username: document.getElementById('newUsername').value.trim(),
             password: document.getElementById('newPassword').value,
             role: document.getElementById('newRole').value,
-            tariff_id: tariffIdVal ? parseInt(tariffIdVal) : null,
             room_id: roomIdVal ? parseInt(roomIdVal) : null,
             residents_count: parseInt(document.getElementById('residentsCount').value) || 1,
             // Тип жильца (family/single). Режим оплаты и место работы убраны:
@@ -1079,13 +1077,11 @@ export const UsersModule = {
         event.preventDefault();
         const button = this.modal.form.querySelector('.confirm-btn');
         const id = this.modal.inputs.id.value;
-        const tariffIdVal = this.modal.inputs.tariff ? this.modal.inputs.tariff.value : null;
         const roomIdVal = this.modal.inputs.roomSelect ? this.modal.inputs.roomSelect.value : null;
 
         const data = {
             username: this.modal.inputs.username.value.trim(),
             role: this.modal.inputs.role.value,
-            tariff_id: tariffIdVal ? parseInt(tariffIdVal) : null,
             room_id: roomIdVal ? parseInt(roomIdVal) : null,
             residents_count: parseInt(this.modal.inputs.residents.value),
             resident_type: this.modal.inputs.residentType?.value || 'family',
