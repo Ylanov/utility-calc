@@ -150,9 +150,13 @@ async def get_reading_state(
 
     # Последнее утверждённое показание комнаты (для отображения предыдущих значений)
     prev_latest = next((r for r in readings if r.is_approved), None)
-    prev_hot = prev_latest.hot_water if prev_latest else zero
-    prev_cold = prev_latest.cold_water if prev_latest else zero
-    prev_elect = prev_latest.electricity if prev_latest else zero
+    # NULL-safe: у жильцов без счётчиков / на подушевом тарифе утверждённое
+    # показание может иметь пустые (NULL) поля счётчиков. Модель ответа требует
+    # Decimal — подставляем 0, иначе ResponseValidationError → 500 (главный
+    # экран приложения падал у целого сегмента жильцов).
+    prev_hot = prev_latest.hot_water if (prev_latest and prev_latest.hot_water is not None) else zero
+    prev_cold = prev_latest.cold_water if (prev_latest and prev_latest.cold_water is not None) else zero
+    prev_elect = prev_latest.electricity if (prev_latest and prev_latest.electricity is not None) else zero
 
     # Черновик текущего периода
     current_reading = None
