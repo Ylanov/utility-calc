@@ -1129,6 +1129,100 @@ async def gisgmp_reconcile(
     return await _build_reconcile(db)
 
 
+@router.get("/gisgmp/reconcile-fio", summary="3-сторонняя сверка ФИО: 1С ↔ ГИС ГМП ↔ база")
+async def gisgmp_reconcile_fio(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """«Где кого нету»: сводит ФИО из трёх источников и показывает несостыковки.
+      • orphans_1c  — ФИО есть в Excel 1С, но точно НЕ сматчилось с жильцом базы;
+      • orphans_gis — ФИО есть в ГИС ГМП, но точно НЕ сматчилось с базой;
+      • db_no_debt  — жилец есть в базе, но его нет ни в 1С, ни в ГИС.
+    После перехода на точный матчинг это главный инструмент: видно, кого
+    привязать вручную (алиас) или поправить ФИО."""
+    _require_finance(current_user)
+    from app.modules.utility.services.gisgmp_import import GISGMP_SOURCE_LABEL
+
+    # --- 1С: последний завершённый Excel-импорт по каждому счёту ---
+    matched_1c: set[int] = set()
+    orphans_1c: dict[str, dict] = {}
+    sources: dict = {}
+    for acc in ("209", "205"):
+        log = (await db.execute(
+            select(DebtImportLog).where(
+                DebtImportLog.account_type == acc,
+                DebtImportLog.status == "completed",
+                DebtImportLog.file_name != GISGMP_SOURCE_LABEL,
+            ).order_by(desc(DebtImportLog.started_at)).limit(1)
+        )).scalars().first()
+        sources[acc] = ({"file": log.file_name,
+                         "at": log.started_at.isoformat() if log.started_at else None}
+                        if log else None)
+        if not log:
+            continue
+        for uid_s in (log.applied_state or {}):
+            if str(uid_s).isdigit():
+                matched_1c.add(int(uid_s))
+        for nf in (log.not_found_users or []):
+            fio = (nf.get("fio") or "").strip()
+            if not fio:
+                continue
+            o = orphans_1c.setdefault(fio, {"fio": fio, "debt_209": 0.0, "debt_205": 0.0})
+            try:
+                o[f"debt_{acc}"] += float(nf.get("debt") or 0)
+            except Exception:
+                pass
+
+    # --- ГИС: из находок (matched_user_id=None → сирота) ---
+    findings = await _load_findings(db)
+    matched_gis: set[int] = set()
+    orphans_gis: list[dict] = []
+    if findings:
+        for row in findings.get("summary", []):
+            uid = row.get("matched_user_id")
+            if uid is not None:
+                matched_gis.add(int(uid))
+            else:
+                orphans_gis.append({
+                    "fio": row.get("fio"),
+                    "debt_209": float(row.get("debt_209") or 0),
+                    "debt_205": float(row.get("debt_205") or 0),
+                })
+
+    # --- база: активные жильцы ---
+    db_rows = (await db.execute(
+        select(User.id, User.username).where(
+            User.role == "user", User.is_deleted.is_(False))
+    )).all()
+    db_ids = {uid for uid, _ in db_rows}
+    uname = {uid: un for uid, un in db_rows}
+
+    in_sources = matched_1c | matched_gis
+    db_no_debt = sorted(
+        [{"user_id": uid, "username": uname.get(uid)} for uid in db_ids if uid not in in_sources],
+        key=lambda x: (x["username"] or ""),
+    )
+    orphans_1c_list = sorted(orphans_1c.values(), key=lambda x: x["fio"])
+    orphans_gis_list = sorted(orphans_gis, key=lambda x: (x.get("fio") or ""))
+
+    return {
+        "sources": sources,
+        "gis_synced_at": (findings or {}).get("synced_at"),
+        "summary": {
+            "db_residents": len(db_ids),
+            "matched_both": len(matched_1c & matched_gis & db_ids),
+            "matched_only_1c": len((matched_1c - matched_gis) & db_ids),
+            "matched_only_gis": len((matched_gis - matched_1c) & db_ids),
+            "orphans_1c": len(orphans_1c_list),
+            "orphans_gis": len(orphans_gis_list),
+            "db_no_debt": len(db_no_debt),
+        },
+        "orphans_1c": orphans_1c_list[:1000],
+        "orphans_gis": orphans_gis_list[:1000],
+        "db_no_debt": db_no_debt[:1000],
+    }
+
+
 async def _build_reconcile(db: AsyncSession) -> dict:
     findings = await _load_findings(db)
     gis: dict[int, dict] = {}

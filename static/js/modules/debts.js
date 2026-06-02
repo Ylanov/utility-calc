@@ -273,6 +273,54 @@ export const DebtsModule = {
         } catch (e) { toast('Ошибка: ' + (e?.message || e), 'error'); }
     },
 
+    // 3-сторонняя сверка ФИО: 1С ↔ ГИС ↔ база («где кого нету»).
+    async openReconcileFio() {
+        const body = this.dom.gisgmpReconcileFioBody;
+        if (!body) return;
+        if (body.style.display !== 'none') { body.style.display = 'none'; return; }
+        body.style.display = 'block';
+        body.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Сверяю 1С / ГИС / базу…';
+        try {
+            const d = await api.get('/financier/gisgmp/reconcile-fio');
+            this.renderReconcileFio(d);
+        } catch (e) {
+            body.innerHTML = 'Ошибка: ' + esc(e?.message || String(e));
+        }
+    },
+
+    renderReconcileFio(d) {
+        const body = this.dom.gisgmpReconcileFioBody;
+        if (!body) return;
+        const s = d.summary || {};
+        const fmt = (v) => (Number(v) || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const tile = (label, val, color) => `<div style="flex:1; min-width:96px; background:var(--bg-page); border-radius:8px; padding:8px 10px; text-align:center;"><div style="font-size:18px; font-weight:700; color:${color};">${val}</div><div style="font-size:10px; color:var(--text-secondary);">${label}</div></div>`;
+        const tbl = (rows, cols, empty) => `<div class="table-responsive" style="max-height:42vh; overflow:auto;"><table class="sticky-header-table" style="font-size:12px;"><thead><tr>${cols.map(c => `<th${c.r ? ' class="text-right"' : ''}>${c.t}</th>`).join('')}</tr></thead><tbody>${rows || `<tr><td colspan="${cols.length}" class="text-center" style="color:#9ca3af;">${empty}</td></tr>`}</tbody></table></div>`;
+
+        const o1c = (d.orphans_1c || []).map(r => `<tr><td>${esc(r.fio)}</td><td class="text-right">${fmt(r.debt_209)}</td><td class="text-right">${fmt(r.debt_205)}</td></tr>`).join('');
+        const ogis = (d.orphans_gis || []).map(r => `<tr><td>${esc(r.fio)}</td><td class="text-right">${fmt(r.debt_209)}</td><td class="text-right">${fmt(r.debt_205)}</td></tr>`).join('');
+        const nodebt = (d.db_no_debt || []).map(r => `<tr><td>${esc(r.username)}</td></tr>`).join('');
+
+        body.innerHTML =
+            `<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
+                ${tile('Жильцов в базе', s.db_residents ?? 0, '#2563eb')}
+                ${tile('Сошлись 1С+ГИС', s.matched_both ?? 0, '#047857')}
+                ${tile('Только 1С', s.matched_only_1c ?? 0, '#0ea5e9')}
+                ${tile('Только ГИС', s.matched_only_gis ?? 0, '#7c3aed')}
+                ${tile('1С без пары', s.orphans_1c ?? 0, '#b91c1c')}
+                ${tile('ГИС без пары', s.orphans_gis ?? 0, '#b91c1c')}
+                ${tile('База без долгов', s.db_no_debt ?? 0, '#d97706')}
+            </div>
+            <p class="hint-text" style="font-size:11px; margin:0 0 10px; color:var(--text-secondary);">
+                «Без пары» = ФИО есть в источнике, но точно не сматчилось с жильцом базы (точный матчинг) — привязать алиасом или поправить ФИО. «База без долгов» = жилец есть в базе, но его нет ни в 1С, ни в ГИС.
+            </p>
+            <h4 style="margin:8px 0 4px; font-size:13px; color:#b91c1c;">🔴 ФИО в 1С, нет в базе (${(d.orphans_1c || []).length})</h4>
+            ${tbl(o1c, [{ t: 'ФИО (1С)' }, { t: 'Долг 209', r: 1 }, { t: 'Долг 205', r: 1 }], 'нет таких')}
+            <h4 style="margin:12px 0 4px; font-size:13px; color:#b91c1c;">🔴 ФИО в ГИС ГМП, нет в базе (${(d.orphans_gis || []).length})</h4>
+            ${tbl(ogis, [{ t: 'ФИО (ГИС)' }, { t: 'Долг 209', r: 1 }, { t: 'Долг 205', r: 1 }], 'нет таких')}
+            <h4 style="margin:12px 0 4px; font-size:13px; color:#d97706;">🟡 Жильцы в базе без долгов 1С/ГИС (${(d.db_no_debt || []).length})</h4>
+            ${tbl(nodebt, [{ t: 'Жилец (база)' }], 'нет таких')}`;
+    },
+
     // История/аудит массовых актуализаций: что актуализировали и что изменилось (до→после).
     async openActualizeLog() {
         const body = this.dom.gisgmpActualizeLogBody;
@@ -710,6 +758,8 @@ td.r,th.r{text-align:right;white-space:nowrap;} tr:nth-child(even){background:#f
             gisgmpFindingsBody: document.getElementById('gisgmpFindingsBody'),
             btnGisgmpReconcile: document.getElementById('btnGisgmpReconcile'),
             gisgmpReconcileBody: document.getElementById('gisgmpReconcileBody'),
+            btnGisgmpReconcileFio: document.getElementById('btnGisgmpReconcileFio'),
+            gisgmpReconcileFioBody: document.getElementById('gisgmpReconcileFioBody'),
             btnGisgmpRecheck: document.getElementById('btnGisgmpRecheck'),
             btnGisgmpActualize: document.getElementById('btnGisgmpActualize'),
             btnGisgmpActualizeLog: document.getElementById('btnGisgmpActualizeLog'),
@@ -763,6 +813,7 @@ td.r,th.r{text-align:right;white-space:nowrap;} tr:nth-child(even){background:#f
         this.dom.gisgmpEnabled?.addEventListener('change', () => this.saveGisgmpRelay());
         this.dom.btnGisgmpFindings?.addEventListener('click', () => this.openGisgmpFindings());
         this.dom.btnGisgmpReconcile?.addEventListener('click', () => this.openGisgmpReconcile());
+        this.dom.btnGisgmpReconcileFio?.addEventListener('click', () => this.openReconcileFio());
         this.dom.btnGisgmpRecheck?.addEventListener('click', () => this.recheckGisgmp());
         this.dom.btnGisgmpActualize?.addEventListener('click', () => this.actualizeGisgmp());
         this.dom.btnGisgmpActualizeLog?.addEventListener('click', () => this.openActualizeLog());
