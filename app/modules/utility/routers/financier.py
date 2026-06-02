@@ -483,6 +483,7 @@ def _run_gisgmp_sync(charges: list[dict]) -> dict:
 async def gisgmp_sync(
     payload: GisgmpSyncIn,
     authorization: Optional[str] = Header(None),
+    db: AsyncSession = Depends(get_db),
 ):
     """Принимает распарсенные начисления от расширения и заливает долги.
 
@@ -505,6 +506,12 @@ async def gisgmp_sync(
     if result.get("status") == "error":
         # Нет активного периода и т.п. — 409, расширение покажет в статусе.
         raise HTTPException(status_code=409, detail=result.get("message", "Импорт не выполнен"))
+    # Кэш/находки только что обновились — если есть прогон актуализации, ждущий
+    # снимка «после», снимаем его сейчас (по свежей сверке). Тихо, без влияния на синк.
+    try:
+        await _capture_actualize_after(db)
+    except Exception:
+        logger.exception("[gisgmp] снимок «после» актуализации не удался")
     return result
 
 
@@ -1329,52 +1336,155 @@ async def gisgmp_recheck_build(
 
 
 GISGMP_ACTUALIZE_KEY = "gisgmp_actualize"
+GISGMP_ACTUALIZE_LOG_KEY = "gisgmp_actualize_log"   # аудит прогонов (до/после)
+_ACTUALIZE_LOG_MAX_RUNS = 50                         # авто-кап истории (+ ручная чистка)
 
 
-@router.post("/gisgmp/actualize-build", summary="Очередь массовой актуализации: счета жильцов с расхождением")
+def _actualize_result(before: dict | None, after: dict | None) -> str:
+    """Эффект актуализации по долгу ГИС (до→после) для аудита."""
+    try:
+        bg = float((before or {}).get("gis") or 0)
+        ag = float((after or {}).get("gis") or 0)
+    except Exception:
+        return "unknown"
+    eps = 1.0
+    if bg <= eps:
+        return "unchanged"
+    if ag <= eps:
+        return "annulled"        # долг ГИС обнулён (реестр аннулировал лишнее)
+    if ag < bg - eps:
+        return "reduced"         # долг ГИС уменьшился
+    if ag > bg + eps:
+        return "increased"
+    return "unchanged"
+
+
+async def _capture_actualize_after(db: AsyncSession) -> None:
+    """После сверки: для прогонов актуализации со статусом after_pending снимаем
+    долг ГИС «после» по каждому жильцу и классифицируем эффект (до→после).
+    Запускается из /gisgmp/sync — кэш и находки к этому моменту уже свежие."""
+    lr = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_ACTUALIZE_LOG_KEY)
+    )).scalars().first()
+    if not lr or not lr.value:
+        return
+    try:
+        lj = json.loads(lr.value)
+    except Exception:
+        return
+    pending = [r for r in lj.get("runs", []) if r.get("after_pending")]
+    if not pending:
+        return
+    rec = await _build_reconcile(db)
+    cur = {
+        int(r["user_id"]): r for r in rec.get("residents", [])
+        if r.get("user_id") is not None
+    }
+    now = utcnow().isoformat()
+    for run in pending:
+        for res in run.get("residents", []):
+            uid = res.get("user_id")
+            r = cur.get(int(uid)) if uid is not None else None
+            if r is not None:
+                after = {"gis": r.get("sum_gis"), "c1": r.get("sum_1c"), "delta": r.get("delta")}
+            else:
+                # Жилец выпал из сверки — ни ГИС, ни 1С долга не осталось → ГИС обнулён.
+                c1 = float((res.get("before") or {}).get("c1") or 0)
+                after = {"gis": 0.0, "c1": c1, "delta": -c1}
+            res["after"] = after
+            res["result"] = _actualize_result(res.get("before"), after)
+        run["after_pending"] = False
+        run["after_at"] = now
+        run["status"] = "done"
+    lr.value = json.dumps(lj, ensure_ascii=False)
+    await db.commit()
+
+
+@router.post("/gisgmp/actualize-build", summary="Очередь массовой актуализации: только ГИС > 1С (ошибка ГИС ГМП)")
 async def gisgmp_actualize_build(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """UUID НЕОПЛАЧЕННЫХ (не аннулированных) счетов всех жильцов с расхождением
-    (любой флаг != ok) → в очередь. Релей в фоне по каждому дёрнет
-    actualize-request в реестре (как кнопка «Актуализировать из ГИС ГМП»),
-    последовательно с ожиданием отклика, и шлёт прогресс."""
+    """Ставит в очередь актуализации НЕОПЛАЧЕННЫЕ (не аннулированные) счета ТОЛЬКО
+    тех жильцов, у кого ГИС > 1С (флаги gis_more и only_gis) — это и есть «ошибка
+    ГИС ГМП», где актуализация имеет смысл (реестр может аннулировать лишний долг).
+    Случаи ГИС < 1С актуализация не лечит — для них «Дотянуть расхождения».
+
+    Матчинг счёт→жилец — по ПОЛНОМУ ФИО (как в находках), НЕ по фамилии, чтобы не
+    тянуть однофамильцев. Параллельно пишем аудит-прогон со снимком «до»; «после»
+    снимется на ближайшей сверке (релей дёрнут авто через run_now)."""
     _require_finance(current_user)
     rec = await _build_reconcile(db)
-    surnames = set()
-    for r in rec.get("residents", []):
-        if r.get("flag") and r["flag"] != "ok":
-            parts = (r.get("username") or "").strip().split()
-            if parts:
-                surnames.add(parts[0].lower())
+    TARGET_FLAGS = ("gis_more", "only_gis")
+    flagged = {
+        int(r["user_id"]): r for r in rec.get("residents", [])
+        if r.get("flag") in TARGET_FLAGS and r.get("user_id") is not None
+    }
+
+    # Точная карта ФИО(реестр)→user_id из находок (та же логика, что свела долги).
+    findings = await _load_findings(db)
+    fio_to_uid: dict[str, int] = {}
+    if findings:
+        for frow in findings.get("summary", []):
+            uid = frow.get("matched_user_id")
+            fio = (frow.get("fio") or "").strip()
+            if uid is not None and fio:
+                fio_to_uid[fio] = int(uid)
+    target_fios = {fio for fio, uid in fio_to_uid.items() if uid in flagged}
 
     from app.modules.utility.services.gisgmp_import import (
-        is_unpaid, is_annulled, GISGMP_CACHE_KEY,
+        is_unpaid, is_annulled, classify_account, GISGMP_CACHE_KEY,
     )
     cache_row = (await db.execute(
         select(SystemSetting).where(SystemSetting.key == GISGMP_CACHE_KEY)
     )).scalars().first()
+    per_user: dict[int, dict] = {}
     uuids, seen = [], set()
-    if cache_row and cache_row.value and surnames:
+    if cache_row and cache_row.value and target_fios:
         try:
             for ch in json.loads(cache_row.value).values():
                 if is_annulled(ch.get("change_status")) or not is_unpaid(ch.get("ack_status")):
                     continue
+                fio = (ch.get("payer_name") or "").strip()
+                if fio not in target_fios:
+                    continue
                 u = ch.get("charge_uuid")
                 if not u or u in seen:
                     continue
-                nm = (ch.get("payer_name") or "").strip().split()
-                if nm and nm[0].lower() in surnames:
-                    seen.add(u)
-                    uuids.append(u)
+                seen.add(u)
+                uuids.append(u)
+                uid = fio_to_uid.get(fio)
+                slot = per_user.setdefault(uid, {"user_id": uid, "fio": fio, "charges": []})
+                try:
+                    amt = float(str(ch.get("amount") or "0").replace(",", "."))
+                except Exception:
+                    amt = 0.0
+                slot["charges"].append({
+                    "uin": ch.get("uin"), "account": classify_account(ch.get("purpose")),
+                    "charge_uuid": u, "amount": amt, "bill_date": ch.get("bill_date"),
+                })
         except Exception:
             pass
 
+    # Снимок «до» по каждому затронутому жильцу (из сверки), сорт по |Δ|.
+    residents_snap = []
+    for uid, slot in per_user.items():
+        fr = flagged.get(uid, {})
+        residents_snap.append({
+            "user_id": uid, "fio": slot["fio"],
+            "username": fr.get("username"), "flag": fr.get("flag"),
+            "before": {"gis": fr.get("sum_gis"), "c1": fr.get("sum_1c"), "delta": fr.get("delta")},
+            "after": None, "result": None,
+            "charges": slot["charges"],
+        })
+    residents_snap.sort(key=lambda x: -abs((x.get("before") or {}).get("delta") or 0))
+
+    run_id = utcnow().isoformat()
     payload = {
         "uuids": uuids, "total": len(uuids), "done": 0, "ok": 0, "fail": 0,
         "running": False, "finished": False,
-        "queued_at": utcnow().isoformat(), "by": current_user.username, "message": "",
+        "queued_at": run_id, "by": current_user.username, "message": "",
+        "targeting": "gis_more+only_gis", "run_id": run_id,
     }
     row = (await db.execute(
         select(SystemSetting).where(SystemSetting.key == GISGMP_ACTUALIZE_KEY)
@@ -1384,8 +1494,36 @@ async def gisgmp_actualize_build(
                             description="Очередь массовой актуализации ГИС ГМП")
         db.add(row)
     row.value = json.dumps(payload, ensure_ascii=False)
+
+    # Аудит-прогон (до/после). «После» снимется на ближайшей сверке.
+    run = {
+        "id": run_id, "queued_at": run_id, "by": current_user.username,
+        "targeting": "ГИС > 1С (gis_more + only_gis)",
+        "total_charges": len(uuids), "residents_count": len(residents_snap),
+        "status": "running", "done": 0, "ok": 0, "fail": 0,
+        "started_at": None, "finished_at": None,
+        "after_pending": False, "after_at": None,
+        "residents": residents_snap,
+    }
+    log_row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_ACTUALIZE_LOG_KEY)
+    )).scalars().first()
+    if log_row is None:
+        log_row = SystemSetting(key=GISGMP_ACTUALIZE_LOG_KEY, value='{"runs": []}',
+                                description="Аудит массовых актуализаций ГИС ГМП (до/после)")
+        db.add(log_row)
+    try:
+        logj = json.loads(log_row.value) if log_row.value else {"runs": []}
+    except Exception:
+        logj = {"runs": []}
+    runs = logj.get("runs", [])
+    runs.insert(0, run)
+    del runs[_ACTUALIZE_LOG_MAX_RUNS:]
+    logj["runs"] = runs
+    log_row.value = json.dumps(logj, ensure_ascii=False)
+
     await db.commit()
-    return {"queued": len(uuids), "residents": len(surnames)}
+    return {"queued": len(uuids), "residents": len(residents_snap), "targeting": "gis_more+only_gis"}
 
 
 class GisgmpActualizeProgressIn(BaseModel):
@@ -1423,7 +1561,36 @@ async def gisgmp_actualize_progress(
         av["finished"] = True
         av["finished_at"] = utcnow().isoformat()
         av["uuids"] = []  # выполнено — очищаем список
+        # Аудит: помечаем прогон «актуализировано», снимок «после» снимем на сверке.
+        run_id = av.get("run_id")
+        if run_id:
+            lr = (await db.execute(
+                select(SystemSetting).where(SystemSetting.key == GISGMP_ACTUALIZE_LOG_KEY)
+            )).scalars().first()
+            if lr and lr.value:
+                try:
+                    lj = json.loads(lr.value)
+                    for run in lj.get("runs", []):
+                        if run.get("id") == run_id:
+                            run["status"] = "actualized"
+                            run["finished_at"] = av["finished_at"]
+                            run["done"] = payload.done
+                            run["ok"] = payload.ok
+                            run["fail"] = payload.fail
+                            run["after_pending"] = True
+                            break
+                    lr.value = json.dumps(lj, ensure_ascii=False)
+                except Exception:
+                    pass
     row.value = json.dumps(av, ensure_ascii=False)
+    if payload.finished:
+        # Триггерим ближайшую сверку — подтянуть результат и снять снимок «после».
+        try:
+            rc = await _load_relay_cfg(db)
+            rc["run_now"] = True
+            await _save_relay_cfg(db, rc)
+        except Exception:
+            pass
     await db.commit()
     return {"ok": True}
 
@@ -1446,6 +1613,62 @@ async def gisgmp_actualize_status(
     return {k: av.get(k) for k in (
         "total", "done", "ok", "fail", "running", "finished",
         "queued_at", "started_at", "finished_at", "last_at", "message", "by")}
+
+
+@router.get("/gisgmp/actualize-log", summary="История массовых актуализаций (аудит до/после)")
+async def gisgmp_actualize_log(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_finance(current_user)
+    lr = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_ACTUALIZE_LOG_KEY)
+    )).scalars().first()
+    if not lr or not lr.value:
+        return {"runs": []}
+    try:
+        return {"runs": json.loads(lr.value).get("runs", [])}
+    except Exception:
+        return {"runs": []}
+
+
+class GisgmpActualizePruneIn(BaseModel):
+    clear_all: bool = False
+    delete_id: Optional[str] = None
+    older_than_days: Optional[int] = None
+    keep_last: Optional[int] = None
+
+
+@router.post("/gisgmp/actualize-log/prune", summary="Чистка истории актуализаций (на выбор админа)")
+async def gisgmp_actualize_log_prune(
+    payload: GisgmpActualizePruneIn,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_finance(current_user)
+    lr = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_ACTUALIZE_LOG_KEY)
+    )).scalars().first()
+    if not lr or not lr.value:
+        return {"remaining": 0}
+    try:
+        lj = json.loads(lr.value)
+    except Exception:
+        lj = {"runs": []}
+    runs = lj.get("runs", [])
+    if payload.clear_all:
+        runs = []
+    elif payload.delete_id:
+        runs = [r for r in runs if r.get("id") != payload.delete_id]
+    elif payload.older_than_days:
+        cutoff = (utcnow() - timedelta(days=int(payload.older_than_days))).isoformat()
+        runs = [r for r in runs if (r.get("queued_at") or "") >= cutoff]
+    elif payload.keep_last is not None:
+        runs = runs[:max(0, int(payload.keep_last))]
+    lj["runs"] = runs
+    lr.value = json.dumps(lj, ensure_ascii=False)
+    await db.commit()
+    return {"remaining": len(runs)}
 
 
 @router.get("/gisgmp/relay.py", summary="Отдать актуальный relay.py (самообновление релея на ВМ)")

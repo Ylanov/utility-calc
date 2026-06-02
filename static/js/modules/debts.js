@@ -264,11 +264,96 @@ export const DebtsModule = {
     // Массовая актуализация: демон дёргает «Актуализировать из ГИС ГМП» по каждому
     // неоплаченному счёту жильцов с расхождением. Долго → фон + прогресс в статусе.
     async actualizeGisgmp() {
-        if (!await showConfirm('Запустить массовую актуализацию? Демон в фоне по КАЖДОМУ неоплаченному счёту жильцов с расхождением дёрнет «Актуализировать из ГИС ГМП» в реестре. Это ДОЛГО (сервер реестра медленный) — можно закрыть страницу, прогресс сохранится в «Статусе».')) return;
+        if (!await showConfirm('Запустить массовую актуализацию? В очередь попадут неоплаченные счета ТОЛЬКО тех жильцов, у кого ГИС > 1С («ошибка ГИС ГМП» — реестр завышает долг). Демон в фоне по каждому счёту дёрнет «Актуализировать из ГИС ГМП». Это ДОЛГО (сервер реестра медленный) — можно закрыть страницу, прогресс в «Статусе». Каждый прогон пишется в «Историю актуализаций» (до/после).')) return;
         try {
             const r = await api.post('/financier/gisgmp/actualize-build', {});
-            toast(`В очередь: ${r.queued} счетов (${r.residents} жильцов). Релей актуализирует в фоне — прогресс в карточке статуса.`, 'info');
+            if (!r.queued) { toast('Сейчас нет жильцов с ГИС > 1С — актуализировать нечего. Сначала обнови «Сверку с 1С».', 'info'); return; }
+            toast(`В очередь: ${r.queued} счетов по ${r.residents} жильцам (только ГИС > 1С). Прогресс — в статусе, итог «до/после» — в «Истории актуализаций».`, 'info');
             this.loadGisgmpStatus();
+        } catch (e) { toast('Ошибка: ' + (e?.message || e), 'error'); }
+    },
+
+    // История/аудит массовых актуализаций: что актуализировали и что изменилось (до→после).
+    async openActualizeLog() {
+        const body = this.dom.gisgmpActualizeLogBody;
+        if (!body) return;
+        if (body.style.display !== 'none') { body.style.display = 'none'; return; }
+        body.style.display = 'block';
+        body.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Загрузка истории…';
+        try {
+            const r = await api.get('/financier/gisgmp/actualize-log');
+            this._actualizeRuns = r.runs || [];
+            this.renderActualizeLog();
+        } catch (e) {
+            body.innerHTML = 'Ошибка загрузки истории: ' + esc(e?.message || String(e));
+        }
+    },
+
+    renderActualizeLog() {
+        const body = this.dom.gisgmpActualizeLogBody;
+        if (!body) return;
+        const runs = this._actualizeRuns || [];
+        const fmt = (v) => (Number(v) || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const dt = (s) => s ? new Date(s).toLocaleString('ru-RU') : '—';
+        const STAT = {
+            running: ['⏳ идёт актуализация', '#2563eb'],
+            actualized: ['✅ актуализировано, ждём сверку для «после»', '#d97706'],
+            done: ['✅ готово (есть «после»)', '#047857'],
+        };
+        const RES = {
+            annulled: ['аннулировано', '#047857'], reduced: ['уменьшилось', '#0ea5e9'],
+            unchanged: ['без изменений', '#6b7280'], increased: ['выросло', '#b91c1c'], unknown: ['—', '#6b7280'],
+        };
+        if (!runs.length) {
+            body.innerHTML = '<span style="color:var(--text-secondary)">История пуста — массовая актуализация ещё не запускалась.</span>';
+            return;
+        }
+        const head = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">`
+            + `<span style="font-size:12px; color:var(--text-secondary)">Прогонов в истории: <b>${runs.length}</b> (хранится до 50, старьё чистится)</span>`
+            + `<button class="action-btn secondary-btn" style="font-size:12px;" data-act-prune="all"><i class="fa-solid fa-trash"></i> Очистить всё</button></div>`;
+        const blocks = runs.map((run, idx) => {
+            const [stTxt, stCol] = STAT[run.status] || STAT.running;
+            const rows = (run.residents || []).map(p => {
+                const b = p.before || {}, a = p.after || {};
+                const [rTxt, rCol] = RES[p.result] || RES.unknown;
+                const afterCells = (run.status === 'done')
+                    ? `<td class="text-right">${fmt(a.gis)}</td><td class="text-center"><b style="color:${rCol}">${rTxt}</b></td>`
+                    : `<td class="text-right" style="color:#9ca3af">ждём…</td><td class="text-center" style="color:#9ca3af">—</td>`;
+                return `<tr><td>${esc(p.fio || p.username || p.user_id)}</td>`
+                    + `<td class="text-right">${fmt(b.gis)}</td><td class="text-right">${fmt(b.c1)}</td>`
+                    + afterCells
+                    + `<td class="text-center">${(p.charges || []).length}</td></tr>`;
+            }).join('');
+            return `<details ${idx === 0 ? 'open' : ''} style="margin-bottom:10px; border:1px solid var(--border-color,#e5e7eb); border-radius:6px; padding:8px;">`
+                + `<summary style="cursor:pointer; font-size:13px;">`
+                + `<b>${dt(run.queued_at)}</b> · ${esc(run.by || '—')} · `
+                + `<b>${run.residents_count || 0}</b> жильцов / <b>${run.total_charges || 0}</b> счетов · `
+                + `<span style="color:${stCol}">${stTxt}</span>`
+                + (run.status !== 'running' ? ` · ok ${run.ok || 0}, ошибок ${run.fail || 0}` : '')
+                + ` <button class="action-btn secondary-btn" style="font-size:11px; padding:2px 8px; margin-left:8px;" data-act-prune="${esc(run.id)}" title="Удалить прогон"><i class="fa-solid fa-xmark"></i></button>`
+                + `</summary>`
+                + `<div style="font-size:11px; color:var(--text-secondary); margin:4px 0;">Цель: ${esc(run.targeting || '')} · снимок «после»: ${run.after_at ? dt(run.after_at) : '—'}</div>`
+                + `<div class="table-responsive" style="max-height:45vh; overflow:auto;"><table class="sticky-header-table" style="font-size:12px;">`
+                + `<thead><tr><th>ФИО</th><th class="text-right">ГИС до</th><th class="text-right">1С</th>`
+                + `<th class="text-right">ГИС после</th><th class="text-center">Результат</th><th class="text-center">Счетов</th></tr></thead>`
+                + `<tbody>${rows || '<tr><td colspan="6" class="text-center">пусто</td></tr>'}</tbody></table></div>`
+                + `</details>`;
+        }).join('');
+        body.innerHTML = head + blocks;
+        body.querySelectorAll('[data-act-prune]').forEach(btn => {
+            btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); this.pruneActualizeLog(btn.getAttribute('data-act-prune')); });
+        });
+    },
+
+    async pruneActualizeLog(which) {
+        const isAll = which === 'all';
+        if (!await showConfirm(isAll ? 'Очистить ВСЮ историю актуализаций?' : 'Удалить этот прогон из истории?')) return;
+        try {
+            await api.post('/financier/gisgmp/actualize-log/prune', isAll ? { clear_all: true } : { delete_id: which });
+            const r = await api.get('/financier/gisgmp/actualize-log');
+            this._actualizeRuns = r.runs || [];
+            this.renderActualizeLog();
+            toast('История обновлена', 'info');
         } catch (e) { toast('Ошибка: ' + (e?.message || e), 'error'); }
     },
 
@@ -627,6 +712,8 @@ td.r,th.r{text-align:right;white-space:nowrap;} tr:nth-child(even){background:#f
             gisgmpReconcileBody: document.getElementById('gisgmpReconcileBody'),
             btnGisgmpRecheck: document.getElementById('btnGisgmpRecheck'),
             btnGisgmpActualize: document.getElementById('btnGisgmpActualize'),
+            btnGisgmpActualizeLog: document.getElementById('btnGisgmpActualizeLog'),
+            gisgmpActualizeLogBody: document.getElementById('gisgmpActualizeLogBody'),
             btnRelayUpdate: document.getElementById('btnRelayUpdate'),
             btnRelayRestart: document.getElementById('btnRelayRestart'),
             btnRelayCreds: document.getElementById('btnRelayCreds'),
@@ -678,6 +765,7 @@ td.r,th.r{text-align:right;white-space:nowrap;} tr:nth-child(even){background:#f
         this.dom.btnGisgmpReconcile?.addEventListener('click', () => this.openGisgmpReconcile());
         this.dom.btnGisgmpRecheck?.addEventListener('click', () => this.recheckGisgmp());
         this.dom.btnGisgmpActualize?.addEventListener('click', () => this.actualizeGisgmp());
+        this.dom.btnGisgmpActualizeLog?.addEventListener('click', () => this.openActualizeLog());
         this.dom.btnRelayUpdate?.addEventListener('click', () => this.relayUpdate());
         this.dom.btnRelayRestart?.addEventListener('click', () => this.relayRestart());
         this.dom.btnRelayCreds?.addEventListener('click', () => this.relaySaveCreds());
