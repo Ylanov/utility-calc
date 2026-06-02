@@ -323,13 +323,32 @@ export const DebtsModule = {
         }
     },
 
-    renderReconcileFio(d) {
+    renderReconcileFio() {
         const body = this.dom.gisgmpReconcileFioBody;
-        if (!body) return;
+        const d = this._reconFio;
+        if (!body || !d) return;
         const s = d.summary || {};
         const fmt = (v) => (Number(v) || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-        const tile = (label, val, color) => `<div style="flex:1; min-width:96px; background:var(--bg-page); border-radius:8px; padding:8px 10px; text-align:center;"><div style="font-size:18px; font-weight:700; color:${color};">${val}</div><div style="font-size:10px; color:var(--text-secondary);">${label}</div></div>`;
-        const tbl = (rows, cols, empty) => `<div class="table-responsive" style="max-height:42vh; overflow:auto;"><table class="sticky-header-table" style="font-size:12px;"><thead><tr>${cols.map(c => `<th${c.r ? ' class="text-right"' : ''}>${c.t}</th>`).join('')}</tr></thead><tbody>${rows || `<tr><td colspan="${cols.length}" class="text-center" style="color:#9ca3af;">${empty}</td></tr>`}</tbody></table></div>`;
+        const tile = (label, val, color) => `<div style="flex:1; min-width:92px; background:var(--bg-page); border-radius:8px; padding:8px 10px; text-align:center;"><div style="font-size:18px; font-weight:700; color:${color};">${val}</div><div style="font-size:10px; color:var(--text-secondary);">${label}</div></div>`;
+        const flt = this._reconFioFilter || 'problem';
+        const q = (this._reconFioQuery || '').trim().toLowerCase();
+        let list = d.rows || [];
+        if (flt === 'no_1c') list = list.filter(r => !r.in_1c);
+        else if (flt === 'no_gis') list = list.filter(r => !r.in_gis);
+        else if (flt === 'no_db') list = list.filter(r => !r.in_db);
+        else if (flt === 'problem') list = list.filter(r => !(r.in_1c && r.in_gis && r.in_db));
+        if (q) list = list.filter(r => (r.fio || '').toLowerCase().includes(q));
+        const mark = (on) => on ? '<span style="color:#047857; font-weight:700;">✓</span>' : '<span style="color:#b91c1c; font-weight:700;">✗</span>';
+        const trs = list.slice(0, 1500).map(r => {
+            const d1c = (r.d209_1c || r.d205_1c) ? fmt((r.d209_1c || 0) + (r.d205_1c || 0)) : '<span style="color:#d1d5db;">—</span>';
+            const dgis = (r.d209_gis || r.d205_gis) ? fmt((r.d209_gis || 0) + (r.d205_gis || 0)) : '<span style="color:#d1d5db;">—</span>';
+            const bad = !(r.in_1c && r.in_gis && r.in_db);
+            return `<tr style="${bad ? 'background:rgba(254,226,226,.35);' : ''}"><td>${esc(r.fio)}</td>`
+                + `<td class="text-center">${mark(r.in_1c)}</td><td class="text-right">${d1c}</td>`
+                + `<td class="text-center">${mark(r.in_gis)}</td><td class="text-right">${dgis}</td>`
+                + `<td class="text-center">${mark(r.in_db)}</td></tr>`;
+        }).join('');
+        const fbtn = (key, label) => `<button class="action-btn ${flt === key ? 'primary-btn' : 'secondary-btn'}" style="font-size:11px; padding:3px 10px;" data-rf="${key}">${label}</button>`;
 
         const o1c = (d.orphans_1c || []).map(r => `<tr><td>${esc(r.fio)}</td><td class="text-right">${fmt(r.debt_209)}</td><td class="text-right">${fmt(r.debt_205)}</td></tr>`).join('');
         const ogis = (d.orphans_gis || []).map(r => `<tr><td>${esc(r.fio)}</td><td class="text-right">${fmt(r.debt_209)}</td><td class="text-right">${fmt(r.debt_205)}</td></tr>`).join('');
@@ -337,14 +356,30 @@ export const DebtsModule = {
 
         body.innerHTML =
             `<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
-                ${tile('Жильцов в базе', s.db_residents ?? 0, '#2563eb')}
-                ${tile('Сошлись 1С+ГИС', s.matched_both ?? 0, '#047857')}
-                ${tile('Только 1С', s.matched_only_1c ?? 0, '#0ea5e9')}
-                ${tile('Только ГИС', s.matched_only_gis ?? 0, '#7c3aed')}
-                ${tile('1С без пары', s.orphans_1c ?? 0, '#b91c1c')}
-                ${tile('ГИС без пары', s.orphans_gis ?? 0, '#b91c1c')}
-                ${tile('База без долгов', s.db_no_debt ?? 0, '#d97706')}
+                ${tile('Всего ФИО', s.total ?? 0, '#2563eb')}
+                ${tile('Везде (1С+ГИС+база)', s.all_three ?? 0, '#047857')}
+                ${tile('Нет в 1С', s.not_in_1c ?? 0, '#b91c1c')}
+                ${tile('Нет в ГИС', s.not_in_gis ?? 0, '#b91c1c')}
+                ${tile('Нет в базе', s.not_in_db ?? 0, '#d97706')}
             </div>
+            <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
+                ${fbtn('problem', 'Проблемные')}${fbtn('no_1c', 'Нет в 1С')}${fbtn('no_gis', 'Нет в ГИС')}${fbtn('no_db', 'Нет в базе')}${fbtn('all', 'Все')}
+                <input type="text" id="reconFioSearch" placeholder="Поиск по ФИО…" value="${esc(this._reconFioQuery || '')}" style="margin-left:auto; padding:4px 8px; font-size:12px; min-width:200px;">
+            </div>
+            <div style="font-size:11px; color:var(--text-secondary); margin-bottom:6px;">Показано: <b>${list.length}</b>. Союз по ТОЧНОМУ ФИО (регистр/ё/пробелы) — никаких «похожих».</div>
+            <div class="table-responsive" style="max-height:55vh; overflow:auto;"><table class="sticky-header-table" style="font-size:12px;">
+                <thead><tr><th>ФИО</th><th class="text-center">1С</th><th class="text-right">Долг 1С</th><th class="text-center">ГИС</th><th class="text-right">Долг ГИС</th><th class="text-center">База</th></tr></thead>
+                <tbody>${trs || '<tr><td colspan="6" class="text-center" style="color:#9ca3af;">нет строк под фильтр</td></tr>'}</tbody>
+            </table></div>`;
+        body.querySelectorAll('[data-rf]').forEach(b => b.addEventListener('click', () => { this._reconFioFilter = b.getAttribute('data-rf'); this.renderReconcileFio(); }));
+        const si = document.getElementById('reconFioSearch');
+        if (si) {
+            si.addEventListener('input', () => { this._reconFioQuery = si.value; this.renderReconcileFio(); });
+            if (this._reconFioQuery) { si.focus(); si.setSelectionRange(si.value.length, si.value.length); }
+        }
+        return;
+        // eslint-disable-next-line no-unreachable
+        body.innerHTML +=
             <p class="hint-text" style="font-size:11px; margin:0 0 10px; color:var(--text-secondary);">
                 «Без пары» = ФИО есть в источнике, но точно не сматчилось с жильцом базы (точный матчинг) — привязать алиасом или поправить ФИО. «База без долгов» = жилец есть в базе, но его нет ни в 1С, ни в ГИС.
             </p>

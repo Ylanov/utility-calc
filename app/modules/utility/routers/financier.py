@@ -1134,92 +1134,103 @@ async def gisgmp_reconcile_fio(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """«Где кого нету»: сводит ФИО из трёх источников и показывает несостыковки.
-      • orphans_1c  — ФИО есть в Excel 1С, но точно НЕ сматчилось с жильцом базы;
-      • orphans_gis — ФИО есть в ГИС ГМП, но точно НЕ сматчилось с базой;
-      • db_no_debt  — жилец есть в базе, но его нет ни в 1С, ни в ГИС.
-    После перехода на точный матчинг это главный инструмент: видно, кого
-    привязать вручную (алиас) или поправить ФИО."""
+    """СОЮЗ по ТОЧНОМУ ФИО трёх источников: 1С (последний импорт/черновик),
+    ГИС ГМП (находки), база жильцов. Одна строка на уникальное нормализованное
+    ФИО (регистр/ё/пробелы), колонки «в 1С / в ГИС / в базе» + долги + флаги
+    «нет в …». Никаких «похожих» — только точное совпадение ФИО."""
     _require_finance(current_user)
     from app.modules.utility.services.gisgmp_import import GISGMP_SOURCE_LABEL
+    from app.modules.utility.services.gsheets_sync import normalize_fio
 
-    # --- 1С: последний завершённый Excel-импорт по каждому счёту ---
-    matched_1c: set[int] = set()
-    orphans_1c: dict[str, dict] = {}
+    rows: dict[str, dict] = {}
+
+    def _row(fio_raw):
+        n = normalize_fio(fio_raw or "")
+        if not n:
+            return None
+        r = rows.get(n)
+        if r is None:
+            r = {"fio": (fio_raw or "").strip(), "in_1c": False, "in_gis": False,
+                 "in_db": False, "d209_1c": 0.0, "d205_1c": 0.0,
+                 "d209_gis": 0.0, "d205_gis": 0.0, "user_id": None, "username": None}
+            rows[n] = r
+        return r
+
+    # --- база: активные жильцы (источник in_db + приоритетное отображение ФИО) ---
+    db_rows = (await db.execute(
+        select(User.id, User.username).where(
+            User.role == "user", User.is_deleted.is_(False))
+    )).all()
+    for uid, un in db_rows:
+        r = _row(un)
+        if r is None:
+            continue
+        r["in_db"] = True
+        r["user_id"] = uid
+        r["username"] = un
+        r["fio"] = un
+
+    # --- 1С: последний импорт/черновик по каждому счёту (staged ИЛИ completed) ---
     sources: dict = {}
     for acc in ("209", "205"):
         log = (await db.execute(
             select(DebtImportLog).where(
                 DebtImportLog.account_type == acc,
-                DebtImportLog.status == "completed",
+                DebtImportLog.status.in_(["staged", "completed"]),
                 DebtImportLog.file_name != GISGMP_SOURCE_LABEL,
             ).order_by(desc(DebtImportLog.started_at)).limit(1)
         )).scalars().first()
-        sources[acc] = ({"file": log.file_name,
+        sources[acc] = ({"file": log.file_name, "status": log.status,
                          "at": log.started_at.isoformat() if log.started_at else None}
                         if log else None)
         if not log:
             continue
-        for uid_s in (log.applied_state or {}):
-            if str(uid_s).isdigit():
-                matched_1c.add(int(uid_s))
-        for nf in (log.not_found_users or []):
-            fio = (nf.get("fio") or "").strip()
-            if not fio:
+        for st in (log.applied_state or {}).values():
+            un = st.get("username")
+            r = _row(un) if un else None
+            if r is None:
                 continue
-            o = orphans_1c.setdefault(fio, {"fio": fio, "debt_209": 0.0, "debt_205": 0.0})
+            r["in_1c"] = True
             try:
-                o[f"debt_{acc}"] += float(nf.get("debt") or 0)
+                r[f"d{acc}_1c"] += float(st.get(f"debt_{acc}") or 0)
+            except Exception:
+                pass
+        for nf in (log.not_found_users or []):
+            r = _row(nf.get("fio"))
+            if r is None:
+                continue
+            r["in_1c"] = True
+            try:
+                r[f"d{acc}_1c"] += float(nf.get("debt") or 0)
             except Exception:
                 pass
 
-    # --- ГИС: из находок (matched_user_id=None → сирота) ---
+    # --- ГИС: находки (по сырому ФИО реестра) ---
     findings = await _load_findings(db)
-    matched_gis: set[int] = set()
-    orphans_gis: list[dict] = []
     if findings:
-        for row in findings.get("summary", []):
-            uid = row.get("matched_user_id")
-            if uid is not None:
-                matched_gis.add(int(uid))
-            else:
-                orphans_gis.append({
-                    "fio": row.get("fio"),
-                    "debt_209": float(row.get("debt_209") or 0),
-                    "debt_205": float(row.get("debt_205") or 0),
-                })
+        for frow in findings.get("summary", []):
+            r = _row(frow.get("fio"))
+            if r is None:
+                continue
+            r["in_gis"] = True
+            r["d209_gis"] += float(frow.get("debt_209") or 0)
+            r["d205_gis"] += float(frow.get("debt_205") or 0)
 
-    # --- база: активные жильцы ---
-    db_rows = (await db.execute(
-        select(User.id, User.username).where(
-            User.role == "user", User.is_deleted.is_(False))
-    )).all()
-    db_ids = {uid for uid, _ in db_rows}
-    uname = {uid: un for uid, un in db_rows}
-
-    in_sources = matched_1c | matched_gis
-    db_no_debt = sorted(
-        [{"user_id": uid, "username": uname.get(uid)} for uid in db_ids if uid not in in_sources],
-        key=lambda x: (x["username"] or ""),
-    )
-    orphans_1c_list = sorted(orphans_1c.values(), key=lambda x: x["fio"])
-    orphans_gis_list = sorted(orphans_gis, key=lambda x: (x.get("fio") or ""))
-
+    items = list(rows.values())
+    summary = {
+        "total": len(items),
+        "all_three": sum(1 for r in items if r["in_1c"] and r["in_gis"] and r["in_db"]),
+        "not_in_db": sum(1 for r in items if not r["in_db"]),
+        "not_in_gis": sum(1 for r in items if not r["in_gis"]),
+        "not_in_1c": sum(1 for r in items if not r["in_1c"]),
+    }
+    # Проблемные (хоть где-то «нет») — сверху, дальше по ФИО.
+    items.sort(key=lambda r: ((r["in_1c"] and r["in_gis"] and r["in_db"]), r["fio"] or ""))
     return {
         "sources": sources,
         "gis_synced_at": (findings or {}).get("synced_at"),
-        "summary": {
-            "db_residents": len(db_ids),
-            "matched_both": len(matched_1c & matched_gis & db_ids),
-            "matched_only_1c": len((matched_1c - matched_gis) & db_ids),
-            "matched_only_gis": len((matched_gis - matched_1c) & db_ids),
-            "orphans_1c": len(orphans_1c_list),
-            "orphans_gis": len(orphans_gis_list),
-            "db_no_debt": len(db_no_debt),
-        },
-        "orphans_1c": orphans_1c_list[:1000],
-        "orphans_gis": orphans_gis_list[:1000],
-        "db_no_debt": db_no_debt[:1000],
+        "summary": summary,
+        "rows": items[:3000],
     }
 
 
@@ -1367,7 +1378,9 @@ async def debts_publish(
     # Помечаем черновики published + снимок до (для отката через историю импортов).
     now = utcnow().isoformat()
     for acc, log in staged.items():
-        log.status = "published"
+        # 'completed' (как у старого импорта) — чтобы все фичи, фильтрующие
+        # completed (история, целостность, сверка с 1С), видели выгруженное.
+        log.status = "completed"
         log.snapshot_data = {"before": snapshot_before,
                              "inserted_reading_ids": inserted_ids,
                              "published_at": now}
@@ -1403,7 +1416,9 @@ async def _build_reconcile(db: AsyncSession) -> dict:
         return (await db.execute(
             select(DebtImportLog).where(
                 DebtImportLog.account_type == acc,
-                DebtImportLog.status == "completed",
+                # staged (черновик) ИЛИ completed (выгружено) — сверка видит и
+                # не выгруженный черновик, чтобы можно было сверить ДО публикации.
+                DebtImportLog.status.in_(["staged", "completed"]),
                 DebtImportLog.file_name != GISGMP_SOURCE_LABEL,
             ).order_by(desc(DebtImportLog.started_at)).limit(1)
         )).scalars().first()
