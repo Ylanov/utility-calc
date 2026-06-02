@@ -94,14 +94,17 @@
     </div>
 
     <!-- =================== МОДАЛКА ДЕТАЛЕЙ =================== -->
-    <div id="errorDetailModal" class="modal" style="display:none;">
-        <div class="modal-content" style="max-width:1100px; max-height:90vh; overflow:auto;">
-            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px;">
-                <h3 id="errorDetailTitle" style="margin:0;">Ошибка</h3>
-                <button class="modal-close" data-action="error-close">✕</button>
+    <div id="errorDetailModal" class="modal-overlay">
+        <div class="modal-window" style="width:min(1080px, 96vw); max-height:90vh; display:flex; flex-direction:column;">
+            <!-- Шапка (фиксированная) -->
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:18px 22px 14px; border-bottom:1px solid var(--border-color); flex-shrink:0;">
+                <h3 id="errorDetailTitle" style="margin:0; font-size:18px;">Ошибка</h3>
+                <button class="close-icon" data-action="error-close" title="Закрыть (Esc)">✕</button>
             </div>
 
-            <div id="errorDetailMeta" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(180px,1fr)); gap:8px; margin-top:12px; font-size:12px;">
+            <!-- Тело (скроллится, шапка остаётся на месте) -->
+            <div style="padding:16px 22px 22px; overflow-y:auto; flex:1 1 auto; min-height:0;">
+            <div id="errorDetailMeta" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(170px,1fr)); gap:10px; font-size:12px;">
                 <!-- метаданные подставляются JS -->
             </div>
 
@@ -154,6 +157,7 @@
                 <h4 style="margin:0 0 6px 0;">Доп. метаданные</h4>
                 <pre id="errorDetailExtra" style="background:#f8fafc; color:#0f172a; padding:12px; border:1px solid var(--border-color); border-radius:6px; overflow:auto; font-size:11px; max-height:200px;"></pre>
             </div>
+            </div><!-- /тело -->
         </div>
     </div>
 </div>

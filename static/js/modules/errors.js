@@ -135,7 +135,7 @@ export const ErrorsModule = {
         this.dom.modal?.addEventListener('click', (e) => {
             const close = e.target.closest('[data-action="error-close"]') || e.target === this.dom.modal;
             if (close) {
-                this.dom.modal.style.display = 'none';
+                this.dom.modal.classList.remove('open');
                 this.state.currentDetail = null;
             }
         });
@@ -143,6 +143,14 @@ export const ErrorsModule = {
         this.dom.btnResolve?.addEventListener('click', () => this.markResolved());
         this.dom.btnReopen?.addEventListener('click', () => this.reopen());
         this.dom.btnDelete?.addEventListener('click', () => this.deleteCurrent());
+
+        // Esc закрывает модалку (удобство).
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && this.dom.modal?.classList.contains('open')) {
+                this.dom.modal.classList.remove('open');
+                this.state.currentDetail = null;
+            }
+        });
     },
 
     _startAutoRefresh() {
@@ -295,7 +303,7 @@ export const ErrorsModule = {
             const r = await api.get(`/admin/errors/${id}`);
             this.state.currentDetail = r;
             this._renderDetail(r);
-            this.dom.modal.style.display = 'flex';
+            this.dom.modal.classList.add('open');
         } catch (e) {
             toast('Не удалось загрузить детали: ' + e.message, 'error');
         }
@@ -383,7 +391,7 @@ export const ErrorsModule = {
             await api.post(`/admin/errors/${this.state.selectedId}/resolve`,
                 notes ? { notes } : {});
             toast('Помечено как решённое', 'success');
-            this.dom.modal.style.display = 'none';
+            this.dom.modal.classList.remove('open');
             this.refreshAll();
         } catch (e) {
             toast('Не удалось: ' + e.message, 'error');
@@ -408,7 +416,7 @@ export const ErrorsModule = {
         try {
             await api.del(`/admin/errors/${this.state.selectedId}`);
             toast('Удалено', 'success');
-            this.dom.modal.style.display = 'none';
+            this.dom.modal.classList.remove('open');
             this.refreshAll();
         } catch (e) {
             // Fallback если api.del нет — DELETE через fetch.
@@ -419,7 +427,7 @@ export const ErrorsModule = {
                 });
                 if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
                 toast('Удалено', 'success');
-                this.dom.modal.style.display = 'none';
+                this.dom.modal.classList.remove('open');
                 this.refreshAll();
             } catch (e2) {
                 toast('Не удалось удалить: ' + e2.message, 'error');
