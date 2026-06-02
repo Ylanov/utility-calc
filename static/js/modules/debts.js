@@ -288,10 +288,10 @@ export const DebtsModule = {
     // Сверка ГИС ГМП ↔ долги 1С: жилец = строка + авто-флаги проблем + фильтры.
     _RECON_LAB: {
         ok: ['ок', '#047857'],
-        only_1c: ['нет в ГИС', '#2563eb'],
+        only_1c: ['нет в ГИС · дотянуть', '#2563eb'],
         only_gis: ['нет в 1С', '#d97706'],
-        gis_more: ['ГИС > 1С', '#b91c1c'],
-        c1_more: ['1С > ГИС', '#7c3aed'],
+        gis_more: ['ошибка ГИС ГМП', '#b91c1c'],
+        c1_more: ['ГИС < 1С · дотянуть', '#7c3aed'],
     },
 
     async openGisgmpReconcile() {
@@ -366,21 +366,22 @@ export const DebtsModule = {
                 : (r.flag !== 'ok'
                     ? `<button class="recon-apply" data-uid="${r.user_id}" data-fio="${esc(r.username)}" style="font-size:11px;color:#fff;background:#b91c1c;border:none;border-radius:4px;padding:2px 7px;cursor:pointer;">Применить ГИС</button>`
                     : '');
-            return `<tr${r.overridden ? ' style="background:#f5f3ff;"' : ''}><td><a href="#" class="recon-payer" data-fio="${esc(r.username)}" style="color:#2563eb;cursor:pointer;">${esc(r.username)}</a></td>`
+            return `<tr${r.overridden ? ' style="background:#f5f3ff;"' : ''}><td><a href="#" class="recon-payer" data-fio="${esc(r.username)}" data-uid="${r.user_id}" style="color:#2563eb;cursor:pointer;">${esc(r.username)}</a></td>`
                 + `<td class="text-right">${fmt(r.g209)}</td><td class="text-right">${fmt(r.c209)}</td>${dcell(r.d209)}`
                 + `<td class="text-right">${fmt(r.g205)}</td><td class="text-right">${fmt(r.c205)}</td>${dcell(r.d205)}`
                 + `<td class="text-right"><b>${fmt(r.delta)}</b></td>`
+                + `<td style="text-align:center;font-size:11px;">${r.gis_months || 0}${r.need_pull ? ' <span style="color:#2563eb;" title="ГИС занижен — стоит дотянуть">⤓</span>' : ''}</td>`
                 + `<td><span style="color:${L[1]};font-size:11px;">${L[0]}${r.severity === 'high' ? ' ⚠' : ''}${r.overridden ? ' ✔' : ''}</span></td>`
                 + `<td>${act}</td></tr>`;
         }).join('');
         res.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;">Показано: ${list.length}. ⚠ = крупное расхождение (≥20k). Красный Δ = ГИС больше, синий = 1С больше.</div>`
             + `<div class="table-responsive" style="max-height:65vh;overflow:auto;"><table class="sticky-header-table" style="font-size:12px;">`
             + `<thead><tr><th>Жилец</th><th class="text-right">209 ГИС</th><th class="text-right">209 1С</th><th class="text-right">Δ209</th>`
-            + `<th class="text-right">205 ГИС</th><th class="text-right">205 1С</th><th class="text-right">Δ205</th><th class="text-right">Σ Δ</th><th>Флаг</th><th>Действие</th></tr></thead>`
-            + `<tbody>${rows || '<tr><td colspan="10" class="text-center">нет</td></tr>'}</tbody></table></div>`;
+            + `<th class="text-right">205 ГИС</th><th class="text-right">205 1С</th><th class="text-right">Δ205</th><th class="text-right">Σ Δ</th><th title="За сколько разных месяцев долг в ГИС; ⤓ = стоит дотянуть">ГИС, мес</th><th>Флаг</th><th>Действие</th></tr></thead>`
+            + `<tbody>${rows || '<tr><td colspan="11" class="text-center">нет</td></tr>'}</tbody></table></div>`;
         res.querySelectorAll('.recon-payer').forEach(a => a.addEventListener('click', (e) => {
             e.preventDefault();
-            this.openPayerCharges(a.getAttribute('data-fio'));
+            this.openPayerCharges(a.getAttribute('data-fio'), a.getAttribute('data-uid'));
         }));
         res.querySelectorAll('.recon-apply').forEach(b => b.addEventListener('click', () => this.applyGisOverride(b.getAttribute('data-uid'), b.getAttribute('data-fio'))));
         res.querySelectorAll('.recon-revert').forEach(b => b.addEventListener('click', () => this.revertGisOverride(b.getAttribute('data-uid'), b.getAttribute('data-fio'))));
@@ -401,7 +402,8 @@ export const DebtsModule = {
         const rows = (d.residents || []).map(r => {
             const L = LAB[r.flag] || ['', ''];
             return `<tr><td>${esc(r.username)}</td><td class=r>${fmt(r.g209)}</td><td class=r>${fmt(r.c209)}</td><td class=r>${dlt(r.d209)}</td>`
-                + `<td class=r>${fmt(r.g205)}</td><td class=r>${fmt(r.c205)}</td><td class=r>${dlt(r.d205)}</td><td class=r><b>${dlt(r.delta)}</b></td><td>${L[0]}</td></tr>`;
+                + `<td class=r>${fmt(r.g205)}</td><td class=r>${fmt(r.c205)}</td><td class=r>${dlt(r.d205)}</td><td class=r><b>${dlt(r.delta)}</b></td>`
+                + `<td class=r>${r.gis_months || 0}${r.need_pull ? ' (дотянуть)' : ''}</td><td>${L[0]}</td></tr>`;
         }).join('');
         const html = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Сверка ГИС ГМП — 1С</title>
 <style>
@@ -423,7 +425,7 @@ td.r,th.r{text-align:right;white-space:nowrap;} tr:nth-child(even){background:#f
 <h2>Проблемы (авто-флаги)</h2>
 <table><tr><th>Категория</th><th class=r>Жильцов</th><th class=r>Сумма Δ, ₽</th><th class=r>Крупных (≥20k)</th></tr>${probRows || '<tr><td colspan=4>расхождений нет</td></tr>'}</table>
 <h2>Разбор по жильцам — ${(d.residents || []).length} (сортировка по |разнице|)</h2>
-<table><thead><tr><th>Жилец</th><th class=r>209 ГИС</th><th class=r>209 1С</th><th class=r>Δ209</th><th class=r>205 ГИС</th><th class=r>205 1С</th><th class=r>Δ205</th><th class=r>Σ Δ</th><th>Флаг</th></tr></thead><tbody>${rows}</tbody></table>
+<table><thead><tr><th>Жилец</th><th class=r>209 ГИС</th><th class=r>209 1С</th><th class=r>Δ209</th><th class=r>205 ГИС</th><th class=r>205 1С</th><th class=r>Δ205</th><th class=r>Σ Δ</th><th class=r>ГИС, мес</th><th>Флаг</th></tr></thead><tbody>${rows}</tbody></table>
 <script>window.onload=function(){setTimeout(function(){window.print();},250);};</script>
 </body></html>`;
         const w = window.open('', '_blank');
@@ -432,8 +434,8 @@ td.r,th.r{text-align:right;white-space:nowrap;} tr:nth-child(even){background:#f
         w.document.close();
     },
 
-    // Клик по ФИО → модал со ВСЕМИ начислениями человека (долг/оплачено/аннулир.).
-    async openPayerCharges(fio) {
+    // Клик по ФИО → модал со ВСЕМИ начислениями + предложение аннулирования.
+    async openPayerCharges(fio, uid) {
         let modal = document.getElementById('payerChargesModal');
         if (!modal) {
             modal = document.createElement('div');
@@ -451,15 +453,16 @@ td.r,th.r{text-align:right;white-space:nowrap;} tr:nth-child(even){background:#f
           </div>`;
         modal.querySelector('#payerClose').addEventListener('click', () => modal.remove());
         try {
+            const resident = uid ? (this._recon?.residents || []).find(r => String(r.user_id) === String(uid)) : null;
             const d = await api.get('/financier/gisgmp/payer-charges?q=' + encodeURIComponent(fio));
-            this.renderPayerCharges(modal.querySelector('#payerBody'), d);
+            this.renderPayerCharges(modal.querySelector('#payerBody'), d, resident);
         } catch (e) {
             const b = modal.querySelector('#payerBody');
             if (b) b.innerHTML = 'Ошибка: ' + esc(e?.message || String(e));
         }
     },
 
-    renderPayerCharges(box, d) {
+    renderPayerCharges(box, d, resident) {
         if (!box) return;
         const fmt = (v) => (Number(v) || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         if (!d.count) {
@@ -472,24 +475,53 @@ td.r,th.r{text-align:right;white-space:nowrap;} tr:nth-child(even){background:#f
             paid: ['Сквитировано', '#047857'],
             annulled: ['Аннулировано', '#6b7280'],
         };
+        // Предложение к аннулированию (ошибка ГИС ГМП): когда ГИС > 1С — берём
+        // СТАРЕЙШИЕ неоплаченные счета на сумму превышения по каждому счёту →
+        // их аннулировать в реестре, итог сравняется с 1С («старый хвост, что
+        // 1С уже закрыл»).
+        const annul = new Set();
+        let banner = '';
+        if (resident) {
+            const pick = (acc, delta) => {
+                if (!(delta > 0.01)) return null;
+                const list = (d.charges || []).filter(c => c.account_type === acc && c.status === 'unpaid')
+                    .sort((a, b) => this._billTs(a.bill_date) - this._billTs(b.bill_date));
+                let s = 0, n = 0;
+                for (const c of list) { annul.add(c.uin); s += Number(c.amount) || 0; n++; if (s >= delta - 0.01) break; }
+                return n ? `<b>${acc}</b>: ${n} счёт(ов) на <b>${fmt(s)}₽</b>` : null;
+            };
+            const parts = [pick('209', resident.d209), pick('205', resident.d205)].filter(Boolean);
+            if (parts.length) {
+                banner = `<div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12px;line-height:1.5;">
+                    <b style="color:#b91c1c;">⚠ Ошибка ГИС ГМП — предложение аннулировать (сравнять с 1С):</b><br>
+                    ${parts.join(' &nbsp;·&nbsp; ')}.<br>
+                    <span style="color:#666;">Эти счета (подсвечены ниже 🔻) аннулируй вручную в реестре ГИС ГМП по их УИН — итог долга сравняется с 1С. Подобраны старейшие неоплаченные = «хвост», который 1С уже закрыл.</span></div>`;
+            }
+        }
         const rows = (d.charges || []).map(c => {
             const s = ST[c.status] || ['—', '#666'];
-            return `<tr>
+            const hl = annul.has(c.uin);
+            return `<tr style="${hl ? 'background:#fee2e2;' : ''}">
                 <td>${esc(c.bill_date || '—')}</td>
                 <td style="text-align:center;">${c.account_type || '—'}</td>
                 <td class="text-right">${fmt(c.amount)}</td>
-                <td><span style="color:${s[1]};font-weight:600;">${s[0]}</span></td>
+                <td><span style="color:${s[1]};font-weight:600;">${s[0]}</span>${hl ? ' <span title="Предложено аннулировать" style="color:#b91c1c;">🔻</span>' : ''}</td>
                 <td style="font-size:11px;color:var(--text-secondary,#666);">${esc(c.purpose || '')}</td>
-                <td style="font-size:11px;color:#999;">${esc(c.actualize_date || '')}</td>
+                <td style="font-size:10px;color:#999;font-family:monospace;">${esc(c.uin || '')}</td>
             </tr>`;
         }).join('');
-        box.innerHTML = `<div style="font-size:13px;margin-bottom:10px;line-height:1.6;">
+        box.innerHTML = banner + `<div style="font-size:13px;margin-bottom:10px;line-height:1.6;">
                 Долг <b>209</b> (комуслуги): <b style="color:#b91c1c">${fmt(t.debt_209)}</b> &nbsp;·&nbsp;
                 Долг <b>205</b> (наём): <b style="color:#b91c1c">${fmt(t.debt_205)}</b><br>
                 Оплачено (сквитировано): ${fmt(t.paid)} &nbsp;·&nbsp; аннулировано строк: ${t.annulled || 0} &nbsp;·&nbsp; всего строк: ${t.count || 0}</div>
             <div class="table-responsive" style="max-height:60vh;overflow:auto;"><table class="sticky-header-table" style="font-size:12px;width:100%;">
-                <thead><tr><th>Период (нач.)</th><th>Счёт</th><th class="text-right">Сумма</th><th>Статус</th><th>Назначение</th><th>Актуализация</th></tr></thead>
+                <thead><tr><th>Период (нач.)</th><th>Счёт</th><th class="text-right">Сумма</th><th>Статус</th><th>Назначение</th><th>УИН</th></tr></thead>
                 <tbody>${rows}</tbody></table></div>`;
+    },
+
+    _billTs(s) {
+        const m = String(s || '').match(/(\d{2})\.(\d{2})\.(\d{4})/);
+        return m ? new Date(+m[3], +m[2] - 1, +m[1]).getTime() : 0;
     },
 
     // Применить/откатить ГИС-оверрайд долга жильца (база — 1С).

@@ -1194,6 +1194,28 @@ async def _build_reconcile(db: AsyncSession) -> dict:
             return "only_1c"       # есть в 1С, ГИС не нашёл
         return "gis_more" if d > 0 else "c1_more"
 
+    # «За сколько месяцев» долг в ГИС у жильца — число РАЗНЫХ месяцев его
+    # неоплаченных (не аннулированных) начислений в реестре, по фамилии.
+    # Для колонки «ГИС, мес» в сверке и печати + сигнала «дотянуть».
+    from app.modules.utility.services.gisgmp_import import (
+        is_unpaid, is_annulled, parse_reg_dt, GISGMP_CACHE_KEY,
+    )
+    surname_months: dict[str, set] = {}
+    cache_row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_CACHE_KEY)
+    )).scalars().first()
+    if cache_row and cache_row.value:
+        try:
+            for ch in json.loads(cache_row.value).values():
+                if is_annulled(ch.get("change_status")) or not is_unpaid(ch.get("ack_status")):
+                    continue
+                nm = (ch.get("payer_name") or "").strip().split()
+                dt = parse_reg_dt(ch.get("bill_date"))
+                if nm and dt is not None:
+                    surname_months.setdefault(nm[0].lower(), set()).add((dt.year, dt.month))
+        except Exception:
+            pass
+
     residents = []
     problems: dict[str, dict] = {}
     matched_total = 0
@@ -1217,12 +1239,17 @@ async def _build_reconcile(db: AsyncSession) -> dict:
             pr["sum_abs"] += float(abs(d))
             if sev == "high":
                 pr["high"] += 1
+        sn = (name or "").strip().split()
+        gmonths = len(surname_months.get(sn[0].lower(), set())) if sn else 0
         residents.append({
             "user_id": uid, "username": name,
             "g209": float(g9), "c209": float(c9), "d209": float(g9 - c9),
             "g205": float(g5), "c205": float(c5), "d205": float(g5 - c5),
             "sum_gis": float(sg), "sum_1c": float(sc), "delta": float(d),
             "flag": flag, "severity": sev,
+            # «За сколько месяцев» долг в ГИС + нужно ли ещё дотянуть (ГИС занижен).
+            "gis_months": gmonths,
+            "need_pull": flag in ("c1_more", "only_1c"),
         })
     # Пометка активных ГИС-оверрайдов (для UI: показать «откат» вместо «применить»).
     ovr_row = (await db.execute(
