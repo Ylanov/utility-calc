@@ -377,18 +377,6 @@ export const DebtsModule = {
             si.addEventListener('input', () => { this._reconFioQuery = si.value; this.renderReconcileFio(); });
             if (this._reconFioQuery) { si.focus(); si.setSelectionRange(si.value.length, si.value.length); }
         }
-        return;
-        // eslint-disable-next-line no-unreachable
-        body.innerHTML +=
-            <p class="hint-text" style="font-size:11px; margin:0 0 10px; color:var(--text-secondary);">
-                «Без пары» = ФИО есть в источнике, но точно не сматчилось с жильцом базы (точный матчинг) — привязать алиасом или поправить ФИО. «База без долгов» = жилец есть в базе, но его нет ни в 1С, ни в ГИС.
-            </p>
-            <h4 style="margin:8px 0 4px; font-size:13px; color:#b91c1c;">🔴 ФИО в 1С, нет в базе (${(d.orphans_1c || []).length})</h4>
-            ${tbl(o1c, [{ t: 'ФИО (1С)' }, { t: 'Долг 209', r: 1 }, { t: 'Долг 205', r: 1 }], 'нет таких')}
-            <h4 style="margin:12px 0 4px; font-size:13px; color:#b91c1c;">🔴 ФИО в ГИС ГМП, нет в базе (${(d.orphans_gis || []).length})</h4>
-            ${tbl(ogis, [{ t: 'ФИО (ГИС)' }, { t: 'Долг 209', r: 1 }, { t: 'Долг 205', r: 1 }], 'нет таких')}
-            <h4 style="margin:12px 0 4px; font-size:13px; color:#d97706;">🟡 Жильцы в базе без долгов 1С/ГИС (${(d.db_no_debt || []).length})</h4>
-            ${tbl(nodebt, [{ t: 'Жилец (база)' }], 'нет таких')}`;
     },
 
     // История/аудит массовых актуализаций: что актуализировали и что изменилось (до→после).
