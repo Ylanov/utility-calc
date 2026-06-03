@@ -1291,6 +1291,181 @@ async def gisgmp_reconcile_fio(
     }
 
 
+# ─── bulk-создание жильцов из «сирот» сверки (есть в 1С/ГИС, нет в базе) ─────
+_FIO_STOPWORDS = (
+    "пао", "ооо", "оао", "зао", "акционерн", "фгау", "фгбу", "фгуп", "гуп",
+    "муп", "банк", "сбербанк", "втб", "филиал", "возмещен", "росжил",
+    "бухгалтер", "директор", "начальник", "казначейств", "уфк", "ифнс",
+    "фссп", "департамент", "комплекс",
+)
+
+
+def _clean_orphan_fio(raw: str) -> str:
+    """ФИО → чистый вид: коллапс пробелов + убрать хвостовой «(общ)»/«(0)»."""
+    s = " ".join((raw or "").split())
+    if s.endswith(")") and "(" in s:
+        s = s[:s.rfind("(")].strip()
+    return s
+
+
+def _looks_like_person_fio(s: str) -> tuple[bool, str]:
+    """Грубый фильтр «похоже на ФИО человека?» → (ok, причина_если_нет)."""
+    if not s:
+        return False, "пусто"
+    low = s.lower()
+    if any(ch.isdigit() for ch in s):
+        return False, "содержит цифры (не ФИО)"
+    if any(kw in low for kw in _FIO_STOPWORDS):
+        return False, "организация/должность"
+    words = [w for w in s.split() if w]
+    if len(words) < 2:
+        return False, "одно слово (нет имени)"
+    if len(words) > 5:
+        return False, "слишком длинно для ФИО"
+    if sum(1 for ch in low if "а" <= ch <= "я" or ch == "ё") < 5:
+        return False, "не кириллица"
+    return True, ""
+
+
+@router.post("/gisgmp/create-missing-residents",
+             summary="Создать жильцов (только ФИО) для тех, кто есть в 1С/ГИС, но не в базе")
+async def gisgmp_create_missing_residents(
+    dry_run: bool = Query(True),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Массово завести личные кабинеты для ФИО из 1С/ГИС, которых НЕТ в базе.
+
+    Создаём ТОЛЬКО ФИО + учётку (без комнаты, адреса и прочего — админ заполнит
+    сам). Мусор отсеиваем: организации/должности (ПАО, ФГАУ, банк, бухгалтер…),
+    строки с цифрами, одно слово без имени. Дубли гасим: точное совпадение с
+    базой/между собой + почти-дубли (типосы в отчестве, ≥90). dry_run=true
+    (по умолчанию) — только предпросмотр, ничего не создаёт."""
+    _require_finance(current_user)
+    from app.modules.utility.services.gsheets_sync import normalize_fio
+    from app.modules.utility.services.gisgmp_import import GISGMP_SOURCE_LABEL, GISGMP_CACHE_KEY
+    from rapidfuzz import fuzz
+
+    db_users = (await db.execute(
+        select(User.username).where(User.role == "user", User.is_deleted.is_(False))
+    )).scalars().all()
+    db_norm = {normalize_fio(u): u for u in db_users if u}
+    db_keys = list(db_norm.keys())
+
+    # Сырые ФИО из 1С (последний импорт по счёту) + ГИС (payer_name из кэша).
+    raw_by_norm: dict[str, str] = {}
+    for acc in ("209", "205"):
+        log = (await db.execute(
+            select(DebtImportLog).where(
+                DebtImportLog.account_type == acc,
+                DebtImportLog.status.in_(["staged", "completed"]),
+                DebtImportLog.file_name != GISGMP_SOURCE_LABEL,
+            ).order_by(desc(DebtImportLog.started_at)).limit(1)
+        )).scalars().first()
+        if not log:
+            continue
+        for st in (log.applied_state or {}).values():
+            un = (st.get("username") or "").strip()
+            if un:
+                raw_by_norm.setdefault(normalize_fio(un), un)
+        for nf in (log.not_found_users or []):
+            fi = (nf.get("fio") or "").strip()
+            if fi:
+                raw_by_norm.setdefault(normalize_fio(fi), fi)
+    try:
+        gis_rows = (await db.execute(
+            text("SELECT DISTINCT c->>'payer_name' AS fio "
+                 "FROM (SELECT value FROM system_settings WHERE key = :k) s, "
+                 "LATERAL jsonb_each(s.value::jsonb) AS e(uin, c)"),
+            {"k": GISGMP_CACHE_KEY},
+        )).all()
+        for (fi,) in gis_rows:
+            fi = (fi or "").strip()
+            if fi:
+                raw_by_norm.setdefault(normalize_fio(fi), fi)
+    except Exception:
+        pass
+
+    to_create: dict[str, str] = {}  # norm(clean) -> clean fio
+    skip_not_fio, skip_in_db, skip_similar = [], [], []
+    for nrm, raw in raw_by_norm.items():
+        if not nrm or nrm in db_norm:
+            continue  # пусто или уже точно в базе — не сирота
+        cleaned = _clean_orphan_fio(raw)
+        ok, reason = _looks_like_person_fio(cleaned)
+        if not ok:
+            skip_not_fio.append({"fio": raw, "reason": reason})
+            continue
+        cnrm = normalize_fio(cleaned)
+        if cnrm in db_norm:
+            skip_in_db.append({"fio": raw, "match": db_norm[cnrm]})
+            continue
+        if cnrm in to_create:
+            continue
+        # Почти-дубль с базой ИЛИ с уже добавленным в очередь (типос в отчестве).
+        best, best_sc = None, 0
+        for k in db_keys:
+            sc = fuzz.token_sort_ratio(cnrm, k)
+            if sc > best_sc:
+                best_sc, best = sc, db_norm[k]
+        for k, v in to_create.items():
+            sc = fuzz.token_sort_ratio(cnrm, k)
+            if sc > best_sc:
+                best_sc, best = sc, v
+        if best_sc >= 90:
+            skip_similar.append({"fio": raw, "match": best, "score": int(best_sc)})
+            continue
+        to_create[cnrm] = cleaned
+
+    create_list = sorted(to_create.values())
+    if dry_run:
+        return {
+            "dry_run": True,
+            "to_create_count": len(create_list),
+            "to_create": create_list,
+            "skip_not_fio": skip_not_fio,
+            "skip_in_db": skip_in_db,
+            "skip_similar": skip_similar,
+        }
+
+    import secrets
+    from app.core.auth import get_password_hash
+    from app.modules.utility.routers.admin_dashboard import write_audit_log
+
+    existing_logins = {
+        (lg or "").lower() for lg in (await db.execute(select(User.login))).scalars().all()
+    }
+    created = []
+    for fio in create_list:
+        login = fio
+        if login.lower() in existing_logins:
+            login = f"{fio} {secrets.token_hex(2)}"
+        existing_logins.add(login.lower())
+        db.add(User(
+            username=fio, login=login,
+            hashed_password=get_password_hash(secrets.token_urlsafe(12)),
+            role="user", is_deleted=False, is_initial_setup_done=False,
+        ))
+        created.append(fio)
+
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action="create", entity_type="user",
+        details={"bulk_create_missing": len(created),
+                 "skipped_not_fio": len(skip_not_fio),
+                 "skipped_dup": len(skip_in_db) + len(skip_similar)},
+    )
+    await db.commit()
+    return {
+        "dry_run": False,
+        "created_count": len(created),
+        "created": created,
+        "skip_not_fio": len(skip_not_fio),
+        "skip_in_db": len(skip_in_db),
+        "skip_similar": len(skip_similar),
+    }
+
+
 @router.get("/gisgmp/link-candidates", summary="Кандидаты-жильцы по фамилии для привязки сироты")
 async def gisgmp_link_candidates(
     fio: str = Query(..., description="ФИО из 1С/ГИС"),

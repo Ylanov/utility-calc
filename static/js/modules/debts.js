@@ -358,6 +358,38 @@ export const DebtsModule = {
     },
 
     // 3-сторонняя сверка ФИО: 1С ↔ ГИС ↔ база («где кого нету»).
+    /** Завести личные кабинеты (только ФИО) для всех, кто есть в 1С/ГИС, но
+     *  нет в базе. Двухстадийно: предпросмотр (dry-run) → подтверждение → apply.
+     *  Мусор (организации/цифры/одно слово) и дубли отсеиваются на бэке. */
+    async createMissingResidents() {
+        let p;
+        try {
+            p = await api.post('/financier/gisgmp/create-missing-residents?dry_run=true');
+        } catch (e) { toast('Ошибка предпросмотра: ' + (e?.message || e), 'error'); return; }
+        const n = p.to_create_count || 0;
+        const skNot = (p.skip_not_fio || []).length;
+        const skDup = (p.skip_in_db || []).length + (p.skip_similar || []).length;
+        if (!n) {
+            toast(`Новых ФИО для создания нет. Отсеяно: не-ФИО/организаций ${skNot}, дублей ${skDup}.`, 'info');
+            return;
+        }
+        const sample = (p.to_create || []).slice(0, 20).join('\n  • ');
+        const more = n > 20 ? `\n  …и ещё ${n - 20}` : '';
+        const ok = await showConfirm(
+            `Создать ${n} жильцов — ТОЛЬКО ФИО (без комнаты, адреса и прочего)?\n\n` +
+            `Будут заведены:\n  • ${sample}${more}\n\n` +
+            `Пропущено: не-ФИО/организаций — ${skNot}, дублей с базой — ${skDup}.\n\n` +
+            `Пароль, комнату и данные заполнишь потом сам.`,
+            { title: 'Создать отсутствующих в базе', confirmText: `Создать ${n}` }
+        );
+        if (!ok) return;
+        try {
+            const r = await api.post('/financier/gisgmp/create-missing-residents?dry_run=false');
+            toast(`Создано жильцов: ${r.created_count}. Пропущено: не-ФИО ${r.skip_not_fio}, дублей ${r.skip_in_db + r.skip_similar}.`, 'success');
+            this.openReconcileFio();  // перерисовать союз — сирот станет меньше
+        } catch (e) { toast('Ошибка создания: ' + (e?.message || e), 'error'); }
+    },
+
     async openReconcileFio() {
         const body = this.dom.gisgmpReconcileFioBody;
         if (!body) return;
@@ -929,6 +961,7 @@ ${(d.orphans || []).length ? `<h2>Не найдены в базе (1С/ГИС е
             btnGisgmpReconcile: document.getElementById('btnGisgmpReconcile'),
             gisgmpReconcileBody: document.getElementById('gisgmpReconcileBody'),
             btnGisgmpReconcileFio: document.getElementById('btnGisgmpReconcileFio'),
+            btnGisgmpCreateMissing: document.getElementById('btnGisgmpCreateMissing'),
             btnGisgmpPurge: document.getElementById('btnGisgmpPurge'),
             gisgmpReconcileFioBody: document.getElementById('gisgmpReconcileFioBody'),
             btnGisgmpRecheck: document.getElementById('btnGisgmpRecheck'),
@@ -985,6 +1018,7 @@ ${(d.orphans || []).length ? `<h2>Не найдены в базе (1С/ГИС е
         this.dom.btnGisgmpFindings?.addEventListener('click', () => this.openGisgmpFindings());
         this.dom.btnGisgmpReconcile?.addEventListener('click', () => this.openGisgmpReconcile());
         this.dom.btnGisgmpReconcileFio?.addEventListener('click', () => this.openReconcileFio());
+        this.dom.btnGisgmpCreateMissing?.addEventListener('click', () => this.createMissingResidents());
         this.dom.btnGisgmpPurge?.addEventListener('click', () => this.purgeGisgmp());
         this._initGisDropdowns();
         this.dom.btnGisgmpRecheck?.addEventListener('click', () => this.recheckGisgmp());
