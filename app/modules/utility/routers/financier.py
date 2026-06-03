@@ -16,7 +16,7 @@ from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func, or_, desc, asc, update as _sa_update
+from sqlalchemy import func, or_, desc, asc, update as _sa_update, text
 from app.core.config import settings
 from app.core.database import get_db
 # Добавлен импорт модели Room
@@ -1205,16 +1205,28 @@ async def gisgmp_reconcile_fio(
             except Exception:
                 pass
 
-    # --- ГИС: находки (по сырому ФИО реестра) ---
-    findings = await _load_findings(db)
-    if findings:
-        for frow in findings.get("summary", []):
-            r = _row(frow.get("fio"))
-            if r is None:
-                continue
-            r["in_gis"] = True
-            r["d209_gis"] += float(frow.get("debt_209") or 0)
-            r["d205_gis"] += float(frow.get("debt_205") or 0)
+    # --- ГИС: ТОЛЬКО summary находок (без 8000 сырых charges — иначе союз тормозит).
+    # Достаём summary JSON-экстрактом в Postgres: сервер парсит value один раз и
+    # отдаёт лишь сводку (~сотни строк), а не весь массив начислений. ---
+    fres = (await db.execute(
+        text("SELECT (value::jsonb -> 'summary')::text AS s, "
+             "value::jsonb ->> 'synced_at' AS at "
+             "FROM system_settings WHERE key = :k"),
+        {"k": GISGMP_FINDINGS_KEY},
+    )).first()
+    gis_synced = None
+    if fres and fres.s:
+        gis_synced = fres.at
+        try:
+            for frow in json.loads(fres.s):
+                r = _row(frow.get("fio"))
+                if r is None:
+                    continue
+                r["in_gis"] = True
+                r["d209_gis"] += float(frow.get("debt_209") or 0)
+                r["d205_gis"] += float(frow.get("debt_205") or 0)
+        except Exception:
+            pass
 
     items = list(rows.values())
     summary = {
@@ -1228,7 +1240,7 @@ async def gisgmp_reconcile_fio(
     items.sort(key=lambda r: ((r["in_1c"] and r["in_gis"] and r["in_db"]), r["fio"] or ""))
     return {
         "sources": sources,
-        "gis_synced_at": (findings or {}).get("synced_at"),
+        "gis_synced_at": gis_synced,
         "summary": summary,
         "rows": items[:3000],
     }
