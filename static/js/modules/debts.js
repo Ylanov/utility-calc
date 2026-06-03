@@ -343,16 +343,16 @@ export const DebtsModule = {
             const d1c = (r.d209_1c || r.d205_1c) ? fmt((r.d209_1c || 0) + (r.d205_1c || 0)) : '<span style="color:#d1d5db;">—</span>';
             const dgis = (r.d209_gis || r.d205_gis) ? fmt((r.d209_gis || 0) + (r.d205_gis || 0)) : '<span style="color:#d1d5db;">—</span>';
             const bad = !(r.in_1c && r.in_gis && r.in_db);
+            // Сирота (есть в 1С/ГИС, нет в базе) → кнопка «Привязать» к жильцу.
+            const action = (!r.in_db && (r.in_1c || r.in_gis))
+                ? `<button class="action-btn secondary-btn" style="font-size:10px; padding:2px 7px;" data-link-fio="${esc(r.fio)}"><i class="fa-solid fa-link"></i> Привязать</button>`
+                : '';
             return `<tr style="${bad ? 'background:rgba(254,226,226,.35);' : ''}"><td>${esc(r.fio)}</td>`
                 + `<td class="text-center">${mark(r.in_1c)}</td><td class="text-right">${d1c}</td>`
                 + `<td class="text-center">${mark(r.in_gis)}</td><td class="text-right">${dgis}</td>`
-                + `<td class="text-center">${mark(r.in_db)}</td></tr>`;
+                + `<td class="text-center">${mark(r.in_db)}</td><td class="text-center">${action}</td></tr>`;
         }).join('');
         const fbtn = (key, label) => `<button class="action-btn ${flt === key ? 'primary-btn' : 'secondary-btn'}" style="font-size:11px; padding:3px 10px;" data-rf="${key}">${label}</button>`;
-
-        const o1c = (d.orphans_1c || []).map(r => `<tr><td>${esc(r.fio)}</td><td class="text-right">${fmt(r.debt_209)}</td><td class="text-right">${fmt(r.debt_205)}</td></tr>`).join('');
-        const ogis = (d.orphans_gis || []).map(r => `<tr><td>${esc(r.fio)}</td><td class="text-right">${fmt(r.debt_209)}</td><td class="text-right">${fmt(r.debt_205)}</td></tr>`).join('');
-        const nodebt = (d.db_no_debt || []).map(r => `<tr><td>${esc(r.username)}</td></tr>`).join('');
 
         body.innerHTML =
             `<div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;">
@@ -368,15 +368,52 @@ export const DebtsModule = {
             </div>
             <div style="font-size:11px; color:var(--text-secondary); margin-bottom:6px;">Показано: <b>${list.length}</b>. Союз по ТОЧНОМУ ФИО (регистр/ё/пробелы) — никаких «похожих».</div>
             <div class="table-responsive" style="max-height:55vh; overflow:auto;"><table class="sticky-header-table" style="font-size:12px;">
-                <thead><tr><th>ФИО</th><th class="text-center">1С</th><th class="text-right">Долг 1С</th><th class="text-center">ГИС</th><th class="text-right">Долг ГИС</th><th class="text-center">База</th></tr></thead>
-                <tbody>${trs || '<tr><td colspan="6" class="text-center" style="color:#9ca3af;">нет строк под фильтр</td></tr>'}</tbody>
+                <thead><tr><th>ФИО</th><th class="text-center">1С</th><th class="text-right">Долг 1С</th><th class="text-center">ГИС</th><th class="text-right">Долг ГИС</th><th class="text-center">База</th><th class="text-center">Действие</th></tr></thead>
+                <tbody>${trs || '<tr><td colspan="7" class="text-center" style="color:#9ca3af;">нет строк под фильтр</td></tr>'}</tbody>
             </table></div>`;
         body.querySelectorAll('[data-rf]').forEach(b => b.addEventListener('click', () => { this._reconFioFilter = b.getAttribute('data-rf'); this.renderReconcileFio(); }));
+        body.querySelectorAll('[data-link-fio]').forEach(b => b.addEventListener('click', () => this.linkFioPrompt(b.getAttribute('data-link-fio'))));
         const si = document.getElementById('reconFioSearch');
         if (si) {
             si.addEventListener('input', () => { this._reconFioQuery = si.value; this.renderReconcileFio(); });
             if (this._reconFioQuery) { si.focus(); si.setSelectionRange(si.value.length, si.value.length); }
         }
+    },
+
+    // Привязать «сироту» 1С/ГИС к жильцу базы: кандидаты по фамилии → выбор → алиас + переименование.
+    async linkFioPrompt(fio) {
+        let cands = [];
+        try {
+            const r = await api.get(`/financier/gisgmp/link-candidates?fio=${encodeURIComponent(fio)}`);
+            cands = r.candidates || [];
+        } catch (e) { toast('Ошибка загрузки кандидатов: ' + (e?.message || e), 'error'); return; }
+        const ov = document.createElement('div');
+        ov.className = 'modal-overlay open';
+        ov.style.zIndex = '9999';
+        const candHtml = cands.length
+            ? cands.map(c => `<button class="action-btn secondary-btn" style="display:block; width:100%; text-align:left; margin-bottom:6px; font-size:13px;" data-uid="${c.id}">${esc(c.username)} <span style="color:var(--text-secondary); font-size:11px;">— ${esc(c.address)}</span></button>`).join('')
+            : '<div style="color:var(--text-secondary); padding:8px;">Нет жильцов с такой фамилией в базе. Возможно, жильца нет — заведи его во вкладке «Жильцы», потом привяжи.</div>';
+        ov.innerHTML = `<div class="modal-window" style="width:540px; max-width:94vw;">
+            <div class="modal-header"><h3 style="font-size:15px;">Привязать «${esc(fio)}» к жильцу</h3><button class="close-btn" data-close>&times;</button></div>
+            <div class="modal-form" style="padding:14px 16px; max-height:60vh; overflow:auto;">
+                <p style="font-size:12px; color:var(--text-secondary); margin:0 0 10px;">Кандидаты по фамилии. Выбери жильца — создастся алиас (долг привяжется при выгрузке), а имя в базе обновится на «${esc(fio)}» (приоритет 1С/ГИС).</p>
+                ${candHtml}
+            </div>
+        </div>`;
+        document.body.appendChild(ov);
+        const close = () => ov.remove();
+        ov.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', close));
+        ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+        ov.querySelectorAll('[data-uid]').forEach(b => b.addEventListener('click', async () => {
+            const uid = Number(b.getAttribute('data-uid'));
+            try {
+                const res = await api.post('/financier/gisgmp/link-fio', { fio, user_id: uid, rename: true });
+                toast(res.warning || `Привязано → ${res.username}`, res.warning ? 'warning' : 'success');
+                close();
+                this._reconFio = await api.get('/financier/gisgmp/reconcile-fio');
+                this.renderReconcileFio();
+            } catch (e) { toast('Ошибка привязки: ' + (e?.message || e), 'error'); }
+        }));
     },
 
     // История/аудит массовых актуализаций: что актуализировали и что изменилось (до→после).

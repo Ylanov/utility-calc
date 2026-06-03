@@ -1234,6 +1234,102 @@ async def gisgmp_reconcile_fio(
     }
 
 
+@router.get("/gisgmp/link-candidates", summary="Кандидаты-жильцы по фамилии для привязки сироты")
+async def gisgmp_link_candidates(
+    fio: str = Query(..., description="ФИО из 1С/ГИС"),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Для кнопки «Привязать» в союзе: жильцы базы с ТОЙ ЖЕ фамилией (точно,
+    первое слово) — кандидаты на привязку сироты 1С/ГИС к учётке. Не fuzzy:
+    предлагаем по фамилии, выбор подтверждает админ."""
+    _require_finance(current_user)
+    parts = (fio or "").strip().split()
+    surname = parts[0].lower() if parts else ""
+    if not surname:
+        return {"candidates": []}
+    rows = (await db.execute(
+        select(User.id, User.username,
+               Room.dormitory_name, Room.room_number,
+               Room.street, Room.house_number, Room.apartment_number)
+        .outerjoin(Room, User.room_id == Room.id)
+        .where(User.role == "user", User.is_deleted.is_(False))
+    )).all()
+    out = []
+    for uid, un, dorm, rno, street, house, apt in rows:
+        first = (un or "").strip().split()[:1]
+        if first and first[0].lower() == surname:
+            if dorm:
+                addr = f"{dorm}, ком. {rno or '—'}"
+            elif street:
+                addr = f"ул. {street}, д. {house or '—'}, кв. {apt or '—'}"
+            else:
+                addr = "—"
+            out.append({"id": uid, "username": un, "address": addr})
+    out.sort(key=lambda x: x["username"] or "")
+    return {"surname": surname, "candidates": out}
+
+
+class GisgmpLinkFioIn(BaseModel):
+    fio: str
+    user_id: int
+    rename: bool = True
+
+
+@router.post("/gisgmp/link-fio", summary="Привязать ФИО из 1С/ГИС к жильцу (алиас + переименование)")
+async def gisgmp_link_fio(
+    payload: GisgmpLinkFioIn,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Связывает ФИО из 1С/ГИС с учёткой жильца: создаёт/перенаводит алиас
+    (долг привяжется при выгрузке) и, если rename=True, переименовывает жильца
+    в имя из 1С/ГИС (источник истины). Это явная привязка админа, не fuzzy."""
+    _require_finance(current_user)
+    from app.modules.utility.models import GSheetsAlias
+    from app.modules.utility.services.gsheets_sync import normalize_fio
+    from app.modules.utility.routers.admin_dashboard import write_audit_log
+    fio = (payload.fio or "").strip()
+    user = await db.get(User, payload.user_id)
+    if not user or user.is_deleted:
+        raise HTTPException(404, "Жилец не найден")
+    normalized = normalize_fio(fio)
+    if not normalized:
+        raise HTTPException(400, "Пустое ФИО")
+    # Алиас: явный выбор админа — перенаводим, если был на другого жильца.
+    existing = (await db.execute(
+        select(GSheetsAlias).where(GSheetsAlias.alias_fio_normalized == normalized)
+    )).scalars().first()
+    if existing:
+        existing.user_id = user.id
+        existing.alias_fio = fio
+        existing.kind = "debt_manual"
+    else:
+        db.add(GSheetsAlias(
+            alias_fio=fio, alias_fio_normalized=normalized, user_id=user.id,
+            kind="debt_manual", note="link-fio (союз)", created_by_id=current_user.id,
+        ))
+    # Переименование в имя из 1С/ГИС (приоритет источника), если нет конфликта.
+    renamed, warning, old_name = False, None, user.username
+    if payload.rename and fio and fio != user.username:
+        clash = (await db.execute(
+            select(User.id).where(User.username == fio, User.id != user.id)
+        )).first()
+        if clash:
+            warning = f"Имя «{fio}» уже занято другим жильцом — переименование пропущено, алиас создан."
+        else:
+            user.username = fio
+            renamed = True
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action="gisgmp_link_fio", entity_type="user", entity_id=user.id,
+        details={"fio": fio, "old_name": old_name, "renamed": renamed},
+    )
+    await db.commit()
+    return {"ok": True, "renamed": renamed, "warning": warning,
+            "user_id": user.id, "username": user.username}
+
+
 @router.get("/debts/staged-status", summary="Черновики долгов 1С, ждущие выгрузки")
 async def debts_staged_status(
     current_user: User = Depends(get_current_user),
