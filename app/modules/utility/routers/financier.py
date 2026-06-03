@@ -1835,8 +1835,14 @@ async def gisgmp_actualize_build(
     target_fios = {fio for fio, uid in fio_to_uid.items() if uid in flagged}
 
     from app.modules.utility.services.gisgmp_import import (
-        is_unpaid, is_annulled, classify_account, GISGMP_CACHE_KEY,
+        is_unpaid, is_annulled, classify_account, parse_reg_dt, GISGMP_CACHE_KEY,
     )
+    # Окно актуализации = окно сбора (months_back из настроек релея). «Всё время»
+    # (>=600 мес) → без фильтра; иначе актуализируем только начисления, чьё
+    # bill_date не старше окна (напр. 1 год / полгода).
+    rcfg = await _load_relay_cfg(db)
+    months_back = int(rcfg.get("months_back") or 999)
+    cutoff = None if months_back >= 600 else (utcnow() - timedelta(days=months_back * 31))
     cache_row = (await db.execute(
         select(SystemSetting).where(SystemSetting.key == GISGMP_CACHE_KEY)
     )).scalars().first()
@@ -1850,6 +1856,10 @@ async def gisgmp_actualize_build(
                 fio = (ch.get("payer_name") or "").strip()
                 if fio not in target_fios:
                     continue
+                if cutoff is not None:
+                    dt = parse_reg_dt(ch.get("bill_date"))
+                    if dt is not None and dt < cutoff:
+                        continue
                 u = ch.get("charge_uuid")
                 if not u or u in seen:
                     continue

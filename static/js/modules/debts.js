@@ -128,7 +128,10 @@ export const DebtsModule = {
             }
             const r = s.relay || {};
             if (this.dom.gisgmpEnabled) this.dom.gisgmpEnabled.checked = r.enabled !== false;
-            if (this.dom.gisgmpMonths) this.dom.gisgmpMonths.value = r.months_back ?? 2;
+            if (this.dom.gisgmpMonths) {
+                const mb = r.months_back ?? 999;
+                this.dom.gisgmpMonths.value = mb >= 24 ? '999' : (mb >= 9 ? '12' : '6');
+            }
             if (this.dom.gisgmpHour) this.dom.gisgmpHour.value = r.daily_hour ?? 22;
 
             const parts = [];
@@ -191,7 +194,7 @@ export const DebtsModule = {
             const dh = parseInt(this.dom.gisgmpHour?.value, 10);
             await api.put('/financier/gisgmp/relay-config', {
                 enabled: !!this.dom.gisgmpEnabled?.checked,
-                months_back: parseInt(this.dom.gisgmpMonths?.value, 10) || 2,
+                months_back: parseInt(this.dom.gisgmpMonths?.value, 10) || 999,
                 daily_hour: Number.isNaN(dh) ? 22 : dh,
             });
             toast('Настройки релея сохранены', 'info');
