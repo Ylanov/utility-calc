@@ -438,16 +438,24 @@ export const DebtsModule = {
         if (q) list = list.filter(r => (r.fio || '').toLowerCase().includes(q));
         const mark = (on) => on ? '<span style="color:#047857; font-weight:700;">✓</span>' : '<span style="color:#b91c1c; font-weight:700;">✗</span>';
         const trs = list.slice(0, 1500).map(r => {
-            const d1c = (r.d209_1c || r.d205_1c) ? fmt((r.d209_1c || 0) + (r.d205_1c || 0)) : '<span style="color:#d1d5db;">—</span>';
-            const dgis = (r.d209_gis || r.d205_gis) ? fmt((r.d209_gis || 0) + (r.d205_gis || 0)) : '<span style="color:#d1d5db;">—</span>';
+            const t1c = (r.d209_1c || 0) + (r.d205_1c || 0);
+            const tgis = (r.d209_gis || 0) + (r.d205_gis || 0);
+            const d1c = (r.d209_1c || r.d205_1c) ? fmt(t1c) : '<span style="color:#d1d5db;">—</span>';
+            const dgis = (r.d209_gis || r.d205_gis) ? fmt(tgis) : '<span style="color:#d1d5db;">—</span>';
+            // Δ = ГИС − 1С (то же сравнение, что в «Сверке с 1С», но тут по ФИО,
+            // без гейта по базе). Красный = ГИС больше, синий = 1С больше.
+            const dv = tgis - t1c;
+            const dCol = Math.abs(dv) < 0.005 ? '<span style="color:#9ca3af;">0</span>'
+                : `<span style="color:${dv > 0 ? '#b91c1c' : '#0ea5e9'}; font-weight:700;">${dv > 0 ? '+' : '−'}${fmt(Math.abs(dv))}</span>`;
             const bad = !(r.in_1c && r.in_gis && r.in_db);
-            // Сирота (есть в 1С/ГИС, нет в базе) → кнопка «Привязать» к жильцу.
+            // «Привязать» — опционально (связать сироту с жильцом базы для выгрузки).
             const action = (!r.in_db && (r.in_1c || r.in_gis))
                 ? `<button class="action-btn secondary-btn" style="font-size:10px; padding:2px 7px;" data-link-fio="${esc(r.fio)}"><i class="fa-solid fa-link"></i> Привязать</button>`
                 : '';
             return `<tr style="${bad ? 'background:rgba(254,226,226,.35);' : ''}"><td>${esc(r.fio)}</td>`
                 + `<td class="text-center">${mark(r.in_1c)}</td><td class="text-right">${d1c}</td>`
                 + `<td class="text-center">${mark(r.in_gis)}</td><td class="text-right">${dgis}</td>`
+                + `<td class="text-right">${dCol}</td>`
                 + `<td class="text-center">${mark(r.in_db)}</td><td class="text-center">${action}</td></tr>`;
         }).join('');
         const fbtn = (key, label) => `<button class="action-btn ${flt === key ? 'primary-btn' : 'secondary-btn'}" style="font-size:11px; padding:3px 10px;" data-rf="${key}">${label}</button>`;
@@ -466,8 +474,8 @@ export const DebtsModule = {
             </div>
             <div style="font-size:11px; color:var(--text-secondary); margin-bottom:6px;">Показано: <b>${list.length}</b>. Союз по ТОЧНОМУ ФИО (регистр/ё/пробелы) — никаких «похожих».</div>
             <div class="table-responsive" style="max-height:55vh; overflow:auto;"><table class="sticky-header-table" style="font-size:12px;">
-                <thead><tr><th>ФИО</th><th class="text-center">1С</th><th class="text-right">Долг 1С</th><th class="text-center">ГИС</th><th class="text-right">Долг ГИС</th><th class="text-center">База</th><th class="text-center">Действие</th></tr></thead>
-                <tbody>${trs || '<tr><td colspan="7" class="text-center" style="color:#9ca3af;">нет строк под фильтр</td></tr>'}</tbody>
+                <thead><tr><th>ФИО</th><th class="text-center">1С</th><th class="text-right">Долг 1С</th><th class="text-center">ГИС</th><th class="text-right">Долг ГИС</th><th class="text-right">Δ ГИС−1С</th><th class="text-center">База</th><th class="text-center">Действие</th></tr></thead>
+                <tbody>${trs || '<tr><td colspan="8" class="text-center" style="color:#9ca3af;">нет строк под фильтр</td></tr>'}</tbody>
             </table></div>`;
         body.querySelectorAll('[data-rf]').forEach(b => b.addEventListener('click', () => { this._reconFioFilter = b.getAttribute('data-rf'); this.renderReconcileFio(); }));
         body.querySelectorAll('[data-link-fio]').forEach(b => b.addEventListener('click', () => this.linkFioPrompt(b.getAttribute('data-link-fio'))));
