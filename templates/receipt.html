@@ -63,22 +63,37 @@ td { text-align: right; }
     </div>
 </div>
 
+<!-- ═════ СЧЁТ 205 — НАЁМ (отдельный блок, НЕ вместе с 209) ═════ -->
+<h3 style="margin:0 0 6px; font-size:12pt; border-bottom:2px solid #333; padding-bottom:3px;">
+    Счёт 205 — Плата за наём жилого помещения
+</h3>
 <table>
 <thead>
 <tr>
-    <th>Услуга</th><th>Ед.</th><th>Объем</th><th>Тариф</th><th>Начислено</th>
+    <th>Услуга</th><th>Ед.</th><th>Объём</th><th>Тариф</th><th>Начислено</th>
 </tr>
 </thead>
 <tbody>
 <tr>
-    <!-- ИСПРАВЛЕНИЕ площади во всех строках -->
-    <td class="col-left">Наем жилого помещения</td><td>м²</td><td>{{ room.apartment_area }}</td><td>{{ tariff.social_rent }}</td><td>{{ reading.cost_social_rent|round(2) }}</td>
+    <td class="col-left">Наём жилого помещения</td><td>м²</td><td>{{ room.apartment_area }}</td><td>{{ tariff.social_rent }}</td><td>{{ reading.cost_social_rent|round(2) }}</td>
 </tr>
+<tr style="font-weight:bold; background:#eee;">
+    <td class="col-left" colspan="4">Итого начислено по счёту 205 за период</td><td>{{ total_205_due|round(2) }}</td>
+</tr>
+</tbody>
+</table>
+
+<!-- ═════ СЧЁТ 209 — КОММУНАЛЬНЫЕ УСЛУГИ И СОДЕРЖАНИЕ (отдельно от 205) ═════ -->
+<h3 style="margin:14px 0 6px; font-size:12pt; border-bottom:2px solid #333; padding-bottom:3px;">
+    Счёт 209 — Коммунальные услуги и содержание
+</h3>
+<table>
+<thead>
+<tr><th>Услуга</th><th>Ед.</th><th>Объём</th><th>Тариф</th><th>Начислено</th></tr>
+</thead>
+<tbody>
 <tr>
     <td class="col-left">Содержание и ремонт</td><td>м²</td><td>{{ room.apartment_area }}</td><td>{{ tariff.maintenance_repair }}</td><td>{{ reading.cost_maintenance|round(2) }}</td>
-</tr>
-<tr>
-    <td colspan="5" class="col-left" style="background:#f4f4f4;font-weight:bold;">Коммунальные услуги</td>
 </tr>
 <tr>
     <td class="col-left">Холодное водоснабжение</td><td>м³</td><td>{{ vol_cold|round(2) }}</td><td>{{ tariff.water_supply }}</td><td>{{ reading.cost_cold_water|round(2) }}</td>
@@ -102,6 +117,9 @@ td { text-align: right; }
 </tr>
 <tr>
     <td class="col-left">Вывоз ТКО</td><td>м²</td><td>{{ room.apartment_area }}</td><td>{{ tariff.waste_disposal }}</td><td>{{ reading.cost_waste|round(2) }}</td>
+</tr>
+<tr style="font-weight:bold; background:#eee;">
+    <td class="col-left" colspan="4">Итого начислено по счёту 209 за период</td><td>{{ total_209_due|round(2) }}</td>
 </tr>
 {% for adj in adjustments %}
 <tr style="background: #fffbef;">
