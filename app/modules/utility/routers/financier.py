@@ -3365,19 +3365,41 @@ async def debts_undo_import(
     if not log.snapshot_data:
         raise HTTPException(400, "Нет snapshot-данных — откат невозможен (старый импорт?)")
 
-    before = log.snapshot_data.get("before", {})
-    inserted_ids = log.snapshot_data.get("inserted_reading_ids", [])
+    before = log.snapshot_data.get("before") or {}
+    inserted_ids = log.snapshot_data.get("inserted_reading_ids") or []
+    if not isinstance(before, dict):
+        before = {}
+    if not isinstance(inserted_ids, list):
+        inserted_ids = []
+    inserted_ids = [i for i in inserted_ids if isinstance(i, int)]
 
-    # 1. Восстанавливаем существующие readings из snapshot
+    # 1. Восстанавливаем существующие readings из snapshot.
+    # ЗАЩИТА: снимок может быть пустым/иного формата (старые или ГИС-импорты) —
+    # пропускаем некорректные записи, не роняем 500.
+    def _dec(v):
+        try:
+            return Decimal(str(v if v not in (None, "") else "0"))
+        except Exception:
+            return Decimal("0")
     updates = []
     for reading_id_str, vals in before.items():
+        if not isinstance(vals, dict):
+            continue
+        try:
+            rid = int(reading_id_str)
+        except (TypeError, ValueError):
+            continue
         updates.append({
-            "id": int(reading_id_str),
-            "debt_209": Decimal(vals.get("debt_209", "0")),
-            "overpayment_209": Decimal(vals.get("overpayment_209", "0")),
-            "debt_205": Decimal(vals.get("debt_205", "0")),
-            "overpayment_205": Decimal(vals.get("overpayment_205", "0")),
+            "id": rid,
+            "debt_209": _dec(vals.get("debt_209")),
+            "overpayment_209": _dec(vals.get("overpayment_209")),
+            "debt_205": _dec(vals.get("debt_205")),
+            "overpayment_205": _dec(vals.get("overpayment_205")),
         })
+    if not updates and not inserted_ids:
+        raise HTTPException(
+            400, "Снимок импорта пуст или несовместим — откат не применён "
+                 "(вероятно, ГИС-импорт или старый формат). Долги не изменены.")
 
     # SQLAlchemy async не имеет bulk_update_mappings — делаем обычный update per row.
     # Для 1000+ записей не критично (один индексированный UPDATE).
