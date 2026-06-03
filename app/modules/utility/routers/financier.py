@@ -1161,11 +1161,12 @@ async def gisgmp_reconcile_fio(
     db: AsyncSession = Depends(get_db),
 ):
     """СОЮЗ по ТОЧНОМУ ФИО трёх источников: 1С (последний импорт/черновик),
-    ГИС ГМП (находки), база жильцов. Одна строка на уникальное нормализованное
-    ФИО (регистр/ё/пробелы), колонки «в 1С / в ГИС / в базе» + долги + флаги
-    «нет в …». Никаких «похожих» — только точное совпадение ФИО."""
+    ГИС ГМП (ВЕСЬ кэш — и должники, и оплаченные «Сквитировано»), база жильцов.
+    Одна строка на уникальное нормализованное ФИО, колонки «в 1С / в ГИС / в базе»
+    + долги (из находок: 0, если в ГИС всё оплачено) + флаги «нет в …». Никаких
+    «похожих» — только точное совпадение ФИО."""
     _require_finance(current_user)
-    from app.modules.utility.services.gisgmp_import import GISGMP_SOURCE_LABEL
+    from app.modules.utility.services.gisgmp_import import GISGMP_SOURCE_LABEL, GISGMP_CACHE_KEY
     from app.modules.utility.services.gsheets_sync import normalize_fio
 
     rows: dict[str, dict] = {}
@@ -1231,9 +1232,27 @@ async def gisgmp_reconcile_fio(
             except Exception:
                 pass
 
-    # --- ГИС: ТОЛЬКО summary находок (без 8000 сырых charges — иначе союз тормозит).
-    # Достаём summary JSON-экстрактом в Postgres: сервер парсит value один раз и
-    # отдаёт лишь сводку (~сотни строк), а не весь массив начислений. ---
+    # --- ГИС, СУЩЕСТВОВАНИЕ: по ВСЕМУ кэшу начислений (вкл. оплаченных
+    # «Сквитировано»). Человек может быть в ГИС с НУЛЕВЫМ долгом (всё оплачено) —
+    # раньше in_gis брался только из находок (должники), и оплаченные показывались
+    # «нет в ГИС», хотя в ГИС ГМП они есть. DISTINCT payer_name извлекаем в
+    # Postgres (парс кэша один раз, в Python приходят только имена). ---
+    try:
+        gis_names = (await db.execute(
+            text("SELECT DISTINCT c->>'payer_name' AS fio "
+                 "FROM (SELECT value FROM system_settings WHERE key = :k) s, "
+                 "LATERAL jsonb_each(s.value::jsonb) AS e(uin, c)"),
+            {"k": GISGMP_CACHE_KEY},
+        )).all()
+        for (fio,) in gis_names:
+            r = _row(fio)
+            if r is not None:
+                r["in_gis"] = True
+    except Exception:
+        pass
+
+    # --- ГИС, ДОЛГ: summary находок (только неоплаченные 209/205). Достаём
+    # summary JSON-экстрактом в Postgres (без сырых charges — иначе союз тормозит). ---
     fres = (await db.execute(
         text("SELECT (value::jsonb -> 'summary')::text AS s, "
              "value::jsonb ->> 'synced_at' AS at "
