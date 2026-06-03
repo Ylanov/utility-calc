@@ -1557,11 +1557,29 @@ async def debts_publish(
 
 async def _build_reconcile(db: AsyncSession) -> dict:
     findings = await _load_findings(db)
+    from app.modules.utility.services.gsheets_sync import normalize_fio
     gis: dict[int, dict] = {}
+    # Несопоставленные ФИО (1С/ГИС не нашли жильца в базе) — собираем отдельно,
+    # чтобы НЕ ТЕРЯТЬ людей: показываем их блоком внизу сверки и в печати.
+    orphans_map: dict[str, dict] = {}
+
+    def _orphan(fio_raw):
+        n = normalize_fio(fio_raw or "")
+        if not n:
+            return None
+        return orphans_map.setdefault(n, {
+            "fio": (fio_raw or "").strip(),
+            "gis_209": 0.0, "gis_205": 0.0, "c1_209": 0.0, "c1_205": 0.0,
+        })
+
     if findings:
         for row in findings.get("summary", []):
             uid = row.get("matched_user_id")
             if uid is None:
+                o = _orphan(row.get("fio"))
+                if o is not None:
+                    o["gis_209"] += float(row.get("debt_209") or 0)
+                    o["gis_205"] += float(row.get("debt_205") or 0)
                 continue
             gis[int(uid)] = {
                 "209": Decimal(str(row.get("debt_209") or 0)),
@@ -1603,6 +1621,15 @@ async def _build_reconcile(db: AsyncSession) -> dict:
                     val = Decimal("0")
                 if val:
                     mr.setdefault(int(uid_s), {})[acc] = val
+        # 1С-сироты этого импорта (ФИО, которые не сматчились с жильцом базы).
+        if log and log.not_found_users:
+            for nf in log.not_found_users:
+                o = _orphan(nf.get("fio"))
+                if o is not None:
+                    try:
+                        o[f"c1_{acc}"] += float(nf.get("debt") or 0)
+                    except Exception:
+                        pass
 
     ids = set(gis) | set(mr)
     unames: dict[int, str] = {}
@@ -1723,6 +1750,8 @@ async def _build_reconcile(db: AsyncSession) -> dict:
     out["problems"] = problems
     out["matched_count"] = matched_total
     out["override_count"] = len(ovr_ids)
+    # Несопоставленные (1С/ГИС, нет жильца в базе) — отдельным блоком, чтобы не теряли.
+    out["orphans"] = sorted(orphans_map.values(), key=lambda x: x["fio"])[:2000]
     return out
 
 

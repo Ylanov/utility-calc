@@ -459,8 +459,9 @@ export const DebtsModule = {
                 const res = await api.post('/financier/gisgmp/link-fio', { fio, user_id: uid, rename: true });
                 toast(res.warning || `Привязано → ${res.username}`, res.warning ? 'warning' : 'success');
                 close();
-                this._reconFio = await api.get('/financier/gisgmp/reconcile-fio');
-                this.renderReconcileFio();
+                // Обновляем открытые виды: союз «Сверка ФИО» и «Сверка с 1С».
+                if (this._reconFio) { try { this._reconFio = await api.get('/financier/gisgmp/reconcile-fio'); this.renderReconcileFio(); } catch (er) { /* норм */ } }
+                this.reloadReconcile();
             } catch (e) { toast('Ошибка привязки: ' + (e?.message || e), 'error'); }
         }));
     },
@@ -670,17 +671,35 @@ export const DebtsModule = {
                 + `<td><span style="color:${L[1]};font-size:11px;">${L[0]}${r.severity === 'high' ? ' ⚠' : ''}${r.overridden ? ' ✔' : ''}</span></td>`
                 + `<td>${act}</td></tr>`;
         }).join('');
+        // Несопоставленные (1С/ГИС есть, жильца в базе нет) — блок внизу, чтобы НЕ ТЕРЯТЬ людей.
+        let orph = d.orphans || [];
+        if (q) orph = orph.filter(o => (o.fio || '').toLowerCase().includes(q));
+        const orphRows = orph.map(o => {
+            const where = [];
+            if (o.gis_209 || o.gis_205) where.push('ГИС');
+            if (o.c1_209 || o.c1_205) where.push('1С');
+            return `<tr style="background:#fffbeb;"><td>${esc(o.fio)}</td>`
+                + `<td class="text-right">${fmt(o.gis_209)}</td><td class="text-right">${fmt(o.gis_205)}</td>`
+                + `<td class="text-right">${fmt(o.c1_209)}</td><td class="text-right">${fmt(o.c1_205)}</td>`
+                + `<td style="font-size:11px;color:#92400e;">в ${where.join('+') || '—'}, нет в базе</td>`
+                + `<td><button class="recon-linkorph" data-fio="${esc(o.fio)}" style="font-size:11px;color:#fff;background:#0ea5e9;border:none;border-radius:4px;padding:2px 7px;cursor:pointer;">Привязать</button></td></tr>`;
+        }).join('');
         res.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;">Показано: ${list.length}. ⚠ = крупное расхождение (≥20k). Красный Δ = ГИС больше, синий = 1С больше.</div>`
-            + `<div class="table-responsive" style="max-height:65vh;overflow:auto;"><table class="sticky-header-table" style="font-size:12px;">`
+            + `<div class="table-responsive" style="max-height:55vh;overflow:auto;"><table class="sticky-header-table" style="font-size:12px;">`
             + `<thead><tr><th>Жилец</th><th class="text-right">209 ГИС</th><th class="text-right">209 1С</th><th class="text-right">Δ209</th>`
             + `<th class="text-right">205 ГИС</th><th class="text-right">205 1С</th><th class="text-right">Δ205</th><th class="text-right">Σ Δ</th><th title="За сколько разных месяцев долг в ГИС; ⤓ = стоит дотянуть">ГИС, мес</th><th>Флаг</th><th>Действие</th></tr></thead>`
-            + `<tbody>${rows || '<tr><td colspan="11" class="text-center">нет</td></tr>'}</tbody></table></div>`;
+            + `<tbody>${rows || '<tr><td colspan="11" class="text-center">нет</td></tr>'}</tbody></table></div>`
+            + (orph.length ? `<div style="font-size:13px;font-weight:600;color:#92400e;margin:14px 0 4px;">🔶 Не найдены в базе — ${orph.length} (есть в 1С/ГИС, жильца нет). Не теряем — их долги ниже. «Привязать» свяжет с жильцом.</div>`
+                + `<div class="table-responsive" style="max-height:40vh;overflow:auto;"><table class="sticky-header-table" style="font-size:12px;">`
+                + `<thead><tr><th>ФИО (1С/ГИС)</th><th class="text-right">209 ГИС</th><th class="text-right">205 ГИС</th><th class="text-right">209 1С</th><th class="text-right">205 1С</th><th>Где</th><th>Действие</th></tr></thead>`
+                + `<tbody>${orphRows}</tbody></table></div>` : '');
         res.querySelectorAll('.recon-payer').forEach(a => a.addEventListener('click', (e) => {
             e.preventDefault();
             this.openPayerCharges(a.getAttribute('data-fio'), a.getAttribute('data-uid'));
         }));
         res.querySelectorAll('.recon-apply').forEach(b => b.addEventListener('click', () => this.applyGisOverride(b.getAttribute('data-uid'), b.getAttribute('data-fio'))));
         res.querySelectorAll('.recon-revert').forEach(b => b.addEventListener('click', () => this.revertGisOverride(b.getAttribute('data-uid'), b.getAttribute('data-fio'))));
+        res.querySelectorAll('.recon-linkorph').forEach(b => b.addEventListener('click', () => this.linkFioPrompt(b.getAttribute('data-fio'))));
     },
 
     // Печатный отчёт сверки — чистый документ в новом окне → печать/PDF из браузера.
@@ -701,6 +720,7 @@ export const DebtsModule = {
                 + `<td class=r>${fmt(r.g205)}</td><td class=r>${fmt(r.c205)}</td><td class=r>${dlt(r.d205)}</td><td class=r><b>${dlt(r.delta)}</b></td>`
                 + `<td class=r>${r.gis_months || 0}${r.need_pull ? ' (дотянуть)' : ''}</td><td>${L[0]}</td></tr>`;
         }).join('');
+        const orphPrint = (d.orphans || []).map(o => `<tr><td>${esc(o.fio)}</td><td class=r>${fmt(o.gis_209)}</td><td class=r>${fmt(o.gis_205)}</td><td class=r>${fmt(o.c1_209)}</td><td class=r>${fmt(o.c1_205)}</td></tr>`).join('');
         const html = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>Сверка ГИС ГМП — 1С</title>
 <style>
 body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;margin:16px;}
@@ -722,6 +742,8 @@ td.r,th.r{text-align:right;white-space:nowrap;} tr:nth-child(even){background:#f
 <table><tr><th>Категория</th><th class=r>Жильцов</th><th class=r>Сумма Δ, ₽</th><th class=r>Крупных (≥20k)</th></tr>${probRows || '<tr><td colspan=4>расхождений нет</td></tr>'}</table>
 <h2>Разбор по жильцам — ${(d.residents || []).length} (сортировка по |разнице|)</h2>
 <table><thead><tr><th>Жилец</th><th class=r>209 ГИС</th><th class=r>209 1С</th><th class=r>Δ209</th><th class=r>205 ГИС</th><th class=r>205 1С</th><th class=r>Δ205</th><th class=r>Σ Δ</th><th class=r>ГИС, мес</th><th>Флаг</th></tr></thead><tbody>${rows}</tbody></table>
+${(d.orphans || []).length ? `<h2>Не найдены в базе (1С/ГИС есть, жильца нет) — ${(d.orphans || []).length}</h2>
+<table><thead><tr><th>ФИО</th><th class=r>209 ГИС</th><th class=r>205 ГИС</th><th class=r>209 1С</th><th class=r>205 1С</th></tr></thead><tbody>${orphPrint}</tbody></table>` : ''}
 <script>window.onload=function(){setTimeout(function(){window.print();},250);};</script>
 </body></html>`;
         const w = window.open('', '_blank');
