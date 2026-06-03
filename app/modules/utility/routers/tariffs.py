@@ -162,28 +162,29 @@ async def get_tariffs_with_stats(
     )
     tariffs = tariffs_result.scalars().all()
 
-    # Считаем пользователей по каждому тарифу одним запросом
-    user_counts_result = await db.execute(
-        select(
-            User.tariff_id,
-            func.count(User.id).label("user_count")
-        )
-        .where(User.is_deleted.is_(False))
-        .group_by(User.tariff_id)
+    # Кол-во жильцов по ЭФФЕКТИВНОМУ тарифу = Room.tariff_id (если активен), иначе
+    # дефолт. Тариф — свойство ЗДАНИЯ (комнаты); персональный User.tariff_id
+    # упразднён (у всех NULL). Раньше счётчик считал по User.tariff_id → все
+    # валились на дефолт (id=1) → «ЦСООР Лидер (328 чел.)». Теперь считаем как
+    # биллинг (tariff_cache.get_effective_tariff): только role=user, по комнате.
+    active_ids = {t.id for t in tariffs}
+    default_id = 1 if 1 in active_ids else (tariffs[0].id if tariffs else None)
+    ut_rows = await db.execute(
+        select(User.id, Room.tariff_id)
+        .select_from(User)
+        .outerjoin(Room, User.room_id == Room.id)
+        .where(User.is_deleted.is_(False), User.role == "user")
     )
-    user_counts_map = {row[0]: row[1] for row in user_counts_result.all()}
-
-    # Считаем пользователей без тарифа (tariff_id IS NULL) — они на дефолтном
-    null_count = user_counts_map.get(None, 0)
+    user_counts_map: dict[int, int] = {}
+    for _uid, rt in ut_rows.all():
+        eff = rt if (rt is not None and rt in active_ids) else default_id
+        if eff is not None:
+            user_counts_map[eff] = user_counts_map.get(eff, 0) + 1
 
     result = []
     for t in tariffs:
-        direct_count = user_counts_map.get(t.id, 0)
-        # Если это базовый тариф (id=1), добавляем пользователей без привязки
-        effective_count = direct_count + (null_count if t.id == 1 else 0)
-
         d = _tariff_full_dict(t)
-        d["user_count"] = effective_count
+        d["user_count"] = user_counts_map.get(t.id, 0)
         result.append(d)
 
     return result
