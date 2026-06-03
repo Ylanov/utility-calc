@@ -801,6 +801,27 @@
                 </form>
             </div>
 
+            <!-- Смена логина (учётка для входа; ФИО меняет только бухгалтерия) -->
+            <div class="card" style="margin: 0;">
+                <div class="card-header">
+                    <h3><i class="fa-solid fa-user-pen" style="color:var(--primary-color); margin-right:8px;"></i> Смена логина</h3>
+                </div>
+                <form id="changeLoginForm" class="styled-form">
+                    <p style="font-size:12px; color:var(--text-secondary); margin:0 0 12px;">
+                        Логин — это ваше имя для входа. ФИО (для начислений) меняет только бухгалтерия.
+                    </p>
+                    <div class="form-group mb-3">
+                        <label>Новый логин</label>
+                        <input type="text" id="clNew" required minlength="3" autocomplete="off" placeholder="Например: ivanov_ivan">
+                    </div>
+                    <div class="form-group" style="margin-bottom: 24px;">
+                        <label>Текущий пароль (для подтверждения)</label>
+                        <input type="password" id="clPass" required autocomplete="current-password">
+                    </div>
+                    <button type="submit" class="action-btn success-btn full-width" id="btnChangeLogin">Сменить логин</button>
+                </form>
+            </div>
+
             <!-- Дополнительная защита 2FA -->
             <div class="card" style="margin: 0;">
                 <div class="card-header">

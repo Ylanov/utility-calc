@@ -9,8 +9,8 @@
             <form id="addUserForm" class="styled-form">
                 <div class="form-grid-2 mb-3">
                     <div class="form-group">
-                        <label>Логин (Л/С)</label>
-                        <input type="text" id="newUsername" required>
+                        <label>ФИО <span style="color:var(--text-secondary);font-weight:400;font-size:11px;">(сверка 1С/ГИС)</span></label>
+                        <input type="text" id="newUsername" required placeholder="Иванов Иван Иванович">
                     </div>
                     <div class="form-group">
                         <label>Пароль</label>
@@ -146,7 +146,7 @@
                     <option value="50" selected>50 строк</option>
                     <option value="100">100 строк</option>
                 </select>
-                <input type="text" id="usersSearchInput" placeholder="Поиск по логину/комнате..." style="flex:1; min-width:200px;">
+                <input type="text" id="usersSearchInput" placeholder="Поиск по ФИО/комнате..." style="flex:1; min-width:200px;">
                 <select id="filterResidentType" style="min-width:140px;" title="Тип жильца">
                     <option value="">Все типы</option>
                     <option value="family">Семейные</option>
@@ -181,7 +181,7 @@
                 <thead>
                     <tr>
                         <th data-sort="id" class="sortable">ID</th>
-                        <th data-sort="username" class="sortable">Логин</th>
+                        <th data-sort="username" class="sortable">ФИО</th>
                         <th data-sort="role" class="sortable">Роль</th>
                         <th class="text-center" title="Тип жильца: семейный / холостяк">Тип</th>
                         <th data-sort="dormitory" class="sortable">Общ.</th>
@@ -328,13 +328,17 @@
 
                     <div class="form-grid-2 mb-3">
                         <div class="form-group">
-                            <label>Логин</label>
+                            <label>ФИО <span style="color:var(--text-secondary);font-weight:400;font-size:11px;">(сверка 1С/ГИС, меняет только админ)</span></label>
                             <input type="text" id="editUsername" required>
                         </div>
                         <div class="form-group">
                             <label>Пароль (пусто = не менять)</label>
                             <input type="password" id="editPassword" placeholder="Новый пароль" autocomplete="new-password">
                         </div>
+                    </div>
+                    <div class="form-group mb-3">
+                        <label>Логин для входа <span style="color:var(--text-secondary);font-weight:400;font-size:11px;">(жилец может сменить сам)</span></label>
+                        <input type="text" id="editLogin" autocomplete="off" placeholder="Логин для входа в систему">
                     </div>
                     <div class="form-grid-2" style="margin-bottom: 24px;">
                         <div class="form-group">

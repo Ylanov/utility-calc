@@ -75,7 +75,8 @@ export const UsersModule = {
             form: document.getElementById('editUserForm'),
             inputs: {
                 id: document.getElementById('editUserId'),
-                username: document.getElementById('editUsername'),
+                username: document.getElementById('editUsername'),  // ФИО (ключ сверки)
+                login: document.getElementById('editLogin'),        // учётка для входа
                 password: document.getElementById('editPassword'),
                 role: document.getElementById('editRole'),
                 tariff: document.getElementById('editTariffId'),
@@ -997,6 +998,7 @@ export const UsersModule = {
 
             if (inputs.id) inputs.id.value = user.id;
             if (inputs.username) inputs.username.value = user.username;
+            if (inputs.login) inputs.login.value = user.login || '';
             if (inputs.password) inputs.password.value = '';
             if (inputs.role) inputs.role.value = user.role;
             if (inputs.tariff) inputs.tariff.value = user.tariff_id || '';
@@ -1088,6 +1090,10 @@ export const UsersModule = {
             // Счётчики (has_*_meter) НЕ шлём — настраиваются на КОМНАТЕ (Жилфонд),
             // жилец наследует (meters_002, room_static_architecture).
         };
+
+        // Логин (учётка) — шлём только если задан (пустой не пройдёт min_length=3).
+        const loginVal = this.modal.inputs.login?.value.trim();
+        if (loginVal) data.login = loginVal;
 
         if (this.modal.inputs.password.value) {
             data.password = this.modal.inputs.password.value;

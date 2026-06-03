@@ -34,6 +34,12 @@ export const ClientProfile = {
             cpNewConfirm: document.getElementById('cpNewConfirm'),
             btnCp: document.getElementById('btnChangePassword'),
 
+            // Смена логина (учётка для входа; ФИО меняет только админ)
+            clForm: document.getElementById('changeLoginForm'),
+            clNew: document.getElementById('clNew'),
+            clPass: document.getElementById('clPass'),
+            btnCl: document.getElementById('btnChangeLogin'),
+
             // Первичная настройка
             fsModal: document.getElementById('firstSetupModal'),
             fsCurrentLogin: document.getElementById('fsCurrentLogin'),
@@ -50,6 +56,9 @@ export const ClientProfile = {
     bindEvents() {
         if (this.dom.cpForm) {
             this.dom.cpForm.addEventListener('submit', (e) => this.handleChangePassword(e));
+        }
+        if (this.dom.clForm) {
+            this.dom.clForm.addEventListener('submit', (e) => this.handleChangeLogin(e));
         }
         if (this.dom.btnFsSkip) {
             this.dom.btnFsSkip.addEventListener('click', () => this.skipFirstSetup());
@@ -77,8 +86,8 @@ export const ClientProfile = {
                 addressDisplay = user.dormitory; // fallback для старых данных
             }
 
-            // Общая информация
-            if (this.dom.user) this.dom.user.textContent = user.username;
+            // Общая информация. «Логин (Л/С)» показывает ЛОГИН (учётку), а не ФИО.
+            if (this.dom.user) this.dom.user.textContent = user.login || user.username;
             if (this.dom.address) this.dom.address.textContent = addressDisplay;
             if (this.dom.headerAddress) this.dom.headerAddress.textContent = addressDisplay;
 
@@ -95,7 +104,7 @@ export const ClientProfile = {
 
             // Проверка первичной настройки
             if (user.is_initial_setup_done === false && this.dom.fsModal) {
-                if (this.dom.fsCurrentLogin) this.dom.fsCurrentLogin.textContent = user.username;
+                if (this.dom.fsCurrentLogin) this.dom.fsCurrentLogin.textContent = user.login || user.username;
                 this.dom.fsModal.classList.add('open');
             }
 
@@ -162,6 +171,33 @@ export const ClientProfile = {
             toast(error.message, 'error');
         } finally {
             setLoading(this.dom.btnCp, false, 'Обновить пароль');
+        }
+    },
+
+    async handleChangeLogin(e) {
+        e.preventDefault();
+        const newLogin = this.dom.clNew.value.trim();
+        const pass = this.dom.clPass.value;
+
+        if (newLogin.length < 3) {
+            toast('Логин слишком короткий (минимум 3 символа)', 'warning');
+            return;
+        }
+
+        setLoading(this.dom.btnCl, true, 'Сохранение...');
+        try {
+            // sub=user.id → смена логина не разлогинивает, перевход не нужен.
+            const res = await api.post('/users/me/change-login', {
+                new_login: newLogin,
+                old_password: pass,
+            });
+            toast('Логин изменён! В следующий раз входите по новому логину.', 'success');
+            if (this.dom.user && res?.login) this.dom.user.textContent = res.login;
+            this.dom.clForm.reset();
+        } catch (error) {
+            toast(error.message, 'error');
+        } finally {
+            setLoading(this.dom.btnCl, false, 'Сменить логин');
         }
     }
 };
