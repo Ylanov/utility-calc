@@ -138,7 +138,11 @@ def compute_reading_breakdown(
     #    пересчитать (см. skip_recalc.py). meter_decreased=False, но возвращаем
     #    prev_is_auto=True — caller вызовет ретроактивный пересчёт.
     AUTO_FLAGS = (
-        "AUTO_AVG", "AUTO_NORM_SANCTION",
+        # ВКЛЮЧАЯ обычный AUTO_NORM (не только _SANCTION): ежемесячная авто-добивка
+        # нормативом — это НАША оценка, а не реальное показание. Без него реальная
+        # подача жильца ниже норматива блокировалась как «счётчик упал»
+        # (Гюрджян 95<103, Теплоухов 830<835).
+        "AUTO_NORM", "AUTO_AVG", "AUTO_NORM_SANCTION",
         "AUTO_AVG_FALLBACK", "AUTO_NO_HISTORY",
         "AUTO_GENERATED",  # legacy
     )
@@ -265,6 +269,9 @@ PREV_SKIP_FLAGS = frozenset({
     # переоценил. Теперь AUTO_AVG не считается meaningful prev, новый
     # reading проходит валидацию, а skip_recalc ретроактивно
     # пересчитывает Апрельский AUTO_AVG.
+    "AUTO_NORM",           # обычная месячная авто-добивка нормативом — наша оценка,
+                           # а не реальное показание. Иначе реальная подача ниже
+                           # норматива валилась «счётчик упал» (Гюрджян/Теплоухов).
     "AUTO_AVG",
     "AUTO_AVG_FALLBACK",
     "AUTO_NORM_SANCTION",

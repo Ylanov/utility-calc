@@ -72,10 +72,20 @@ def _growing_norm_volumes(
     return vol_hot, vol_cold, vol_el, effective
 
 
-async def close_current_period(db: AsyncSession, admin_user_id: int):
+async def close_current_period(db: AsyncSession, admin_user_id: int, generate_norm: bool = False):
     """
-    Закрывает текущий расчетный период с генерацией недостающих показаний.
-    ОПТИМИЗИРОВАНО: Использован батчинг (chunking) для защиты от OOM (Out Of Memory).
+    Закрывает текущий расчётный период.
+
+    Двушаговая политика (июнь 2026): по умолчанию (generate_norm=False) закрытие
+    ТОЛЬКО финализирует — утверждает черновики и гасит is_active, БЕЗ авто-
+    начисления норматива. Норматив пропустившим начисляется отдельно кнопкой
+    «Начислить норматив» (POST /api/admin/billing/auto-fill-readings/{period_id})
+    после проверки админом. Раньше закрытие сразу начисляло норматив, а авто-
+    закрытие по расписанию делало это раньше, чем жилец успевал подать → реальная
+    подача потом блокировалась как «счётчик упал».
+
+    generate_norm=True — старое поведение (закрытие + авто-норматив одним шагом).
+    ОПТИМИЗИРОВАНО: батчинг (chunking) для защиты от OOM при generate_norm=True.
     """
 
     # 1. Блокируем запись активного периода (здесь это безопасно, так как строка одна)
@@ -88,6 +98,19 @@ async def close_current_period(db: AsyncSession, admin_user_id: int):
 
     if not active_period or not active_period.is_active:
         raise ValueError("Нет активного периода для закрытия или он уже закрыт.")
+
+    # Двушаговая политика: закрытие только ФИНАЛИЗИРУЕТ (утверждает черновики +
+    # is_active=False), без авто-норматива. Норматив пропустившим — отдельной
+    # кнопкой после проверки (см. docstring). generate_norm=True → старое поведение.
+    if not generate_norm:
+        await db.execute(
+            update(MeterReading)
+            .where(MeterReading.period_id == active_period.id, MeterReading.is_approved.is_(False))
+            .values(is_approved=True)
+        )
+        active_period.is_active = False
+        logger.info(f"Period '{active_period.name}' closed (finalize-only, no auto-norm).")
+        return {"status": "closed", "closed_period": active_period.name, "auto_generated": 0}
 
     # 2. Получаем тарифы (они нужны в памяти, их мало)
     tariffs_result = await db.execute(select(Tariff).where(Tariff.is_active))

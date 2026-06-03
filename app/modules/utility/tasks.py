@@ -542,9 +542,12 @@ def auto_fill_missing_readings_task() -> dict:
     from app.modules.utility.services.analyzer_config import config
     from app.modules.utility.services.billing import auto_fill_period_readings
 
-    enabled = config.get_bool("billing.auto_fill_enabled", True)
+    # Двушаговая политика (июнь 2026): ночная авто-добивка нормативом по умолчанию
+    # ВЫКЛЮЧЕНА — норматив начисляет админ вручную кнопкой «Начислить норматив»
+    # после закрытия и проверки. Включить: billing.auto_fill_enabled=true.
+    enabled = config.get_bool("billing.auto_fill_enabled", False)
     if not enabled:
-        logger.info("[AUTO-FILL] disabled via analyzer_settings, skipping")
+        logger.info("[AUTO-FILL] disabled (billing.auto_fill_enabled=false), skipping")
         return {"status": "disabled"}
 
     min_age_days = config.get_int("billing.auto_fill_min_age_days", 0)
@@ -804,11 +807,18 @@ def check_auto_period_task():
                         "период '%s' НЕ закрываем (иначе всем 0).",
                         current_day, start_day, active.name)
                 else:
-                    # ИСПРАВЛЕНИЕ (apr 2026): только наблюдательная проверка lock
-                    # (read-only get), реальный atomic lock делает сама
-                    # close_period_task.
-                    redis_client = Redis.from_url(settings.REDIS_URL)
-                    if redis_client.get("lock:close_period"):
+                    # Авто-закрытие периода по умолчанию ВЫКЛЮЧЕНО (двушаговая
+                    # политика, июнь 2026): период закрывает админ вручную, чтобы
+                    # норматив не начислялся раньше, чем жилец успел подать.
+                    # Вернуть авто-закрытие: billing.auto_close_enabled=true.
+                    from app.modules.utility.services.analyzer_config import config
+                    if not config.get_bool("billing.auto_close_enabled", False):
+                        logger.info(
+                            "[AUTO] Окно закрылось, но авто-закрытие выключено "
+                            "(billing.auto_close_enabled=false) — период '%s' "
+                            "закроет админ вручную.", active.name)
+                    elif Redis.from_url(settings.REDIS_URL).get("lock:close_period"):
+                        # read-only get; реальный atomic lock делает close_period_task.
                         logger.info("[AUTO] Close already running, skip duplicate")
                     else:
                         admin = db.query(User).filter_by(username="admin").first()
