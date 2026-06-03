@@ -65,8 +65,8 @@ async def get_current_user(
 
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        username: str = payload.get("sub")
-        if username is None:
+        sub: str = payload.get("sub")
+        if sub is None:
             raise credentials_exception
 
         # P0-фикс: раньше scope не проверялся. Pre-auth-токены (scope="pre-auth"),
@@ -82,14 +82,17 @@ async def get_current_user(
         logger.debug(f"JWT decode error: {e}")
         raise credentials_exception
 
-    # ИСПРАВЛЕНИЕ: фильтр is_deleted — удалённый пользователь не должен иметь доступ,
-    # даже если его JWT токен ещё не истёк.
-    result = await db.execute(
-        select(User).where(
-            User.username == username,
-            User.is_deleted.is_(False)
+    # Резолвим по sub: новые токены — sub = user.id (неизменяемый), старые
+    # (до users_login_001) — sub = username. Оба пути, пока старые не истекут.
+    # Зеркало app/core/auth.py. Фильтр is_deleted сохранён.
+    try:
+        result = await db.execute(
+            select(User).where(User.id == int(sub), User.is_deleted.is_(False))
         )
-    )
+    except (TypeError, ValueError):
+        result = await db.execute(
+            select(User).where(User.username == sub, User.is_deleted.is_(False))
+        )
     user = result.scalars().first()
 
     if user is None:

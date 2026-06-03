@@ -235,7 +235,13 @@ class User(Base):
     __tablename__ = "users"
 
     id = Column(Integer, primary_key=True, index=True)
+    # username = ФИО. Ключ сопоставления 1С/ГИС, правит ТОЛЬКО админ.
     username = Column(String, unique=True, index=True)
+    # login — учётные данные для ВХОДА, отдельно от ФИО. Правит сам жилец
+    # (/me/change-login). Раньше это было одно поле с username — смена «логина»
+    # ломала сопоставление долгов. Вход по login (case-insensitive,
+    # uq_user_login_lower). Бэкофилл login:=username — миграция users_login_001.
+    login = Column(String, nullable=False)
     hashed_password = Column(String, nullable=False)
     role = Column(String, nullable=False)
 
@@ -373,6 +379,11 @@ class User(Base):
         Index(
             "uq_user_username_lower",
             func.lower(username),
+            unique=True
+        ),
+        Index(
+            "uq_user_login_lower",
+            func.lower(login),
             unique=True
         ),
         Index(

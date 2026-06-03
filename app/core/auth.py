@@ -145,7 +145,7 @@ async def get_current_user(
             algorithms=[settings.ALGORITHM]
         )
 
-        username: Optional[str] = payload.get("sub")
+        sub: Optional[str] = payload.get("sub")
         token_role: Optional[str] = payload.get("role")
         token_scope: Optional[str] = payload.get("scope", "full")
         # tv (token version) — int счётчик, инкрементируется при logout /
@@ -153,7 +153,7 @@ async def get_current_user(
         # сразу невалидными. См. миграцию token_001_version.
         token_tv: Optional[int] = payload.get("tv")
 
-        if username is None:
+        if sub is None:
             raise credentials_exception
 
         # pre-auth токены выдаются после ввода пароля, но ДО 2FA —
@@ -165,14 +165,19 @@ async def get_current_user(
     except JWTError:
         raise credentials_exception
 
-    # ИСПРАВЛЕНИЕ: фильтр is_deleted — удалённый пользователь не должен иметь доступ,
-    # даже если его JWT токен ещё не истёк.
-    result = await db.execute(
-        select(User).where(
-            User.username == username,
-            User.is_deleted.is_(False)
+    # Резолвим юзера по sub. Новые токены несут sub = user.id (неизменяемый),
+    # старые (до релиза users_login_001) — sub = username. Поддерживаем оба,
+    # пока старые не истекут → НЕТ массового разлогина на деплое. Лукап по id
+    # не ломает сессию при переименовании ФИО (link-fio): id стабилен.
+    # Фильтр is_deleted — удалённый не имеет доступа даже с непротухшим токеном.
+    try:
+        result = await db.execute(
+            select(User).where(User.id == int(sub), User.is_deleted.is_(False))
         )
-    )
+    except (TypeError, ValueError):
+        result = await db.execute(
+            select(User).where(User.username == sub, User.is_deleted.is_(False))
+        )
 
     user = result.scalars().first()
 

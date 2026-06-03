@@ -230,7 +230,9 @@ BillingMode = Literal["by_meter", "per_capita"]
 
 
 class UserCreate(BaseModel):
-    username: str = Field(..., min_length=3, max_length=100)
+    username: str = Field(..., min_length=3, max_length=100)  # ФИО (ключ сопоставления)
+    # login — учётка для входа. None → берётся = username (жилец сменит сам).
+    login: Optional[str] = Field(None, min_length=3, max_length=100)
     password: str = Field(..., min_length=8, max_length=128)
     role: AllowedRole = "user"
     residents_count: int = Field(1, ge=1, le=20)
@@ -252,7 +254,8 @@ class UserCreate(BaseModel):
 
 class UserResponse(BaseModel):
     id: int
-    username: str
+    username: str           # ФИО
+    login: Optional[str] = None  # учётка для входа (отдельно от ФИО)
     role: str
 
     residents_count: int
@@ -274,7 +277,8 @@ class UserResponse(BaseModel):
 
 
 class UserUpdate(BaseModel):
-    username: Optional[str] = Field(None, min_length=3, max_length=100)
+    username: Optional[str] = Field(None, min_length=3, max_length=100)  # ФИО (только админ)
+    login: Optional[str] = Field(None, min_length=3, max_length=100)     # учётка (админ может сбросить)
     password: Optional[str] = Field(None, min_length=8, max_length=128)
     role: Optional[AllowedRole] = None
     residents_count: Optional[int] = Field(None, ge=1, le=20)

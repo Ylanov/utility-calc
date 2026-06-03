@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
+from sqlalchemy import func
 from jose import jwt, JWTError
 
 from fastapi_limiter.depends import RateLimiter
@@ -79,9 +80,12 @@ async def login(
         form_data: OAuth2PasswordRequestForm = Depends(),
         db: AsyncSession = Depends(get_db)
 ):
+    # Вход по ЛОГИНУ (учётке), а НЕ по ФИО. login backfill = username
+    # (миграция users_login_001) — существующие входят прежним значением,
+    # пока не сменят логин сами. Case-insensitive (uq_user_login_lower).
     result = await db.execute(
         select(User).where(
-            User.username == form_data.username,
+            func.lower(User.login) == (form_data.username or "").strip().lower(),
             User.is_deleted.is_(False)
         )
     )
@@ -127,7 +131,7 @@ async def login(
     # =====================================================================
     if user.totp_secret:
         temp_token = create_access_token(
-            data={"sub": user.username, "scope": "pre-auth"},
+            data={"sub": str(user.id), "scope": "pre-auth"},
             expires_delta=timedelta(minutes=PRE_AUTH_TOKEN_EXPIRE_MINUTES),
         )
         await db.commit()
@@ -143,9 +147,11 @@ async def login(
     user.last_login_at = now
     # tv (token_version) — позволяет отозвать сессию через инкремент
     # счётчика в БД (см. /api/logout, /me/change-password).
+    # sub = user.id — неизменяемый. Раньше был username; переименование ФИО
+    # (link-fio) разлогинивало жильца. id стабилен → сессия переживает ренейм.
     access_token = create_access_token(
         data={
-            "sub": user.username,
+            "sub": str(user.id),
             "role": user.role,
             "scope": "full",
             "tv": user.token_version or 0,
@@ -184,14 +190,18 @@ async def verify_2fa_login(
         raise HTTPException(status_code=400, detail="Отсутствует временный токен")
     try:
         payload = jwt.decode(data.temp_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        username = payload.get("sub")
+        sub = payload.get("sub")
         scope = payload.get("scope")
         if scope != "pre-auth":
             raise HTTPException(status_code=401, detail="Неверный тип токена")
     except JWTError:
         raise HTTPException(status_code=401, detail="Временный токен истёк или некорректен")
 
-    result = await db.execute(select(User).where(User.username == username))
+    # sub = user.id (новые токены) либо username (старые pre-auth ≤5 мин до релиза).
+    try:
+        result = await db.execute(select(User).where(User.id == int(sub)))
+    except (TypeError, ValueError):
+        result = await db.execute(select(User).where(User.username == sub))
     user = result.scalars().first()
     if not user or not user.totp_secret:
         raise HTTPException(status_code=400, detail="2FA не настроена или пользователь не найден")
@@ -224,7 +234,7 @@ async def verify_2fa_login(
     user.last_login_at = now
 
     access_token = create_access_token(data={
-        "sub": user.username, "role": user.role, "scope": "full",
+        "sub": str(user.id), "role": user.role, "scope": "full",
         "tv": user.token_version or 0,
     })
 

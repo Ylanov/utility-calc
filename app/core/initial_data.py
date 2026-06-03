@@ -47,6 +47,7 @@ async def seed_data():
                 # допустимо как bootstrap первого админа, но логируем громко).
                 admin = User(
                     username="admin",
+                    login="admin",
                     hashed_password=get_password_hash("admin"),
                     role="admin",  # упрощено в roles_001 (раньше было 'accountant')
                     is_deleted=False,

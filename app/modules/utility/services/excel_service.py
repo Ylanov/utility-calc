@@ -191,6 +191,7 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
                         # RoomAssignment засеется одним батчем после commit (см. ниже).
                         new_user = User(
                             username=username,
+                            login=username,  # учётка по умолчанию = ФИО, жилец сменит сам
                             hashed_password=hashed_password,
                             role="user",
                             workplace=workplace,

@@ -46,6 +46,10 @@ ZERO = Decimal("0.00")
 # СХЕМЫ ДЛЯ НАСТРОЙКИ ПРОФИЛЯ
 # =================================================================
 class ChangeCredentials(BaseModel):
+    # new_login — новый ЛОГИН (учётка). new_username оставлен для обратной
+    # совместимости со старым моб-приложением (его сетап слал new_username) —
+    # теперь трактуется тоже как логин: ФИО жилец менять не может.
+    new_login: Optional[str] = Field(None, min_length=3, max_length=100)
     new_username: Optional[str] = Field(None, min_length=3, max_length=100)
     new_password: Optional[str] = Field(None, min_length=8, max_length=128)
     old_password: Optional[str] = None
@@ -107,13 +111,20 @@ async def initial_setup(
     if current_user.is_initial_setup_done:
         raise HTTPException(status_code=400, detail="Первичная настройка уже пройдена.")
 
-    if data.new_username and data.new_username != current_user.username:
+    # Первичная настройка меняет ЛОГИН (учётку), НЕ ФИО. ФИО (username) —
+    # ключ сопоставления 1С/ГИС, его задаёт админ и жилец трогать не может.
+    # new_username оставлен для обратной совместимости со старым приложением.
+    new_login = (data.new_login or data.new_username or "").strip()
+    if new_login and new_login.lower() != (current_user.login or "").lower():
         existing_check = await db.execute(
-            select(User).where(func.lower(User.username) == func.lower(data.new_username))
+            select(User).where(
+                func.lower(User.login) == new_login.lower(),
+                User.id != current_user.id,
+            )
         )
         if existing_check.scalars().first():
             raise HTTPException(status_code=400, detail="Этот логин уже занят другим пользователем")
-        current_user.username = data.new_username
+        current_user.login = new_login
 
     if data.new_password:
         current_user.hashed_password = get_password_hash(data.new_password)
@@ -177,6 +188,48 @@ async def change_password(
     return {"status": "success", "message": "Пароль успешно изменен"}
 
 
+@router.post(
+    "/me/change-login",
+    dependencies=[Depends(RateLimiter(times=5, seconds=60))]
+)
+async def change_login(
+        data: ChangeCredentials,
+        db: AsyncSession = Depends(get_db),
+        current_user: User = Depends(get_current_user)
+):
+    """Жилец сам меняет ЛОГИН (учётку для входа).
+
+    ФИО (username) менять нельзя — это ключ сопоставления 1С/ГИС, его правит
+    только админ. Требуем текущий пароль (смена учётных данных). Сессия
+    остаётся валидной — JWT sub = user.id (неизменяемый), перелогин не нужен.
+    """
+    new_login = (data.new_login or data.new_username or "").strip()
+    if len(new_login) < 3:
+        raise HTTPException(status_code=400, detail="Новый логин слишком короткий (минимум 3 символа)")
+    if not data.old_password or not verify_password(data.old_password, current_user.hashed_password):
+        raise HTTPException(status_code=400, detail="Неверный текущий пароль")
+
+    if new_login.lower() != (current_user.login or "").lower():
+        dup = await db.execute(
+            select(User).where(
+                func.lower(User.login) == new_login.lower(),
+                User.id != current_user.id,
+            )
+        )
+        if dup.scalars().first():
+            raise HTTPException(status_code=400, detail="Этот логин уже занят")
+
+    current_user.login = new_login
+    db.add(current_user)
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action="update", entity_type="user", entity_id=current_user.id,
+        details={"action": "change_login", "new_login": new_login}
+    )
+    await db.commit()
+    return {"status": "success", "message": "Логин изменён", "login": new_login}
+
+
 # =================================================================
 # CRUD ЖИЛЬЦОВ
 # =================================================================
@@ -187,11 +240,21 @@ async def create_user(
         db: AsyncSession = Depends(get_db)
 ):
     """Создание нового пользователя с привязкой к комнате по room_id."""
+    # login (учётка) по умолчанию = ФИО — жилец сменит сам через /me/change-login.
+    login_val = (new_user.login or new_user.username).strip()
+
+    # ФИО (username) уникально — это ключ сопоставления 1С/ГИС.
     existing = await db.execute(
         select(User).where(func.lower(User.username) == func.lower(new_user.username))
     )
     if existing.scalars().first():
-        raise HTTPException(status_code=400, detail="Пользователь с таким логином уже существует")
+        raise HTTPException(status_code=400, detail="Пользователь с таким ФИО уже существует")
+    # login тоже уникален (case-insensitive).
+    existing_login = await db.execute(
+        select(User).where(func.lower(User.login) == login_val.lower())
+    )
+    if existing_login.scalars().first():
+        raise HTTPException(status_code=400, detail="Этот логин уже занят")
 
     if new_user.room_id:
         room_check = await db.get(Room, new_user.room_id)
@@ -209,6 +272,7 @@ async def create_user(
 
     db_user = User(
         username=new_user.username,
+        login=login_val,
         hashed_password=get_password_hash(new_user.password),
         role=new_user.role,
         residents_count=new_user.residents_count,
@@ -687,6 +751,24 @@ async def update_user(
     # (подтягивается от дома/комнаты, настраивается через «Настройки дома»).
     update_dict.pop("tariff_id", None)
 
+    # ФИО (username) и login уникальны. Раньше апдейт делал setattr без проверки —
+    # дубликат ронял IntegrityError (500). Проверяем тут (исключая самого себя).
+    # PUT доступен только админу (allow_accountant) — поэтому ФИО правит админ.
+    new_fio = (update_dict.get("username") or "").strip()
+    if new_fio and new_fio.lower() != (db_user.username or "").lower():
+        dup = await db.execute(select(User).where(
+            func.lower(User.username) == new_fio.lower(), User.id != db_user.id))
+        if dup.scalars().first():
+            raise HTTPException(status_code=400, detail="Пользователь с таким ФИО уже существует")
+        update_dict["username"] = new_fio
+    new_login = (update_dict.get("login") or "").strip()
+    if new_login and new_login.lower() != (db_user.login or "").lower():
+        dup = await db.execute(select(User).where(
+            func.lower(User.login) == new_login.lower(), User.id != db_user.id))
+        if dup.scalars().first():
+            raise HTTPException(status_code=400, detail="Этот логин уже занят")
+        update_dict["login"] = new_login
+
     if "password" in update_dict and update_dict["password"]:
         db_user.hashed_password = get_password_hash(update_dict.pop("password"))
 
@@ -781,6 +863,7 @@ async def relocate_user(
     if action == "evict":
         user.is_deleted = True
         user.username = f"{user.username}_deleted_{user.id}"
+        user.login = f"{user.login}_deleted_{user.id}"  # освобождаем и логин
         # Закрываем активную RoomAssignment (moved_out_at = now), новой не создаём
         await move_user_to_room(db, user=user, new_room_id=None, note="evicted")
         message = "Жилец успешно выселен. Финальная квитанция сформирована."

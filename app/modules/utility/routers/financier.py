@@ -5128,6 +5128,7 @@ async def debts_create_and_match(
     from app.core.auth import get_password_hash
     db_user = User(
         username=data.username.strip(),
+        login=data.username.strip(),  # учётка по умолчанию = ФИО, жилец сменит сам
         hashed_password=get_password_hash(data.password),
         role="user",
         workplace=(data.workplace or "").strip() or None,

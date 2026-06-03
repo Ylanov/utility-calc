@@ -411,6 +411,7 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
     if data.is_moving_out:
         user.is_deleted = True
         user.username = f"{user.username}_deleted_{user.id}"
+        user.login = f"{user.login}_deleted_{user.id}"  # освобождаем и логин
         user.room_id = None
 
     await db.commit()

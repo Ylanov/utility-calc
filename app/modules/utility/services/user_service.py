@@ -19,8 +19,10 @@ async def delete_user_service(user_id: int, db: AsyncSession):
     user.is_deleted = True
     room_id = user.room_id
 
-    # Меняем логин, чтобы в будущем можно было зарегистрировать нового жильца с таким же ФИО/логином
+    # Освобождаем И ФИО (username), И логин — чтобы в будущем можно было
+    # зарегистрировать нового жильца с таким же ФИО/логином (индексы глобальные).
     user.username = f"{user.username}_deleted_{user.id}"
+    user.login = f"{user.login}_deleted_{user.id}"
 
     db.add(user)
     await db.flush()
