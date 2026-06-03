@@ -106,6 +106,21 @@ export const DebtsModule = {
         }
     },
 
+    /** Пересопоставить «не найденных» в черновиках 1С с текущей базой (после
+     *  добавления/заселения жильцов). Привязывает долг тем, кто теперь в базе
+     *  И с комнатой; кто без комнаты — сообщает (им нужно заселение). */
+    async rematchBase() {
+        try {
+            const r = await api.post('/financier/debts/rematch-base', {});
+            let msg = `Привязано долгов: ${r.attached}.`;
+            if (r.in_base_no_room) msg += ` ${r.in_base_no_room} есть в базе, но БЕЗ комнаты — заселите их в комнаты и повторите.`;
+            if (r.still_not_found) msg += ` Совсем нет в базе: ${r.still_not_found}.`;
+            toast(msg, r.attached ? 'success' : 'info');
+            this.loadStagedStatus();
+            this.reload();
+        } catch (e) { toast('Ошибка пересопоставки: ' + (e?.message || e), 'error'); }
+    },
+
     async publishDebts() {
         if (!await showConfirm('Выгрузить долги жильцам? Возьму последние черновики 1С (209/205) + активные ГИС-оверрайды и запишу долги в показания активного периода. Полная замена по выгружаемому счёту (кого нет в черновике → 0). Снимок до — для отката через историю.', { title: 'Выгрузить долги', confirmText: 'Выгрузить' })) return;
         try {
@@ -950,6 +965,7 @@ ${(d.orphans || []).length ? `<h2>Не найдены в базе (1С/ГИС е
             // Авто-подгрузка ГИС ГМП (серверный релей)
             gisgmpStatus: document.getElementById('gisgmpStatus'),
             btnPublishDebts: document.getElementById('btnPublishDebts'),
+            btnRematchBase: document.getElementById('btnRematchBase'),
             debtsStagedStatus: document.getElementById('debtsStagedStatus'),
             gisgmpEnabled: document.getElementById('gisgmpEnabled'),
             gisgmpMonths: document.getElementById('gisgmpMonths'),
@@ -1029,6 +1045,7 @@ ${(d.orphans || []).length ? `<h2>Не найдены в базе (1С/ГИС е
         this.dom.btnRelayCreds?.addEventListener('click', () => this.relaySaveCreds());
         this.dom.btnUpload?.addEventListener('click', () => this.handleUpload());
         this.dom.btnPublishDebts?.addEventListener('click', () => this.publishDebts());
+        this.dom.btnRematchBase?.addEventListener('click', () => this.rematchBase());
 
         // Авто-предпросмотр при выборе файла (Bug T)
         this.dom.inputUpload209?.addEventListener('change', () => this.previewFile('209'));
