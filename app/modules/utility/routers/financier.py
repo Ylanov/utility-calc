@@ -1679,10 +1679,8 @@ async def debts_rematch_base(
                 remaining.append(nf)
                 still += 1
                 continue
-            if not u["room_id"]:
-                remaining.append(nf)
-                no_room += 1
-                continue
+            # Долг на лицевом счёте (user_id), не на комнате: привязываем даже
+            # без заселения. room_id=NULL ок — комната подцепится позже.
             key = str(u["id"])
             ent = ap.get(key) or {
                 "debt_209": "0", "overpayment_209": "0",
@@ -1694,6 +1692,8 @@ async def debts_rematch_base(
             ent["room_label"] = u["room_label"]
             ap[key] = ent
             attached += 1
+            if not u["room_id"]:
+                no_room += 1  # привязан, но пока без комнаты (для отчёта)
             changed = True
         if changed:
             log.applied_state = ap

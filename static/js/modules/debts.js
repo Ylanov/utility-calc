@@ -107,13 +107,13 @@ export const DebtsModule = {
     },
 
     /** Пересопоставить «не найденных» в черновиках 1С с текущей базой (после
-     *  добавления/заселения жильцов). Привязывает долг тем, кто теперь в базе
-     *  И с комнатой; кто без комнаты — сообщает (им нужно заселение). */
+     *  добавления/заселения жильцов). Долг на лицевом счёте (ФИО): привязывает
+     *  ВСЕХ, кто есть в базе — с комнатой ИЛИ без (комната подцепится позже). */
     async rematchBase() {
         try {
             const r = await api.post('/financier/debts/rematch-base', {});
             let msg = `Привязано долгов: ${r.attached}.`;
-            if (r.in_base_no_room) msg += ` ${r.in_base_no_room} есть в базе, но БЕЗ комнаты — заселите их в комнаты и повторите.`;
+            if (r.in_base_no_room) msg += ` Из них ${r.in_base_no_room} пока без комнаты (подцепятся при заселении).`;
             if (r.still_not_found) msg += ` Совсем нет в базе: ${r.still_not_found}.`;
             toast(msg, r.attached ? 'success' : 'info');
             this.loadStagedStatus();

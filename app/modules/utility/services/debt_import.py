@@ -718,7 +718,10 @@ def sync_import_debts_process(
 
             user_data = get_user_data_optimized(fio_raw)
 
-            if not user_data or not user_data["room_id"]:
+            if not user_data:
+                # Долг на лицевом счёте (user_id), НЕ на комнате — матчим жильца
+                # даже без заселения (room_id может быть NULL, подцепится позже).
+                # Сюда попадают только те, кого ВООБЩЕ нет в базе по ФИО.
                 # Сохраняем dict вместо плоской строки — суммы нужны фронту
                 # чтобы при reassign автоматически перенести долг к жильцу.
                 # Раньше: stats["not_found_users"].append(fio_raw) → суммы

@@ -638,7 +638,10 @@ class MeterReading(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     created_at = Column(DateTime, primary_key=True, default=_utcnow)
 
-    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=False)
+    # nullable=True: долг ЖКХ принадлежит лицевому счёту (user_id), а НЕ комнате.
+    # Жилец из 1С/ГИС может быть в базе без заселения — долг привязывается к нему;
+    # комната проставится позже и подцепится. См. readings_room_nullable_001.
+    room_id = Column(Integer, ForeignKey("rooms.id"), nullable=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     period_id = Column(Integer, ForeignKey("periods.id"), nullable=True)
 
