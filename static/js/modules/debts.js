@@ -421,6 +421,22 @@ export const DebtsModule = {
         }
     },
 
+    /** Принудительно перезапросить «Сверку ФИО» с сервера (без тоггла видимости).
+     *  База проверяется живьём — добавленные/заселённые жильцы тут отразятся. */
+    async refreshReconcileFio() {
+        const body = this.dom.gisgmpReconcileFioBody;
+        if (!body) return;
+        body.style.display = 'block';
+        const f = this._reconFioFilter, q = this._reconFioQuery;
+        try {
+            this._reconFio = await api.get('/financier/gisgmp/reconcile-fio');
+            this._reconFioFilter = f || 'problem';
+            this._reconFioQuery = q || '';
+            this.renderReconcileFio();
+            toast('Сверка обновлена', 'info');
+        } catch (e) { body.innerHTML = 'Ошибка: ' + esc(e?.message || String(e)); }
+    },
+
     renderReconcileFio() {
         const body = this.dom.gisgmpReconcileFioBody;
         const d = this._reconFio;
@@ -470,14 +486,16 @@ export const DebtsModule = {
             </div>
             <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
                 ${fbtn('problem', 'Проблемные')}${fbtn('no_1c', 'Нет в 1С')}${fbtn('no_gis', 'Нет в ГИС')}${fbtn('no_db', 'Нет в базе')}${fbtn('all', 'Все')}
+                <button class="action-btn secondary-btn" data-recon-refresh style="font-size:11px; padding:3px 10px;"><i class="fa-solid fa-rotate-right"></i> Обновить</button>
                 <input type="text" id="reconFioSearch" placeholder="Поиск по ФИО…" value="${esc(this._reconFioQuery || '')}" style="margin-left:auto; padding:4px 8px; font-size:12px; min-width:200px;">
             </div>
-            <div style="font-size:11px; color:var(--text-secondary); margin-bottom:6px;">Показано: <b>${list.length}</b>. Союз по ТОЧНОМУ ФИО (регистр/ё/пробелы) — никаких «похожих».</div>
+            <div style="font-size:11px; color:var(--text-secondary); margin-bottom:6px;">Показано: <b>${list.length}</b>. База — живьём; ГИС от: <b>${d.gis_synced_at ? new Date(d.gis_synced_at).toLocaleString('ru-RU') : '—'}</b>; 1С — последний импорт. Союз по ТОЧНОМУ ФИО.</div>
             <div class="table-responsive" style="max-height:55vh; overflow:auto;"><table class="sticky-header-table" style="font-size:12px;">
                 <thead><tr><th>ФИО</th><th class="text-center">1С</th><th class="text-right">Долг 1С</th><th class="text-center">ГИС</th><th class="text-right">Долг ГИС</th><th class="text-right">Δ ГИС−1С</th><th class="text-center">База</th><th class="text-center">Действие</th></tr></thead>
                 <tbody>${trs || '<tr><td colspan="8" class="text-center" style="color:#9ca3af;">нет строк под фильтр</td></tr>'}</tbody>
             </table></div>`;
         body.querySelectorAll('[data-rf]').forEach(b => b.addEventListener('click', () => { this._reconFioFilter = b.getAttribute('data-rf'); this.renderReconcileFio(); }));
+        body.querySelector('[data-recon-refresh]')?.addEventListener('click', () => this.refreshReconcileFio());
         body.querySelectorAll('[data-link-fio]').forEach(b => b.addEventListener('click', () => this.linkFioPrompt(b.getAttribute('data-link-fio'))));
         const si = document.getElementById('reconFioSearch');
         if (si) {
