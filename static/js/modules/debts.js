@@ -365,8 +365,10 @@ export const DebtsModule = {
         body.style.display = 'block';
         body.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Сверяю 1С / ГИС / базу…';
         try {
-            const d = await api.get('/financier/gisgmp/reconcile-fio');
-            this.renderReconcileFio(d);
+            this._reconFio = await api.get('/financier/gisgmp/reconcile-fio');
+            this._reconFioFilter = 'problem';
+            this._reconFioQuery = '';
+            this.renderReconcileFio();
         } catch (e) {
             body.innerHTML = 'Ошибка: ' + esc(e?.message || String(e));
         }
