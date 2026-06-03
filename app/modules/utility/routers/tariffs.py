@@ -101,6 +101,49 @@ async def get_tariffs(
     return result.scalars().all()
 
 
+def _tariff_full_dict(t: Tariff) -> dict:
+    """Полная сериализация тарифа для UI-редактора.
+
+    Bug «тарификация сбрасывается»: /with-stats и /scheduled отдавали только
+    цены, БЕЗ charge_* / нормативов / сезонности / singles_skip. Редактор
+    грузит тарифы отсюда (tariffs.js → fillForm) — поля приходили undefined, и
+    галочки «что начисляет» вставали в дефолт (все вкл), а нормативы в 0 при
+    КАЖДОЙ перезагрузке (хотя сохранялись). Теперь отдаём все читаемые поля.
+    """
+    return {
+        "id": t.id, "name": t.name, "is_active": t.is_active,
+        "effective_from": t.effective_from.strftime("%Y-%m-%dT%H:%M") if t.effective_from else None,
+        # цены / ставки
+        "maintenance_repair": t.maintenance_repair, "social_rent": t.social_rent,
+        "heating": t.heating, "water_heating": t.water_heating,
+        "water_supply": t.water_supply, "sewage": t.sewage,
+        "waste_disposal": t.waste_disposal, "electricity_per_sqm": t.electricity_per_sqm,
+        "electricity_rate": t.electricity_rate, "per_capita_amount": t.per_capita_amount,
+        "tariff_type": t.tariff_type,
+        "applicable_to": getattr(t.applicable_to, "value", t.applicable_to),
+        # нормативы + коэффициент санкции
+        "hw_norm_per_capita": t.hw_norm_per_capita, "cw_norm_per_capita": t.cw_norm_per_capita,
+        "el_norm_per_capita": t.el_norm_per_capita, "norm_coefficient": t.norm_coefficient,
+        # «что начисляет этот тариф» — 8 галочек
+        "charge_hot_water": t.charge_hot_water, "charge_cold_water": t.charge_cold_water,
+        "charge_sewage": t.charge_sewage, "charge_electricity": t.charge_electricity,
+        "charge_maintenance": t.charge_maintenance, "charge_social_rent": t.charge_social_rent,
+        "charge_heating": t.charge_heating, "charge_waste": t.charge_waste,
+        # сезонность (отопление / подогрев ГВС)
+        "heating_active": t.heating_active,
+        "heating_season_start": t.heating_season_start.isoformat() if t.heating_season_start else None,
+        "heating_season_end": t.heating_season_end.isoformat() if t.heating_season_end else None,
+        "hw_heating_active": t.hw_heating_active,
+        "hw_heating_season_start": t.hw_heating_season_start.isoformat() if t.hw_heating_season_start else None,
+        "hw_heating_season_end": t.hw_heating_season_end.isoformat() if t.hw_heating_season_end else None,
+        # skip-флаги для холостяцких квартир
+        "singles_skip_maintenance": t.singles_skip_maintenance,
+        "singles_skip_social_rent": t.singles_skip_social_rent,
+        "singles_skip_heating": t.singles_skip_heating,
+        "singles_skip_waste": t.singles_skip_waste,
+    }
+
+
 # =====================================================
 # GET /api/tariffs/with-stats — Тарифы + кол-во жильцов
 # =====================================================
@@ -139,22 +182,9 @@ async def get_tariffs_with_stats(
         # Если это базовый тариф (id=1), добавляем пользователей без привязки
         effective_count = direct_count + (null_count if t.id == 1 else 0)
 
-        result.append({
-            "id": t.id,
-            "name": t.name,
-            "is_active": t.is_active,
-            "user_count": effective_count,
-            "effective_from": t.effective_from.strftime("%Y-%m-%dT%H:%M") if t.effective_from else None,
-            "maintenance_repair": t.maintenance_repair,
-            "social_rent": t.social_rent,
-            "heating": t.heating,
-            "water_heating": t.water_heating,
-            "water_supply": t.water_supply,
-            "sewage": t.sewage,
-            "waste_disposal": t.waste_disposal,
-            "electricity_rate": t.electricity_rate,
-            "per_capita_amount": t.per_capita_amount,
-        })
+        d = _tariff_full_dict(t)
+        d["user_count"] = effective_count
+        result.append(d)
 
     return result
 
@@ -175,23 +205,7 @@ async def get_scheduled_tariffs(
         ).order_by(Tariff.effective_from)
     )
     tariffs = result.scalars().all()
-    return [
-        {
-            "id": t.id,
-            "name": t.name,
-            "effective_from": t.effective_from.strftime("%Y-%m-%dT%H:%M") if t.effective_from else None,
-            "maintenance_repair": t.maintenance_repair,
-            "social_rent": t.social_rent,
-            "heating": t.heating,
-            "water_heating": t.water_heating,
-            "water_supply": t.water_supply,
-            "sewage": t.sewage,
-            "waste_disposal": t.waste_disposal,
-            "electricity_rate": t.electricity_rate,
-            "per_capita_amount": t.per_capita_amount,
-        }
-        for t in tariffs
-    ]
+    return [_tariff_full_dict(t) for t in tariffs]
 
 
 # =====================================================
