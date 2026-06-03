@@ -70,6 +70,16 @@ export const DebtsModule = {
         this.loadImportHistory();
         this.loadGisgmpStatus();
         this.loadStagedStatus();
+        // Авто-обновление статуса ГИС ГМП раз в 15с — «живой» статус (тикает возраст
+        // опроса релея, прогресс актуализации). Только когда вкладка Долги видима.
+        if (this._gisStatusTimer) clearInterval(this._gisStatusTimer);
+        this._gisStatusTimer = setInterval(() => {
+            const box = this.dom.gisgmpStatus;
+            if (box && box.offsetParent !== null) {
+                this.loadGisgmpStatus();
+                this.loadStagedStatus();
+            }
+        }, 15000);
     },
 
     // ─── Гейт «Выгрузить»: статус черновиков + публикация долгов ───────────
@@ -169,6 +179,7 @@ export const DebtsModule = {
                     parts.push(`<span style="color:#2563eb;">Актуализация: <b>${st}</b> — ${act.done || 0} из ${act.total} (${pct}%, ok ${act.ok || 0}, ошибок ${act.fail || 0})</span>`);
                 }
             } catch (e) { /* нет очереди актуализации — норм */ }
+            parts.push(`<span style="color:#9ca3af; font-size:11px;">🔄 обновлено ${new Date().toLocaleTimeString('ru-RU')} · авто-обновление каждые 15с</span>`);
             box.innerHTML = parts.join('<br>');
         } catch (e) {
             box.textContent = 'Не удалось загрузить статус ГИС ГМП.';
