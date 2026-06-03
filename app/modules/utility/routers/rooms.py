@@ -184,6 +184,9 @@ async def get_rooms(
         street: Optional[str] = Query(
             None, description="Точное название улицы (для домов)",
         ),
+        house_number: Optional[str] = Query(
+            None, description="Номер дома (для домов; вместе со street = конкретный дом)",
+        ),
         # Новые фильтры — без них невозможно сделать быстрый drill-down
         # по состоянию комнаты. У админа в проекте на 2000+ комнат без
         # фильтров работать нельзя.
@@ -230,6 +233,10 @@ async def get_rooms(
         query = query.where(Room.street == street)
         count_query = count_query.where(Room.street == street)
 
+    if house_number:
+        query = query.where(Room.house_number == house_number)
+        count_query = count_query.where(Room.house_number == house_number)
+
     # Фильтр по заполненности: коррелируем через subquery количества жильцов
     if occupancy:
         residents_subq = (
@@ -273,6 +280,8 @@ async def get_rooms(
 @router.get("/stats", dependencies=[Depends(allow_management)])
 async def housing_stats(
     dormitory: Optional[str] = Query(None),
+    street: Optional[str] = Query(None),
+    house_number: Optional[str] = Query(None),
     db: AsyncSession = Depends(get_db),
 ):
     """KPI для шапки вкладки «Жилфонд».
@@ -289,6 +298,10 @@ async def housing_stats(
     base = select(Room)
     if dormitory:
         base = base.where(Room.dormitory_name == dormitory)
+    if street:
+        base = base.where(Room.street == street)
+    if house_number:
+        base = base.where(Room.house_number == house_number)
 
     # Все комнаты с кол-вом проживающих одним запросом
     residents_subq = (
@@ -315,6 +328,10 @@ async def housing_stats(
     )
     if dormitory:
         rows_q = rows_q.where(Room.dormitory_name == dormitory)
+    if street:
+        rows_q = rows_q.where(Room.street == street)
+    if house_number:
+        rows_q = rows_q.where(Room.house_number == house_number)
 
     rows = (await db.execute(rows_q)).all()
 
@@ -392,6 +409,8 @@ async def housing_stats(
 async def export_rooms(
     search: Optional[str] = Query(None),
     dormitory: Optional[str] = Query(None),
+    street: Optional[str] = Query(None),
+    house_number: Optional[str] = Query(None),
     occupancy: Optional[str] = Query(None, pattern="^(empty|partial|full|overcrowded)$"),
     missing_meter: Optional[bool] = Query(None),
     db: AsyncSession = Depends(get_db),
@@ -430,6 +449,10 @@ async def export_rooms(
         ))
     if dormitory:
         q = q.where(Room.dormitory_name == dormitory)
+    if street:
+        q = q.where(Room.street == street)
+    if house_number:
+        q = q.where(Room.house_number == house_number)
     if occupancy:
         cap = func.coalesce(Room.total_room_residents, 1)
         if occupancy == "empty":

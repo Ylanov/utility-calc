@@ -243,34 +243,56 @@ export const HousingModule = {
     // ==========================================
     async loadDormitories() {
         try {
-            const dorms = await api.get('/rooms/dormitories');
-            // ИСПРАВЛЕНО: XSS через название общежития.
-            // Раньше подстановка `${d}` в innerHTML была уязвима: если в БД
-            // попадёт общежитие с HTML-тегами, любой админ схлопнёт на onerror.
-            // Заменили на DOM-конструирование через createElement — браузер
-            // сам экранирует текст через textContent.
+            // Левый «Фильтр по зданию»: и общаги, И дома. Раньше брали
+            // /rooms/dormitories (только общаги) — дома в фильтр не попадали.
+            // Значение опции: общага → dormitory_name (как раньше, чтобы не
+            // ломать существующие фильтры/префиллы); дом → «house:::street:::house».
+            // new Option(text, value) — браузер экранирует text через textContent.
+            const buildings = await api.get('/rooms/buildings');
             const sel = this.dom.dormFilterSelect;
-            // Сохраняем текущий выбор фильтра — иначе после сохранения комнаты
-            // (handleSave → loadDormitories) фильтр сбрасывался на «Все объекты».
             const prevValue = sel.value;
             sel.innerHTML = '';
             sel.appendChild(new Option('Все объекты', ''));
-            dorms.forEach(d => sel.appendChild(new Option(String(d), String(d))));
-            // Восстанавливаем выбор, если такое здание ещё есть в списке.
-            if (prevValue && dorms.map(String).includes(prevValue)) {
-                sel.value = prevValue;
-            }
-
-            const list = this.dom.dormList;
-            list.innerHTML = '';
-            dorms.forEach(d => {
-                const opt = document.createElement('option');
-                opt.value = String(d);
-                list.appendChild(opt);
+            const values = [''];
+            (buildings || []).forEach(b => {
+                if (b.type === 'house' && b.street && b.house_number) {
+                    const val = `house:::${b.street}:::${b.house_number}`;
+                    sel.appendChild(new Option(b.label || `🏠 ${b.street}, ${b.house_number}`, val));
+                    values.push(val);
+                } else if (b.dormitory_name) {
+                    sel.appendChild(new Option(b.label || b.dormitory_name, b.dormitory_name));
+                    values.push(b.dormitory_name);
+                }
             });
+            if (prevValue && values.includes(prevValue)) sel.value = prevValue;
+
+            // datalist автокомплита поля «Общежитие» в форме — только общаги.
+            const list = this.dom.dormList;
+            if (list) {
+                list.innerHTML = '';
+                (buildings || [])
+                    .filter(b => b.type !== 'house' && b.dormitory_name)
+                    .forEach(b => {
+                        const opt = document.createElement('option');
+                        opt.value = String(b.dormitory_name);
+                        list.appendChild(opt);
+                    });
+            }
         } catch (e) {
-            toast('Ошибка загрузки списка общежитий', 'error');
+            toast('Ошибка загрузки списка зданий', 'error');
         }
+    },
+
+    /** Параметры фильтра по выбранному зданию (общага или дом) для /rooms*.
+     *  Общага → {dormitory}; дом → {place_type, street, house_number}. */
+    _buildingFilterParams() {
+        const v = (this.dom.dormFilterSelect?.value || '').trim();
+        if (!v) return {};
+        if (v.startsWith('house:::')) {
+            const p = v.split(':::');
+            return { place_type: 'house', street: p[1] || '', house_number: p[2] || '' };
+        }
+        return { dormitory: v };
     },
 
     initTable() {
@@ -285,8 +307,7 @@ export const HousingModule = {
                 pageInfo: 'roomsPageInfo'
             },
             getExtraParams: () => {
-                const params = {};
-                if (this.dom.dormFilterSelect?.value) params.dormitory = this.dom.dormFilterSelect.value;
+                const params = { ...this._buildingFilterParams() };
                 if (this.dom.filterOccupancy?.value) params.occupancy = this.dom.filterOccupancy.value;
                 if (this.dom.filterMissingMeter?.checked) params.missing_meter = 'true';
                 return params;
@@ -552,8 +573,8 @@ export const HousingModule = {
 
     async loadStats() {
         if (!this.dom.statsHost) return;
-        const dormitory = this.dom.dormFilterSelect?.value || '';
-        const qs = dormitory ? `?dormitory=${encodeURIComponent(dormitory)}` : '';
+        const bp = this._buildingFilterParams();
+        const qs = Object.keys(bp).length ? `?${new URLSearchParams(bp).toString()}` : '';
         try {
             const s = await api.get(`/rooms/stats${qs}`);
             this.renderStats(s);
@@ -637,8 +658,7 @@ export const HousingModule = {
     },
 
     async exportExcel() {
-        const params = new URLSearchParams();
-        if (this.dom.dormFilterSelect?.value) params.append('dormitory', this.dom.dormFilterSelect.value);
+        const params = new URLSearchParams(this._buildingFilterParams());
         if (this.dom.filterOccupancy?.value) params.append('occupancy', this.dom.filterOccupancy.value);
         if (this.dom.filterMissingMeter?.checked) params.append('missing_meter', 'true');
         const qs = params.toString() ? `?${params.toString()}` : '';
@@ -782,7 +802,8 @@ export const HousingModule = {
             if (this.modal.inputs.maxCapacity) this.modal.inputs.maxCapacity.value = '';
             // Префилл названия общаги из активного фильтра (для удобства массового
             // создания комнат в одном общежитии). Применимо только если тип = dormitory.
-            if (!isHouse && this.dom.dormFilterSelect && this.dom.dormFilterSelect.value) {
+            if (!isHouse && this.dom.dormFilterSelect && this.dom.dormFilterSelect.value
+                && !this.dom.dormFilterSelect.value.startsWith('house:::')) {
                 this.modal.inputs.dorm.value = this.dom.dormFilterSelect.value;
             }
             this.fillTariffSelect(null);
@@ -915,11 +936,15 @@ export const HousingModule = {
     // Bulk-нормализация серийников ИЗ СПИСКА (кнопка в тулбаре): берёт дом из
     // фильтра слева — не нужно открывать комнату. Предпросмотр → подтверждение.
     async normalizeSerialsByFilter() {
-        const dorm = (this.dom.dormFilterSelect?.value || '').trim();
-        if (!dorm) {
+        const bp = this._buildingFilterParams();
+        if (!bp.dormitory && !bp.street) {
             return toast('Выберите дом/общежитие в фильтре слева, затем нажмите «Норм. серийники».', 'warning');
         }
-        const params = new URLSearchParams({ dormitory_name: dorm });
+        const label = bp.dormitory || `${bp.street}, д. ${bp.house_number}`;
+        const params = new URLSearchParams(
+            bp.dormitory
+                ? { dormitory_name: bp.dormitory }
+                : { street: bp.street, house_number: bp.house_number });
         let preview;
         try {
             preview = await api.post(`/rooms/normalize-serials?${params}&dry_run=true`);
@@ -927,7 +952,7 @@ export const HousingModule = {
             return toast('Ошибка предпросмотра: ' + (e.message || ''), 'error');
         }
         if (!preview.changed_rooms) {
-            return toast(`По «${dorm}» нечего нормализовать (всё уже в формате).`, 'info');
+            return toast(`По «${label}» нечего нормализовать (всё уже в формате).`, 'info');
         }
         const sample = (preview.changes || []).slice(0, 5).map(c => {
             const parts = Object.values(c.fields).map(v => `${v.old} → ${v.new}`);
@@ -935,7 +960,7 @@ export const HousingModule = {
         }).join('\n');
         const more = preview.changed_rooms > 5 ? `\n  …и ещё ${preview.changed_rooms - 5} комнат` : '';
         if (!await showConfirm(
-            `Нормализовать серийники по «${dorm}»?\n\n` +
+            `Нормализовать серийники по «${label}»?\n\n` +
             `Изменится комнат: ${preview.changed_rooms} из ${preview.total_rooms}.\n\n` +
             `Примеры:\n${sample}${more}`,
             { title: 'Нормализация серийников', confirmText: 'Нормализовать' }
@@ -971,10 +996,14 @@ export const HousingModule = {
             if (sel) {
                 sel.innerHTML = this._dormBuildings.map((b, i) => `<option value="${i}">${escapeHtml(b.label)} (${b.rooms})</option>`).join('');
                 // По умолчанию — здание, выбранное в фильтре слева (если это общага).
-                const leftDorm = (this.dom.dormFilterSelect?.value || '').trim();
+                const v = (this.dom.dormFilterSelect?.value || '').trim();
                 let idx = 0;
-                if (leftDorm) {
-                    const f = this._dormBuildings.findIndex(b => b.type === 'dormitory' && b.dormitory_name === leftDorm);
+                if (v.startsWith('house:::')) {
+                    const p = v.split(':::');
+                    const f = this._dormBuildings.findIndex(b => b.type === 'house' && b.street === p[1] && b.house_number === p[2]);
+                    if (f >= 0) idx = f;
+                } else if (v) {
+                    const f = this._dormBuildings.findIndex(b => b.type === 'dormitory' && b.dormitory_name === v);
                     if (f >= 0) idx = f;
                 }
                 sel.value = String(idx);
