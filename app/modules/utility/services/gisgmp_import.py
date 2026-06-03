@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 GISGMP_SOURCE_LABEL = "ГИС ГМП (авто)"
 GISGMP_FINDINGS_KEY = "gisgmp_findings"
+GISGMP_FINDINGS_CHARGES_KEY = "gisgmp_findings_charges"  # сырые строки отдельно (не раздувать находки)
 GISGMP_CACHE_KEY = "gisgmp_cache"      # {uin: charge_dict} — накопительный кэш
 GISGMP_CURSOR_KEY = "gisgmp_cursor"    # {"since": ISO} — макс дата актуализации
 _CACHE_CAP = 20000                     # потолок кэша (защита от разрастания)
@@ -153,17 +154,23 @@ def _recompute_findings(db: Session, cache: dict) -> dict:
         })
     summary.sort(key=lambda r: -float(r["total"]))
 
+    synced_at = datetime.now(timezone.utc).isoformat()
     findings = {
-        "synced_at": datetime.now(timezone.utc).isoformat(),
+        "synced_at": synced_at,
         "total_charges": len(charges),
         "residents": len(fio_map),
         "matched": matched,
         "not_found": len(fio_map) - matched,
         "diag": diag,
         "summary": summary,
-        "charges": charges[:_FINDINGS_CHARGES_CAP],
+        # Сырые charges ВЫНЕСЕНЫ в отдельный ключ: иначе находки раздувались до
+        # мегабайтов (charges доминируют), и статус (15с) + союз грузили их каждый
+        # раз. Теперь находки лёгкие (~сводка), а строки — отдельно для поиска.
     }
-    _write_json(db, GISGMP_FINDINGS_KEY, findings, "Находки ГИС ГМП (пересчёт из кэша)")
+    _write_json(db, GISGMP_FINDINGS_KEY, findings, "Находки ГИС ГМП (сводка, пересчёт из кэша)")
+    _write_json(db, GISGMP_FINDINGS_CHARGES_KEY,
+                {"synced_at": synced_at, "charges": charges[:_FINDINGS_CHARGES_CAP]},
+                "Сырые начисления ГИС ГМП (для поиска «Показать найденное»)")
     return findings
 
 

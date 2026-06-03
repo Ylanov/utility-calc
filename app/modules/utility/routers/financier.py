@@ -524,11 +524,24 @@ async def gisgmp_status(
     последний синк, сколько жильцов затронуто, не настроен ли токен."""
     _require_finance(current_user)
     relay = await _load_relay_cfg(db)
-    findings = await _load_findings(db)
+    # Только счётчики находок (а не весь блоб) — статус опрашивается часто (15с).
+    fres = (await db.execute(
+        text("WITH f AS (SELECT value::jsonb AS j FROM system_settings WHERE key = :k) "
+             "SELECT j->>'synced_at' AS synced_at, j->>'total_charges' AS total_charges, "
+             "j->>'residents' AS residents, j->>'matched' AS matched, "
+             "j->>'not_found' AS not_found FROM f"),
+        {"k": GISGMP_FINDINGS_KEY},
+    )).first()
     fsum = None
-    if findings:
-        fsum = {k: findings.get(k) for k in
-                ("synced_at", "total_charges", "residents", "matched", "not_found")}
+    if fres and fres.synced_at is not None:
+        def _ci(v):
+            try:
+                return int(v)
+            except Exception:
+                return 0
+        fsum = {"synced_at": fres.synced_at, "total_charges": _ci(fres.total_charges),
+                "residents": _ci(fres.residents), "matched": _ci(fres.matched),
+                "not_found": _ci(fres.not_found)}
 
     # Онлайн релея (по последнему опросу конфига) + версия (актуальна ли она).
     poll_s = int(relay.get("relay_poll_seconds") or 120)
@@ -1109,7 +1122,20 @@ async def gisgmp_findings(
     показываем для отладки в отдельном окне «Долги 1С»."""
     _require_finance(current_user)
     findings = await _load_findings(db)
-    return findings or {"empty": True}
+    if not findings:
+        return {"empty": True}
+    # Сырые начисления теперь в отдельном ключе (находки лёгкие) — подмешиваем
+    # их сюда для поиска по фамилии в «Показать найденное».
+    from app.modules.utility.services.gisgmp_import import GISGMP_FINDINGS_CHARGES_KEY
+    chrow = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_FINDINGS_CHARGES_KEY)
+    )).scalars().first()
+    if chrow and chrow.value:
+        try:
+            findings = {**findings, "charges": json.loads(chrow.value).get("charges", [])}
+        except Exception:
+            pass
+    return findings
 
 
 @router.get("/gisgmp/reconcile", summary="Сверка ГИС ГМП (находки) ↔ долги 1С (Excel)")
