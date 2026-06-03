@@ -25,6 +25,7 @@ import hashlib
 import io
 import logging
 import re
+import unicodedata
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
 from typing import Optional
@@ -199,17 +200,44 @@ def parse_decimal(raw: str) -> Optional[Decimal]:
         return None
 
 
-def normalize_fio(fio: str) -> str:
-    """Приводит ФИО к единому виду для fuzzy-match.
+# Невидимые символы — частый мусор из копипаста 1С/ГИС/PDF/Excel: zero-width
+# space/non-joiner/joiner, word-joiner, BOM, мягкий перенос. Удаляем (translate→None).
+_FIO_INVISIBLE = dict.fromkeys([0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF, 0x00AD], None)
 
-    — lowercase
-    — убираем точки/запятые (чтобы «И.И.» и «И. И.» совпали)
-    — ё → е (частый источник расхождений)
-    — коллапсируем пробелы
+# Латиница-гомоглифы → кириллица. ФИО жильцов всегда кириллические, поэтому
+# латинская буква внутри ФИО — это «порча» (раскладка/копипаст из 1С/ГИС): на вид
+# «Агаметов» один-в-один, но с латинской 'а' по байтам другой → не матчился.
+# Для чисто-кириллических ФИО это no-op (латиницы нет → нечего сворачивать).
+_FIO_HOMOGLYPH = {
+    ord(lat): cyr for lat, cyr in {
+        "a": "а", "b": "в", "c": "с", "e": "е", "h": "н", "k": "к", "m": "м",
+        "o": "о", "p": "р", "t": "т", "x": "х", "y": "у",
+    }.items()
+}
+
+# Варианты тире/дефиса → обычный «-» (двойные фамилии: en/em-dash, minus,
+# fullwidth — на вид один-в-один с дефисом, по байтам разные).
+_FIO_DASHES = {ord(d): "-" for d in "‐‑‒–—―−﹘﹣－"}
+
+
+def normalize_fio(fio: str) -> str:
+    """Приводит ФИО к единому виду для сопоставления 1С ↔ ГИС ГМП ↔ база.
+
+    Гасит НЕвидимые различия (на вид «один в один», по байтам разные — из-за
+    них идентичные ФИО не матчились и показывались «не обнаружен»):
+      — Unicode NFC (й/ё из «буква + комбинируемый знак» → единый кодпоинт);
+      — невидимые символы (zero-width, BOM, мягкий перенос);
+      — латиница-гомоглифы (а е о с р х у к м т н в) → кириллица;
+      — варианты тире → обычный дефис;
+    и видимые: lowercase, ё→е, точки/запятые → пробел, коллапс пробелов.
     """
     if not fio:
         return ""
-    s = str(fio).lower().replace("ё", "е")
+    s = unicodedata.normalize("NFC", str(fio))
+    s = s.translate(_FIO_INVISIBLE)
+    s = s.lower().replace("ё", "е")
+    s = s.translate(_FIO_HOMOGLYPH)
+    s = s.translate(_FIO_DASHES)
     s = re.sub(r"[.,]", " ", s)
     s = " ".join(s.split())
     return s
