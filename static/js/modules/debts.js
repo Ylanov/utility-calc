@@ -308,6 +308,41 @@ export const DebtsModule = {
         } catch (e) { toast('Ошибка: ' + (e?.message || e), 'error'); }
     },
 
+    // Выпадающие меню в карточке ГИС ГМП (компактнее, чем 8 кнопок в ряд).
+    _initGisDropdowns() {
+        const hideAll = () => document.querySelectorAll('.gis-dd-menu').forEach(m => { m.style.display = 'none'; });
+        document.querySelectorAll('.gis-dd-trigger').forEach(t => {
+            if (t._ddWired) return;
+            t._ddWired = true;
+            t.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const menu = t.parentElement.querySelector('.gis-dd-menu');
+                if (!menu) return;
+                const wasOpen = menu.style.display === 'block';
+                hideAll();
+                menu.style.display = wasOpen ? 'none' : 'block';
+            });
+        });
+        document.querySelectorAll('.gis-dd-item').forEach(it => {
+            if (it._ddWired) return;
+            it._ddWired = true;
+            it.addEventListener('click', () => setTimeout(hideAll, 0));
+        });
+        if (!document._gisDdDocClose) {
+            document._gisDdDocClose = true;
+            document.addEventListener('click', hideAll);
+        }
+    },
+
+    async purgeGisgmp() {
+        if (!await showConfirm('Очистить ВСЕ рабочие данные ГИС ГМП (кэш начислений, находки, курсор, очередь актуализации)? Долги жильцов это НЕ трогает — они из 1С. После очистки запусти сбор заново («Актуализация → Запустить сбор»).', { title: 'Очистить ГИС ГМП', confirmText: 'Очистить' })) return;
+        try {
+            const r = await api.post('/financier/gisgmp/purge', {});
+            toast(`Данные ГИС ГМП очищены (ключей: ${r.cleared}). Запусти сбор заново.`, 'success');
+            this.loadGisgmpStatus();
+        } catch (e) { toast('Ошибка: ' + (e?.message || e), 'error'); }
+    },
+
     // 3-сторонняя сверка ФИО: 1С ↔ ГИС ↔ база («где кого нету»).
     async openReconcileFio() {
         const body = this.dom.gisgmpReconcileFioBody;
@@ -856,6 +891,7 @@ td.r,th.r{text-align:right;white-space:nowrap;} tr:nth-child(even){background:#f
             btnGisgmpReconcile: document.getElementById('btnGisgmpReconcile'),
             gisgmpReconcileBody: document.getElementById('gisgmpReconcileBody'),
             btnGisgmpReconcileFio: document.getElementById('btnGisgmpReconcileFio'),
+            btnGisgmpPurge: document.getElementById('btnGisgmpPurge'),
             gisgmpReconcileFioBody: document.getElementById('gisgmpReconcileFioBody'),
             btnGisgmpRecheck: document.getElementById('btnGisgmpRecheck'),
             btnGisgmpActualize: document.getElementById('btnGisgmpActualize'),
@@ -911,6 +947,8 @@ td.r,th.r{text-align:right;white-space:nowrap;} tr:nth-child(even){background:#f
         this.dom.btnGisgmpFindings?.addEventListener('click', () => this.openGisgmpFindings());
         this.dom.btnGisgmpReconcile?.addEventListener('click', () => this.openGisgmpReconcile());
         this.dom.btnGisgmpReconcileFio?.addEventListener('click', () => this.openReconcileFio());
+        this.dom.btnGisgmpPurge?.addEventListener('click', () => this.purgeGisgmp());
+        this._initGisDropdowns();
         this.dom.btnGisgmpRecheck?.addEventListener('click', () => this.recheckGisgmp());
         this.dom.btnGisgmpActualize?.addEventListener('click', () => this.actualizeGisgmp());
         this.dom.btnGisgmpActualizeLog?.addEventListener('click', () => this.openActualizeLog());

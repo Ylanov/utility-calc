@@ -1330,6 +1330,34 @@ async def gisgmp_link_fio(
             "user_id": user.id, "username": user.username}
 
 
+@router.post("/gisgmp/purge", summary="Очистить данные ГИС ГМП (кэш, находки, курсор, очередь)")
+async def gisgmp_purge(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Обнуляет рабочие данные ГИС ГМП: кэш начислений, находки, курсор инкремента
+    и очередь актуализации. Долги жильцов НЕ трогает (они из 1С через гейт).
+    После очистки нужен новый сбор («Запустить сбор») — соберёт с нуля точным
+    матчингом. Аудит-историю актуализаций (gisgmp_actualize_log) не чистим."""
+    _require_finance(current_user)
+    from app.modules.utility.routers.admin_dashboard import write_audit_log
+    keys = ["gisgmp_cache", "gisgmp_findings", "gisgmp_cursor", "gisgmp_actualize"]
+    rows = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key.in_(keys))
+    )).scalars().all()
+    cleared = 0
+    for row in rows:
+        row.value = "{}"
+        cleared += 1
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action="gisgmp_purge", entity_type="system_setting", entity_id=None,
+        details={"keys": keys, "cleared": cleared},
+    )
+    await db.commit()
+    return {"ok": True, "cleared": cleared}
+
+
 @router.get("/debts/staged-status", summary="Черновики долгов 1С, ждущие выгрузки")
 async def debts_staged_status(
     current_user: User = Depends(get_current_user),

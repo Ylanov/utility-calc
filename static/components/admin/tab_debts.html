@@ -103,13 +103,29 @@
                 <input type="number" id="gisgmpHour" min="0" max="23" style="width:90px;" title="Во сколько по Москве делать ежедневный авто-сбор (вечером, когда нет нагрузки)">
             </div>
             <button id="btnGisgmpSave" class="action-btn secondary-btn" style="font-size:13px;"><i class="fa-solid fa-floppy-disk"></i> Сохранить</button>
-            <button id="btnGisgmpRunNow" class="action-btn primary-btn" style="font-size:13px; background:#0ea5e9; border-color:#0ea5e9;"><i class="fa-solid fa-play"></i> Запустить сейчас</button>
-            <button id="btnGisgmpFindings" class="action-btn secondary-btn" style="font-size:13px;"><i class="fa-solid fa-list-check"></i> Показать найденное</button>
-            <button id="btnGisgmpReconcile" class="action-btn secondary-btn" style="font-size:13px;"><i class="fa-solid fa-code-compare"></i> Сверка с 1С</button>
-            <button id="btnGisgmpReconcileFio" class="action-btn secondary-btn" style="font-size:13px;" title="3-сторонняя сверка ФИО: кто есть и кого нет в 1С, ГИС и базе"><i class="fa-solid fa-users-between-lines"></i> Сверка ФИО (1С/ГИС/база)</button>
-            <button id="btnGisgmpRecheck" class="action-btn secondary-btn" style="font-size:13px;" title="Точечно дотянуть полную историю по тем, у кого ГИС занижен"><i class="fa-solid fa-arrows-rotate"></i> Дотянуть расхождения</button>
-            <button id="btnGisgmpActualize" class="action-btn secondary-btn" style="font-size:13px;" title="Только «ошибка ГИС ГМП» (ГИС > 1С): демон в фоне дёрнет «Актуализировать из ГИС ГМП» по их неоплаченным счетам (долго)"><i class="fa-solid fa-rotate"></i> Актуализировать расхождения</button>
-            <button id="btnGisgmpActualizeLog" class="action-btn secondary-btn" style="font-size:13px;" title="История массовых актуализаций: кого актуализировали и что изменилось (до/после)"><i class="fa-solid fa-clock-rotate-left"></i> История актуализаций</button>
+
+            <!-- Группа «Актуализация»: сбор + дотягивание + массовая актуализация -->
+            <div class="gis-dd" style="position:relative; display:inline-block;">
+                <button type="button" class="action-btn primary-btn gis-dd-trigger" style="font-size:13px; background:#0ea5e9; border-color:#0ea5e9;"><i class="fa-solid fa-bolt"></i> Актуализация <i class="fa-solid fa-caret-down" style="margin-left:4px;"></i></button>
+                <div class="gis-dd-menu" style="display:none; position:absolute; z-index:50; top:calc(100% + 4px); left:0; min-width:262px; background:var(--bg-card,#fff); border:1px solid var(--border-color,#e5e7eb); border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.14); padding:6px;">
+                    <button id="btnGisgmpRunNow" class="action-btn secondary-btn gis-dd-item" style="display:block; width:100%; text-align:left; margin-bottom:4px; font-size:13px;" title="Релей соберёт начисления реестра (по курсору; пустой курсор → полный проход)"><i class="fa-solid fa-play"></i> Запустить сбор сейчас</button>
+                    <button id="btnGisgmpRecheck" class="action-btn secondary-btn gis-dd-item" style="display:block; width:100%; text-align:left; margin-bottom:4px; font-size:13px;" title="Точечно дотянуть полную историю по тем, у кого ГИС занижен"><i class="fa-solid fa-arrows-rotate"></i> Дотянуть расхождения</button>
+                    <button id="btnGisgmpActualize" class="action-btn secondary-btn gis-dd-item" style="display:block; width:100%; text-align:left; font-size:13px;" title="Только «ошибка ГИС ГМП» (ГИС > 1С): демон дёрнет «Актуализировать из ГИС ГМП» по их счетам (долго)"><i class="fa-solid fa-rotate"></i> Актуализировать расхождения</button>
+                </div>
+            </div>
+
+            <!-- Группа «Сверки и просмотр» -->
+            <div class="gis-dd" style="position:relative; display:inline-block;">
+                <button type="button" class="action-btn secondary-btn gis-dd-trigger" style="font-size:13px;"><i class="fa-solid fa-magnifying-glass-chart"></i> Сверки и просмотр <i class="fa-solid fa-caret-down" style="margin-left:4px;"></i></button>
+                <div class="gis-dd-menu" style="display:none; position:absolute; z-index:50; top:calc(100% + 4px); left:0; min-width:262px; background:var(--bg-card,#fff); border:1px solid var(--border-color,#e5e7eb); border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,.14); padding:6px;">
+                    <button id="btnGisgmpFindings" class="action-btn secondary-btn gis-dd-item" style="display:block; width:100%; text-align:left; margin-bottom:4px; font-size:13px;"><i class="fa-solid fa-list-check"></i> Показать найденное</button>
+                    <button id="btnGisgmpReconcile" class="action-btn secondary-btn gis-dd-item" style="display:block; width:100%; text-align:left; margin-bottom:4px; font-size:13px;"><i class="fa-solid fa-code-compare"></i> Сверка с 1С</button>
+                    <button id="btnGisgmpReconcileFio" class="action-btn secondary-btn gis-dd-item" style="display:block; width:100%; text-align:left; margin-bottom:4px; font-size:13px;" title="Союз по точному ФИО: кто есть и кого нет в 1С, ГИС и базе"><i class="fa-solid fa-users-between-lines"></i> Сверка ФИО (1С/ГИС/база)</button>
+                    <button id="btnGisgmpActualizeLog" class="action-btn secondary-btn gis-dd-item" style="display:block; width:100%; text-align:left; font-size:13px;"><i class="fa-solid fa-clock-rotate-left"></i> История актуализаций</button>
+                </div>
+            </div>
+
+            <button id="btnGisgmpPurge" class="action-btn secondary-btn" style="font-size:13px; color:#b91c1c; border-color:#fecaca;" title="Обнулить кэш/находки/курсор/очередь ГИС ГМП и собрать заново. Долги жильцов (из 1С) НЕ трогает."><i class="fa-solid fa-trash"></i> Очистить ГИС</button>
         </div>
         <p class="hint-text" style="font-size:11px; margin:0 0 8px; color:#0369a1;">
             Пока в отладке: найденное хранится <b>отдельно</b> и в долги 1С (Excel) не пишется — смотри в «Показать найденное».
