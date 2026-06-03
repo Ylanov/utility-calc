@@ -5127,45 +5127,68 @@ async def debts_reassign_not_found(
     log = await db.get(DebtImportLog, log_id)
     if not log:
         raise HTTPException(404, "Лог импорта не найден")
-    if log.status != "completed":
-        raise HTTPException(400, f"Статус лога «{log.status}» — reassign только для completed")
+    if log.status not in ("staged", "completed"):
+        raise HTTPException(400, f"Статус лога «{log.status}» — reassign для staged/completed")
 
     user = await db.get(User, user_id)
-    if not user or not user.room_id:
-        raise HTTPException(400, "Жилец не найден или не привязан к комнате")
-
-    # Ищем / создаём черновик за период импорта
-    reading = None
-    if log.period_id:
-        reading = (await db.execute(
-            select(MeterReading).where(
-                MeterReading.period_id == log.period_id,
-                MeterReading.room_id == user.room_id,
-            ).limit(1)
-        )).scalars().first()
+    if not user:
+        raise HTTPException(404, "Жилец не найден")
+    # Долг на лицевом счёте (user_id) — комната опциональна, подцепится позже.
 
     debt_dec = Decimal(str(debt or 0))
     over_dec = Decimal(str(overpayment or 0))
+    acc = log.account_type
+    reading_id = None
 
-    if reading:
-        if log.account_type == "209":
-            reading.debt_209 = (reading.debt_209 or Decimal("0")) + debt_dec
-            reading.overpayment_209 = (reading.overpayment_209 or Decimal("0")) + over_dec
-        else:
-            reading.debt_205 = (reading.debt_205 or Decimal("0")) + debt_dec
-            reading.overpayment_205 = (reading.overpayment_205 or Decimal("0")) + over_dec
-    elif log.period_id:
-        reading = MeterReading(
-            user_id=user.id,
-            room_id=user.room_id,
-            period_id=log.period_id,
-            is_approved=False,
-            debt_209=debt_dec if log.account_type == "209" else Decimal("0"),
-            overpayment_209=over_dec if log.account_type == "209" else Decimal("0"),
-            debt_205=debt_dec if log.account_type == "205" else Decimal("0"),
-            overpayment_205=over_dec if log.account_type == "205" else Decimal("0"),
-        )
-        db.add(reading)
+    if log.status == "staged":
+        # Черновик: пишем в applied_state (как rematch-base/publish), показания
+        # НЕ трогаем — их создаст «Выгрузить». Полная замена по этому счёту.
+        ap = dict(log.applied_state or {})
+        key = str(user.id)
+        ent = ap.get(key) or {
+            "debt_209": "0", "overpayment_209": "0",
+            "debt_205": "0", "overpayment_205": "0",
+        }
+        ent[f"debt_{acc}"] = str(debt_dec)
+        ent[f"overpayment_{acc}"] = str(over_dec)
+        ent["username"] = user.username
+        ent["room_id"] = user.room_id
+        room = await db.get(Room, user.room_id) if user.room_id else None
+        ent["room_label"] = room.format_address if room else None
+        ap[key] = ent
+        log.applied_state = ap
+    else:
+        # completed: долг уже выгружен — дописываем в показание ЭТОГО жильца
+        # (по user_id, не по комнате; room_id может быть NULL).
+        reading = None
+        if log.period_id:
+            reading = (await db.execute(
+                select(MeterReading).where(
+                    MeterReading.period_id == log.period_id,
+                    MeterReading.user_id == user.id,
+                ).limit(1)
+            )).scalars().first()
+        if reading:
+            if acc == "209":
+                reading.debt_209 = (reading.debt_209 or Decimal("0")) + debt_dec
+                reading.overpayment_209 = (reading.overpayment_209 or Decimal("0")) + over_dec
+            else:
+                reading.debt_205 = (reading.debt_205 or Decimal("0")) + debt_dec
+                reading.overpayment_205 = (reading.overpayment_205 or Decimal("0")) + over_dec
+        elif log.period_id:
+            reading = MeterReading(
+                user_id=user.id,
+                room_id=user.room_id,
+                period_id=log.period_id,
+                is_approved=False,
+                debt_209=debt_dec if acc == "209" else Decimal("0"),
+                overpayment_209=over_dec if acc == "209" else Decimal("0"),
+                debt_205=debt_dec if acc == "205" else Decimal("0"),
+                overpayment_205=over_dec if acc == "205" else Decimal("0"),
+            )
+            db.add(reading)
+        await db.flush()
+        reading_id = reading.id if reading else None
 
     # Удаляем FIO из not_found_users. После фикса формата (list[dict])
     # сравниваем через helper _nfu_fio чтобы не упасть на .strip() от dict.
@@ -5187,7 +5210,7 @@ async def debts_reassign_not_found(
     await db.commit()
     return {
         "status": "ok",
-        "reading_id": reading.id if reading else None,
+        "reading_id": reading_id,
         "alias_created": alias_created,
     }
 
@@ -5378,8 +5401,8 @@ async def debts_create_and_match(
     log = await db.get(DebtImportLog, log_id)
     if not log:
         raise HTTPException(404, "Лог не найден")
-    if log.status != "completed":
-        raise HTTPException(400, f"Статус лога «{log.status}» — операция только для completed")
+    if log.status not in ("staged", "completed"):
+        raise HTTPException(400, f"Статус лога «{log.status}» — операция для staged/completed")
 
     # 1. Уникальность логина (case-insensitive)
     existing_user = (await db.execute(
@@ -5433,16 +5456,30 @@ async def debts_create_and_match(
     debt_dec = Decimal(str(data.debt or 0))
     over_dec = Decimal(str(data.overpayment or 0))
 
-    if log.period_id:
+    acc = log.account_type
+    if log.status == "staged":
+        # Черновик: долг в applied_state, показание создаст «Выгрузить».
+        ap = dict(log.applied_state or {})
+        ap[str(db_user.id)] = {
+            "debt_209": str(debt_dec) if acc == "209" else "0",
+            "overpayment_209": str(over_dec) if acc == "209" else "0",
+            "debt_205": str(debt_dec) if acc == "205" else "0",
+            "overpayment_205": str(over_dec) if acc == "205" else "0",
+            "username": db_user.username,
+            "room_id": room.id,
+            "room_label": room.format_address,
+        }
+        log.applied_state = ap
+    elif log.period_id:
         reading = (await db.execute(
             select(MeterReading).where(
                 MeterReading.period_id == log.period_id,
-                MeterReading.room_id == room.id,
+                MeterReading.user_id == db_user.id,
             ).limit(1)
         )).scalars().first()
 
         if reading:
-            if log.account_type == "209":
+            if acc == "209":
                 reading.debt_209 = (reading.debt_209 or Decimal("0")) + debt_dec
                 reading.overpayment_209 = (reading.overpayment_209 or Decimal("0")) + over_dec
             else:
@@ -5454,10 +5491,10 @@ async def debts_create_and_match(
                 room_id=room.id,
                 period_id=log.period_id,
                 is_approved=False,
-                debt_209=debt_dec if log.account_type == "209" else Decimal("0"),
-                overpayment_209=over_dec if log.account_type == "209" else Decimal("0"),
-                debt_205=debt_dec if log.account_type == "205" else Decimal("0"),
-                overpayment_205=over_dec if log.account_type == "205" else Decimal("0"),
+                debt_209=debt_dec if acc == "209" else Decimal("0"),
+                overpayment_209=over_dec if acc == "209" else Decimal("0"),
+                debt_205=debt_dec if acc == "205" else Decimal("0"),
+                overpayment_205=over_dec if acc == "205" else Decimal("0"),
             )
             db.add(reading)
 
