@@ -689,8 +689,8 @@ export const DebtsModule = {
     async recheckActualize() {
         try {
             const r = await api.post('/financier/gisgmp/actualize-recheck', {});
-            if (!r.queued) { toast(r.reason || 'Нечего перепроверять', 'info'); return; }
-            toast(`Поставил переопрос ${r.queued} фамилий (${r.residents} жильцов). Релей переопросит ГИС за ~2 мин — «после» появится в прогоне.`, 'info');
+            if (!r.queued) { toast(r.reason || 'Нет активных циклов', 'info'); return; }
+            toast(`Запущен сбор для ${r.runs || r.queued} активных циклов — результат подтянется за ~2 мин.`, 'info');
             this.loadGisgmpStatus?.();
             setTimeout(async () => {
                 try { const x = await api.get('/financier/gisgmp/actualize-log'); this._actualizeRuns = x.runs || []; this.renderActualizeLog(); } catch (e) { /* ignore */ }

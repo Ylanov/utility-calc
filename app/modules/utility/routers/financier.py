@@ -728,7 +728,8 @@ async def gisgmp_relay_config(
     # их ФИО в gisgmp_recheck ДО чтения очереди ниже — чтобы релей забрал этим же
     # опросом и снял «после» по уже обработанным ГИС начислениям.
     try:
-        await _drive_actualize_runs(db)
+        if await _drive_actualize_runs(db) and not should_run:
+            should_run, reason = True, "loop-check"  # лёгкий инкрем. сбор для активных циклов
     except Exception:
         logger.exception("[gisgmp] авто-цикл актуализации не удался")
 
@@ -2190,27 +2191,29 @@ async def _enqueue_recheck_surnames(db: AsyncSession, surnames: set[str]) -> Non
     rc_row.value = json.dumps({"surnames": merged, "deep_months": 36}, ensure_ascii=False)
 
 
-async def _drive_actualize_runs(db: AsyncSession) -> None:
+async def _drive_actualize_runs(db: AsyncSession) -> bool:
     """Авто-цикл доведения актуализации до «Сквитировано» (рулит по ~2-мин опросу
     релея). Для прогонов «checking»: читает СВЕЖИЙ кэш ГИС, считает ещё
     несквитированные начисления прогона (по UIN) → пишет «после»; всё сквитировано
     → done(all_paid); иначе каждые REACT_MIN мин повтор актуализации их
-    несквитированных (макс MAX_ATTEMPTS попытки) → done(unpaid_left); и каждый
-    опрос ставит переопрос их ФИО для свежести. HARD_MIN — аварийный финал, чтобы
-    не висело вечно. Зовётся из relay-config ДО чтения очереди переопроса."""
+    несквитированных (макс MAX_ATTEMPTS попытки) → done(unpaid_left); HARD_MIN —
+    аварийный финал. Возвращает need_scrape: если есть активные циклы, релею нужен
+    ЛЁГКИЙ инкрементальный сбор (ловит счета, у которых ГИС двинул дату при
+    сквитировании) — вместо ТЯЖЁЛОГО переопроса сотен ФИО на массовом прогоне.
+    Зовётся из relay-config."""
     REACT_MIN, MAX_ATTEMPTS, HARD_MIN = 30, 2, 90
     lr = (await db.execute(
         select(SystemSetting).where(SystemSetting.key == GISGMP_ACTUALIZE_LOG_KEY)
     )).scalars().first()
     if not lr or not lr.value:
-        return
+        return False
     try:
         lj = json.loads(lr.value)
     except Exception:
-        return
+        return False
     active = [r for r in lj.get("runs", []) if r.get("status") == "checking"]
     if not active:
-        return
+        return False
     from app.modules.utility.services.gisgmp_import import (
         GISGMP_CACHE_KEY, is_unpaid, is_annulled,
     )
@@ -2250,7 +2253,7 @@ async def _drive_actualize_runs(db: AsyncSession) -> None:
         except Exception:
             act_busy = False
 
-    recheck_surnames: set[str] = set()
+    need_scrape = False
     reactualize = None
     changed = False
 
@@ -2292,7 +2295,7 @@ async def _drive_actualize_runs(db: AsyncSession) -> None:
                 run["status"] = "running"  # релей дошлёт повтор
                 changed = True
                 continue
-        recheck_surnames |= _run_surnames(run)
+        need_scrape = True  # ещё «checking» → нужен лёгкий инкрементальный сбор
 
     if reactualize:
         run, uuids = reactualize
@@ -2307,11 +2310,10 @@ async def _drive_actualize_runs(db: AsyncSession) -> None:
                                     description="Очередь массовой актуализации ГИС ГМП")
             db.add(act_row)
         act_row.value = json.dumps(act_payload, ensure_ascii=False)
-    if recheck_surnames:
-        await _enqueue_recheck_surnames(db, recheck_surnames)
-    if changed or reactualize or recheck_surnames:
+    if changed or reactualize:
         lr.value = json.dumps(lj, ensure_ascii=False)
         await db.commit()
+    return need_scrape
 
 
 @router.post("/gisgmp/actualize-recheck", summary="Проверить результат актуализации (переопрос ГИС по ФИО)")
@@ -2334,20 +2336,16 @@ async def gisgmp_actualize_recheck(
         lj = json.loads(lr.value)
     except Exception:
         return {"queued": 0, "reason": "история повреждена"}
-    # Форсируем переопрос ВСЕХ активных циклов («checking») — авто-цикл подхватит
-    # свежий кэш на ближайшем опросе и обновит «после»/финал. Статус не трогаем —
-    # цикл сам решит (всё сквитировано → done, иначе повтор/ожидание).
+    # Форсируем ЛЁГКИЙ инкрементальный сбор (run_now) — авто-цикл подхватит свежий
+    # кэш на ближайшем опросе и обновит «после»/финал. НЕ переопрашиваем сотни ФИО
+    # (тяжело для ГИС на массовом прогоне): сбор ловит сквитированные по дате.
     active = [r for r in lj.get("runs", []) if r.get("status") == "checking"]
     if not active:
         return {"queued": 0, "reason": "нет активных циклов актуализации"}
-    surnames: set[str] = set()
-    for run in active:
-        surnames |= _run_surnames(run)
-    if not surnames:
-        return {"queued": 0, "reason": "нет ФИО в прогонах"}
-    await _enqueue_recheck_surnames(db, surnames)
-    await db.commit()
-    return {"queued": len(surnames), "runs": len(active)}
+    rc = await _load_relay_cfg(db)
+    rc["run_now"] = True
+    await _save_relay_cfg(db, rc)
+    return {"queued": len(active), "runs": len(active)}
 
 
 async def _load_person_charges(db: AsyncSession, fio: str) -> tuple[list[dict], list[str]]:
