@@ -558,7 +558,9 @@ async def gisgmp_status(
         rp = Path(__file__).resolve().parents[4] / "relay" / "gisgmp" / "relay.py"
         for line in rp.read_text(encoding="utf-8").splitlines():
             if line.strip().startswith("RELAY_VERSION"):
-                relay_latest = line.split("=", 1)[1].strip().strip('"').strip("'")
+                # split('#') срезает хвостовой комментарий — иначе он попадал в
+                # версию и панель вечно показывала «обновление доступно».
+                relay_latest = line.split("#", 1)[0].split("=", 1)[1].strip().strip('"').strip("'")
                 break
     except Exception:
         pass
