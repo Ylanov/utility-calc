@@ -239,8 +239,14 @@ jobs:
           context: .
           push: true
           tags: ${{ steps.meta.outputs.tags }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Реестр-кэш в GHCR — надёжнее gha: нет лимита 10ГБ/7дн и вытеснения,
+          # из-за которого слои apt/pip пересобирались с нуля каждый билд. gha
+          # оставлен вторым источником на переходный период. Первый билд после
+          # этого ещё холодный (наполняет :buildcache), дальше слои CACHED.
+          cache-from: |
+            type=registry,ref=ghcr.io/ylanov/utility-calc:buildcache
+            type=gha
+          cache-to: type=registry,ref=ghcr.io/ylanov/utility-calc:buildcache,mode=max
 
       - name: Scan Docker image with Trivy
         run: |
