@@ -728,9 +728,9 @@ async def gisgmp_relay_config(
     # их ФИО в gisgmp_recheck ДО чтения очереди ниже — чтобы релей забрал этим же
     # опросом и снял «после» по уже обработанным ГИС начислениям.
     try:
-        await _auto_recheck_due_actualizations(db)
+        await _drive_actualize_runs(db)
     except Exception:
-        logger.exception("[gisgmp] авто-перепроверка актуализации не удалась")
+        logger.exception("[gisgmp] авто-цикл актуализации не удался")
 
     # Очередь точечного дотягивания проблемных ФИО (где ГИС занижен):
     # отдаём список и сразу гасим (claim), чтобы не повторять.
@@ -2190,12 +2190,15 @@ async def _enqueue_recheck_surnames(db: AsyncSession, surnames: set[str]) -> Non
     rc_row.value = json.dumps({"surnames": merged, "deep_months": 36}, ensure_ascii=False)
 
 
-async def _auto_recheck_due_actualizations(db: AsyncSession) -> None:
-    """Авто-перепроверка результата: прогоны актуализации в статусе «sent» старше
-    recheck_after (~2ч — ГИС успел обработать «Отправлен»→«Завершен») ОДИН раз
-    (auto_done) ставим в глубокий переопрос по их ФИО и взводим after_pending —
-    снимок «после» снимется на ближайшей сверке. Зовётся из relay-config (опрос
-    релея ~раз в 2 мин), ДО чтения очереди переопроса — чтобы забрать тем же опросом."""
+async def _drive_actualize_runs(db: AsyncSession) -> None:
+    """Авто-цикл доведения актуализации до «Сквитировано» (рулит по ~2-мин опросу
+    релея). Для прогонов «checking»: читает СВЕЖИЙ кэш ГИС, считает ещё
+    несквитированные начисления прогона (по UIN) → пишет «после»; всё сквитировано
+    → done(all_paid); иначе каждые REACT_MIN мин повтор актуализации их
+    несквитированных (макс MAX_ATTEMPTS попытки) → done(unpaid_left); и каждый
+    опрос ставит переопрос их ФИО для свежести. HARD_MIN — аварийный финал, чтобы
+    не висело вечно. Зовётся из relay-config ДО чтения очереди переопроса."""
+    REACT_MIN, MAX_ATTEMPTS, HARD_MIN = 30, 2, 90
     lr = (await db.execute(
         select(SystemSetting).where(SystemSetting.key == GISGMP_ACTUALIZE_LOG_KEY)
     )).scalars().first()
@@ -2205,27 +2208,110 @@ async def _auto_recheck_due_actualizations(db: AsyncSession) -> None:
         lj = json.loads(lr.value)
     except Exception:
         return
-    now = utcnow()
-    due_surnames: set[str] = set()
-    for run in lj.get("runs", []):
-        if run.get("status") != "sent" or run.get("auto_done"):
-            continue
-        ra = run.get("recheck_after")
-        try:
-            if not ra or datetime.fromisoformat(ra) > now:
-                continue
-        except Exception:
-            continue
-        due_surnames |= _run_surnames(run)
-        run["status"] = "rechecking"
-        run["after_pending"] = True
-        run["auto_done"] = True
-        run["recheck_at"] = now.isoformat()
-    if not due_surnames:
+    active = [r for r in lj.get("runs", []) if r.get("status") == "checking"]
+    if not active:
         return
-    await _enqueue_recheck_surnames(db, due_surnames)
-    lr.value = json.dumps(lj, ensure_ascii=False)
-    await db.commit()
+    from app.modules.utility.services.gisgmp_import import (
+        GISGMP_CACHE_KEY, is_unpaid, is_annulled,
+    )
+    cache = {}
+    cache_row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_CACHE_KEY)
+    )).scalars().first()
+    if cache_row and cache_row.value:
+        try:
+            cache = json.loads(cache_row.value)
+        except Exception:
+            cache = {}
+
+    def _unpaid_now(ch: dict) -> bool:
+        cc = cache.get(ch.get("uin"))
+        if cc is None:
+            return True  # ещё не пересканен этим циклом — считаем несквитированным
+        return is_unpaid(cc.get("ack_status")) and not is_annulled(cc.get("change_status"))
+
+    now = utcnow()
+    now_iso = now.isoformat()
+
+    def _age_min(iso) -> float:
+        try:
+            return (now - datetime.fromisoformat(iso)).total_seconds() / 60.0 if iso else 1e9
+        except Exception:
+            return 1e9
+
+    act_row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_ACTUALIZE_KEY)
+    )).scalars().first()
+    act_busy = False
+    if act_row and act_row.value:
+        try:
+            _av = json.loads(act_row.value)
+            act_busy = bool(_av.get("running") or _av.get("uuids"))
+        except Exception:
+            act_busy = False
+
+    recheck_surnames: set[str] = set()
+    reactualize = None
+    changed = False
+
+    def _finalize(run, result):
+        run["status"] = "done"
+        run["after_pending"] = False
+        run["after_at"] = now_iso
+        run["loop_result"] = result
+
+    for run in active:
+        still_uuids: list[str] = []
+        for res in run.get("residents", []):
+            res_sum = 0.0
+            for ch in res.get("charges", []):
+                if _unpaid_now(ch):
+                    u = ch.get("charge_uuid")
+                    if u:
+                        still_uuids.append(u)
+                    res_sum += float(ch.get("amount") or 0)
+            res["after"] = {"gis": round(res_sum, 2), "c1": None, "delta": None}
+            res["result"] = _actualize_result(res.get("before"), res["after"])
+        if not still_uuids:
+            _finalize(run, "all_paid")
+            changed = True
+            continue
+        if _age_min(run.get("started_at") or run.get("queued_at")) >= HARD_MIN:
+            _finalize(run, "timeout")
+            changed = True
+            continue
+        if _age_min(run.get("last_actualize_at")) >= REACT_MIN:
+            if int(run.get("attempt", 1)) >= MAX_ATTEMPTS:
+                _finalize(run, "unpaid_left")
+                changed = True
+                continue
+            if not act_busy and reactualize is None:
+                reactualize = (run, still_uuids)
+                run["attempt"] = int(run.get("attempt", 1)) + 1
+                run["last_actualize_at"] = now_iso
+                run["status"] = "running"  # релей дошлёт повтор
+                changed = True
+                continue
+        recheck_surnames |= _run_surnames(run)
+
+    if reactualize:
+        run, uuids = reactualize
+        act_payload = {
+            "uuids": uuids, "total": len(uuids), "done": 0, "ok": 0, "fail": 0,
+            "running": False, "finished": False, "queued_at": now_iso,
+            "by": "авто-цикл", "message": "", "targeting": "loop-retry",
+            "run_id": run.get("id"),
+        }
+        if act_row is None:
+            act_row = SystemSetting(key=GISGMP_ACTUALIZE_KEY, value="{}",
+                                    description="Очередь массовой актуализации ГИС ГМП")
+            db.add(act_row)
+        act_row.value = json.dumps(act_payload, ensure_ascii=False)
+    if recheck_surnames:
+        await _enqueue_recheck_surnames(db, recheck_surnames)
+    if changed or reactualize or recheck_surnames:
+        lr.value = json.dumps(lj, ensure_ascii=False)
+        await db.commit()
 
 
 @router.post("/gisgmp/actualize-recheck", summary="Проверить результат актуализации (переопрос ГИС по ФИО)")
@@ -2248,25 +2334,20 @@ async def gisgmp_actualize_recheck(
         lj = json.loads(lr.value)
     except Exception:
         return {"queued": 0, "reason": "история повреждена"}
-    # Перепроверяем ВСЕ прогоны, что ждут результата (а не только последний —
-    # иначе остальные «ждущие» висят пустыми). done не трогаем (уже финал).
-    pending = [r for r in lj.get("runs", [])
-               if r.get("status") in ("sent", "processing", "rechecking", "actualized")]
-    if not pending:
-        return {"queued": 0, "reason": "нет прогонов, ждущих перепроверки"}
-    all_surnames: set[str] = set()
-    now_iso = utcnow().isoformat()
-    for run in pending:
-        all_surnames |= _run_surnames(run)
-        run["status"] = "rechecking"
-        run["after_pending"] = True
-        run["recheck_at"] = now_iso
-    if not all_surnames:
+    # Форсируем переопрос ВСЕХ активных циклов («checking») — авто-цикл подхватит
+    # свежий кэш на ближайшем опросе и обновит «после»/финал. Статус не трогаем —
+    # цикл сам решит (всё сквитировано → done, иначе повтор/ожидание).
+    active = [r for r in lj.get("runs", []) if r.get("status") == "checking"]
+    if not active:
+        return {"queued": 0, "reason": "нет активных циклов актуализации"}
+    surnames: set[str] = set()
+    for run in active:
+        surnames |= _run_surnames(run)
+    if not surnames:
         return {"queued": 0, "reason": "нет ФИО в прогонах"}
-    await _enqueue_recheck_surnames(db, all_surnames)
-    lr.value = json.dumps(lj, ensure_ascii=False)
+    await _enqueue_recheck_surnames(db, surnames)
     await db.commit()
-    return {"queued": len(all_surnames), "runs": len(pending)}
+    return {"queued": len(surnames), "runs": len(active)}
 
 
 async def _load_person_charges(db: AsyncSession, fio: str) -> tuple[list[dict], list[str]]:
@@ -2375,6 +2456,7 @@ async def gisgmp_actualize_person(
         "targeting": f"один человек: {fio}", "total_charges": len(revocable),
         "residents_count": 1, "status": "running", "done": 0, "ok": 0, "fail": 0,
         "started_at": None, "finished_at": None, "after_pending": False, "after_at": None,
+        "attempt": 1, "last_actualize_at": run_id,
         "residents": [{
             "user_id": None, "fio": fio, "username": None, "flag": None,
             "before": {"gis": round(sum(c["amount"] for c in charges
@@ -2519,6 +2601,7 @@ async def gisgmp_actualize_build(
         "status": "running", "done": 0, "ok": 0, "fail": 0,
         "started_at": None, "finished_at": None,
         "after_pending": False, "after_at": None,
+        "attempt": 1, "last_actualize_at": run_id,
         "residents": residents_snap,
     }
     log_row = (await db.execute(
@@ -2593,14 +2676,12 @@ async def gisgmp_actualize_progress(
                     lj = json.loads(lr.value)
                     for run in lj.get("runs", []):
                         if run.get("id") == run_id:
-                            run["status"] = "sent"
+                            run["status"] = "checking"  # авто-цикл начинает опрос «Сквитировано»
                             run["finished_at"] = av["finished_at"]
                             run["done"] = payload.done
                             run["ok"] = payload.ok
                             run["fail"] = payload.fail
                             run["after_pending"] = False
-                            run["recheck_after"] = (utcnow() + timedelta(hours=2)).isoformat()
-                            run["auto_done"] = False
                             break
                     lr.value = json.dumps(lj, ensure_ascii=False)
                 except Exception:

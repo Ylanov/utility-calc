@@ -621,10 +621,16 @@ export const DebtsModule = {
         const dt = (s) => s ? new Date(s).toLocaleString('ru-RU') : '—';
         const STAT = {
             running: ['⏳ отправка запросов в ГИС…', '#2563eb'],
-            sent: ['📨 отправлено в ГИС — обрабатывается асинхронно (нажми «Проверить результат» позже)', '#d97706'],
+            checking: ['🔄 цикл: проверяю «Сквитировано» (~каждые 2 мин)…', '#2563eb'],
+            sent: ['📨 отправлено — ждём перепроверку', '#d97706'],
             rechecking: ['🔄 перепроверяем результат в ГИС…', '#2563eb'],
             actualized: ['📨 отправлено — ждём перепроверку', '#d97706'],
             done: ['✅ готово (есть «после»)', '#047857'],
+        };
+        const LRES = {
+            all_paid: ['✅ всё сквитировано (оплачено)', '#047857'],
+            unpaid_left: ['⚠ часть не оплачена (после 2 попыток — реальный долг)', '#b91c1c'],
+            timeout: ['⏱ финал по таймауту (90 мин)', '#d97706'],
         };
         const RES = {
             annulled: ['аннулировано', '#047857'], reduced: ['уменьшилось', '#0ea5e9'],
@@ -646,7 +652,7 @@ export const DebtsModule = {
             const rows = (run.residents || []).map(p => {
                 const b = p.before || {}, a = p.after || {};
                 const [rTxt, rCol] = RES[p.result] || RES.unknown;
-                const afterCells = (run.status === 'done')
+                const afterCells = (run.status === 'done' || run.status === 'checking')
                     ? `<td class="text-right">${fmt(a.gis)}</td><td class="text-center"><b style="color:${rCol}">${rTxt}</b></td>`
                     : `<td class="text-right" style="color:#9ca3af">ждём…</td><td class="text-center" style="color:#9ca3af">—</td>`;
                 return `<tr><td>${esc(p.fio || p.username || p.user_id)}</td>`
@@ -659,6 +665,8 @@ export const DebtsModule = {
                 + `<b>${dt(run.queued_at)}</b> · ${esc(run.by || '—')} · `
                 + `<b>${run.residents_count || 0}</b> жильцов / <b>${run.total_charges || 0}</b> счетов · `
                 + `<span style="color:${stCol}">${stTxt}</span>`
+                + (run.status === 'checking' ? ` · попытка ${run.attempt || 1}/2` : '')
+                + (run.loop_result && LRES[run.loop_result] ? ` · <b style="color:${LRES[run.loop_result][1]}">${LRES[run.loop_result][0]}</b>` : '')
                 + (run.status !== 'running' ? ` · ok ${run.ok || 0}, ошибок ${run.fail || 0}` : '')
                 + ` <button class="action-btn secondary-btn" style="font-size:11px; padding:2px 8px; margin-left:8px;" data-act-prune="${esc(run.id)}" title="Удалить прогон"><i class="fa-solid fa-xmark"></i></button>`
                 + `</summary>`
