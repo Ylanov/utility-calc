@@ -265,7 +265,16 @@ def do_actualize(uuids):
         try:
             r = s.get(f"{REGISTRY}/api/charge/{u}/actualize-request",
                       headers=hdr, timeout=60)
+            # «ok» ТОЛЬКО если реестр реально принял запрос: тело вида
+            # {"result":"Запрос на актуализацию начисления отправлен"}. Голый
+            # HTTP 200 бывает страницей/ошибкой при <400 — это НЕ успех.
+            accepted = False
             if r.status_code < 400:
+                try:
+                    accepted = "отправл" in str((r.json() or {}).get("result", "")).lower()
+                except Exception:
+                    accepted = '"result"' in (r.text or "")
+            if accepted:
                 ok += 1
             else:
                 fail += 1

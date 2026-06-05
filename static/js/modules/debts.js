@@ -193,7 +193,7 @@ export const DebtsModule = {
                 const act = await api.get('/financier/gisgmp/actualize-status');
                 if (act && act.total) {
                     const pct = Math.round((act.done || 0) / act.total * 100);
-                    const st = act.running ? '⏳ идёт' : (act.finished ? '✅ готово' : 'в очереди');
+                    const st = act.running ? '⏳ отправка' : (act.finished ? '📨 отправлено, ГИС обрабатывает' : 'в очереди');
                     parts.push(`<span style="color:#2563eb;">Актуализация: <b>${st}</b> — ${act.done || 0} из ${act.total} (${pct}%, ok ${act.ok || 0}, ошибок ${act.fail || 0})</span>`);
                 }
             } catch (e) { /* нет очереди актуализации — норм */ }
@@ -564,8 +564,10 @@ export const DebtsModule = {
         const fmt = (v) => (Number(v) || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
         const dt = (s) => s ? new Date(s).toLocaleString('ru-RU') : '—';
         const STAT = {
-            running: ['⏳ идёт актуализация', '#2563eb'],
-            actualized: ['✅ актуализировано, ждём сверку для «после»', '#d97706'],
+            running: ['⏳ отправка запросов в ГИС…', '#2563eb'],
+            sent: ['📨 отправлено в ГИС — обрабатывается асинхронно (нажми «Проверить результат» позже)', '#d97706'],
+            rechecking: ['🔄 перепроверяем результат в ГИС…', '#2563eb'],
+            actualized: ['📨 отправлено — ждём перепроверку', '#d97706'],
             done: ['✅ готово (есть «после»)', '#047857'],
         };
         const RES = {
@@ -576,9 +578,13 @@ export const DebtsModule = {
             body.innerHTML = '<span style="color:var(--text-secondary)">История пуста — массовая актуализация ещё не запускалась.</span>';
             return;
         }
-        const head = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">`
+        const hasPending = runs.some(r => ['sent', 'processing', 'rechecking', 'actualized'].includes(r.status));
+        const head = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px; flex-wrap:wrap;">`
             + `<span style="font-size:12px; color:var(--text-secondary)">Прогонов в истории: <b>${runs.length}</b> (хранится до 50, старьё чистится)</span>`
-            + `<button class="action-btn secondary-btn" style="font-size:12px;" data-act-prune="all"><i class="fa-solid fa-trash"></i> Очистить всё</button></div>`;
+            + `<span style="display:flex; gap:6px;">`
+            + (hasPending ? `<button class="action-btn primary-btn" style="font-size:12px;" data-act-recheck title="Переопросить ГИС по ФИО последнего прогона и снять снимок «после». ГИС обрабатывает актуализацию асинхронно — жми, когда прошло время (или дождись авто через ~2ч)."><i class="fa-solid fa-rotate-right"></i> Проверить результат</button>` : '')
+            + `<button class="action-btn secondary-btn" style="font-size:12px;" data-act-prune="all"><i class="fa-solid fa-trash"></i> Очистить всё</button>`
+            + `</span></div>`;
         const blocks = runs.map((run, idx) => {
             const [stTxt, stCol] = STAT[run.status] || STAT.running;
             const rows = (run.residents || []).map(p => {
@@ -611,6 +617,21 @@ export const DebtsModule = {
         body.querySelectorAll('[data-act-prune]').forEach(btn => {
             btn.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); this.pruneActualizeLog(btn.getAttribute('data-act-prune')); });
         });
+        body.querySelector('[data-act-recheck]')?.addEventListener('click', () => this.recheckActualize());
+    },
+
+    // Проверить результат актуализации: переопрос ГИС по ФИО последнего прогона
+    // (ГИС обрабатывает «Отправлен в ГИС ГМП» асинхронно — снимок сразу был бы пуст).
+    async recheckActualize() {
+        try {
+            const r = await api.post('/financier/gisgmp/actualize-recheck', {});
+            if (!r.queued) { toast(r.reason || 'Нечего перепроверять', 'info'); return; }
+            toast(`Поставил переопрос ${r.queued} фамилий (${r.residents} жильцов). Релей переопросит ГИС за ~2 мин — «после» появится в прогоне.`, 'info');
+            this.loadGisgmpStatus?.();
+            setTimeout(async () => {
+                try { const x = await api.get('/financier/gisgmp/actualize-log'); this._actualizeRuns = x.runs || []; this.renderActualizeLog(); } catch (e) { /* ignore */ }
+            }, 2000);
+        } catch (e) { toast('Ошибка перепроверки: ' + (e?.message || e), 'error'); }
     },
 
     async pruneActualizeLog(which) {

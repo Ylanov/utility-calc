@@ -724,6 +724,14 @@ async def gisgmp_relay_config(
         except Exception:
             since = None
 
+    # Авто-перепроверка результата актуализации: «sent»-прогоны старше ~2ч ставим
+    # их ФИО в gisgmp_recheck ДО чтения очереди ниже — чтобы релей забрал этим же
+    # опросом и снял «после» по уже обработанным ГИС начислениям.
+    try:
+        await _auto_recheck_due_actualizations(db)
+    except Exception:
+        logger.exception("[gisgmp] авто-перепроверка актуализации не удалась")
+
     # Очередь точечного дотягивания проблемных ФИО (где ГИС занижен):
     # отдаём список и сразу гасим (claim), чтобы не повторять.
     rc_row = (await db.execute(
@@ -2138,6 +2146,114 @@ async def _capture_actualize_after(db: AsyncSession) -> None:
     await db.commit()
 
 
+def _run_surnames(run: dict) -> set[str]:
+    """Фамилии (первое слово ФИО) жильцов прогона — для глубокого переопроса."""
+    out: set[str] = set()
+    for p in run.get("residents", []):
+        fio = (p.get("fio") or "").strip()
+        if fio:
+            out.add(fio.split()[0])
+    return out
+
+
+async def _enqueue_recheck_surnames(db: AsyncSession, surnames: set[str]) -> None:
+    """Добавляет фамилии в очередь глубокого переопроса ГИС (gisgmp_recheck),
+    мёржит с уже стоящими. Релей заберёт на ближайшем опросе (do_recheck)."""
+    if not surnames:
+        return
+    rc_row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == "gisgmp_recheck")
+    )).scalars().first()
+    cur = {}
+    if rc_row and rc_row.value:
+        try:
+            cur = json.loads(rc_row.value)
+        except Exception:
+            cur = {}
+    merged = sorted(set(cur.get("surnames") or []) | surnames)
+    if rc_row is None:
+        rc_row = SystemSetting(key="gisgmp_recheck", value="{}",
+                               description="Очередь точечного дотягивания ГИС ГМП")
+        db.add(rc_row)
+    rc_row.value = json.dumps({"surnames": merged, "deep_months": 36}, ensure_ascii=False)
+
+
+async def _auto_recheck_due_actualizations(db: AsyncSession) -> None:
+    """Авто-перепроверка результата: прогоны актуализации в статусе «sent» старше
+    recheck_after (~2ч — ГИС успел обработать «Отправлен»→«Завершен») ОДИН раз
+    (auto_done) ставим в глубокий переопрос по их ФИО и взводим after_pending —
+    снимок «после» снимется на ближайшей сверке. Зовётся из relay-config (опрос
+    релея ~раз в 2 мин), ДО чтения очереди переопроса — чтобы забрать тем же опросом."""
+    lr = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_ACTUALIZE_LOG_KEY)
+    )).scalars().first()
+    if not lr or not lr.value:
+        return
+    try:
+        lj = json.loads(lr.value)
+    except Exception:
+        return
+    now = utcnow()
+    due_surnames: set[str] = set()
+    for run in lj.get("runs", []):
+        if run.get("status") != "sent" or run.get("auto_done"):
+            continue
+        ra = run.get("recheck_after")
+        try:
+            if not ra or datetime.fromisoformat(ra) > now:
+                continue
+        except Exception:
+            continue
+        due_surnames |= _run_surnames(run)
+        run["status"] = "rechecking"
+        run["after_pending"] = True
+        run["auto_done"] = True
+        run["recheck_at"] = now.isoformat()
+    if not due_surnames:
+        return
+    await _enqueue_recheck_surnames(db, due_surnames)
+    lr.value = json.dumps(lj, ensure_ascii=False)
+    await db.commit()
+
+
+@router.post("/gisgmp/actualize-recheck", summary="Проверить результат актуализации (переопрос ГИС по ФИО)")
+async def gisgmp_actualize_recheck(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ставит ФИО последнего прогона актуализации (sent/processing/rechecking) в
+    ГЛУБОКИЙ переопрос ГИС + взводит after_pending — релей переопросит, на
+    ближайшей сверке снимется «после». Ручной дубль авто-перепроверки: нужен,
+    т.к. ГИС обрабатывает «Отправлен в ГИС ГМП» асинхронно и снимок сразу всегда
+    показывал «без изменений»."""
+    _require_finance(current_user)
+    lr = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_ACTUALIZE_LOG_KEY)
+    )).scalars().first()
+    if not lr or not lr.value:
+        return {"queued": 0, "reason": "нет прогонов актуализации"}
+    try:
+        lj = json.loads(lr.value)
+    except Exception:
+        return {"queued": 0, "reason": "история повреждена"}
+    target = next((r for r in lj.get("runs", [])
+                   if r.get("status") in ("sent", "processing", "rechecking", "actualized")), None)
+    if not target:
+        return {"queued": 0, "reason": "нет прогона, ждущего перепроверки"}
+    surnames = _run_surnames(target)
+    if not surnames:
+        return {"queued": 0, "reason": "нет ФИО в прогоне"}
+    await _enqueue_recheck_surnames(db, surnames)
+    target["status"] = "rechecking"
+    target["after_pending"] = True
+    target["recheck_at"] = utcnow().isoformat()
+    lr.value = json.dumps(lj, ensure_ascii=False)
+    await db.commit()
+    return {"queued": len(surnames),
+            "residents": len(target.get("residents", [])),
+            "run_id": target.get("id")}
+
+
 @router.post("/gisgmp/actualize-build", summary="Очередь массовой актуализации: только ГИС > 1С (ошибка ГИС ГМП)")
 async def gisgmp_actualize_build(
     current_user: User = Depends(get_current_user),
@@ -2309,7 +2425,12 @@ async def gisgmp_actualize_progress(
         av["finished"] = True
         av["finished_at"] = utcnow().isoformat()
         av["uuids"] = []  # выполнено — очищаем список
-        # Аудит: помечаем прогон «актуализировано», снимок «после» снимем на сверке.
+        # Прогон «отправлен в ГИС». Снимок «после» НЕ снимаем сразу: ГИС
+        # обрабатывает запрос АСИНХРОННО («Отправлен в ГИС ГМП» → «Завершен»,
+        # часы) — преждевременный снимок всегда показывал «без изменений».
+        # «После» снимется на ПЕРЕПРОВЕРКЕ: авто (через ~2ч) или кнопкой
+        # «Проверить результат» — оба ставят ФИО прогона в глубокий переопрос
+        # ГИС + взводят after_pending, и снимок берётся уже по свежим данным.
         run_id = av.get("run_id")
         if run_id:
             lr = (await db.execute(
@@ -2320,25 +2441,19 @@ async def gisgmp_actualize_progress(
                     lj = json.loads(lr.value)
                     for run in lj.get("runs", []):
                         if run.get("id") == run_id:
-                            run["status"] = "actualized"
+                            run["status"] = "sent"
                             run["finished_at"] = av["finished_at"]
                             run["done"] = payload.done
                             run["ok"] = payload.ok
                             run["fail"] = payload.fail
-                            run["after_pending"] = True
+                            run["after_pending"] = False
+                            run["recheck_after"] = (utcnow() + timedelta(hours=2)).isoformat()
+                            run["auto_done"] = False
                             break
                     lr.value = json.dumps(lj, ensure_ascii=False)
                 except Exception:
                     pass
     row.value = json.dumps(av, ensure_ascii=False)
-    if payload.finished:
-        # Триггерим ближайшую сверку — подтянуть результат и снять снимок «после».
-        try:
-            rc = await _load_relay_cfg(db)
-            rc["run_now"] = True
-            await _save_relay_cfg(db, rc)
-        except Exception:
-            pass
     await db.commit()
     return {"ok": True}
 
