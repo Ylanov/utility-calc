@@ -2236,10 +2236,13 @@ async def gisgmp_actualize_recheck(
         lj = json.loads(lr.value)
     except Exception:
         return {"queued": 0, "reason": "история повреждена"}
+    # Берём последний прогон в любом «живом» статусе, включая done — ГИС мог
+    # обработать «Отправлен»→«Завершен» уже ПОСЛЕ авто-снимка, и перепроверить
+    # ещё раз должно быть можно.
     target = next((r for r in lj.get("runs", [])
-                   if r.get("status") in ("sent", "processing", "rechecking", "actualized")), None)
+                   if r.get("status") in ("sent", "processing", "rechecking", "actualized", "done")), None)
     if not target:
-        return {"queued": 0, "reason": "нет прогона, ждущего перепроверки"}
+        return {"queued": 0, "reason": "нет прогона для перепроверки"}
     surnames = _run_surnames(target)
     if not surnames:
         return {"queued": 0, "reason": "нет ФИО в прогоне"}

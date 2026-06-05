@@ -578,7 +578,7 @@ export const DebtsModule = {
             body.innerHTML = '<span style="color:var(--text-secondary)">История пуста — массовая актуализация ещё не запускалась.</span>';
             return;
         }
-        const hasPending = runs.some(r => ['sent', 'processing', 'rechecking', 'actualized'].includes(r.status));
+        const hasPending = runs.length > 0;  // «Проверить результат» доступна всегда — ГИС мог дообработать позже
         const head = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px; flex-wrap:wrap;">`
             + `<span style="font-size:12px; color:var(--text-secondary)">Прогонов в истории: <b>${runs.length}</b> (хранится до 50, старьё чистится)</span>`
             + `<span style="display:flex; gap:6px;">`
