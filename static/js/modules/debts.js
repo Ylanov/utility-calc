@@ -193,7 +193,7 @@ export const DebtsModule = {
                 const act = await api.get('/financier/gisgmp/actualize-status');
                 if (act && act.total) {
                     const pct = Math.round((act.done || 0) / act.total * 100);
-                    const st = act.running ? '⏳ отправка' : (act.finished ? '📨 отправлено, ГИС обрабатывает' : 'в очереди');
+                    const st = act.running ? '⏳ отправка' : (act.finished ? '📨 отправлено — итог в «Истории актуализаций»' : 'в очереди');
                     parts.push(`<span style="color:#2563eb;">Актуализация: <b>${st}</b> — ${act.done || 0} из ${act.total} (${pct}%, ok ${act.ok || 0}, ошибок ${act.fail || 0})</span>`);
                 }
             } catch (e) { /* нет очереди актуализации — норм */ }
