@@ -2262,6 +2262,140 @@ async def gisgmp_actualize_recheck(
             "run_id": target.get("id")}
 
 
+async def _load_person_charges(db: AsyncSession, fio: str) -> tuple[list[dict], list[str]]:
+    """Начисления ГИС ГМП одного человека из кэша (союз по ТОЧНОМУ ФИО).
+    Возвращает (charges, revocable_uuids). revocable = НЕсквитированные и НЕ
+    аннулированные — именно их актуализируем/аннулируем."""
+    from app.modules.utility.services.gisgmp_import import (
+        GISGMP_CACHE_KEY, is_unpaid, is_annulled, classify_account,
+    )
+    from app.modules.utility.services.gsheets_sync import normalize_fio
+    target = normalize_fio(fio or "")
+    charges: list[dict] = []
+    revocable: list[str] = []
+    if not target:
+        return charges, revocable
+    cache_row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_CACHE_KEY)
+    )).scalars().first()
+    if cache_row and cache_row.value:
+        try:
+            for ch in json.loads(cache_row.value).values():
+                if normalize_fio(ch.get("payer_name") or "") != target:
+                    continue
+                unpaid = is_unpaid(ch.get("ack_status"))
+                annulled = is_annulled(ch.get("change_status"))
+                try:
+                    amt = float(str(ch.get("amount") or "0").replace(",", "."))
+                except Exception:
+                    amt = 0.0
+                u = ch.get("charge_uuid")
+                charges.append({
+                    "uin": ch.get("uin"), "account": classify_account(ch.get("purpose")),
+                    "amount": amt, "bill_date": ch.get("bill_date"),
+                    "ack_status": ch.get("ack_status"), "change_status": ch.get("change_status"),
+                    "charge_uuid": u, "unpaid": unpaid, "annulled": annulled,
+                    "purpose": ch.get("purpose"),
+                })
+                if unpaid and not annulled and u:
+                    revocable.append(u)
+        except Exception:
+            pass
+    charges.sort(key=lambda c: (not c["unpaid"], c.get("account") or "", c.get("bill_date") or ""))
+    return charges, revocable
+
+
+@router.get("/gisgmp/person-charges", summary="Начисления ГИС ГМП по одному ФИО (проваливание в сверке)")
+async def gisgmp_person_charges(
+    fio: str = Query(..., max_length=200),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Read-only: все начисления человека из кэша ГИС (UIN, счёт, сумма, дата,
+    статус квитирования/изменения, uuid). Питает модалку проваливания + кнопки."""
+    _require_finance(current_user)
+    charges, revocable = await _load_person_charges(db, fio)
+    summary = {
+        "total": len(charges),
+        "revocable": len(revocable),
+        "annulled": sum(1 for c in charges if c["annulled"]),
+        "sum_revocable": round(sum(c["amount"] for c in charges if c["unpaid"] and not c["annulled"]), 2),
+    }
+    return {"fio": fio, "charges": charges, "summary": summary}
+
+
+class GisgmpPersonIn(BaseModel):
+    fio: str
+
+
+@router.post("/gisgmp/actualize-person", summary="Актуализировать начисления ОДНОГО человека")
+async def gisgmp_actualize_person(
+    payload: GisgmpPersonIn,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ставит несквитированные начисления одного человека (проваливание в сверке)
+    в очередь актуализации — релей дёрнет actualize-request по каждому; результат
+    снимется отложенной перепроверкой, как у массовой. Не пишем поверх идущей."""
+    _require_finance(current_user)
+    fio = (payload.fio or "").strip()
+    charges, revocable = await _load_person_charges(db, fio)
+    if not revocable:
+        return {"queued": 0, "reason": "нет несквитированных начислений у этого ФИО"}
+    act_row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_ACTUALIZE_KEY)
+    )).scalars().first()
+    if act_row and act_row.value:
+        try:
+            cur = json.loads(act_row.value)
+            if cur.get("running") or cur.get("uuids"):
+                return {"queued": 0, "reason": "идёт другая актуализация — дождитесь завершения"}
+        except Exception:
+            pass
+    run_id = utcnow().isoformat()
+    qpayload = {
+        "uuids": revocable, "total": len(revocable), "done": 0, "ok": 0, "fail": 0,
+        "running": False, "finished": False, "queued_at": run_id,
+        "by": current_user.username, "message": "", "targeting": "person", "run_id": run_id,
+    }
+    if act_row is None:
+        act_row = SystemSetting(key=GISGMP_ACTUALIZE_KEY, value="{}",
+                                description="Очередь массовой актуализации ГИС ГМП")
+        db.add(act_row)
+    act_row.value = json.dumps(qpayload, ensure_ascii=False)
+    run = {
+        "id": run_id, "queued_at": run_id, "by": current_user.username,
+        "targeting": f"один человек: {fio}", "total_charges": len(revocable),
+        "residents_count": 1, "status": "running", "done": 0, "ok": 0, "fail": 0,
+        "started_at": None, "finished_at": None, "after_pending": False, "after_at": None,
+        "residents": [{
+            "user_id": None, "fio": fio, "username": None, "flag": None,
+            "before": None, "after": None, "result": None,
+            "charges": [{"uin": c["uin"], "account": c["account"], "charge_uuid": c["charge_uuid"],
+                         "amount": c["amount"], "bill_date": c["bill_date"]}
+                        for c in charges if c["unpaid"] and not c["annulled"]],
+        }],
+    }
+    log_row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_ACTUALIZE_LOG_KEY)
+    )).scalars().first()
+    if log_row is None:
+        log_row = SystemSetting(key=GISGMP_ACTUALIZE_LOG_KEY, value='{"runs": []}',
+                                description="Аудит массовых актуализаций ГИС ГМП (до/после)")
+        db.add(log_row)
+    try:
+        logj = json.loads(log_row.value) if log_row.value else {"runs": []}
+    except Exception:
+        logj = {"runs": []}
+    runs = logj.get("runs", [])
+    runs.insert(0, run)
+    del runs[_ACTUALIZE_LOG_MAX_RUNS:]
+    logj["runs"] = runs
+    log_row.value = json.dumps(logj, ensure_ascii=False)
+    await db.commit()
+    return {"queued": len(revocable), "fio": fio}
+
+
 @router.post("/gisgmp/actualize-build", summary="Очередь массовой актуализации: только ГИС > 1С (ошибка ГИС ГМП)")
 async def gisgmp_actualize_build(
     current_user: User = Depends(get_current_user),

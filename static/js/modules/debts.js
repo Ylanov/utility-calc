@@ -471,7 +471,7 @@ export const DebtsModule = {
             const action = (!r.in_db && (r.in_1c || r.in_gis))
                 ? `<button class="action-btn secondary-btn" style="font-size:10px; padding:2px 7px;" data-link-fio="${esc(r.fio)}"><i class="fa-solid fa-link"></i> Привязать</button>`
                 : '';
-            return `<tr style="${bad ? 'background:rgba(254,226,226,.35);' : ''}"><td>${esc(r.fio)}</td>`
+            return `<tr style="${bad ? 'background:rgba(254,226,226,.35);' : ''}"><td><span class="recon-fio-link" data-person-fio="${esc(r.fio)}" style="cursor:pointer; color:#2563eb; text-decoration:underline dotted;" title="Открыть начисления ГИС по этому ФИО">${esc(r.fio)}</span></td>`
                 + `<td class="text-center">${mark(r.in_1c)}</td><td class="text-right">${d1c}</td><td class="text-right">${op1c}</td>`
                 + `<td class="text-center">${mark(r.in_gis)}</td><td class="text-right">${dgis}</td>`
                 + `<td class="text-right">${dCol}</td>`
@@ -501,11 +501,63 @@ export const DebtsModule = {
         body.querySelectorAll('[data-rf]').forEach(b => b.addEventListener('click', () => { this._reconFioFilter = b.getAttribute('data-rf'); this.renderReconcileFio(); }));
         body.querySelector('[data-recon-refresh]')?.addEventListener('click', () => this.refreshReconcileFio());
         body.querySelectorAll('[data-link-fio]').forEach(b => b.addEventListener('click', () => this.linkFioPrompt(b.getAttribute('data-link-fio'))));
+        body.querySelectorAll('[data-person-fio]').forEach(b => b.addEventListener('click', () => this.openPersonCharges(b.getAttribute('data-person-fio'))));
         const si = document.getElementById('reconFioSearch');
         if (si) {
             si.addEventListener('input', () => { this._reconFioQuery = si.value; this.renderReconcileFio(); });
             if (this._reconFioQuery) { si.focus(); si.setSelectionRange(si.value.length, si.value.length); }
         }
+    },
+
+    // Проваливание в ФИО: модалка со всеми начислениями ГИС человека + действия.
+    async openPersonCharges(fio) {
+        let data;
+        try {
+            data = await api.get(`/financier/gisgmp/person-charges?fio=${encodeURIComponent(fio)}`);
+        } catch (e) { toast('Ошибка загрузки начислений: ' + (e?.message || e), 'error'); return; }
+        const charges = data.charges || [];
+        const s = data.summary || {};
+        const fmt = (v) => (Number(v) || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const ov = document.createElement('div');
+        ov.className = 'modal-overlay open';
+        ov.style.zIndex = '9999';
+        const rowsHtml = charges.length ? charges.map(c => {
+            const st = c.annulled ? '<span style="color:#6b7280;">аннулировано</span>'
+                : (c.unpaid ? '<span style="color:#b91c1c; font-weight:600;">не сквитировано</span>' : '<span style="color:#047857;">сквитировано</span>');
+            return `<tr style="${c.unpaid && !c.annulled ? 'background:rgba(254,226,226,.3);' : ''}">`
+                + `<td style="font-family:monospace; font-size:11px;">${esc(c.uin || '—')}</td>`
+                + `<td class="text-center">${esc(c.account || '?')}</td>`
+                + `<td class="text-right">${fmt(c.amount)}</td>`
+                + `<td class="text-center" style="font-size:11px;">${esc(c.bill_date || '—')}</td>`
+                + `<td>${st}</td></tr>`;
+        }).join('') : '<tr><td colspan="5" class="text-center" style="color:#9ca3af;">нет начислений в кэше ГИС по этому ФИО</td></tr>';
+        ov.innerHTML = `<div class="modal-window" style="width:740px; max-width:96vw;">
+            <div class="modal-header"><h3 style="font-size:15px;">Начисления ГИС ГМП — ${esc(fio)}</h3><button class="close-btn" data-close>&times;</button></div>
+            <div class="modal-form" style="padding:14px 16px; max-height:72vh; overflow:auto;">
+                <div style="font-size:12px; color:var(--text-secondary); margin-bottom:8px;">Всего: <b>${s.total || 0}</b> · не сквитировано: <b style="color:#b91c1c;">${s.revocable || 0}</b> (${fmt(s.sum_revocable)} ₽) · аннулировано: <b>${s.annulled || 0}</b></div>
+                <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap; align-items:center;">
+                    <button class="action-btn primary-btn" style="font-size:13px;" data-act-person ${s.revocable ? '' : 'disabled'}><i class="fa-solid fa-rotate"></i> Актуализировать (${s.revocable || 0})</button>
+                    <span style="font-size:11px; color:#9ca3af;">Кнопка «Аннулировать» появится после проверки эндпоинта на тесте.</span>
+                </div>
+                <div class="table-responsive" style="max-height:50vh; overflow:auto;"><table class="sticky-header-table" style="font-size:12px;">
+                    <thead><tr><th>УИН</th><th class="text-center">Счёт</th><th class="text-right">Сумма</th><th class="text-center">Дата</th><th>Статус</th></tr></thead>
+                    <tbody>${rowsHtml}</tbody></table></div>
+            </div></div>`;
+        document.body.appendChild(ov);
+        const close = () => ov.remove();
+        ov.querySelector('[data-close]')?.addEventListener('click', close);
+        ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+        ov.querySelector('[data-act-person]')?.addEventListener('click', async () => { close(); await this.actualizePerson(fio); });
+    },
+
+    async actualizePerson(fio) {
+        if (!await showConfirm(`Поставить актуализацию всех несквитированных начислений «${fio}»? Релей дёрнет ГИС по каждому; результат — отложенной перепроверкой (как у массовой).`)) return;
+        try {
+            const r = await api.post('/financier/gisgmp/actualize-person', { fio });
+            if (!r.queued) { toast(r.reason || 'Нечего актуализировать', 'info'); return; }
+            toast(`Поставлено в актуализацию: ${r.queued} начислений по «${fio}». Прогресс — в статусе, итог — в «Истории актуализаций».`, 'success');
+            this.loadGisgmpStatus?.();
+        } catch (e) { toast('Ошибка актуализации: ' + (e?.message || e), 'error'); }
     },
 
     // Привязать «сироту» 1С/ГИС к жильцу базы: кандидаты по фамилии → выбор → алиас + переименование.
