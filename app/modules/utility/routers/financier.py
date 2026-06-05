@@ -1187,6 +1187,7 @@ async def gisgmp_reconcile_fio(
         if r is None:
             r = {"fio": (fio_raw or "").strip(), "in_1c": False, "in_gis": False,
                  "in_db": False, "d209_1c": 0.0, "d205_1c": 0.0,
+                 "o209_1c": 0.0, "o205_1c": 0.0,  # переплата 1С (ГИС её не отдаёт)
                  "d209_gis": 0.0, "d205_gis": 0.0, "user_id": None, "username": None}
             rows[n] = r
         return r
@@ -1228,6 +1229,7 @@ async def gisgmp_reconcile_fio(
             r["in_1c"] = True
             try:
                 r[f"d{acc}_1c"] += float(st.get(f"debt_{acc}") or 0)
+                r[f"o{acc}_1c"] += float(st.get(f"overpayment_{acc}") or 0)
             except Exception:
                 pass
         for nf in (log.not_found_users or []):
@@ -1237,6 +1239,7 @@ async def gisgmp_reconcile_fio(
             r["in_1c"] = True
             try:
                 r[f"d{acc}_1c"] += float(nf.get("debt") or 0)
+                r[f"o{acc}_1c"] += float(nf.get("overpayment") or 0)
             except Exception:
                 pass
 
@@ -1288,6 +1291,7 @@ async def gisgmp_reconcile_fio(
         "not_in_db": sum(1 for r in items if not r["in_db"]),
         "not_in_gis": sum(1 for r in items if not r["in_gis"]),
         "not_in_1c": sum(1 for r in items if not r["in_1c"]),
+        "with_overpay": sum(1 for r in items if (r["o209_1c"] + r["o205_1c"]) > 0.005),
     }
     # Проблемные (хоть где-то «нет») — сверху, дальше по ФИО.
     items.sort(key=lambda r: ((r["in_1c"] and r["in_gis"] and r["in_db"]), r["fio"] or ""))
@@ -1695,6 +1699,7 @@ async def debts_rematch_base(
                 "debt_205": "0", "overpayment_205": "0",
             }
             ent[f"debt_{acc}"] = str(nf.get("debt") or 0)
+            ent[f"overpayment_{acc}"] = str(nf.get("overpayment") or 0)
             ent["username"] = u["username"]
             ent["room_id"] = u["room_id"]
             ent["room_label"] = u["room_label"]

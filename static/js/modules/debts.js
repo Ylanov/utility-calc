@@ -450,14 +450,17 @@ export const DebtsModule = {
         if (flt === 'no_1c') list = list.filter(r => !r.in_1c);
         else if (flt === 'no_gis') list = list.filter(r => !r.in_gis);
         else if (flt === 'no_db') list = list.filter(r => !r.in_db);
+        else if (flt === 'over') list = list.filter(r => ((r.o209_1c || 0) + (r.o205_1c || 0)) > 0.005);
         else if (flt === 'problem') list = list.filter(r => !(r.in_1c && r.in_gis && r.in_db));
         if (q) list = list.filter(r => (r.fio || '').toLowerCase().includes(q));
         const mark = (on) => on ? '<span style="color:#047857; font-weight:700;">✓</span>' : '<span style="color:#b91c1c; font-weight:700;">✗</span>';
         const trs = list.slice(0, 1500).map(r => {
             const t1c = (r.d209_1c || 0) + (r.d205_1c || 0);
             const tgis = (r.d209_gis || 0) + (r.d205_gis || 0);
+            const o1c = (r.o209_1c || 0) + (r.o205_1c || 0);
             const d1c = (r.d209_1c || r.d205_1c) ? fmt(t1c) : '<span style="color:#d1d5db;">—</span>';
             const dgis = (r.d209_gis || r.d205_gis) ? fmt(tgis) : '<span style="color:#d1d5db;">—</span>';
+            const op1c = o1c > 0.005 ? `<span style="color:#047857; font-weight:600;">${fmt(o1c)}</span>` : '<span style="color:#d1d5db;">—</span>';
             // Δ = ГИС − 1С (то же сравнение, что в «Сверке с 1С», но тут по ФИО,
             // без гейта по базе). Красный = ГИС больше, синий = 1С больше.
             const dv = tgis - t1c;
@@ -469,7 +472,7 @@ export const DebtsModule = {
                 ? `<button class="action-btn secondary-btn" style="font-size:10px; padding:2px 7px;" data-link-fio="${esc(r.fio)}"><i class="fa-solid fa-link"></i> Привязать</button>`
                 : '';
             return `<tr style="${bad ? 'background:rgba(254,226,226,.35);' : ''}"><td>${esc(r.fio)}</td>`
-                + `<td class="text-center">${mark(r.in_1c)}</td><td class="text-right">${d1c}</td>`
+                + `<td class="text-center">${mark(r.in_1c)}</td><td class="text-right">${d1c}</td><td class="text-right">${op1c}</td>`
                 + `<td class="text-center">${mark(r.in_gis)}</td><td class="text-right">${dgis}</td>`
                 + `<td class="text-right">${dCol}</td>`
                 + `<td class="text-center">${mark(r.in_db)}</td><td class="text-center">${action}</td></tr>`;
@@ -483,16 +486,17 @@ export const DebtsModule = {
                 ${tile('Нет в 1С', s.not_in_1c ?? 0, '#b91c1c')}
                 ${tile('Нет в ГИС', s.not_in_gis ?? 0, '#b91c1c')}
                 ${tile('Нет в базе', s.not_in_db ?? 0, '#d97706')}
+                ${tile('С переплатой 1С', s.with_overpay ?? 0, '#0ea5e9')}
             </div>
             <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-bottom:8px;">
-                ${fbtn('problem', 'Проблемные')}${fbtn('no_1c', 'Нет в 1С')}${fbtn('no_gis', 'Нет в ГИС')}${fbtn('no_db', 'Нет в базе')}${fbtn('all', 'Все')}
+                ${fbtn('problem', 'Проблемные')}${fbtn('no_1c', 'Нет в 1С')}${fbtn('no_gis', 'Нет в ГИС')}${fbtn('no_db', 'Нет в базе')}${fbtn('over', 'С переплатой')}${fbtn('all', 'Все')}
                 <button class="action-btn secondary-btn" data-recon-refresh style="font-size:11px; padding:3px 10px;"><i class="fa-solid fa-rotate-right"></i> Обновить</button>
                 <input type="text" id="reconFioSearch" placeholder="Поиск по ФИО…" value="${esc(this._reconFioQuery || '')}" style="margin-left:auto; padding:4px 8px; font-size:12px; min-width:200px;">
             </div>
             <div style="font-size:11px; color:var(--text-secondary); margin-bottom:6px;">Показано: <b>${list.length}</b>. База — живьём; ГИС от: <b>${d.gis_synced_at ? new Date(d.gis_synced_at).toLocaleString('ru-RU') : '—'}</b>; 1С — последний импорт. Союз по ТОЧНОМУ ФИО.</div>
             <div class="table-responsive" style="max-height:55vh; overflow:auto;"><table class="sticky-header-table" style="font-size:12px;">
-                <thead><tr><th>ФИО</th><th class="text-center">1С</th><th class="text-right">Долг 1С</th><th class="text-center">ГИС</th><th class="text-right">Долг ГИС</th><th class="text-right">Δ ГИС−1С</th><th class="text-center">База</th><th class="text-center">Действие</th></tr></thead>
-                <tbody>${trs || '<tr><td colspan="8" class="text-center" style="color:#9ca3af;">нет строк под фильтр</td></tr>'}</tbody>
+                <thead><tr><th>ФИО</th><th class="text-center">1С</th><th class="text-right">Долг 1С</th><th class="text-right">Перепл 1С</th><th class="text-center">ГИС</th><th class="text-right">Долг ГИС</th><th class="text-right">Δ ГИС−1С</th><th class="text-center">База</th><th class="text-center">Действие</th></tr></thead>
+                <tbody>${trs || '<tr><td colspan="9" class="text-center" style="color:#9ca3af;">нет строк под фильтр</td></tr>'}</tbody>
             </table></div>`;
         body.querySelectorAll('[data-rf]').forEach(b => b.addEventListener('click', () => { this._reconFioFilter = b.getAttribute('data-rf'); this.renderReconcileFio(); }));
         body.querySelector('[data-recon-refresh]')?.addEventListener('click', () => this.refreshReconcileFio());
