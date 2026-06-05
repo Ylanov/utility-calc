@@ -2138,6 +2138,13 @@ async def _capture_actualize_after(db: AsyncSession) -> None:
             r = cur.get(int(uid)) if uid is not None else None
             if r is not None:
                 after = {"gis": r.get("sum_gis"), "c1": r.get("sum_1c"), "delta": r.get("delta")}
+            elif res.get("fio"):
+                # Прогон по ОДНОМУ человеку (user_id нет): «после» = сумма ещё
+                # несквитированных начислений (что сквитировалось — ушло из долга).
+                _ch, _rev = await _load_person_charges(db, res["fio"])
+                after = {"gis": round(sum(c["amount"] for c in _ch
+                                          if c["unpaid"] and not c["annulled"]), 2),
+                         "c1": None, "delta": None}
             else:
                 # Жилец выпал из сверки — ни ГИС, ни 1С долга не осталось → ГИС обнулён.
                 c1 = float((res.get("before") or {}).get("c1") or 0)
@@ -2241,25 +2248,25 @@ async def gisgmp_actualize_recheck(
         lj = json.loads(lr.value)
     except Exception:
         return {"queued": 0, "reason": "история повреждена"}
-    # Берём последний прогон в любом «живом» статусе, включая done — ГИС мог
-    # обработать «Отправлен»→«Завершен» уже ПОСЛЕ авто-снимка, и перепроверить
-    # ещё раз должно быть можно.
-    target = next((r for r in lj.get("runs", [])
-                   if r.get("status") in ("sent", "processing", "rechecking", "actualized", "done")), None)
-    if not target:
-        return {"queued": 0, "reason": "нет прогона для перепроверки"}
-    surnames = _run_surnames(target)
-    if not surnames:
-        return {"queued": 0, "reason": "нет ФИО в прогоне"}
-    await _enqueue_recheck_surnames(db, surnames)
-    target["status"] = "rechecking"
-    target["after_pending"] = True
-    target["recheck_at"] = utcnow().isoformat()
+    # Перепроверяем ВСЕ прогоны, что ждут результата (а не только последний —
+    # иначе остальные «ждущие» висят пустыми). done не трогаем (уже финал).
+    pending = [r for r in lj.get("runs", [])
+               if r.get("status") in ("sent", "processing", "rechecking", "actualized")]
+    if not pending:
+        return {"queued": 0, "reason": "нет прогонов, ждущих перепроверки"}
+    all_surnames: set[str] = set()
+    now_iso = utcnow().isoformat()
+    for run in pending:
+        all_surnames |= _run_surnames(run)
+        run["status"] = "rechecking"
+        run["after_pending"] = True
+        run["recheck_at"] = now_iso
+    if not all_surnames:
+        return {"queued": 0, "reason": "нет ФИО в прогонах"}
+    await _enqueue_recheck_surnames(db, all_surnames)
     lr.value = json.dumps(lj, ensure_ascii=False)
     await db.commit()
-    return {"queued": len(surnames),
-            "residents": len(target.get("residents", [])),
-            "run_id": target.get("id")}
+    return {"queued": len(all_surnames), "runs": len(pending)}
 
 
 async def _load_person_charges(db: AsyncSession, fio: str) -> tuple[list[dict], list[str]]:
@@ -2370,7 +2377,10 @@ async def gisgmp_actualize_person(
         "started_at": None, "finished_at": None, "after_pending": False, "after_at": None,
         "residents": [{
             "user_id": None, "fio": fio, "username": None, "flag": None,
-            "before": None, "after": None, "result": None,
+            "before": {"gis": round(sum(c["amount"] for c in charges
+                                        if c["unpaid"] and not c["annulled"]), 2),
+                       "c1": None, "delta": None},
+            "after": None, "result": None,
             "charges": [{"uin": c["uin"], "account": c["account"], "charge_uuid": c["charge_uuid"],
                          "amount": c["amount"], "bill_date": c["bill_date"]}
                         for c in charges if c["unpaid"] and not c["annulled"]],
