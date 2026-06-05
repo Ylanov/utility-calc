@@ -768,6 +768,24 @@ async def gisgmp_relay_config(
         except Exception:
             pass
 
+    # Очередь аннулирования (кнопка «Аннулировать всё несквитированное», АДМИН):
+    # отдаём UUID ОДИН раз, помечаем running. Релей разбирает первым (приоритет).
+    an_row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == "gisgmp_annul")
+    )).scalars().first()
+    annul = None
+    if an_row and an_row.value:
+        try:
+            anv = json.loads(an_row.value)
+        except Exception:
+            anv = {}
+        if anv.get("uuids") and not anv.get("running"):
+            annul = {"uuids": anv["uuids"]}
+            anv["running"] = True
+            anv["started_at"] = utcnow().isoformat()
+            an_row.value = json.dumps(anv, ensure_ascii=False)
+            await db.commit()
+
     # Очередь массовой актуализации (кнопка «Актуализировать расхождения»):
     # отдаём полный список UUID ОДИН раз и помечаем running, пока релей идёт.
     act_row = (await db.execute(
@@ -798,6 +816,7 @@ async def gisgmp_relay_config(
         "recheck": recheck,
         "control": control or None,
         "actualize": actualize,
+        "annul": annul,
     }
 
 
@@ -2484,6 +2503,166 @@ async def gisgmp_actualize_person(
     log_row.value = json.dumps(logj, ensure_ascii=False)
     await db.commit()
     return {"queued": len(revocable), "fio": fio}
+
+
+# =========================================================================
+# АННУЛИРОВАНИЕ начислений ГИС ГМП (разрушительно, но ОБРАТИМО через
+# де-аннулирование). Очередь gisgmp_annul → релей do_revoke по revoke-request.
+# Только АДМИН + слово-подтверждение. Аудит — gisgmp_annul_log.
+# =========================================================================
+GISGMP_ANNUL_KEY = "gisgmp_annul"
+GISGMP_ANNUL_LOG_KEY = "gisgmp_annul_log"
+
+
+class GisgmpAnnulIn(BaseModel):
+    fio: str
+    confirm: str = ""
+
+
+@router.post("/gisgmp/annul-person", summary="Аннулировать ВСЕ несквитированные начисления человека (ТОЛЬКО админ)")
+async def gisgmp_annul_person(
+    payload: GisgmpAnnulIn,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """РАЗРУШИТЕЛЬНО (но ОБРАТИМО де-аннулированием): ставит в очередь аннулирования
+    ВСЕ несквитированные (и не аннулированные) начисления ОДНОГО человека. Релей
+    дёргает revoke-request по каждому uuid. ТОЛЬКО АДМИН + слово «АННУЛИРОВАТЬ»."""
+    if (current_user.role or "") != "admin":
+        raise HTTPException(403, "Аннулирование — только администратор")
+    if (payload.confirm or "").strip().upper() != "АННУЛИРОВАТЬ":
+        raise HTTPException(400, "Нужно подтверждение: впишите слово АННУЛИРОВАТЬ")
+    fio = (payload.fio or "").strip()
+    charges, revocable = await _load_person_charges(db, fio)
+    if not revocable:
+        return {"queued": 0, "reason": "нет несквитированных начислений у этого ФИО"}
+    an_row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_ANNUL_KEY)
+    )).scalars().first()
+    if an_row and an_row.value:
+        try:
+            cur = json.loads(an_row.value)
+            if cur.get("running") or cur.get("uuids"):
+                return {"queued": 0, "reason": "идёт другое аннулирование — дождитесь завершения"}
+        except Exception:
+            pass
+    run_id = utcnow().isoformat()
+    rev_sum = round(sum(c["amount"] for c in charges if c["unpaid"] and not c["annulled"]), 2)
+    qpayload = {
+        "uuids": revocable, "total": len(revocable), "done": 0, "ok": 0, "fail": 0,
+        "running": False, "finished": False, "queued_at": run_id,
+        "by": current_user.username, "fio": fio, "message": "", "run_id": run_id,
+    }
+    if an_row is None:
+        an_row = SystemSetting(key=GISGMP_ANNUL_KEY, value="{}",
+                               description="Очередь аннулирования ГИС ГМП")
+        db.add(an_row)
+    an_row.value = json.dumps(qpayload, ensure_ascii=False)
+    run = {
+        "id": run_id, "queued_at": run_id, "by": current_user.username, "fio": fio,
+        "total_charges": len(revocable), "sum": rev_sum, "status": "running",
+        "done": 0, "ok": 0, "fail": 0, "finished_at": None,
+        "charges": [{"uin": c["uin"], "account": c["account"], "amount": c["amount"],
+                     "charge_uuid": c["charge_uuid"], "bill_date": c["bill_date"]}
+                    for c in charges if c["unpaid"] and not c["annulled"]],
+    }
+    log_row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_ANNUL_LOG_KEY)
+    )).scalars().first()
+    if log_row is None:
+        log_row = SystemSetting(key=GISGMP_ANNUL_LOG_KEY, value='{"runs": []}',
+                                description="Аудит аннулирований ГИС ГМП")
+        db.add(log_row)
+    try:
+        logj = json.loads(log_row.value) if log_row.value else {"runs": []}
+    except Exception:
+        logj = {"runs": []}
+    runs = logj.get("runs", [])
+    runs.insert(0, run)
+    del runs[50:]
+    logj["runs"] = runs
+    log_row.value = json.dumps(logj, ensure_ascii=False)
+    await db.commit()
+    logger.warning("[gisgmp] АННУЛИРОВАНИЕ: %s ставит %d счетов (%.2f) по «%s»",
+                   current_user.username, len(revocable), rev_sum, fio)
+    return {"queued": len(revocable), "fio": fio, "sum": rev_sum}
+
+
+class GisgmpAnnulProgressIn(BaseModel):
+    done: int = 0
+    ok: int = 0
+    fail: int = 0
+    finished: bool = False
+    message: str = ""
+
+
+@router.post("/gisgmp/annul-progress", summary="Релей шлёт прогресс аннулирования (token)")
+async def gisgmp_annul_progress(
+    payload: GisgmpAnnulProgressIn,
+    authorization: Optional[str] = Header(None),
+    db: AsyncSession = Depends(get_db),
+):
+    _check_gisgmp_token(authorization)
+    row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_ANNUL_KEY)
+    )).scalars().first()
+    if not row or not row.value:
+        return {"ok": True}
+    try:
+        av = json.loads(row.value)
+    except Exception:
+        av = {}
+    av["done"] = payload.done
+    av["ok"] = payload.ok
+    av["fail"] = payload.fail
+    av["last_at"] = utcnow().isoformat()
+    if payload.message:
+        av["message"] = payload.message[:300]
+    if payload.finished:
+        av["running"] = False
+        av["finished"] = True
+        av["finished_at"] = utcnow().isoformat()
+        av["uuids"] = []
+        rid = av.get("run_id")
+        lr = (await db.execute(
+            select(SystemSetting).where(SystemSetting.key == GISGMP_ANNUL_LOG_KEY)
+        )).scalars().first()
+        if lr and lr.value:
+            try:
+                lj = json.loads(lr.value)
+                for run in lj.get("runs", []):
+                    if run.get("id") == rid or (rid is None and run.get("status") == "running"):
+                        run["status"] = "done"
+                        run["finished_at"] = av["finished_at"]
+                        run["done"] = payload.done
+                        run["ok"] = payload.ok
+                        run["fail"] = payload.fail
+                        break
+                lr.value = json.dumps(lj, ensure_ascii=False)
+            except Exception:
+                pass
+    row.value = json.dumps(av, ensure_ascii=False)
+    await db.commit()
+    return {"ok": True}
+
+
+@router.get("/gisgmp/annul-status", summary="Прогресс аннулирования (для UI)")
+async def gisgmp_annul_status(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    _require_finance(current_user)
+    row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_ANNUL_KEY)
+    )).scalars().first()
+    if not row or not row.value:
+        return {"total": 0, "done": 0, "running": False, "finished": False}
+    try:
+        av = json.loads(row.value)
+    except Exception:
+        return {"total": 0, "done": 0, "running": False, "finished": False}
+    return {k: av.get(k) for k in (
+        "total", "done", "ok", "fail", "running", "finished", "fio", "by", "message", "finished_at")}
 
 
 @router.post("/gisgmp/actualize-build", summary="Очередь массовой актуализации: только ГИС > 1С (ошибка ГИС ГМП)")

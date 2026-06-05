@@ -287,6 +287,50 @@ def do_actualize(uuids):
     log(f"[relay] актуализация завершена: ok {ok}, ошибок {fail} из {total}")
 
 
+def revoke_progress(done, ok, fail, finished=False, message=""):
+    """Прогресс массового аннулирования → ЖКХ (индикатор в UI)."""
+    try:
+        requests.post(f"{JKH_URL}/api/financier/gisgmp/annul-progress",
+                      headers=_auth(),
+                      json={"done": done, "ok": ok, "fail": fail,
+                            "finished": finished, "message": (message or "")[:300]},
+                      timeout=30)
+    except Exception as e:
+        log("[relay] прогресс аннулирования не ушёл:", e)
+
+
+def do_revoke(uuids):
+    """Массовое аннулирование: по каждому UUID дёргаем revoke-request в реестре
+    (как кнопка «Аннулировать начисление»). ОБРАТИМО — un-revoke-request возвращает.
+    «ok» только если реестр принял ({"result":"…отправлен"})."""
+    s = requests.Session()
+    login(s)
+    total, ok, fail = len(uuids), 0, 0
+    hdr = {"User-Agent": UA, "X-Requested-With": "XMLHttpRequest"}
+    log(f"[relay] аннулирование {total} счетов…")
+    for i, u in enumerate(uuids, 1):
+        try:
+            r = s.get(f"{REGISTRY}/api/charge/{u}/revoke-request",
+                      headers=hdr, timeout=60)
+            accepted = False
+            if r.status_code < 400:
+                try:
+                    accepted = "отправл" in str((r.json() or {}).get("result", "")).lower()
+                except Exception:
+                    accepted = '"result"' in (r.text or "")
+            if accepted:
+                ok += 1
+            else:
+                fail += 1
+        except Exception:
+            fail += 1
+        time.sleep(ACTUALIZE_SLEEP)
+        if i % 10 == 0 or i == total:
+            revoke_progress(i, ok, fail, finished=(i == total),
+                            message=f"аннулировано {i}/{total} (ok {ok}, ошибок {fail})")
+    log(f"[relay] аннулирование завершено: ok {ok}, ошибок {fail} из {total}")
+
+
 def _reexec():
     """Перезапуск процесса на месте (execv) — мгновенно, без 30с паузы systemd.
     Подхватывает свежий relay.py и обновлённое окружение (PASSPORT_*)."""
@@ -374,9 +418,16 @@ def main():
     while True:
         try:
             cfg = get_config()
+            annul = cfg.get("annul")
             actualize = cfg.get("actualize")
             recheck = cfg.get("recheck")
-            if actualize and actualize.get("uuids"):
+            if annul and annul.get("uuids"):
+                try:
+                    do_revoke(annul["uuids"])
+                except Exception as e:
+                    log("[relay] ошибка аннулирования:", e)
+                    revoke_progress(0, 0, 0, finished=True, message="ошибка: " + str(e)[:200])
+            elif actualize and actualize.get("uuids"):
                 try:
                     do_actualize(actualize["uuids"])
                 except Exception as e:

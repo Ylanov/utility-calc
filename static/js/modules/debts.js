@@ -537,7 +537,7 @@ export const DebtsModule = {
                 <div style="font-size:12px; color:var(--text-secondary); margin-bottom:8px;">Всего: <b>${s.total || 0}</b> · не сквитировано: <b style="color:#b91c1c;">${s.revocable || 0}</b> (${fmt(s.sum_revocable)} ₽) · аннулировано: <b>${s.annulled || 0}</b></div>
                 <div style="display:flex; gap:8px; margin-bottom:10px; flex-wrap:wrap; align-items:center;">
                     <button class="action-btn primary-btn" style="font-size:13px;" data-act-person ${s.revocable ? '' : 'disabled'}><i class="fa-solid fa-rotate"></i> Актуализировать (${s.revocable || 0})</button>
-                    <span style="font-size:11px; color:#9ca3af;">Кнопка «Аннулировать» появится после проверки эндпоинта на тесте.</span>
+                    <button class="action-btn" style="font-size:13px; background:#b91c1c; color:#fff; border-color:#b91c1c;" data-annul-person ${s.revocable ? '' : 'disabled'} title="Аннулировать в ГИС все несквитированные начисления (только админ, обратимо де-аннулированием)"><i class="fa-solid fa-ban"></i> Аннулировать несквитированное (${s.revocable || 0})</button>
                 </div>
                 <div class="table-responsive" style="max-height:50vh; overflow:auto;"><table class="sticky-header-table" style="font-size:12px;">
                     <thead><tr><th>УИН</th><th class="text-center">Счёт</th><th class="text-right">Сумма</th><th class="text-center">Дата</th><th>Статус</th></tr></thead>
@@ -548,6 +548,47 @@ export const DebtsModule = {
         ov.querySelector('[data-close]')?.addEventListener('click', close);
         ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
         ov.querySelector('[data-act-person]')?.addEventListener('click', async () => { close(); await this.actualizePerson(fio); });
+        ov.querySelector('[data-annul-person]')?.addEventListener('click', () => this.annulPerson(fio, s));
+    },
+
+    // Аннулировать ВСЕ несквитированные начисления человека (только админ, слово-подтв).
+    async annulPerson(fio, s) {
+        const fmt = (v) => (Number(v) || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const ov = document.createElement('div');
+        ov.className = 'modal-overlay open';
+        ov.style.zIndex = '10000';
+        ov.innerHTML = `<div class="modal-window" style="width:500px; max-width:94vw;">
+            <div class="modal-header" style="background:#fef2f2;"><h3 style="font-size:15px; color:#b91c1c;">⚠ Аннулировать начисления</h3><button class="close-btn" data-close>&times;</button></div>
+            <div class="modal-form" style="padding:16px;">
+                <p style="font-size:13px; margin:0 0 8px;">Аннулировать в ГИС ГМП <b>ВСЕ ${s.revocable || 0}</b> несквитированных начислений на сумму <b>${fmt(s.sum_revocable)} ₽</b> у <b>${esc(fio)}</b>.</p>
+                <p style="font-size:12px; color:#92400e; background:#fffbeb; padding:8px 10px; border-radius:6px; margin:0 0 12px;">Релей дёрнет «Аннулировать» по каждому счёту. Уже аннулированные/сквитированные не трогаются. В ГИС это <b>обратимо</b> («Де-аннулировать»). Действие только для админа.</p>
+                <label style="font-size:12px; display:block; margin-bottom:4px;">Впишите слово <b style="color:#b91c1c;">АННУЛИРОВАТЬ</b> для подтверждения:</label>
+                <input type="text" id="annulConfirmInput" placeholder="АННУЛИРОВАТЬ" autocomplete="off" style="width:100%; padding:7px 10px; font-size:13px; margin-bottom:14px; box-sizing:border-box;">
+                <div style="display:flex; gap:8px; justify-content:flex-end;">
+                    <button class="action-btn secondary-btn" data-close>Отмена</button>
+                    <button class="action-btn" style="background:#b91c1c; color:#fff; border-color:#b91c1c;" data-annul-go><i class="fa-solid fa-ban"></i> Аннулировать ${s.revocable || 0}</button>
+                </div>
+            </div></div>`;
+        document.body.appendChild(ov);
+        const close = () => ov.remove();
+        ov.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', close));
+        ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+        const inp = document.getElementById('annulConfirmInput');
+        inp?.focus();
+        ov.querySelector('[data-annul-go]')?.addEventListener('click', async () => {
+            const confirm = (inp?.value || '').trim();
+            if (confirm.toUpperCase() !== 'АННУЛИРОВАТЬ') { toast('Впишите слово АННУЛИРОВАТЬ', 'warning'); inp?.focus(); return; }
+            try {
+                const r = await api.post('/financier/gisgmp/annul-person', { fio, confirm });
+                if (!r.queued) { toast(r.reason || 'Нечего аннулировать', 'info'); close(); return; }
+                toast(`Поставлено в аннулирование: ${r.queued} счетов (${fmt(r.sum)} ₽) по «${fio}». Релей аннулирует за ~1-2 мин.`, 'success');
+                close();
+                this.loadGisgmpStatus?.();
+            } catch (e) {
+                const m = e?.message || String(e);
+                toast(m.includes('403') ? 'Аннулирование — только администратор' : ('Ошибка: ' + m), 'error');
+            }
+        });
     },
 
     async actualizePerson(fio) {
