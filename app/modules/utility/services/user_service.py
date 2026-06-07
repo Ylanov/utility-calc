@@ -1,5 +1,25 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.modules.utility.models import User
+from sqlalchemy import or_, select
+from app.modules.utility.models import User, MeterReading
+
+
+def countable_resident_condition():
+    """Условие «учитываемый жилец наших домов» для where(...).
+
+    Решение 2026-06-07 («с долгом — оставить»): жилец учитывается, если у него
+    ЕСТЬ комната ИЛИ есть хотя бы один reading (долг на лице без комнаты ждёт
+    заселения — фича «долг на ФИО»). Безкомнатный БЕЗ единого reading — это
+    «свой дом»/мусор: его нигде не учитываем (списки, дашборд-счётчики, сверка).
+
+    NB: это НЕ фильтр is_deleted — его добавляют отдельно. Подзапрос лёгкий
+    (~400 жильцов), индекс readings.user_id уже есть.
+    """
+    return or_(
+        User.room_id.isnot(None),
+        User.id.in_(
+            select(MeterReading.user_id).where(MeterReading.user_id.isnot(None))
+        ),
+    )
 
 
 async def delete_user_service(user_id: int, db: AsyncSession):

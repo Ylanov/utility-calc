@@ -15,6 +15,7 @@ from app.modules.utility.models import (
     User, Room, MeterReading, BillingPeriod, AuditLog, SupportTicket
 )
 from app.core.dependencies import RoleChecker
+from app.modules.utility.services.user_service import countable_resident_condition
 
 router = APIRouter(tags=["Admin Dashboard"])
 logger = logging.getLogger(__name__)
@@ -88,7 +89,9 @@ async def get_dashboard_kpi(
         select(
             func.count(User.id).label("total"),
             func.count(case((User.room_id.is_not(None), 1))).label("with_room"),
-        ).where(User.is_deleted.is_(False), User.role == "user")
+        ).where(User.is_deleted.is_(False), User.role == "user",
+                # без «своих домов»: учитываем только с комнатой или с долгом
+                countable_resident_condition())
     )
     u = users_stats.one()
     total_users = u[0]
@@ -324,12 +327,15 @@ async def get_attention_center(
         )
     )).scalar_one() or 0
 
-    # 7. Жильцы без комнаты (orphan users) — частый источник проблем 1С
+    # 7. Жильцы без комнаты, НО С долгом (нужно заселить, чтобы долг подцепился).
+    # Безкомнатные без единого reading («свой дом») сюда НЕ попадают — это не
+    # проблема. room_id IS NULL + countable() = безкомнатный с reading.
     orphan_users_count = (await db.execute(
         select(func.count(User.id)).where(
             User.is_deleted.is_(False),
             User.role == "user",
             User.room_id.is_(None),
+            countable_resident_condition(),
         )
     )).scalar_one() or 0
 
@@ -399,8 +405,8 @@ async def get_attention_center(
         },
         {
             "key": "orphan_users",
-            "label": "Жильцы без комнаты",
-            "hint": "У жильца не назначена комната — частая причина пустых ОСВ",
+            "label": "Жильцы без комнаты (с долгом)",
+            "hint": "Безкомнатный с долгом 1С — назначьте комнату, чтобы долг подцепился",
             "count": orphan_users_count,
             "severity": "warning" if orphan_users_count > 0 else "ok",
             "icon": "fa-user-slash",

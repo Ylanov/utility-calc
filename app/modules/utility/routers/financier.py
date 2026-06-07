@@ -25,6 +25,7 @@ from app.core.dependencies import get_current_user
 from app.core.auth import fernet
 from app.modules.utility.schemas import PaginatedResponse, UserDebtResponse
 from app.modules.utility.tasks import import_debts_task
+from app.modules.utility.services.user_service import countable_resident_condition
 
 router = APIRouter(prefix="/api/financier", tags=["Financier"])
 logger = logging.getLogger(__name__)
@@ -1217,7 +1218,9 @@ async def gisgmp_reconcile_fio(
     # --- база: активные жильцы (источник in_db + приоритетное отображение ФИО) ---
     db_rows = (await db.execute(
         select(User.id, User.username).where(
-            User.role == "user", User.is_deleted.is_(False))
+            User.role == "user", User.is_deleted.is_(False),
+            # «свои дома» (безкомнатные без долга) в сверку не берём
+            countable_resident_condition())
     )).all()
     for uid, un in db_rows:
         r = _row(un)
@@ -3046,6 +3049,8 @@ async def get_users_with_debts(
     ).where(
         User.is_deleted.is_(False),
         User.role == "user",
+        # «свои дома» (безкомнатные без долга) в список «Долги 1С» не берём
+        countable_resident_condition(),
     )
 
     search_condition = None
@@ -3095,7 +3100,8 @@ async def get_users_with_debts(
 
     # count
     count_stmt = select(func.count(User.id)).outerjoin(Room, User.room_id == Room.id).where(
-        User.is_deleted.is_(False), User.role == "user"
+        User.is_deleted.is_(False), User.role == "user",
+        countable_resident_condition(),
     )
     if search_condition is not None:
         count_stmt = count_stmt.where(search_condition)
@@ -3458,9 +3464,11 @@ async def debts_stats(
     )
     total_rooms = (await db.execute(total_rooms_q)).scalar_one()
 
-    # Всего активных жильцов
+    # Всего учитываемых жильцов (с комнатой ИЛИ с долгом). Без «своих домов» —
+    # чтобы число сходилось с долговой популяцией (деньги/должники reading-based).
     total_users_q = select(func.count(User.id)).where(
         User.is_deleted.is_(False), User.role == "user",
+        countable_resident_condition(),
     )
     total_users = (await db.execute(total_users_q)).scalar_one()
 

@@ -28,7 +28,9 @@ from app.modules.utility.schemas import (
 from app.core.dependencies import get_current_user, RoleChecker
 from app.core.auth import get_password_hash, verify_password
 from app.modules.utility.services.excel_service import import_users_from_excel
-from app.modules.utility.services.user_service import delete_user_service
+from app.modules.utility.services.user_service import (
+    delete_user_service, countable_resident_condition,
+)
 
 # ИМПОРТ ДЛЯ ЖУРНАЛА ДЕЙСТВИЙ
 from app.modules.utility.routers.admin_dashboard import write_audit_log
@@ -354,8 +356,14 @@ async def get_users(
     Использует Keyset Pagination (O(1)) при сортировке по ID,
     и автоматически переходит на OFFSET при использовании фильтров.
     """
-    items_query = select(User).options(selectinload(User.room)).where(User.is_deleted.is_(False))
-    count_query = select(func.count(User.id)).where(User.is_deleted.is_(False))
+    # «Свой дом»/мусор: жилец (role='user') БЕЗ комнаты и БЕЗ единого reading
+    # нигде не учитывается (решение 2026-06-07). Не-жильцов (admin/accountant)
+    # показываем всегда — фильтр их не касается.
+    _visible = or_(User.role != "user", countable_resident_condition())
+    items_query = select(User).options(selectinload(User.room)).where(
+        User.is_deleted.is_(False), _visible)
+    count_query = select(func.count(User.id)).where(
+        User.is_deleted.is_(False), _visible)
 
     # Нужен ли JOIN к Room: если ищем по dormitory / сортируем по нему / ищем текстом
     # / фильтруем по place_type / street.
@@ -462,8 +470,10 @@ async def users_stats(
 ):
     """KPI + распределения + топ-должники/переплатчики одним раундом к БД."""
     active_where = User.is_deleted.is_(False)
+    # total = учитываемые жильцы (с комнатой ИЛИ с долгом), без «своих домов».
     total_users = (await db.execute(
-        select(func.count(User.id)).where(active_where, User.role == "user")
+        select(func.count(User.id)).where(
+            active_where, User.role == "user", countable_resident_condition())
     )).scalar_one()
     with_room = (await db.execute(
         select(func.count(User.id)).where(
