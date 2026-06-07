@@ -11,10 +11,24 @@ from sqlalchemy.orm import selectinload
 
 from app.modules.utility.models import User, MeterReading, BillingPeriod, Room
 from app.modules.utility.constants import ANOMALY_MAP
+from app.modules.utility.services.tariff_cache import tariff_cache
 
 logger = logging.getLogger(__name__)
 
 ZERO = Decimal("0.00")
+
+
+def _charge_flag(tariff, field: str) -> bool:
+    """charge_*-флаг тарифа с обработкой None→True (зеркалит calculations._charge).
+
+    Источник истины — ЭФФЕКТИВНЫЙ тариф комнаты (get_effective_tariff(room)),
+    нигде не хранится. Поэтому переезд жильца в тариф со счётчиками
+    (charge_*=True) сам убирает метку «не начисляется» на следующем запросе.
+    """
+    if tariff is None:
+        return True
+    v = getattr(tariff, field, None)
+    return True if v is None else bool(v)
 
 
 def _infer_source(anomaly_flags: Optional[str]) -> str:
@@ -266,6 +280,7 @@ async def get_paginated_readings(
     items = []
     for current, user, room in rows:
         prev = prev_map.get(room.id)
+        eff_t = tariff_cache.get_effective_tariff(user=user, room=room)
         anomaly_details = []
 
         if current.anomaly_flags and current.anomaly_flags != "PENDING":
@@ -306,6 +321,12 @@ async def get_paginated_readings(
             "period_name": selected_period.name,
             "source": _infer_source(current.anomaly_flags),
             "created_at": current.created_at.isoformat() if current.created_at else None,
+            # Живые charge_*-флаги эффективного тарифа комнаты: фронт рисует
+            # «не начисляется» вместо значения там, где услуга не начисляется.
+            "charge_hot_water": _charge_flag(eff_t, "charge_hot_water"),
+            "charge_cold_water": _charge_flag(eff_t, "charge_cold_water"),
+            "charge_sewage": _charge_flag(eff_t, "charge_sewage"),
+            "charge_electricity": _charge_flag(eff_t, "charge_electricity"),
         })
 
     return {

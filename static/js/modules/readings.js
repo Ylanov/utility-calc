@@ -24,6 +24,18 @@ function fmtMoney(v) {
 function fmtNum(v, digits = 3) {
     return Number(v || 0).toFixed(digits);
 }
+// Ячейка счётчика: «не начисляется», если тариф жильца не начисляет услугу
+// (charge===false), иначе само значение. charge приходит живьём из тарифа
+// комнаты (см. admin_readings_list._charge_flag) — переезд в Лидер уберёт метку.
+function meterCell(value, charge) {
+    if (charge === false) {
+        return el('span', {
+            title: 'не начисляется по тарифу',
+            style: { color: '#9ca3af', fontStyle: 'italic', fontSize: '11px' }
+        }, 'не начисл.');
+    }
+    return fmtNum(value);
+}
 function fmtDate(iso) {
     if (!iso) return '—';
     try { return new Date(iso).toLocaleDateString('ru-RU'); } catch { return iso; }
@@ -352,9 +364,9 @@ export const ReadingsModule = {
             // Источник
             el('td', { style: { fontSize: '12px', whiteSpace: 'nowrap' } },
                 `${src.icon} ${escapeHtml(src.label)}`),
-            el('td', { class: 'text-right' }, fmtNum(r.cur_hot ?? r.hot_water)),
-            el('td', { class: 'text-right' }, fmtNum(r.cur_cold ?? r.cold_water)),
-            el('td', { class: 'text-right' }, fmtNum(r.cur_elect ?? r.electricity)),
+            el('td', { class: 'text-right' }, meterCell(r.cur_hot ?? r.hot_water, r.charge_hot_water)),
+            el('td', { class: 'text-right' }, meterCell(r.cur_cold ?? r.cold_water, r.charge_cold_water)),
+            el('td', { class: 'text-right' }, meterCell(r.cur_elect ?? r.electricity, r.charge_electricity)),
             deltaCell,
             el('td', { class: 'text-right', style: { color: '#27ae60', fontWeight: 'bold' } }, `${fmtMoney(r.total_cost)} ₽`),
             el('td', { class: 'text-center' },

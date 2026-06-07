@@ -334,6 +334,16 @@ export const ClientReadings = {
             if (hasCw) this.setCellsFromValue('cold', data.prev_cold);
             if (hasEl) this.setCellsFromValue('elect', data.prev_elect);
         }
+
+        // Живая метка «не начисляется»: charge_*-флаги эффективного тарифа
+        // комнаты приходят в /api/readings/state. Если услуга не начисляется
+        // (charge_*=false) — карточка приглушается, поле снимается с submit,
+        // под ней подпись. Нигде не хранится → переезд в тариф со счётчиками
+        // (charge=true) вернёт карточку в норму на следующем ответе.
+        this._applyMeterCharge('hot', data.charge_hot_water !== false);
+        this._applyMeterCharge('cold', data.charge_cold_water !== false);
+        this._applyMeterCharge('elect', data.charge_electricity !== false);
+
         this.validate();
     },
 
@@ -356,6 +366,37 @@ export const ClientReadings = {
             input.disabled = true;
             // Шлём 0 — сервер всё равно перезатрёт расход на норматив × residents.
             input.value = 0;
+        }
+    },
+
+    /**
+     * Живая метка «не начисляется по тарифу» на карточке счётчика.
+     * Источник истины — charge_*-флаги из /api/readings/state (эффективный
+     * тариф КОМНАТЫ, не сохранён). При isCharged=false карточка приглушается,
+     * поле снимается с submit, добавляется подпись. При isCharged=true метка
+     * убирается (видимость карточки остаётся за _applyMeterVisibility/has_meter).
+     * Так переезд в тариф со счётчиками автоматически возвращает поле в строй.
+     */
+    _applyMeterCharge(key, isCharged) {
+        const card = this.dom.cards[key];
+        const input = this.dom.inputs[key];
+        if (!card) return;
+        let lbl = card.querySelector('.not-charged-label');
+        if (!isCharged) {
+            card.style.display = '';        // показать даже если has_meter=false
+            card.style.opacity = '0.55';
+            if (input) { input.required = false; input.disabled = true; input.value = 0; }
+            if (!lbl) {
+                lbl = el('div', {
+                    class: 'not-charged-label',
+                    style: { marginTop: '6px', fontSize: '11px', fontStyle: 'italic', color: '#9ca3af', textAlign: 'center' }
+                }, 'не начисляется по тарифу');
+                card.appendChild(lbl);
+            }
+            lbl.style.display = '';
+        } else {
+            card.style.opacity = '';
+            if (lbl) lbl.style.display = 'none';
         }
     },
 
