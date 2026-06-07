@@ -866,14 +866,17 @@ async def relocate_user(
         user.login = f"{user.login}_deleted_{user.id}"  # освобождаем и логин
         # Закрываем активную RoomAssignment (moved_out_at = now), новой не создаём
         await move_user_to_room(db, user=user, new_room_id=None, note="evicted")
-        message = "Жилец успешно выселен. Финальная квитанция сформирована."
+        # Прим.: отдельная финальная квитанция за частичный месяц тут НЕ
+        # формируется — начисление по старой комнате идёт обычным закрытием
+        # периода (reading хранит свой room_id, считается по тарифу той комнаты).
+        message = "Жилец успешно выселен."
     elif action == "move":
         new_room = await db.get(Room, data.new_room_id)
         if not new_room:
             raise HTTPException(status_code=404, detail="Новая комната не найдена")
         await move_user_to_room(db, user=user, new_room_id=new_room.id,
                                 note=f"relocate to {new_room.format_address}")
-        message = f"Финальная квитанция сформирована. Жилец переведен в {new_room.format_address}."
+        message = f"Жилец переведён в {new_room.format_address}."
 
     # ЗАПИСЬ В ЖУРНАЛ: Переселение/Выселение
     await write_audit_log(

@@ -57,6 +57,7 @@ async def auto_recalc_drift(db, period_id: int) -> dict:
         select(MeterReading)
         .options(
             selectinload(MeterReading.user).selectinload(User.room),
+            selectinload(MeterReading.room),
             selectinload(MeterReading.period),
         )
         .where(
@@ -82,7 +83,11 @@ async def auto_recalc_drift(db, period_id: int) -> dict:
 
     for r in rows:
         user = r.user
-        room = user.room if user else None
+        # КОМНАТА reading'а (r.room), а НЕ текущая комната жильца (user.room).
+        # Иначе после переезда (room A→B) исторический reading периода A
+        # пересчитался бы по тарифу B и авто-перезаписал бы верную квитанцию.
+        # r.room=None (долг на лице без комнаты) → пропускаем: считать нечего.
+        room = r.room
         if not user or not room:
             continue
         tariff = tariff_cache.get_effective_tariff(user=user, room=room)

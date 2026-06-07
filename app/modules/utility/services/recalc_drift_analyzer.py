@@ -93,6 +93,7 @@ async def detect_drift_in_period(
         select(MeterReading)
         .options(
             selectinload(MeterReading.user).selectinload(User.room),
+            selectinload(MeterReading.room),
             selectinload(MeterReading.period),
         )
         .where(
@@ -121,7 +122,10 @@ async def detect_drift_in_period(
 
     for r in readings:
         user = r.user
-        room = user.room if user else None
+        # Комната reading'а (r.room), НЕ текущая комната жильца — иначе у всех
+        # переехавших анализатор покажет ложный «дрейф» (история считалась бы
+        # по тарифу новой комнаты). r.room=None (долг без комнаты) → ниже skip.
+        room = r.room
 
         # Reading без жильца/комнаты — реально такого быть не должно,
         # но не падаем.

@@ -319,7 +319,10 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
     """
     reading = (await db.execute(
         select(MeterReading)
-        .options(selectinload(MeterReading.user).selectinload(User.room))
+        .options(
+            selectinload(MeterReading.user).selectinload(User.room),
+            selectinload(MeterReading.room),
+        )
         .where(MeterReading.id == reading_id)
         .with_for_update()
     )).scalars().first()
@@ -331,7 +334,13 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
         raise HTTPException(status_code=409, detail="Показание уже утверждено другим администратором")
 
     user = reading.user
-    room = user.room
+    # Комната САМОГО reading (reading.room), а НЕ текущая комната жильца
+    # (user.room). Если жилец переехал ДО утверждения черновика, reading был
+    # подан в старой комнате (reading.room_id стампится при подаче) — утверждать
+    # и считать тариф/prev надо по ней, иначе room_id↔суммы разъедутся, а
+    # baseline (первая подача в комнате) сработает не там. Согласуется с
+    # bulk_approve_drafts, который джойнит Room по MeterReading.room_id.
+    room = reading.room
     if not room:
         raise HTTPException(status_code=400, detail="Жилец не привязан к помещению")
 
