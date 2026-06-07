@@ -5,7 +5,7 @@ from decimal import Decimal
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func, update, or_
+from sqlalchemy import func, update, or_, and_
 from sqlalchemy.orm import selectinload
 
 from app.modules.utility.models import User, MeterReading, Tariff, BillingPeriod, Adjustment, Room
@@ -89,22 +89,41 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
     # а не по комнате в целом. Жилец может переехать в комнату, где уже
     # есть история от прошлого жильца — в таком случае его первая подача
     # на новом месте должна быть baseline, а не дельтой от чужих цифр.
-    subq_max_date = select(
+    #
+    # Аудит #9 (класс «Капранов»): prev ОБЯЗАН быть meaningful и из ПРОШЛОГО
+    # периода. Раньше брали max(created_at) без фильтра флагов/периода → при
+    # авто-утверждении дельта массово считалась от синтетического нуля
+    # (AUTO_NORM/AUTO_GENERATED hot=0). Теперь: max(period_id) среди period_id <
+    # активного и НЕ из PREV_SKIP_FLAGS. ILIKE с escape точно зеркалит
+    # is_meaningful_prev (подстрочное вхождение флага). Единый предикат с
+    # approve_single / client_readings / save_manual_entry.
+    from app.modules.utility.services.reading_calculator import PREV_SKIP_FLAGS
+
+    def _esc_like(s: str) -> str:
+        return s.replace("#", "##").replace("_", "#_").replace("%", "#%")
+
+    _flags_col = func.coalesce(MeterReading.anomaly_flags, "")
+    _meaningful = and_(*[
+        ~_flags_col.ilike(f"%{_esc_like(f)}%", escape="#") for f in PREV_SKIP_FLAGS
+    ])
+    subq_max_pid = select(
         MeterReading.user_id,
         MeterReading.room_id,
-        func.max(MeterReading.created_at).label("max_created")
+        func.max(MeterReading.period_id).label("max_pid")
     ).where(
         MeterReading.user_id.in_(user_ids),
         MeterReading.room_id.in_(room_ids),
         MeterReading.is_approved.is_(True),
+        MeterReading.period_id < active_period.id,
+        _meaningful,
     ).group_by(MeterReading.user_id, MeterReading.room_id).subquery()
 
     prev_rows = (await db.execute(
         select(MeterReading).join(
-            subq_max_date,
-            (MeterReading.user_id == subq_max_date.c.user_id) &
-            (MeterReading.room_id == subq_max_date.c.room_id) &
-            (MeterReading.created_at == subq_max_date.c.max_created)
+            subq_max_pid,
+            (MeterReading.user_id == subq_max_pid.c.user_id) &
+            (MeterReading.room_id == subq_max_pid.c.room_id) &
+            (MeterReading.period_id == subq_max_pid.c.max_pid)
         )
     )).scalars().all()
     # Ключ — (user_id, room_id), значит та же пара нужна для lookup ниже.
@@ -361,16 +380,26 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
     # в целом. Иначе если до этого жильца в комнате кто-то уже подавал
     # показания (старый жилец, GSHEETS_AUTO с огромными цифрами и т.п.),
     # дельта посчитается относительно чужих значений — получатся миллионы.
-    prev = (await db.execute(
+    #
+    # Аудит #3 (регрессия «Капранов»): prev ОБЯЗАН проходить is_meaningful_prev
+    # — иначе берётся синтетический AUTO_GENERATED/AUTO_NORM (hot=0) и дельта
+    # считается от нуля (250-0=250 м³ → десятки тыс. ₽). Берём кандидатов из
+    # ПРОШЛЫХ периодов (period_id < reading.period_id, как у клиента/manual —
+    # period_id=NULL INITIAL не годится в prev) по убыванию периода и берём
+    # первый meaningful. Единый предикат с client_readings/save_manual_entry.
+    from app.modules.utility.services.reading_calculator import is_meaningful_prev
+    _prev_candidates = (await db.execute(
         select(MeterReading)
         .where(
             MeterReading.user_id == user.id,
             MeterReading.room_id == room.id,
             MeterReading.is_approved,
             MeterReading.id != reading.id,
+            MeterReading.period_id < reading.period_id,
         )
-        .order_by(MeterReading.created_at.desc()).limit(1)
-    )).scalars().first()
+        .order_by(MeterReading.period_id.desc()).limit(20)
+    )).scalars().all()
+    prev = next((r for r in _prev_candidates if is_meaningful_prev(r)), None)
 
     # BASELINE — первая в жизни ЖИЛЬЦА подача в этой комнате.
     # Счётчики уже могут быть накопленные (десятки тысяч за годы), и
