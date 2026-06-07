@@ -236,7 +236,7 @@ async def auto_fill_period_endpoint(
     acquired = await redis_client.set(lock_key, lock_value, nx=True, ex=1800)
     if not acquired:
         try:
-            await redis_client.aclose()
+            await (getattr(redis_client, "aclose", None) or redis_client.close)()
         except Exception:
             pass
         raise HTTPException(
@@ -256,7 +256,7 @@ async def auto_fill_period_endpoint(
         except Exception:
             pass
         try:
-            await redis_client.aclose()
+            await (getattr(redis_client, "aclose", None) or redis_client.close)()
         except Exception:
             pass
 
