@@ -587,7 +587,10 @@ async def unapprove_single(db: AsyncSession, reading_id: int, current_user=None)
     """
     reading = (await db.execute(
         select(MeterReading)
-        .options(selectinload(MeterReading.user).selectinload(User.room))
+        .options(
+            selectinload(MeterReading.user).selectinload(User.room),
+            selectinload(MeterReading.room),
+        )
         .where(MeterReading.id == reading_id)
         .with_for_update()
     )).scalars().first()
@@ -597,7 +600,10 @@ async def unapprove_single(db: AsyncSession, reading_id: int, current_user=None)
     if not reading.is_approved:
         raise HTTPException(status_code=400, detail="Показание не утверждено — отменять нечего")
 
-    room = reading.user.room if reading.user else None
+    # Комната САМОГО reading (а не текущая комната жильца) — симметрия Edit B:
+    # у переехавшего reading.user.room ≠ комната, к которой привязан reading;
+    # room.last_* надо восстанавливать в комнате reading'а.
+    room = reading.room
 
     reading.is_approved = False
     reading.total_209 = ZERO
