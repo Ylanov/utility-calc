@@ -156,6 +156,10 @@ async def admin_reset_password(
     temp_password = _generate_temp_password()
     user.hashed_password = get_password_hash(temp_password)
     user.is_initial_setup_done = False
+    # Аудит #26: сброс пароля — реакция на компрометацию. Бампим token_version,
+    # чтобы ВСЕ ранее выданные токены (в т.ч. угнанный) стали невалидны сразу,
+    # а не жили до exp (~2ч). Зеркалит self-service /me/change-password.
+    user.token_version = (user.token_version or 0) + 1
 
     # Аудит — кто кому сбросил. Импорт ленивый, чтобы избежать
     # cross-router cycle (admin_dashboard импортит auth-вещи).

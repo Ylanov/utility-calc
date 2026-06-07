@@ -78,6 +78,12 @@ async def get_current_user(
         token_scope = payload.get("scope", "full")
         if token_scope != "full":
             raise credentials_exception
+        # Аудит #14: эта (слабая) копия раньше НЕ проверяла role/tv, хотя от неё
+        # зависят RoleChecker/require_resident → почти все ручки. Из-за этого
+        # отзыв сессии (logout/смена пароля/сброс) и понижение роли не работали.
+        # Извлекаем здесь, проверяем после резолва юзера. Зеркало auth.py.
+        token_role = payload.get("role")
+        token_tv = payload.get("tv")
     except JWTError as e:
         logger.debug(f"JWT decode error: {e}")
         raise credentials_exception
@@ -96,6 +102,20 @@ async def get_current_user(
     user = result.scalars().first()
 
     if user is None:
+        raise credentials_exception
+
+    # Понижение роли: если админу сменили role на user, его старый токен с
+    # role='admin' больше не открывает admin-ручки. Старые токены без role
+    # (token_role=None) не отклоняем — backward compat.
+    if token_role and token_role != user.role:
+        raise credentials_exception
+
+    # Отзыв сессии: JWT с tv=N валиден, только пока user.token_version == N.
+    # logout / смена пароля / админ-сброс инкрементируют счётчик → ранее
+    # выданные токены становятся невалидными. Нет tv в токене (старый) → 0.
+    current_tv = user.token_version or 0
+    token_tv_int = token_tv if token_tv is not None else 0
+    if token_tv_int != current_tv:
         raise credentials_exception
 
     # Помечаем все логи и Sentry-events этим request'ом — user_id жильца.

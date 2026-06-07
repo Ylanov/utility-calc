@@ -792,8 +792,15 @@ async def update_user(
             raise HTTPException(status_code=400, detail="Этот логин уже занят")
         update_dict["login"] = new_login
 
+    # Аудит #26: смена пароля/роли админом обязана отзывать старые сессии
+    # (бамп token_version) — иначе угнанный токен живёт до exp. Роль теперь
+    # ловится и проверкой token_role в get_current_user, но бамп надёжнее.
+    _bump_tv = False
     if "password" in update_dict and update_dict["password"]:
         db_user.hashed_password = get_password_hash(update_dict.pop("password"))
+        _bump_tv = True
+    if "role" in update_dict and update_dict["role"] != db_user.role:
+        _bump_tv = True
 
     # Переезд: если меняется room_id — пишем в историю проживания (RoomAssignment).
     # Раньше менялось одной строчкой setattr — без следов; теперь через сервис.
@@ -809,6 +816,9 @@ async def update_user(
     # (счётчики на квартиру делятся в billing). per_capita — legacy.
     for key, value in update_dict.items():
         setattr(db_user, key, value)
+
+    if _bump_tv:
+        db_user.token_version = (db_user.token_version or 0) + 1
 
     # ЗАПИСЬ В ЖУРНАЛ: Обновление пользователя
     await write_audit_log(
