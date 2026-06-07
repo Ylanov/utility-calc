@@ -175,8 +175,10 @@ def calculate_utilities(
     # ─────────────────────────────────────────────────
     v_hot  = safe_positive(D(volume_hot))
     v_cold = safe_positive(D(volume_cold))
-    v_sew  = safe_positive(D(volume_sewage))
     v_el   = safe_positive(D(volume_electricity_share))
+    # v_sew (водоотведение) считаем ниже, ПОСЛЕ charge-флагов — как сумму
+    # только заряжаемых водных объёмов (Аудит #4). Переданный volume_sewage
+    # (= hot+cold) — производное, здесь не используем.
 
     residents = D(user.residents_count if user.residents_count else 1)
     # Наличие счётчиков — приоритет КОМНАТЫ (статично, meters_002), fallback
@@ -195,11 +197,6 @@ def calculate_utilities(
         v_cold = safe_positive(D(getattr(tariff, "cw_norm_per_capita", 0)) * residents)
     if not has_el:
         v_el = safe_positive(D(getattr(tariff, "el_norm_per_capita", 0)) * residents)
-
-    # Водоотведение тоже пересчитываем если хотя бы один из водных
-    # счётчиков отсутствует — оно идёт от суммы (ГВС + ХВС).
-    if (not has_hw) or (not has_cw):
-        v_sew = v_hot + v_cold
 
     # Площадь комнаты
     area = D(room.apartment_area or 0)
@@ -252,6 +249,17 @@ def calculate_utilities(
     def _charge(field: str) -> bool:
         v = getattr(tariff, field, None)
         return True if v is None else bool(v)
+
+    # Водоотведение = объём ТОЛЬКО заряжаемых водных ресурсов (ГВС+ХВС).
+    # Аудит #4: при charge_hot_water/charge_cold_water=False объём ресурса НЕ
+    # должен течь в водоотведение — иначе жилец платит водоотведение за воду,
+    # которую тариф не начисляет (внутренне противоречивый счёт). v_hot/v_cold
+    # выше уже учли норматив при отсутствии счётчика. При обоих включённых
+    # ресурсах результат идентичен прежнему (v_hot+v_cold) — без регрессии.
+    v_sew = (
+        (v_hot if _charge("charge_hot_water") else ZERO)
+        + (v_cold if _charge("charge_cold_water") else ZERO)
+    )
 
     # ГВС (Bug AP, 2026-05): тариф water_heating уже включает в себя
     # стоимость воды + подогрева — это единая цена 1 м³ ГВС.
