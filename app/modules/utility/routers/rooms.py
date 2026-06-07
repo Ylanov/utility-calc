@@ -785,6 +785,18 @@ async def update_room(room_id: int, data: RoomUpdate, db: AsyncSession = Depends
         await db.flush()
         from app.modules.utility.services.room_assignment import recount_singles_residents
         await recount_singles_residents(db, room_id)
+    elif singles_changed and "total_room_residents" not in update_data:
+        # Аудит #20: singles→family. Делитель счётчиков был авто-холостяцким;
+        # для семьи это «число людей» — иначе доли электричества не сходятся к
+        # 100% (переначисление). Если админ НЕ задал total_room_residents явно
+        # в этом апдейте — ставим сумму residents_count аккаунтов (≥1).
+        await db.flush()
+        _ppl = (await db.execute(
+            select(func.coalesce(func.sum(func.coalesce(User.residents_count, 1)), 0))
+            .where(User.room_id == room_id, User.is_deleted.is_(False),
+                   User.role == "user")
+        )).scalar_one()
+        room.total_room_residents = int(_ppl) if _ppl and _ppl > 0 else 1
 
     await db.commit()
     await db.refresh(room)
@@ -1132,6 +1144,12 @@ async def make_room_singles(
             "residents_converted": res.rowcount,
         },
     )
+    # Аудит #12: после перевода в singles делитель счётчиков обязан
+    # пересчитаться (= число жильцов), иначе остаётся семейным → холостяк
+    # недоплачивает за воду в N раз. Зеркалит update_room.
+    await db.flush()
+    from app.modules.utility.services.room_assignment import recount_singles_residents
+    await recount_singles_residents(db, room_id)
     await db.commit()
     return {"status": "ok", "room_id": room_id, "residents_converted": res.rowcount}
 

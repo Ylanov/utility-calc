@@ -247,6 +247,19 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
                 db.add_all(new_assignments)
                 await db.commit()
 
+        # Аудит #13: bulk-импорт ставит room_id новым жильцам напрямую (минуя
+        # move_user_to_room), поэтому делитель счётчиков singles-комнат не
+        # пересчитывается → пере-/недоначисление воды кратно. Пересчитываем все
+        # затронутые комнаты (recount — no-op для не-singles). Переезды существующих
+        # жильцов шли через move_user_to_room, который уже пересчитал старую+новую.
+        if users_with_room:
+            from app.modules.utility.services.room_assignment import recount_singles_residents
+            affected_room_ids = {rid for _, rid in users_with_room if rid is not None}
+            for _rid in affected_room_ids:
+                await recount_singles_residents(db, _rid)
+            if affected_room_ids:
+                await db.commit()
+
         await asyncio.to_thread(workbook.close)
 
         return {
