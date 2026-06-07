@@ -976,6 +976,61 @@ def test_charge_no_meters_preset():
 
 
 # ──────────────────────────────────────────────────────────────
+# Регресс (ревизия #4): корректировка водоотведения и charge-гейт v_sew
+# ──────────────────────────────────────────────────────────────
+
+def test_sewage_correction_applied():
+    """sewage_correction вычитается из объёма водоотведения, а не теряется.
+    Регрессия: после правки #4 v_sew игнорировал volume_sewage (куда caller
+    зашивал корректировку) → водоотведение завышалось. Теперь — явный параметр."""
+    user = FakeUser(residents=2)
+    room = FakeRoom(area=50.0, total_residents=2)
+    tariff = FakeTariff(sewage="35.00")
+
+    # ГВС 8 + ХВС 4 = 12; корректировка 3 → объём 9 → 9 × 35 = 315.00
+    res = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=Decimal("8"), volume_cold=Decimal("4"),
+        volume_sewage=Decimal("12"), volume_electricity_share=Decimal("0"),
+        sewage_correction=Decimal("3"),
+    )
+    assert res["cost_sewage"] == quantize_money(Decimal("9") * Decimal("35.00"))
+
+    # corr=0 → полный объём 12 × 35 = 420.00 (без регрессии)
+    res0 = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=Decimal("8"), volume_cold=Decimal("4"),
+        volume_sewage=Decimal("12"), volume_electricity_share=Decimal("0"),
+    )
+    assert res0["cost_sewage"] == quantize_money(Decimal("12") * Decimal("35.00"))
+
+    # корректировка больше объёма → clamp в 0 (не отрицательная сумма)
+    res_clamp = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=Decimal("8"), volume_cold=Decimal("4"),
+        volume_sewage=Decimal("12"), volume_electricity_share=Decimal("0"),
+        sewage_correction=Decimal("100"),
+    )
+    assert res_clamp["cost_sewage"] == Decimal("0.00")
+
+
+def test_sewage_excludes_uncharged_resource():
+    """Аудит #4: при charge_hot_water=False объём ГВС НЕ течёт в водоотведение."""
+    user = FakeUser(residents=2)
+    room = FakeRoom(area=50.0, total_residents=2)
+    tariff = FakeTariff(sewage="35.00", charge_hot_water=False)
+
+    res = calculate_utilities(
+        user=user, room=room, tariff=tariff,
+        volume_hot=Decimal("8"), volume_cold=Decimal("4"),
+        volume_sewage=Decimal("12"), volume_electricity_share=Decimal("0"),
+    )
+    # ГВС не начисляется → водоотведение только по ХВС: 4 × 35 = 140.00
+    assert res["cost_sewage"] == quantize_money(Decimal("4") * Decimal("35.00"))
+    assert res["cost_hot_water"] == Decimal("0.00")
+
+
+# ──────────────────────────────────────────────────────────────
 # ЗАПУСК ВСЕХ ТЕСТОВ
 # ──────────────────────────────────────────────────────────────
 

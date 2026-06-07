@@ -1085,10 +1085,12 @@ def _recalc_compute_one(db_session, reading, user, room, prev_reading, tariffs_b
     costs = calculate_utilities(
         user=user, room=room, tariff=tariff,
         volume_hot=d_hot, volume_cold=d_cold,
-        volume_sewage=max(ZERO, (d_hot + d_cold) - sewage_corr),
+        volume_sewage=d_hot + d_cold,
         volume_electricity_share=d_elect,
         heating_season_active=_heating,
         hot_water_heating_active=_hw,
+        # корректировку водоотведения — явным параметром (ревизия регрессии #4)
+        sewage_correction=sewage_corr,
     )
 
     cost_205 = costs["cost_social_rent"]

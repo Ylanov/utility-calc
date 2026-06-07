@@ -456,10 +456,13 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
             tariff=t,
             volume_hot=d_hot_final,
             volume_cold=d_cold_final,
-            volume_sewage=max(ZERO, (d_hot_final + d_cold_final) - correction_data.sewage_correction),
+            volume_sewage=d_hot_final + d_cold_final,
             volume_electricity_share=d_elect_final,
             heating_season_active=_heating,
             hot_water_heating_active=_hw,
+            # корректировку водоотведения передаём явным параметром (раньше
+            # зашивали в volume_sewage — терялась после правки #4, ревизия).
+            sewage_correction=correction_data.sewage_correction,
         )
 
         # Финальный sanity-check на итог. Защита от случая когда коррекции
