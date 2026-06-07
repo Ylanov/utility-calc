@@ -217,15 +217,28 @@ async def get_dashboard_kpi(
                 "percent_change": pct_change,
             }
 
-    # === ОБЩАЯ ЗАДОЛЖЕННОСТЬ (по последним показаниям каждого жильца) ===
-    debt_result = await db.execute(
-        select(
-            func.coalesce(func.sum(MeterReading.debt_209), 0),
-            func.coalesce(func.sum(MeterReading.debt_205), 0),
-        ).where(MeterReading.is_approved.is_(True))
-    )
-    debt_row = debt_result.one()
-    total_debt = float(debt_row[0]) + float(debt_row[1])
+    # === ОБЩАЯ ЗАДОЛЖЕННОСТЬ ===
+    # Аудит #6: сальдо — снимок активного периода; раньше SUM без period_id и
+    # без join User множил долг на число периодов и включал удалённых жильцов
+    # → цифра завышалась в разы и не сходилась с financier. Эталон —
+    # /debts/stats: фильтр period_id == active + join User (живые role='user').
+    total_debt = 0.0
+    if active_period is not None:
+        debt_result = await db.execute(
+            select(
+                func.coalesce(func.sum(MeterReading.debt_209), 0),
+                func.coalesce(func.sum(MeterReading.debt_205), 0),
+            )
+            .join(User, User.id == MeterReading.user_id)
+            .where(
+                MeterReading.is_approved.is_(True),
+                MeterReading.period_id == active_period.id,
+                User.is_deleted.is_(False),
+                User.role == "user",
+            )
+        )
+        debt_row = debt_result.one()
+        total_debt = float(debt_row[0]) + float(debt_row[1])
 
     return {
         "users": {

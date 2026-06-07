@@ -726,18 +726,24 @@ async def get_client_finance(
     )).scalars().first()
     active_period_id = active_period.id if active_period else None
 
-    agg_stmt = select(
-        func.coalesce(func.sum(MeterReading.debt_209), 0).label("debt_209"),
-        func.coalesce(func.sum(MeterReading.overpayment_209), 0).label("overpayment_209"),
-        func.coalesce(func.sum(MeterReading.debt_205), 0).label("debt_205"),
-        func.coalesce(func.sum(MeterReading.overpayment_205), 0).label("overpayment_205"),
-    ).where(
-        MeterReading.user_id == current_user.id,
-        MeterReading.is_approved.is_(True),
-    )
-
-    agg_row = (await db.execute(agg_stmt)).first()
-    debt_209, overpay_209, debt_205, overpay_205 = agg_row
+    # Аудит #5: сальдо 1С (debt/overpayment) — снимок ОДНОГО периода, его нельзя
+    # суммировать по всем периодам (баланс множился на число периодов → жилец
+    # видел долг ×N). Эталон — financier /users-status и /debts/stats: фильтр
+    # period_id == активного. Если активного периода нет — сальдо 0.
+    debt_209 = overpay_209 = debt_205 = overpay_205 = 0
+    if active_period_id is not None:
+        agg_stmt = select(
+            func.coalesce(func.sum(MeterReading.debt_209), 0),
+            func.coalesce(func.sum(MeterReading.overpayment_209), 0),
+            func.coalesce(func.sum(MeterReading.debt_205), 0),
+            func.coalesce(func.sum(MeterReading.overpayment_205), 0),
+        ).where(
+            MeterReading.user_id == current_user.id,
+            MeterReading.is_approved.is_(True),
+            MeterReading.period_id == active_period_id,
+        )
+        agg_row = (await db.execute(agg_stmt)).first()
+        debt_209, overpay_209, debt_205, overpay_205 = agg_row
 
     # Текущая ожидаемая сумма к оплате за активный период (draft или утверждённая).
     current_total = Decimal("0.00")

@@ -518,6 +518,15 @@ async def users_stats(
         for tid, tname, c in tariff_rows
     ]
 
+    # Аудит #6: сальдо — снимок активного периода. SUM по всем периодам без
+    # join User множил долг на число периодов и включал удалённых. Эталон —
+    # financier /debts/stats: period_id == active + join User (живые role='user').
+    from sqlalchemy import false as _sa_false
+    _ap = (await db.execute(
+        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
+    )).scalars().first()
+    _period_cond = (MeterReading.period_id == _ap.id) if _ap else _sa_false()
+
     debt_rows = (await db.execute(
         select(
             func.coalesce(func.sum(MeterReading.debt_209), 0),
@@ -525,7 +534,9 @@ async def users_stats(
             func.coalesce(func.sum(MeterReading.overpayment_209), 0),
             func.coalesce(func.sum(MeterReading.overpayment_205), 0),
         )
-        .where(MeterReading.is_approved.is_(True))
+        .join(User, User.id == MeterReading.user_id)
+        .where(active_where, User.role == "user",
+               MeterReading.is_approved.is_(True), _period_cond)
     )).first()
     total_debt = float((debt_rows[0] or 0) + (debt_rows[1] or 0))
     total_overpayment = float((debt_rows[2] or 0) + (debt_rows[3] or 0))
@@ -538,7 +549,8 @@ async def users_stats(
         )
         .join(MeterReading, MeterReading.user_id == User.id)
         .outerjoin(Room, User.room_id == Room.id)
-        .where(active_where, MeterReading.is_approved.is_(True))
+        .where(active_where, User.role == "user",
+               MeterReading.is_approved.is_(True), _period_cond)
         .group_by(User.id, User.username, Room.dormitory_name, Room.room_number)
         .having(func.coalesce(func.sum(MeterReading.debt_209 + MeterReading.debt_205), 0) > 0)
         .order_by(func.coalesce(func.sum(MeterReading.debt_209 + MeterReading.debt_205), 0).desc())
@@ -559,7 +571,8 @@ async def users_stats(
         )
         .join(MeterReading, MeterReading.user_id == User.id)
         .outerjoin(Room, User.room_id == Room.id)
-        .where(active_where, MeterReading.is_approved.is_(True))
+        .where(active_where, User.role == "user",
+               MeterReading.is_approved.is_(True), _period_cond)
         .group_by(User.id, User.username, Room.dormitory_name, Room.room_number)
         .having(func.coalesce(func.sum(MeterReading.overpayment_209 + MeterReading.overpayment_205), 0) > 0)
         .order_by(func.coalesce(func.sum(MeterReading.overpayment_209 + MeterReading.overpayment_205), 0).desc())
