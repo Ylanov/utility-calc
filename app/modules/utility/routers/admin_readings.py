@@ -213,10 +213,52 @@ async def auto_fill_period_endpoint(
     периоде (любой статус). dry_run=true вернёт preview без записи в БД.
     """
     from app.modules.utility.services.billing import auto_fill_period_readings
+
+    # dry_run — только preview, без записи → лок не нужен.
+    if dry_run:
+        try:
+            return await auto_fill_period_readings(db, period_id, dry_run=True)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    # Защита от ДВОЙНОГО начисления норматива. На readings нет UNIQUE(user_id,
+    # period_id), а два ПАРАЛЛЕЛЬНЫХ вызова (двойной клик / кнопка vs beat-задача
+    # vs второй бухгалтер) читают existing_user_ids до коммита друг друга и
+    # вставляют по 2 AUTO_NORM каждому не сдавшему → счёт ×2. Сериализуем по
+    # period_id атомарным SET NX EX (как close_period_task). Последовательный
+    # повтор уже идемпотентен (existing_user_ids внутри auto_fill).
+    import uuid
+    from redis import asyncio as aioredis
+    from app.core.config import settings
+    redis_client = aioredis.from_url(settings.REDIS_URL)
+    lock_key = f"lock:autofill:{period_id}"
+    lock_value = f"u{getattr(current_user, 'id', 0)}-{uuid.uuid4().hex}"
+    acquired = await redis_client.set(lock_key, lock_value, nx=True, ex=1800)
+    if not acquired:
+        try:
+            await redis_client.aclose()
+        except Exception:
+            pass
+        raise HTTPException(
+            409, "Начисление норматива по этому периоду уже выполняется — дождитесь завершения")
     try:
-        return await auto_fill_period_readings(db, period_id, dry_run=dry_run)
+        return await auto_fill_period_readings(db, period_id, dry_run=False)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    finally:
+        # Освобождаем лок только если он наш (Lua, атомарно).
+        try:
+            release_script = (
+                "if redis.call('GET', KEYS[1]) == ARGV[1] "
+                "then return redis.call('DEL', KEYS[1]) else return 0 end"
+            )
+            await redis_client.eval(release_script, 1, lock_key, lock_value)
+        except Exception:
+            pass
+        try:
+            await redis_client.aclose()
+        except Exception:
+            pass
 
 
 @router.get("/api/admin/readings/manual-state/{user_id}")
