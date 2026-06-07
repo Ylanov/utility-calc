@@ -101,7 +101,11 @@ async def import_users_from_excel(file_content: bytes, db: AsyncSession) -> dict
                 rt_raw = (str(row[12]).strip().lower() if len(row) > 12 and row[12] else "")
                 if rt_raw in ("single", "холостяк", "холост", "койко", "койко-место"):
                     resident_type = "single"
-                    billing_mode = "per_capita"
+                    # by_meter, НЕ per_capita: per_capita_amount тарифов = 0 → весь
+                    # счёт холостяка обнулялся. Архитектура на by_meter (per_capita
+                    # legacy); singles делят счётчик в calculate_utilities. Зеркалит
+                    # ветку is_singles_apartment ниже.
+                    billing_mode = "by_meter"
                 else:
                     resident_type = "family"
                     billing_mode = "by_meter"
