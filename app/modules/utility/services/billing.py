@@ -66,9 +66,20 @@ def _growing_norm_volumes(
     _ = residents  # явно отмечаем что параметр не используется (см. v4)
     cap = D(getattr(user_tariff, "norm_coefficient", 0) or 3)
     effective = cap if miss_count >= NORM_SANCTION_THRESHOLD else D(1)
-    vol_hot = D(user_tariff.hw_norm_per_capita or 0) * effective
-    vol_cold = D(user_tariff.cw_norm_per_capita or 0) * effective
-    vol_el = D(user_tariff.el_norm_per_capita or 0) * effective
+
+    # Тариф может НЕ начислять меру (charge_*=False — напр. дом без счётчиков):
+    # тогда норматив-объём = 0. Иначе авто-добивка накручивала бы виртуальное
+    # показание счётчика (норматив, напр. 3/7/100) даже там, где мера не
+    # начисляется — стоимость calculate_utilities и так занулит, но ПОКАЗАНИЕ
+    # росло → путаница в карточке жильца + искажение дельты, если флаг включат.
+    # None из legacy-БД трактуем как True (начисляется), как _charge в calculations.
+    def _ch(field: str) -> bool:
+        v = getattr(user_tariff, field, None)
+        return True if v is None else bool(v)
+
+    vol_hot = D(user_tariff.hw_norm_per_capita or 0) * effective if _ch("charge_hot_water") else D(0)
+    vol_cold = D(user_tariff.cw_norm_per_capita or 0) * effective if _ch("charge_cold_water") else D(0)
+    vol_el = D(user_tariff.el_norm_per_capita or 0) * effective if _ch("charge_electricity") else D(0)
     return vol_hot, vol_cold, vol_el, effective
 
 
