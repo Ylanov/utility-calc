@@ -451,12 +451,18 @@ async def save_reading(
     # хронологически предыдущий период. readings уже отсортированы
     # period_id.desc(), так что first match — самый свежий из прошлых.
     from app.modules.utility.services.reading_calculator import is_meaningful_prev
-    prev_latest = next(
-        (r for r in readings
-         if r.is_approved and r.period_id and r.period_id < period.id
-         and is_meaningful_prev(r)),
-        None
-    )
+    # Аудит (замена счётчика): prev — из ПРОШЛОГО периода ИЛИ METER_REPLACEMENT
+    # ТЕКУЩЕГО (новый baseline после замены счётчика в этом же периоде). Без
+    # второй ветки подача в том же периоде после замены считалась бы от старого
+    # большого показания → «счётчик упал»/блок. Ветка инертна без замены.
+    def _prev_ok(r):
+        if not (r.is_approved and r.period_id and is_meaningful_prev(r)):
+            return False
+        if r.period_id < period.id:
+            return True
+        return (r.period_id == period.id
+                and "METER_REPLACEMENT" in (r.anomaly_flags or ""))
+    prev_latest = next((r for r in readings if _prev_ok(r)), None)
     prev_any = next(
         (r for r in readings
          if r.is_approved and r.period_id and r.period_id < period.id),

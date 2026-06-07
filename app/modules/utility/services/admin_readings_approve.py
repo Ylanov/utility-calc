@@ -114,7 +114,13 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
         MeterReading.user_id.in_(user_ids),
         MeterReading.room_id.in_(room_ids),
         MeterReading.is_approved.is_(True),
-        MeterReading.period_id < active_period.id,
+        # ПРОШЛЫЙ период ИЛИ METER_REPLACEMENT текущего (новый baseline после
+        # замены счётчика; ветка инертна без замены).
+        or_(
+            MeterReading.period_id < active_period.id,
+            and_(MeterReading.period_id == active_period.id,
+                 _flags_col.ilike(f"%{_esc_like('METER_REPLACEMENT')}%", escape="#")),
+        ),
         _meaningful,
     ).group_by(MeterReading.user_id, MeterReading.room_id).subquery()
 
@@ -124,7 +130,9 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
             (MeterReading.user_id == subq_max_pid.c.user_id) &
             (MeterReading.room_id == subq_max_pid.c.room_id) &
             (MeterReading.period_id == subq_max_pid.c.max_pid)
-        )
+        # is_approved + meaningful на ВНЕШНЕМ select: при max_pid==active не
+        # зацепить черновик (не approved) или closing (METER_CLOSED не meaningful).
+        ).where(MeterReading.is_approved.is_(True), _meaningful)
     )).scalars().all()
     # Ключ — (user_id, room_id), значит та же пара нужна для lookup ниже.
     prev_readings_map = {(r.user_id, r.room_id): r for r in prev_rows}
@@ -388,6 +396,11 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
     # period_id=NULL INITIAL не годится в prev) по убыванию периода и берём
     # первый meaningful. Единый предикат с client_readings/save_manual_entry.
     from app.modules.utility.services.reading_calculator import is_meaningful_prev
+    # prev — из ПРОШЛОГО периода ИЛИ METER_REPLACEMENT ТЕКУЩЕГО (новый baseline
+    # после замены счётчика в том же периоде; вторая ветка инертна без замены —
+    # см. замену счётчика). order period_id desc → current-period replacement
+    # сверху; created_at desc — tiebreak.
+    _flags_one = func.coalesce(MeterReading.anomaly_flags, "")
     _prev_candidates = (await db.execute(
         select(MeterReading)
         .where(
@@ -395,9 +408,14 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
             MeterReading.room_id == room.id,
             MeterReading.is_approved,
             MeterReading.id != reading.id,
-            MeterReading.period_id < reading.period_id,
+            or_(
+                MeterReading.period_id < reading.period_id,
+                and_(MeterReading.period_id == reading.period_id,
+                     _flags_one.ilike("%METER_REPLACEMENT%")),
+            ),
         )
-        .order_by(MeterReading.period_id.desc()).limit(20)
+        .order_by(MeterReading.period_id.desc(), MeterReading.created_at.desc())
+        .limit(20)
     )).scalars().all()
     prev = next((r for r in _prev_candidates if is_meaningful_prev(r)), None)
 

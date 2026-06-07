@@ -277,6 +277,12 @@ PREV_SKIP_FLAGS = frozenset({
     "AUTO_NORM_SANCTION",
     "MANUAL_RECEIPT",      # квитанция без показаний (только сальдо)
     "ONE_TIME_CHARGE_BASELINE",  # выселение с baseline-flag
+    # Замена счётчика: METER_CLOSED — ФИНАЛЬНОЕ показание СТАРОГО прибора
+    # (большое накопленное значение). Его НЕЛЬЗЯ брать как prev для нового
+    # счётчика — иначе новая малая подача < старого → «счётчик упал»/блок.
+    # Валидный prev после замены — METER_REPLACEMENT (новый baseline, малое
+    # начальное значение) — он НЕ в skip.
+    "METER_CLOSED",
 })
 
 

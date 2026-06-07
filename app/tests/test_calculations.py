@@ -1031,6 +1031,25 @@ def test_sewage_excludes_uncharged_resource():
 
 
 # ──────────────────────────────────────────────────────────────
+# Замена счётчика: is_meaningful_prev (METER_CLOSED ≠ prev, METER_REPLACEMENT = prev)
+# ──────────────────────────────────────────────────────────────
+
+def test_meter_replacement_prev_flags():
+    """METER_CLOSED (финал старого счётчика, большое значение) НЕ годится как prev
+    → не блокирует новую малую подачу. METER_REPLACEMENT (новый baseline) годится."""
+    from app.modules.utility.services.reading_calculator import is_meaningful_prev
+
+    class _R:
+        def __init__(self, flags):
+            self.anomaly_flags = flags
+
+    assert is_meaningful_prev(_R("METER_CLOSED")) is False
+    assert is_meaningful_prev(_R("METER_REPLACEMENT")) is True
+    assert is_meaningful_prev(_R(None)) is True            # обычная реальная подача
+    assert is_meaningful_prev(_R("AUTO_NORM")) is False    # синтетика (контроль)
+
+
+# ──────────────────────────────────────────────────────────────
 # ЗАПУСК ВСЕХ ТЕСТОВ
 # ──────────────────────────────────────────────────────────────
 

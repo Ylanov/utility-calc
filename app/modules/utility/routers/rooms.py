@@ -1183,11 +1183,19 @@ async def replace_meter(room_id: int, data: ReplaceMeterSchema, db: AsyncSession
     user = (await db.execute(
         select(User).where(User.room_id == room.id, User.is_deleted == False).limit(1))).scalars().first()
 
-    # Ищем последние показания
-    prev_reading = (await db.execute(
-        select(MeterReading).where(MeterReading.room_id == room.id, MeterReading.is_approved == True)
-        .order_by(MeterReading.created_at.desc()).limit(1)
-    )).scalars().first()
+    # Ищем последнее показание для базы закрытия. Аудит (замена счётчика,
+    # дефект 3): берём последнее MEANINGFUL approved показание ИМЕННО этого
+    # жильца (если есть) — не AUTO/synth/METER_CLOSED/чужое, иначе дельта
+    # закрытия и перенос долга считаются от неверной базы.
+    from app.modules.utility.services.reading_calculator import is_meaningful_prev
+    _pr_q = select(MeterReading).where(
+        MeterReading.room_id == room.id, MeterReading.is_approved == True)
+    if user:
+        _pr_q = _pr_q.where(MeterReading.user_id == user.id)
+    _pr_cands = (await db.execute(
+        _pr_q.order_by(MeterReading.created_at.desc()).limit(20)
+    )).scalars().all()
+    prev_reading = next((r for r in _pr_cands if is_meaningful_prev(r)), None)
 
     p_hot = prev_reading.hot_water if prev_reading else ZERO
     p_cold = prev_reading.cold_water if prev_reading else ZERO
