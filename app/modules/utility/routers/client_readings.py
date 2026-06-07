@@ -728,10 +728,14 @@ async def get_client_finance(
 
     # Аудит #5: сальдо 1С (debt/overpayment) — снимок ОДНОГО периода, его нельзя
     # суммировать по всем периодам (баланс множился на число периодов → жилец
-    # видел долг ×N). Эталон — financier /users-status и /debts/stats: фильтр
-    # period_id == активного. Если активного периода нет — сальдо 0.
+    # видел долг ×N). Период берём как financier — resolve_view_period (активный →
+    # последний импорт → свежий), чтобы в межмесячном окне (активного нет) долг
+    # не обнулялся и сходился с вкладкой «Долги 1С» (ревизия #5/#6).
+    from app.modules.utility.services.period_resolver import resolve_view_period
+    _view_period = await resolve_view_period(db)
+    _view_period_id = _view_period.id if _view_period else None
     debt_209 = overpay_209 = debt_205 = overpay_205 = 0
-    if active_period_id is not None:
+    if _view_period_id is not None:
         agg_stmt = select(
             func.coalesce(func.sum(MeterReading.debt_209), 0),
             func.coalesce(func.sum(MeterReading.overpayment_209), 0),
@@ -740,7 +744,7 @@ async def get_client_finance(
         ).where(
             MeterReading.user_id == current_user.id,
             MeterReading.is_approved.is_(True),
-            MeterReading.period_id == active_period_id,
+            MeterReading.period_id == _view_period_id,
         )
         agg_row = (await db.execute(agg_stmt)).first()
         debt_209, overpay_209, debt_205, overpay_205 = agg_row

@@ -518,14 +518,14 @@ async def users_stats(
         for tid, tname, c in tariff_rows
     ]
 
-    # Аудит #6: сальдо — снимок активного периода. SUM по всем периодам без
-    # join User множил долг на число периодов и включал удалённых. Эталон —
-    # financier /debts/stats: period_id == active + join User (живые role='user').
+    # Аудит #6: сальдо — снимок ОДНОГО периода. SUM по всем периодам без join
+    # User множил долг на число периодов и включал удалённых. Период — как
+    # financier (resolve_view_period: активный → последний импорт → свежий),
+    # чтобы в межмесячном окне цифра не обнулялась (ревизия #5/#6).
     from sqlalchemy import false as _sa_false
-    _ap = (await db.execute(
-        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
-    )).scalars().first()
-    _period_cond = (MeterReading.period_id == _ap.id) if _ap else _sa_false()
+    from app.modules.utility.services.period_resolver import resolve_view_period
+    _vp = await resolve_view_period(db)
+    _period_cond = (MeterReading.period_id == _vp.id) if _vp else _sa_false()
 
     debt_rows = (await db.execute(
         select(

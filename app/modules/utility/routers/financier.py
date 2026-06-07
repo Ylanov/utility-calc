@@ -3331,36 +3331,11 @@ async def room_residents_finance(
 # =========================================================================
 
 async def _resolve_view_period(db: AsyncSession, period_id: Optional[int]):
-    """Период для ПРОСМОТРА долгов (список/KPI/квартиры).
-
-    Раньше вьюхи жёстко брали активный период — и если активного нет (между
-    месяцами: май закрыт, июнь не открыт), показывали 0 хотя долги залиты в
-    закрытый период. Теперь: явный period_id → он; иначе активный; иначе период
-    последнего импорта долгов; иначе самый свежий период. Так после импорта за
-    май долги видно, даже когда активного периода нет.
-    """
-    if period_id:
-        return (await db.execute(
-            select(BillingPeriod).where(BillingPeriod.id == period_id)
-        )).scalars().first()
-    active = (await db.execute(
-        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
-    )).scalars().first()
-    if active:
-        return active
-    last_imp = (await db.execute(
-        select(DebtImportLog)
-        .where(DebtImportLog.period_id.isnot(None))
-        .order_by(desc(DebtImportLog.started_at))
-        .limit(1)
-    )).scalars().first()
-    if last_imp and last_imp.period_id:
-        p = await db.get(BillingPeriod, last_imp.period_id)
-        if p:
-            return p
-    return (await db.execute(
-        select(BillingPeriod).order_by(BillingPeriod.id.desc()).limit(1)
-    )).scalars().first()
+    """Период для ПРОСМОТРА долгов (список/KPI/квартиры). Делегирует общему
+    services.period_resolver.resolve_view_period — единый источник для financier,
+    ЛК жильца, дашборда и /users/stats (ревизия #5/#6)."""
+    from app.modules.utility.services.period_resolver import resolve_view_period
+    return await resolve_view_period(db, period_id)
 
 
 def _require_finance(user: User) -> None:

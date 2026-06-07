@@ -218,12 +218,15 @@ async def get_dashboard_kpi(
             }
 
     # === ОБЩАЯ ЗАДОЛЖЕННОСТЬ ===
-    # Аудит #6: сальдо — снимок активного периода; раньше SUM без period_id и
-    # без join User множил долг на число периодов и включал удалённых жильцов
-    # → цифра завышалась в разы и не сходилась с financier. Эталон —
-    # /debts/stats: фильтр period_id == active + join User (живые role='user').
+    # Аудит #6: сальдо — снимок ОДНОГО периода; раньше SUM без period_id и без
+    # join User множил долг на число периодов и включал удалённых → завышение в
+    # разы, расхождение с financier. Период берём как financier —
+    # resolve_view_period (активный → последний импорт → свежий), чтобы в
+    # межмесячном окне цифра не обнулялась (ревизия #5/#6).
+    from app.modules.utility.services.period_resolver import resolve_view_period
+    _view_period = await resolve_view_period(db)
     total_debt = 0.0
-    if active_period is not None:
+    if _view_period is not None:
         debt_result = await db.execute(
             select(
                 func.coalesce(func.sum(MeterReading.debt_209), 0),
@@ -232,7 +235,7 @@ async def get_dashboard_kpi(
             .join(User, User.id == MeterReading.user_id)
             .where(
                 MeterReading.is_approved.is_(True),
-                MeterReading.period_id == active_period.id,
+                MeterReading.period_id == _view_period.id,
                 User.is_deleted.is_(False),
                 User.role == "user",
             )
