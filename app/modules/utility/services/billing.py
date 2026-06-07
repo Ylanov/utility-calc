@@ -231,6 +231,14 @@ async def close_current_period(db: AsyncSession, admin_user_id: int, generate_no
                  "AUTO_AVG_FALLBACK", "AUTO_NO_HISTORY", "BASELINE")
             )
 
+        def _is_debt_only(reading) -> bool:
+            """Аудит #11/#17: финансовая запись без показаний (долг 1С на лице) —
+            НЕ meter-событие. Нельзя брать как baseline счётчика (D(None)=0 →
+            норматив рос бы от нуля, «скрученный счётчик») и нельзя прерывать ею
+            miss_count (иначе санкция ×3 не сработает у должников с импортом 1С)."""
+            return (reading.hot_water is None and reading.cold_water is None
+                    and reading.electricity is None)
+
         # Расчет внутри чанка
         for user in chunk_users:
             # Через единый кеш + приоритет Room.tariff_id → User.tariff_id → default.
@@ -239,7 +247,8 @@ async def close_current_period(db: AsyncSession, admin_user_id: int, generate_no
                 tariff_cache.get_effective_tariff(user=user, room=getattr(user, "room", None))
                 or default_tariff
             )
-            history = history_map.get(user.room_id, [])
+            history = [r for r in history_map.get(user.room_id, [])
+                       if not _is_debt_only(r)]
             history.sort(key=lambda r: r.created_at, reverse=True)
 
             # Сколько последних периодов подряд reading был AUTO (не вручную).
@@ -429,6 +438,14 @@ async def auto_fill_period_readings(
                    ("AUTO_GENERATED", "AUTO_AVG", "AUTO_NORM", "AUTO_NORM_SANCTION",
                  "AUTO_AVG_FALLBACK", "AUTO_NO_HISTORY", "BASELINE"))
 
+    def _is_debt_only(reading) -> bool:
+        """Аудит #11/#17: финансовая запись без показаний (долг 1С на лице) — НЕ
+        meter-событие. Исключаем из history: иначе baseline счётчика = D(None)=0
+        (норматив рос бы от нуля), а miss_count рвался бы на ней (санкция ×3 не
+        срабатывала у должников с ежемесячным импортом 1С)."""
+        return (reading.hot_water is None and reading.cold_water is None
+                and reading.electricity is None)
+
     for user in users_to_process:
         from app.modules.utility.services.tariff_cache import tariff_cache
         user_tariff = (
@@ -467,7 +484,7 @@ async def auto_fill_period_readings(
         rows = [(r, p) for r, p in rows if period_chron_key(p.name) < target_chron]
         history = [r for r, _p in sorted(
             rows, key=lambda row: period_chron_key(row[1].name), reverse=True
-        )][:6]
+        ) if not _is_debt_only(r)][:6]
 
         miss_count = 0
         for r in history:
