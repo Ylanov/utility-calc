@@ -87,6 +87,10 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
             MeterReading.user_id == user.id,
             MeterReading.room_id == room.id,
             MeterReading.is_approved,
+            # Ревизия #3 (решение «baseline=0»): period_id=NULL baseline
+            # (INITIAL_SETUP) НЕ берём как prev — первая реальная подача = baseline
+            # (расход 0), единообразно с approve_single/client/tasks/gsheets.
+            MeterReading.period_id.isnot(None),
         )
         .order_by(MeterReading.created_at.desc()).limit(6)
     )).scalars().all()
@@ -297,6 +301,10 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
             MeterReading.user_id == user.id,
             MeterReading.room_id == room.id,
             MeterReading.is_approved,
+            # Ревизия #3 (решение «baseline=0»): period_id=NULL baseline
+            # (INITIAL_SETUP) НЕ берём как prev — первая реальная подача = baseline
+            # (расход 0), единообразно с approve_single/client/tasks/gsheets.
+            MeterReading.period_id.isnot(None),
         )
         .order_by(MeterReading.created_at.desc()).limit(6)
     )).scalars().all()
