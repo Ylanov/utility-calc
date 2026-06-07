@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.modules.utility.models import User
-from app.modules.utility.schemas import ApproveRequest, AdminManualReadingSchema, OneTimeChargeSchema
+from app.modules.utility.schemas import ApproveRequest, AdminManualReadingSchema
 from app.core.dependencies import RoleChecker
 
 from app.modules.utility.services import admin_readings_list
@@ -278,11 +278,9 @@ async def save_manual_reading(
 ):
     return await admin_readings_manual.save_manual_entry(db, data)
 
-
-@router.post("/api/admin/readings/one-time")
-async def create_one_time_charge(
-        data: OneTimeChargeSchema,
-        current_user: User = Depends(allow_readings_manage),
-        db: AsyncSession = Depends(get_db)
-):
-    return await admin_readings_manual.create_one_time_charge(db, data)
+# Эндпоинт POST /api/admin/readings/one-time УДАЛЁН (аудит #21): схема
+# OneTimeChargeSchema не совпадала с полями, которые читал сервис →
+# гарантированный 500 с Initial commit; фронт его не вызывал, выселение/переезд
+# идёт через POST /users/{id}/relocate → move_user_to_room. Мёртвый сервис-стаб
+# create_one_time_charge оставлен недостижимым; при необходимости разовое
+# пропорциональное начисление переписать заново корректно.
