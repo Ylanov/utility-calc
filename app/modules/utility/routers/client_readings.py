@@ -225,6 +225,10 @@ async def get_reading_state(
         rv = getattr(user.room, attr, None) if user.room else None
         return bool(rv) if rv is not None else bool(getattr(user, attr, True))
 
+    # Разграничение для жильца: начислено машиной по нормативу (он не подавал)
+    # или по его реальным показаниям. Выводим из anomaly_flags — без миграции.
+    from app.modules.utility.services.anomaly_flags import is_estimated_charge
+
     return {
         "period_name": period.name if period else None,
         "prev_hot": prev_hot,
@@ -245,6 +249,12 @@ async def get_reading_state(
         "is_draft": is_draft,
         "is_period_open": is_period_open,
         "is_already_approved": is_already_approved,
+        # True = текущее показание начислено машиной по нормативу (жилец не
+        # подавал), False = по его реальным показаниям. Клиент рисует бейдж.
+        "is_estimated": (
+            is_estimated_charge(current_reading.anomaly_flags)
+            if current_reading else False
+        ),
         "cost_hot_water": current_reading.cost_hot_water if current_reading else None,
         "cost_cold_water": current_reading.cost_cold_water if current_reading else None,
         "cost_electricity": current_reading.cost_electricity if current_reading else None,
@@ -834,6 +844,7 @@ async def get_client_history(
         .limit(limit)
     )).scalars().all()
 
+    from app.modules.utility.services.anomaly_flags import is_estimated_charge
     items = [
         {
             "id": r.id,
@@ -843,6 +854,8 @@ async def get_client_history(
             "electric": r.electricity,
             "total": r.total_cost,
             "date": r.created_at,
+            # True = начислено машиной по нормативу (жилец не подавал).
+            "is_estimated": is_estimated_charge(r.anomaly_flags),
         }
         for r in readings
     ]

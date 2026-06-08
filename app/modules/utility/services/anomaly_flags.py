@@ -97,3 +97,39 @@ def real_flags(flags_csv: str | None) -> list[str]:
 def has_real_anomaly(flags_csv: str | None) -> bool:
     """True если в строке есть хотя бы один настоящий флаг (не source-маркер)."""
     return bool(real_flags(flags_csv))
+
+
+# Маркеры МАШИННОГО начисления (без подачи жильца): система оценила
+# потребление по нормативу × проживающих (×3 после 3 пропусков) вместо
+# реальных показаний счётчика. Жилец видит в приложении бейдж «Начислено
+# по нормативу» vs «По вашим показаниям».
+#
+# ВНИМАНИЕ: это ОТДЕЛЬНЫЙ концепт от _is_auto/AUTO_FLAGS в billing.py
+# (подсчёт miss_count) и от PREV_SKIP_FLAGS в reading_calculator.py
+# (исключение синтетики из prev). Здесь — только «начислено ли это
+# машиной по нормативу/среднему» для разграничения в UI. AUTO_GENERATED
+# (нулевой baseline, начисления нет) сюда НЕ входит.
+ESTIMATED_CHARGE_FLAGS: frozenset[str] = frozenset({
+    "AUTO_NORM",
+    "AUTO_NORM_SANCTION",
+    "AUTO_AVG",            # legacy (стратегия удалена 28.05.2026, но в истории есть)
+    "AUTO_AVG_FALLBACK",   # legacy
+    "AUTO_NO_HISTORY",
+})
+
+
+def is_estimated_charge(flags_csv: str | None) -> bool:
+    """True если начисление сделано МАШИНОЙ по нормативу/среднему (жилец не
+    подавал показания). Substring-проверка по ESTIMATED_CHARGE_FLAGS: флаги
+    в anomaly_flags идут CSV-строкой с другими токенами и в любом регистре.
+
+        is_estimated_charge("AUTO_NORM")            -> True
+        is_estimated_charge("AUTO_NORM_SANCTION")   -> True
+        is_estimated_charge("PENDING,SPIKE_HOT")    -> False  (реальная подача)
+        is_estimated_charge("BASELINE")             -> False
+        is_estimated_charge(None)                   -> False
+    """
+    if not flags_csv:
+        return False
+    up = flags_csv.upper()
+    return any(f in up for f in ESTIMATED_CHARGE_FLAGS)

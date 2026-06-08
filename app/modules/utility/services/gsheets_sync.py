@@ -1011,6 +1011,16 @@ def promote_auto_approved_rows(db: Session, target_period=None) -> dict:
     # импортируют исторические подачи задним числом, и created_at не
     # отражает биллинговую хронологию. Берём period_id < active_period.id —
     # т.е. строго ПРОШЛЫЕ периоды, и среди них самый свежий.
+    # Bug (Гюрджян/Теплоухов 06.2026): порог prev для импорта ДОЛЖЕН исключать
+    # синтетические/машинные показания (AUTO_NORM и т.п. — PREV_SKIP_FLAGS).
+    # Иначе реальная подача из таблиц НИЖЕ норматива валилась «счётчик упал».
+    # Это SQL-эквивалент is_meaningful_prev: WHERE применяется ДО оконной
+    # функции, поэтому row_number() нумерует уже только осмысленные строки и
+    # rn==1 = последний РЕАЛЬНЫЙ prev. Делает истинным комментарий ниже
+    # («prev_by_user уже отфильтрован через is_meaningful_prev»). Пути
+    # приложения/ручного ввода/утверждения фильтруют так же.
+    from app.modules.utility.services.reading_calculator import PREV_SKIP_FLAGS
+    _flags_upper = _sa_func.upper(_sa_func.coalesce(MeterReading.anomaly_flags, ""))
     prev_subq = (
         db.query(
             MeterReading.user_id.label("uid"),
@@ -1027,6 +1037,7 @@ def promote_auto_approved_rows(db: Session, target_period=None) -> dict:
             MeterReading.user_id.in_(user_ids),
             MeterReading.is_approved.is_(True),
             MeterReading.period_id < active_period.id,
+            *[~_flags_upper.contains(_f, autoescape=True) for _f in PREV_SKIP_FLAGS],
         )
         .subquery()
     )
