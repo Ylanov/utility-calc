@@ -177,12 +177,24 @@ if settings.ENVIRONMENT == "production" and os.path.isfile(".env.local"):
 _DEFAULT_ENCRYPTION_KEY = "gR8g_2t9R2YwO9yZ0qEa7L_M4-c8Kx2mJ1rYvW4PZ7o="
 _DEFAULT_S3_ACCESS = "minioadmin"
 _DEFAULT_S3_SECRET = "minioadmin"
+# Плейсхолдеры SECRET_KEY из репозитория/доков — проходят проверку длины (>=32),
+# но являются ПУБЛИЧНЫМИ (видны любому, кто читал репо) → в production запрещены.
+_INSECURE_SECRET_KEYS = {
+    "long_random_string_for_security_tokens",
+    "local-dev-secret-key-change-in-production-min-32-chars",
+}
 
 if settings.ENVIRONMENT == "production":
     # CRITICAL — без них приложение реально небезопасно, отказываем в старте.
     if not settings.SECRET_KEY or len(settings.SECRET_KEY) < 32:
         raise RuntimeError(
             "В production требуется безопасный SECRET_KEY (не менее 32 символов)"
+        )
+
+    if settings.SECRET_KEY in _INSECURE_SECRET_KEYS:
+        raise RuntimeError(
+            "В production SECRET_KEY не должен равняться плейсхолдеру из репозитория. "
+            "Сгенерируйте новый: `openssl rand -hex 32` и пропишите в .env."
         )
 
     if not settings.ENCRYPTION_KEY:

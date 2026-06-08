@@ -85,6 +85,15 @@ async def _save_to_error_log(request: Request, exc: BaseException) -> None:
 
 async def _read_safe_body(request: Request) -> Any:
     """Безопасно читает body для лога. Не больше 10KB, секретные ключи маскирует."""
+    # Тело аутентификационных ручек НЕ логируем вовсе: там пароли/коды/токены,
+    # причём /api/token — form-urlencoded (раньше не парсился как JSON и пароль
+    # уходил в error_log в открытом виде, видимый админу).
+    try:
+        _path = request.url.path or ""
+        if _path.startswith("/api/token") or _path.startswith("/api/auth"):
+            return "***тело auth-запроса не логируется***"
+    except Exception:
+        pass
     try:
         raw = await request.body()
         if not raw:
@@ -98,21 +107,42 @@ async def _read_safe_body(request: Request) -> Any:
         try:
             parsed = json.loads(raw.decode("utf-8"))
         except Exception:
-            return raw.decode("utf-8", errors="replace")[:1000]
+            # Не JSON (например form-urlencoded) — маскируем секретные form-поля,
+            # а не возвращаем сырую строку (там мог быть пароль).
+            text = raw.decode("utf-8", errors="replace")[:2000]
+            try:
+                from urllib.parse import parse_qsl, urlencode
+                pairs = parse_qsl(text, keep_blank_values=True)
+                if pairs:
+                    return urlencode([
+                        (k, "***" if _is_secret_key(k) else v) for k, v in pairs
+                    ])
+            except Exception:
+                pass
+            return text[:1000]
         return _mask_secrets(parsed)
     except Exception:
         return None
 
 
+# Подстроки имён полей, значения которых маскируем в логах ошибок (этот лог
+# виден админам через /api/admin/errors и копируется в чат с ИИ). Подстрочное
+# сравнение ловит new_password/old_password/refresh_token/csrf_token и т.п.
+# Над-маскирование безобидных полей (zip_code) безопасно — это только лог.
 _SECRET_KEYS = {"password", "hashed_password", "token", "secret", "api_key",
-                "totp_code", "code", "otp"}
+                "totp_code", "totp_secret", "otp", "encryption_key", "fernet"}
+
+
+def _is_secret_key(name: str) -> bool:
+    n = (name or "").lower()
+    return any(s in n for s in _SECRET_KEYS)
 
 
 def _mask_secrets(obj: Any) -> Any:
     """Рекурсивно заменяет значения секретных ключей на ***."""
     if isinstance(obj, dict):
         return {
-            k: ("***" if k.lower() in _SECRET_KEYS else _mask_secrets(v))
+            k: ("***" if _is_secret_key(k) else _mask_secrets(v))
             for k, v in obj.items()
         }
     if isinstance(obj, list):
