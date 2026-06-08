@@ -1030,9 +1030,9 @@ export const UsersModule = {
                         c.innerHTML = data.items.map(it => `
                             <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 0; border-bottom:1px solid var(--border-color);">
                                 <div>
-                                    <strong>${it.room || `комната #${it.room_id}`}</strong>
+                                    <strong>${this._escape(it.room || `комната #${it.room_id}`)}</strong>
                                     ${it.is_current ? '<span style="margin-left:8px; padding:1px 6px; border-radius:8px; background:#d1fae5; color:#065f46; font-size:10px; font-weight:600;">сейчас</span>' : ''}
-                                    ${it.note ? `<div style="color:var(--text-secondary); font-size:11px;">${it.note}</div>` : ''}
+                                    ${it.note ? `<div style="color:var(--text-secondary); font-size:11px;">${this._escape(it.note)}</div>` : ''}
                                 </div>
                                 <div style="font-size:11px; color:var(--text-secondary); text-align:right;">
                                     ${fmt(it.moved_in_at) || '—'}
@@ -1040,7 +1040,7 @@ export const UsersModule = {
                                 </div>
                             </div>`).join('');
                     } catch (e) {
-                        c.innerHTML = `<span style="color:var(--danger-color);">Ошибка: ${e.message}</span>`;
+                        c.innerHTML = `<span style="color:var(--danger-color);">Ошибка: ${this._escape(e.message)}</span>`;
                     }
                 };
             }
@@ -1165,13 +1165,15 @@ export const UsersModule = {
             tbody.innerHTML = items.map(s => {
                 const dt = s.submitted_at ? new Date(s.submitted_at).toLocaleString('ru-RU', {dateStyle: 'short', timeStyle: 'short'}) : '—';
                 const mismatchBg = s.mismatched ? 'background:#fef3c7;' : '';
-                const sysDormRoom = (s.system_dorm || '—') + ' / ' + (s.system_room || '—');
-                const subDormRoom = (s.submitted_dorm || '—') + ' / ' + (s.submitted_room || '—');
+                // XSS: submitted_dorm/room — свободный текст от жильца (data-refresh),
+                // экранируем перед вставкой в innerHTML (аудит безопасности).
+                const sysDormRoom = this._escape(s.system_dorm || '—') + ' / ' + this._escape(s.system_room || '—');
+                const subDormRoom = this._escape(s.submitted_dorm || '—') + ' / ' + this._escape(s.submitted_room || '—');
                 const sysR = s.system_residents == null ? '—' : s.system_residents;
                 return `
                     <tr style="${mismatchBg}">
                         <td style="white-space:nowrap;">${dt}</td>
-                        <td><b>${s.username || '#' + s.user_id}</b></td>
+                        <td><b>${this._escape(s.username || ('#' + s.user_id))}</b></td>
                         <td>${subDormRoom}</td>
                         <td style="color: var(--text-secondary);">${sysDormRoom}</td>
                         <td class="text-center"><b>${s.submitted_residents}</b></td>
