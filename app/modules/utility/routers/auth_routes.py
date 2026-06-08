@@ -91,10 +91,23 @@ async def login(
     )
     user = result.scalars().first()
 
-    # Проверяем блокировку ДО того как обрабатываем пароль —
-    # чтобы заблокированные попытки не приводили к лишнему хешу argon2.
     now = utcnow()
-    if user and user.locked_until and user.locked_until > now:
+
+    # Аккаунт не найден → понятное сообщение жильцу (раньше отдавали то же
+    # «Неверный логин или пароль», и жилец не понимал, что учётки просто нет
+    # → шёл «вспоминать пароль»). Отвечаем сразу, без хеша.
+    # ВНИМАНИЕ: это раскрывает существование логина (username enumeration) —
+    # осознанный UX-выбор для ЗАКРЫТОЙ системы общежития. Перебор сдерживает
+    # rate-limit (5/60с). Если потребуется скрыть — вернуть единый 401.
+    if user is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Такого аккаунта нет. Обратитесь в отдел эксплуатации зданий.",
+        )
+
+    # Проверяем блокировку ДО того как обрабатываем пароль — чтобы
+    # заблокированные попытки не приводили к лишнему хешу argon2.
+    if user.locked_until and user.locked_until > now:
         remaining = int((user.locked_until - now).total_seconds() / 60) + 1
         raise HTTPException(
             status_code=423,
@@ -102,19 +115,18 @@ async def login(
                    f"Повторите через {remaining} мин."
         )
 
-    if not user or not verify_password(form_data.password, user.hashed_password):
+    if not verify_password(form_data.password, user.hashed_password):
         # Неверный пароль — инкрементируем счётчик.
-        if user is not None:
-            user.failed_login_count = (user.failed_login_count or 0) + 1
-            if user.failed_login_count >= MAX_FAILED_LOGINS:
-                user.locked_until = now + timedelta(minutes=LOCK_DURATION_MINUTES)
-                user.failed_login_count = 0  # обнуляем для следующей серии
-                logger.warning(
-                    "Account %s locked for %d min (brute-force protection)",
-                    user.username, LOCK_DURATION_MINUTES,
-                )
-            db.add(user)
-            await db.commit()
+        user.failed_login_count = (user.failed_login_count or 0) + 1
+        if user.failed_login_count >= MAX_FAILED_LOGINS:
+            user.locked_until = now + timedelta(minutes=LOCK_DURATION_MINUTES)
+            user.failed_login_count = 0  # обнуляем для следующей серии
+            logger.warning(
+                "Account %s locked for %d min (brute-force protection)",
+                user.username, LOCK_DURATION_MINUTES,
+            )
+        db.add(user)
+        await db.commit()
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
 
     # Пароль верен. Сбрасываем счётчик и блокировку.
