@@ -937,6 +937,9 @@
                                         <div class="tcard-title">Где применяется этот тариф</div>
                                         <div class="tcard-subtitle">Комнаты и жильцы, к которым тариф фактически применяется</div>
                                     </div>
+                                    <button type="button" id="btnTariffRooms" class="action-btn secondary-btn" style="margin-left:auto; height:36px; padding:0 14px; font-size:13px; border-radius:8px; display:inline-flex; align-items:center; gap:6px;" title="Управление привязанными комнатами — посмотреть и убрать">
+                                        <i class="fa-solid fa-door-closed"></i> Квартиры <span id="tariffRoomsBtnCount"></span>
+                                    </button>
                                 </div>
                                 <div class="tcard-body">
                                     <div id="tariffUsageStats" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:10px; margin-bottom:12px;"></div>
@@ -2088,6 +2091,38 @@
                 <button type="button" id="btnApplyGcal" class="action-btn success-btn">
                     <i class="fa-solid fa-check"></i> Применить в тариф
                 </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==========================================
+         МОДАЛКА: КВАРТИРЫ НА ТАРИФЕ
+         Углублённое управление нормативом — видно к каким комнатам
+         привязан тариф, можно убрать комнату (упадёт на дефолтный).
+         Открывается кнопкой «Квартиры (N)» из блока «Где применяется».
+         Логика — TariffsModule.openRoomsModal / _renderRoomsModal.
+         ========================================== -->
+    <div id="tariffRoomsModal" class="modal-overlay">
+        <div class="modal-window" style="width: 720px;">
+            <div class="modal-header" style="background:rgba(59,130,246,0.08);">
+                <h3 style="color:#1d4ed8;">
+                    <i class="fa-solid fa-door-closed"></i>
+                    Квартиры на тарифе «<span id="tariffRoomsName">—</span>»
+                </h3>
+                <button class="close-btn close-icon" data-tariff-rooms-close>&times;</button>
+            </div>
+            <div class="modal-form" style="padding:18px 22px; background:var(--bg-page);">
+                <div id="tariffRoomsSummary" style="margin-bottom:14px;"></div>
+                <div id="tariffRoomsNote"></div>
+                <div id="tariffRoomsTableWrap" style="margin-top:12px;"></div>
+                <p class="hint-text" style="margin:14px 0 0; font-size:11.5px;">
+                    <i class="fa-solid fa-circle-info"></i>
+                    Добавить квартиры — через <b>Жилфонд</b> (карточка комнаты) или массово по дому
+                    (блок «Применить ко всему общежитию»).
+                </p>
+            </div>
+            <div class="modal-footer" style="display:flex; gap:10px; justify-content:flex-end;">
+                <button class="action-btn secondary-btn" data-tariff-rooms-close>Закрыть</button>
             </div>
         </div>
     </div>

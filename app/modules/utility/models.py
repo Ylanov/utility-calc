@@ -1540,3 +1540,62 @@ class ResidentProblem(Base):
               "user_id", "problem_type", "status"),
         Index("ix_resident_problems_status_severity", "status", "severity"),
     )
+
+
+class OtStaff(Base):
+    """Реестр сотрудников по охране труда («Основной штат» / «КЭС-2025»).
+
+    Структура (подразделение/должность) засевается из присланных Word-шаблонов;
+    ФИО и даты заполняет админ. Сотрудник — ОТДЕЛЬНАЯ сущность от жильца
+    (users.role='user'); опц. связь user_id по ФИО (users.username).
+
+    Сигналы «кому когда обучаться/медосмотр» считаются из даты прохождения +
+    периодичности (next = date + period_months; статус overdue/soon/ok).
+    """
+    __tablename__ = "ot_staff"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    # Структура из вордов
+    source = Column(String(32), nullable=True, index=True)       # osnovnoy_shtat | kes_2025
+    kes_group = Column(String(64), nullable=True, index=True)    # «1-КЭС» … (для КЭС-2025)
+    department = Column(String(255), nullable=True, index=True)  # подразделение/секция
+    position = Column(String(500), nullable=False)               # должность (код специальности)
+    sort_order = Column(Integer, default=0, nullable=False, server_default="0")
+
+    # Человек (заполняется админом)
+    full_name = Column(String(255), nullable=True, index=True)   # ФИО; пусто = вакансия
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"),
+                     nullable=True, index=True)                  # опц. связь с жильцом
+    birth_date = Column(Date, nullable=True)
+
+    # Охрана труда — разовые даты
+    sout_date = Column(Date, nullable=True)                      # дата СОУТ
+    sout_class = Column(String(32), nullable=True)               # класс СОУТ
+    induction_date = Column(Date, nullable=True)                 # вводный инструктаж
+    ot_instructions_date = Column(Date, nullable=True)           # инструкции по ОТ
+    internship_date = Column(Date, nullable=True)                # стажировка на РМ
+    siz_note = Column(String(255), nullable=True)                # нормы СИЗ
+    eb_group = Column(String(64), nullable=True)                 # группа по электробезопасности
+
+    # Периодические — для сигналов
+    ot_training_date = Column(Date, nullable=True)               # обучение по ОТ (последнее)
+    ot_training_period_months = Column(Integer, nullable=True,
+                                       default=36, server_default="36")  # РФ: ~раз в 3 года
+    medical_date = Column(Date, nullable=True)                   # медосмотр (последний)
+    medical_type = Column(String(32), nullable=True)             # первичный | повторный
+    medical_period_months = Column(Integer, nullable=True,
+                                   default=12, server_default="12")      # РФ: ~раз в год
+
+    note = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False,
+                       server_default="true", index=True)
+    created_at = Column(DateTime, default=_utcnow, nullable=False,
+                        server_default=func.now())
+    updated_at = Column(DateTime, nullable=True, onupdate=_utcnow)
+
+    user = relationship("User")
+
+    __table_args__ = (
+        Index("ix_ot_staff_source_kes_dept", "source", "kes_group", "department"),
+    )

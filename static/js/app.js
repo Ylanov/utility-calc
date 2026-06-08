@@ -295,7 +295,7 @@ function handleRoute() {
     // для обратной совместимости.
     // ВАЖНО: при добавлении новой вкладки — обязательно добавить её сюда,
     // иначе clickByHash сделает fallback на dashboard.
-    const validTabs = ['dashboard', 'tools', 'housing', 'users', 'debts', 'certs', 'audit', 'tickets', 'errors', 'llm'];
+    const validTabs = ['dashboard', 'tools', 'housing', 'users', 'debts', 'certs', 'safety', 'audit', 'tickets', 'errors', 'llm'];
     let tabToLoad = validTabs.includes(hash) ? hash : defaultTab;
     if (hash === 'readings') tabToLoad = 'dashboard';
     if (hash === 'manual' || hash === 'tariffs' || hash === 'accountant') tabToLoad = 'tools';
@@ -393,6 +393,13 @@ async function initModule(tabId) {
                     loadedModules.housing = HousingModule;
                 }
                 loadedModules.housing.init();
+                break;
+            case 'safety':
+                if (!loadedModules.safety) {
+                    const { SafetyModule } = await import('./modules/safety.js');
+                    loadedModules.safety = SafetyModule;
+                }
+                loadedModules.safety.init();
                 break;
             case 'users':
                 if (!loadedModules.users) {
@@ -596,6 +603,9 @@ function refreshModuleData(tabId) {
         case 'housing':
         case 'users':
             if (mod.table) mod.table.refresh();
+            break;
+        case 'safety':
+            if (typeof mod.refresh === 'function') mod.refresh();
             break;
         case 'debts':
             if (typeof mod.reload === 'function') mod.reload();

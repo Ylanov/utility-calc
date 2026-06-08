@@ -1,0 +1,2410 @@
+[
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "КОМАНДОВАНИЕ",
+  "position": "Главный специалист 0901036 (Организация и технология защиты информации)",
+  "sort_order": 1
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "КОМАНДОВАНИЕ",
+  "position": "Главный специалист 0901036 (Организация и технология защиты информации)",
+  "sort_order": 2
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "КОМАНДОВАНИЕ",
+  "position": "Главный специалист 0901036 (Организация и технология защиты информации)",
+  "sort_order": 3
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "КОМАНДОВАНИЕ",
+  "position": "Главный специалист (по охране труда) 2801026 (Безопасность технологических производств)",
+  "sort_order": 4
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "КОМАНДОВАНИЕ",
+  "position": "Главный специалист (по техническому надзору) 2801016 (Безопасность жизнедеятельности в техносфере)",
+  "sort_order": 5
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА ОПЕРАТИВНОГО ПЛАНИРОВАНИЯ",
+  "position": "Начальник отдела - зам. НШ по оперативной работе",
+  "sort_order": 6
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА ОПЕРАТИВНОГО ПЛАНИРОВАНИЯ",
+  "position": "Специалист гражданской обороны 0320016 (документоведение, документационное обеспечение управления)",
+  "sort_order": 7
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОРГАНИЗАЦИОННЫЙ И КОМПЛЕКТОВАНИЯ",
+  "position": "Начальник отдела – зам. НШ",
+  "sort_order": 8
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОРГАНИЗАЦИОННЫЙ И КОМПЛЕКТОВАНИЯ",
+  "position": "Заместитель начальника отдела",
+  "sort_order": 9
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОРГАНИЗАЦИОННЫЙ И КОМПЛЕКТОВАНИЯ",
+  "position": "Специалист гражданской обороны 0320016 (Документоведение, документационное обеспечение управления)",
+  "sort_order": 10
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОРГАНИЗАЦИОННЫЙ И КОМПЛЕКТОВАНИЯ",
+  "position": "Специалист гражданской обороны 0320016 (Документоведение, документационное обеспечение управления)",
+  "sort_order": 11
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОРГАНИЗАЦИОННЫЙ И КОМПЛЕКТОВАНИЯ",
+  "position": "Специалист гражданской обороны 0320016 (Документоведение, документационное обеспечение управления)",
+  "sort_order": 12
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОРГАНИЗАЦИОННЫЙ И КОМПЛЕКТОВАНИЯ",
+  "position": "Специалист гражданской обороны 0320016 (Документоведение, документационное обеспечение управления)",
+  "sort_order": 13
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОРГАНИЗАЦИОННЫЙ И КОМПЛЕКТОВАНИЯ",
+  "position": "Специалист гражданской обороны 0320016 (Документоведение, документационное обеспечение управления)",
+  "sort_order": 14
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОРГАНИЗАЦИОННЫЙ И КОМПЛЕКТОВАНИЯ",
+  "position": "Оператор электронно- вычислительных и вычислительных машин",
+  "sort_order": 15
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (СВЯЗИ, АВТОМАТИЗИРОВАННЫХ СИСТЕМ УПРАВЛЕНИЯ И ТЕЛЕКОММУНИКАЦИЙ)",
+  "position": "Начальник отдела-нач. связи",
+  "sort_order": 16
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (СВЯЗИ, АВТОМАТИЗИРОВАННЫХ СИСТЕМ УПРАВЛЕНИЯ И ТЕЛЕКОММУНИКАЦИЙ)",
+  "position": "Заместитель начальника отдела",
+  "sort_order": 17
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (СВЯЗИ, АВТОМАТИЗИРОВАННЫХ СИСТЕМ УПРАВЛЕНИЯ И ТЕЛЕКОММУНИКАЦИЙ)",
+  "position": "Специалист гражданской обороны 2104056 (Радиосвязь, радиовещание и телевидение)",
+  "sort_order": 18
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (АВТОМАТИЗИРОВАННЫХ СИСТЕМ УПРАВЛЕНИЯ И СВЯЗИ)",
+  "position": "Специалист гражданской обороны 2301026 (Автоматизированные системы обработки информации)",
+  "sort_order": 19
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (АВТОМАТИЗИРОВАННЫХ СИСТЕМ УПРАВЛЕНИЯ И СВЯЗИ)",
+  "position": "Телефонист",
+  "sort_order": 20
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (АВТОМАТИЗИРОВАННЫХ СИСТЕМ УПРАВЛЕНИЯ И СВЯЗИ)",
+  "position": "Телефонист",
+  "sort_order": 21
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (АВТОМАТИЗИРОВАННЫХ СИСТЕМ УПРАВЛЕНИЯ И СВЯЗИ)",
+  "position": "Телефонист",
+  "sort_order": 22
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (ТЕЛЕКОММУНИКАЦИЙ)",
+  "position": "Специалист гражданской обороны 21.04006 (Сети связи и системы коммутации)",
+  "sort_order": 23
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (ТЕЛЕКОММУНИКАЦИЙ)",
+  "position": "Оператор электронно- вычислительных и вычислительных машин",
+  "sort_order": 24
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (ТЕЛЕКОММУНИКАЦИЙ)",
+  "position": "Оператор электронно- вычислительных и вычислительных машин",
+  "sort_order": 25
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА СЛУЖБЫ ВОЙСК И БЕЗОПАСНОСТИ ВОЕННОЙ СЛУЖБЫ",
+  "position": "Начальник группы-комендант",
+  "sort_order": 26
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА СЛУЖБЫ ВОЙСК И БЕЗОПАСНОСТИ ВОЕННОЙ СЛУЖБЫ",
+  "position": "Специалист гражданской обороны 0320016 (Документоведение, документационное обеспечение управления)",
+  "sort_order": 27
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "СЕКРЕТНОЕ ОТДЕЛЕНИЕ",
+  "position": "Начальник службы",
+  "sort_order": 28
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "СЕКРЕТНОЕ ОТДЕЛЕНИЕ",
+  "position": "Техник 06117 (Делопроизводство и архивоведение)",
+  "sort_order": 29
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (ПРОФЕССИОНАЛЬНОЙ ПОДГОТОВКИ)",
+  "position": "Начальник отдела",
+  "sort_order": 30
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (ОРГАНИЗАЦИИ ПРОФЕССИОНАЛЬНОЙ ПОДГОТОВКИ)",
+  "position": "Начальник группы",
+  "sort_order": 31
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (ОРГАНИЗАЦИИ ПРОФЕССИОНАЛЬНОЙ ПОДГОТОВКИ)",
+  "position": "Специалист гражданской обороны 0320016 (Документоведение, документационное обеспечение управления)",
+  "sort_order": 32
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (ОРГАНИЗАЦИИ ПРОФЕССИОНАЛЬНОЙ ПОДГОТОВКИ)",
+  "position": "Спортсмен-инструктор 0321016 (Физическая культура и спорт)",
+  "sort_order": 33
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (ОРГАНИЗАЦИИ ПРОФЕССИОНАЛЬНОЙ ПОДГОТОВКИ)",
+  "position": "Администратор 03077 (Физическая культура)",
+  "sort_order": 34
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (ОРГАНИЗАЦИИ ПРОФЕССИОНАЛЬНОЙ ПОДГОТОВКИ)",
+  "position": "Техник 22017 (Заведующий лабораторией)",
+  "sort_order": 35
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (ПОДГОТОВКИ СПАСАТЕЛЕЙ И ПОВЫШЕНИЯ КВАЛИФИКАЦИИ СПЕЦИАЛИСТОВ)",
+  "position": "Начальник группы",
+  "sort_order": 36
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (ПОДГОТОВКИ СПАСАТЕЛЕЙ И ПОВЫШЕНИЯ КВАЛИФИКАЦИИ СПЕЦИАЛИСТОВ)",
+  "position": "Специалист гражданской обороны 2801036 (Защита в чрезвычайных ситуациях)",
+  "sort_order": 37
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (ПОДГОТОВКИ СПАСАТЕЛЕЙ И ПОВЫШЕНИЯ КВАЛИФИКАЦИИ СПЕЦИАЛИСТОВ)",
+  "position": "Оператор электронно- вычислительных и вычислительных машин",
+  "sort_order": 38
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ВОСПИТАТЕЛЬНОЙ РАБОТЫ (И СВЯЗИ С ОБЩЕСТВЕННОСТЬЮ)",
+  "position": "Начальник отдела",
+  "sort_order": 39
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ВОСПИТАТЕЛЬНОЙ РАБОТЫ (И СВЯЗИ С ОБЩЕСТВЕННОСТЬЮ)",
+  "position": "Заместитель начальника отдела",
+  "sort_order": 40
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ВОСПИТАТЕЛЬНОЙ РАБОТЫ (И СВЯЗИ С ОБЩЕСТВЕННОСТЬЮ)",
+  "position": "Специалист гражданской обороны 0306026 (Связи с общественностью)",
+  "sort_order": 41
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ВОСПИТАТЕЛЬНОЙ РАБОТЫ (И СВЯЗИ С ОБЩЕСТВЕННОСТЬЮ)",
+  "position": "Специалист гражданской обороны 0306026 (Связи с общественностью)",
+  "sort_order": 42
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ПСИХОЛОГИЧЕСКАЯ СЛУЖБА",
+  "position": "Начальник службы",
+  "sort_order": 43
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ПСИХОЛОГИЧЕСКАЯ СЛУЖБА",
+  "position": "Психолог 0303016 (Психология)",
+  "sort_order": 44
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ КАДРОВ",
+  "position": "Начальник отдела",
+  "sort_order": 45
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ КАДРОВ",
+  "position": "Заместитель начальника отдела",
+  "sort_order": 46
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ КАДРОВ",
+  "position": "Специалист гражданской обороны 0805056 (Управление персоналом)",
+  "sort_order": 47
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ КАДРОВ",
+  "position": "Специалист гражданской обороны 0805056 (Управление персоналом)",
+  "sort_order": 48
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ КАДРОВ",
+  "position": "Специалист гражданской обороны 0805056 (Управление персоналом)",
+  "sort_order": 49
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ КАДРОВ",
+  "position": "Специалист гражданской обороны 0401016 (Социальная работа)",
+  "sort_order": 50
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ КАДРОВ",
+  "position": "Специалист гражданской обороны 0401016 (Социальная работа)",
+  "sort_order": 51
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ФИНАНСОВО-ЭКОНОМИЧЕСКИЙ ОТДЕЛ",
+  "position": "Нач. отд. – гл. бухгалтер",
+  "sort_order": 52
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ФИНАНСОВО-ЭКОНОМИЧЕСКИЙ ОТДЕЛ",
+  "position": "Зам. НО. – зам. гл. бухгалтера",
+  "sort_order": 53
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА ПЛАНИРОВАНИЯ (ФИНАНСОВОГО ОБЕСПЕЧЕНИЯ И ЭКОНОМИЧЕСКОГО АНАЛИЗА)",
+  "position": "Экономист 0805026 (Экономика и управление на предприятии)",
+  "sort_order": 54
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА ПЛАНИРОВАНИЯ (ФИНАНСОВОГО ОБЕСПЕЧЕНИЯ И ЭКОНОМИЧЕСКОГО АНАЛИЗА)",
+  "position": "Экономист 0805026 (Экономика и управление на предприятии)",
+  "sort_order": 55
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА ПЛАНИРОВАНИЯ (ФИНАНСОВОГО ОБЕСПЕЧЕНИЯ И ЭКОНОМИЧЕСКОГО АНАЛИЗА)",
+  "position": "Экономист 0805026 (Экономика и управление на предприятии)",
+  "sort_order": 56
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА ПЛАНИРОВАНИЯ (ФИНАНСОВОГО ОБЕСПЕЧЕНИЯ И ЭКОНОМИЧЕСКОГО АНАЛИЗА)",
+  "position": "Экономист 0805026 (Экономика и управление на предприятии)",
+  "sort_order": 57
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (БУХГАЛТЕРСКОГО УЧЕТА)",
+  "position": "Начальник группы 0801096 (Бухгалтерский учет анализ и аудит)",
+  "sort_order": 58
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (БУХГАЛТЕРСКОГО УЧЕТА)",
+  "position": "Бухгалтер 0801096 (Бухгалтерский учет анализ и аудит)",
+  "sort_order": 59
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (БУХГАЛТЕРСКОГО УЧЕТА)",
+  "position": "Бухгалтер 0801096 (Бухгалтерский учет анализ и аудит)",
+  "sort_order": 60
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (БУХГАЛТЕРСКОГО УЧЕТА)",
+  "position": "Бухгалтер 0801096 (Бухгалтерский учет анализ и аудит)",
+  "sort_order": 61
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "СЛУЖБА АРТИЛЛЕРИЙСКОГО ВООРУЖЕНИЯ",
+  "position": "Начальник службы",
+  "sort_order": 62
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "СЛУЖБА АРТИЛЛЕРИЙСКОГО ВООРУЖЕНИЯ",
+  "position": "Специалист гражданской обороны 1901056 (Наземные транспортные системы)",
+  "sort_order": 63
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "СЛУЖБА АРТИЛЛЕРИЙСКОГО ВООРУЖЕНИЯ",
+  "position": "Оператор электронно- вычислительных и вычислительных машин",
+  "sort_order": 64
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ИНЖЕНЕРНАЯ СЛУЖБА",
+  "position": "Начальник службы",
+  "sort_order": 65
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ИНЖЕНЕРНАЯ СЛУЖБА",
+  "position": "Инженер 1902056 (Подъемно-транспортные, строительные, дорожные машины и оборудование)",
+  "sort_order": 66
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ИНЖЕНЕРНАЯ СЛУЖБА",
+  "position": "Специалист гражданской обороны 1803026 (Подводная техника)",
+  "sort_order": 67
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "СЛУЖБА РАДИАЦИОННОЙ, ХИМИЧЕСКОЙ И БИОЛОГИЧЕСКОЙ ЗАЩИТЫ",
+  "position": "Начальник службы",
+  "sort_order": 68
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "СЛУЖБА РАДИАЦИОННОЙ, ХИМИЧЕСКОЙ И БИОЛОГИЧЕСКОЙ ЗАЩИТЫ",
+  "position": "Инженер (эколог) 2802006 (Защита окружающей среды)",
+  "sort_order": 69
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "АВТОМОБИЛЬНАЯ СЛУЖБА",
+  "position": "Начальник службы",
+  "sort_order": 70
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "АВТОМОБИЛЬНАЯ СЛУЖБА",
+  "position": "Специалист гражданской обороны 1906016 (Автомобили и автомобильное хозяйство)",
+  "sort_order": 71
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "АВТОМОБИЛЬНАЯ СЛУЖБА",
+  "position": "Специалист гражданской обороны 1906016 (Автомобили и автомобильное хозяйство)",
+  "sort_order": 72
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "СЛУЖБА ГОРЮЧЕГО И СМАЗОЧНЫХ МАТЕРИАЛОВ",
+  "position": "Начальник службы",
+  "sort_order": 73
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "СЛУЖБА ГОРЮЧЕГО И СМАЗОЧНЫХ МАТЕРИАЛОВ",
+  "position": "Специалист гражданской обороны 2404006 (Химическая технология органических веществ и топлива)",
+  "sort_order": 74
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "СЛУЖБА ГОРЮЧЕГО И СМАЗОЧНЫХ МАТЕРИАЛОВ",
+  "position": "Бухгалтер 0801096 (Бухгалтерский учет, анализ и аудит)",
+  "sort_order": 75
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ПРОДОВОЛЬСТВЕННАЯ СЛУЖБА",
+  "position": "Начальник службы",
+  "sort_order": 76
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ПРОДОВОЛЬСТВЕННАЯ СЛУЖБА",
+  "position": "Специалист гражданской обороны 2605016 (Технология продуктов общественного питания)",
+  "sort_order": 77
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ПРОДОВОЛЬСТВЕННАЯ СЛУЖБА",
+  "position": "Специалист гражданской обороны 2605016 (Технология продуктов общественного питания)",
+  "sort_order": 78
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ВЕЩЕВАЯ СЛУЖБА",
+  "position": "Начальник службы",
+  "sort_order": 79
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ВЕЩЕВАЯ СЛУЖБА",
+  "position": "Специалист гражданской обороны 2609016 (Технология швейных изделий)",
+  "sort_order": 80
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ВЕЩЕВАЯ СЛУЖБА",
+  "position": "Бухгалтер 0801096 (Бухгалтерский учет, анализ и аудит)",
+  "sort_order": 81
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ВЕЩЕВАЯ СЛУЖБА",
+  "position": "Оператор электронно- вычислительных и вычислительных машин",
+  "sort_order": 82
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ЭКСПЛУАТАЦИИ ЗДАНИЙ",
+  "position": "Начальник отдела",
+  "sort_order": 83
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ЭКСПЛУАТАЦИИ ЗДАНИЙ",
+  "position": "Заместитель начальника отдела",
+  "sort_order": 84
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ЭКСПЛУАТАЦИИ ЗДАНИЙ",
+  "position": "Специалист гражданской обороны 2701026 (Промышленное и гражданское строительство)",
+  "sort_order": 85
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ЭКСПЛУАТАЦИИ ЗДАНИЙ",
+  "position": "Специалист гражданской обороны 2701026 (Промышленное и гражданское строительство)",
+  "sort_order": 86
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ЭКСПЛУАТАЦИИ ЗДАНИЙ",
+  "position": "Специалист гражданской обороны 2701026 (Промышленное и гражданское строительство)",
+  "sort_order": 87
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ЭКСПЛУАТАЦИИ ЗДАНИЙ",
+  "position": "Инженер 2701056 (Промышленное и гражданское строительство)",
+  "sort_order": 88
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ЭКСПЛУАТАЦИИ ЗДАНИЙ",
+  "position": "Инженер 2701056 (Промышленное и гражданское строительство)",
+  "sort_order": 89
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ЭКСПЛУАТАЦИИ ЗДАНИЙ",
+  "position": "Бухгалтер 0801096 (Бухгалтерский учет, анализ и аудит)",
+  "sort_order": 90
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ЭКСПЛУАТАЦИИ ЗДАНИЙ",
+  "position": "Техник 29027 (Строительство и эксплуатация зданий и сооружений)",
+  "sort_order": 91
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (ОРГАНИЗАЦИИ КОНТРАКТНОЙ РАБОТЫ)",
+  "position": "Начальник отдела",
+  "sort_order": 92
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (ОРГАНИЗАЦИИ КОНТРАКТНОЙ РАБОТЫ)",
+  "position": "Специалист гражданской обороны 1902016 (Автомобиле- и тракторостроение)",
+  "sort_order": 93
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (ОРГАНИЗАЦИИ КОНТРАКТНОЙ РАБОТЫ)",
+  "position": "Бухгалтер 0801096 (Бухгалтерский учет, анализ и аудит)",
+  "sort_order": 94
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "СЛУЖБА ПРОТИВОПОЖАРНОЙ ЗАЩИТЫ И СПАСАТЕЛЬНЫХ РАБОТ",
+  "position": "Начальник службы",
+  "sort_order": 95
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "СЛУЖБА ПРОТИВОПОЖАРНОЙ ЗАЩИТЫ И СПАСАТЕЛЬНЫХ РАБОТ",
+  "position": "Специалист гражданской обороны 2801046 (Пожарная безопасность)",
+  "sort_order": 96
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ЮРИДИЧЕСКАЯ СЛУЖБА",
+  "position": "Начальник службы",
+  "sort_order": 97
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ЮРИДИЧЕСКАЯ СЛУЖБА",
+  "position": "Юрисконсульт 0504026 (Юриспруденция)",
+  "sort_order": 98
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА ОХРАНЫ ТРУДА И ТЕХНИКИ БЕЗОПАСНОСТИ",
+  "position": "Начальник группы 2801016 (Безопасность жизнедеятельности в техносфере)",
+  "sort_order": 99
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА ОХРАНЫ ТРУДА И ТЕХНИКИ БЕЗОПАСНОСТИ",
+  "position": "Специалист гражданской обороны 2801016 (Безопасность жизнедеятельности в техносфере)",
+  "sort_order": 100
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА ОХРАНЫ ТРУДА И ТЕХНИКИ БЕЗОПАСНОСТИ",
+  "position": "Специалист гражданской обороны 2801016 (Безопасность жизнедеятельности в техносфере)",
+  "sort_order": 101
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "УПРАВЛЕНИЕ (ПЕРВООЧЕРЕДНЫХ АВАРИЙНО-СПАСАТЕЛЬНЫХ РАБОТ В ЗОНАХ ЧРЕЗВЫЧАЙНЫХ СИТУАЦИЙ)",
+  "position": "Начальник управления",
+  "sort_order": 102
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "УПРАВЛЕНИЕ (ПЕРВООЧЕРЕДНЫХ АВАРИЙНО-СПАСАТЕЛЬНЫХ РАБОТ В ЗОНАХ ЧРЕЗВЫЧАЙНЫХ СИТУАЦИЙ)",
+  "position": "Заместитель начальника управления",
+  "sort_order": 103
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "УПРАВЛЕНИЕ (ПЕРВООЧЕРЕДНЫХ АВАРИЙНО-СПАСАТЕЛЬНЫХ РАБОТ В ЗОНАХ ЧРЕЗВЫЧАЙНЫХ СИТУАЦИЙ)",
+  "position": "Специалист гражданской обороны 2801036 (Защита в чрезвычайных ситуациях)",
+  "sort_order": 104
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (СПАСАТЕЛЕЙ-ДЕСАНТНИКОВ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 105
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (СПАСАТЕЛЕЙ-ДЕСАНТНИКОВ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 106
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (СПАСАТЕЛЕЙ-ДЕСАНТНИКОВ)",
+  "position": "Старший инструктор-парашютист 03077 (физическая культура)",
+  "sort_order": 107
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (СПАСАТЕЛЕЙ-ДЕСАНТНИКОВ)",
+  "position": "Инструктор-парашютист 03077 (физическая культура)",
+  "sort_order": 108
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (ГОРНОСПАСАТЕЛЬНЫХ РАБОТ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 109
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (ГОРНОСПАСАТЕЛЬНЫХ РАБОТ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 110
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (АВАРИЙНО-СПАСАТЕЛЬНЫХ ВОДОЛАЗНЫХ РАБОТ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 111
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (АВАРИЙНО-СПАСАТЕЛЬНЫХ ВОДОЛАЗНЫХ РАБОТ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 112
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (АВАРИЙНО-СПАСАТЕЛЬНЫХ ВОДОЛАЗНЫХ РАБОТ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 113
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "УПРАВЛЕНИЕ (СПАСЕНИЯ, ЭВАКУАЦИИ НАСЕЛЕНИЯ И СОПРОВОЖДЕНИЯ ГРУЗОВ)",
+  "position": "Начальник управления",
+  "sort_order": 114
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "УПРАВЛЕНИЕ (СПАСЕНИЯ, ЭВАКУАЦИИ НАСЕЛЕНИЯ И СОПРОВОЖДЕНИЯ ГРУЗОВ)",
+  "position": "Зам нач. управления",
+  "sort_order": 115
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "УПРАВЛЕНИЕ (СПАСЕНИЯ, ЭВАКУАЦИИ НАСЕЛЕНИЯ И СОПРОВОЖДЕНИЯ ГРУЗОВ)",
+  "position": "Зам нач. управ. (по воспит.раб)",
+  "sort_order": 116
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "УПРАВЛЕНИЕ (СПАСЕНИЯ, ЭВАКУАЦИИ НАСЕЛЕНИЯ И СОПРОВОЖДЕНИЯ ГРУЗОВ)",
+  "position": "Специалист гражданской обороны 0805056 (Управление персоналом)",
+  "sort_order": 117
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА ОБЕСПЕЧЕНИЯ (СПАСАТЕЛЬНЫХ РАБОТ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 118
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА ОБЕСПЕЧЕНИЯ (СПАСЕНИЯ И ЭВАКУАЦИИ НАСЕЛЕНИЯ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 119
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА ОБЕСПЕЧЕНИЯ (СПАСЕНИЯ И ЭВАКУАЦИИ НАСЕЛЕНИЯ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 120
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА ОБСЛУЖИВАНИЯ (АВАРИЙНО-СПАСАТЕЛЬНОГО ИНСТРУМЕНТА)",
+  "position": "Водитель автомобиля",
+  "sort_order": 121
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "УПРАВЛЕНИЕ (РАДИАЦИОННОЙ, ХИМИЧЕСКОЙ И БИОЛОГИЧЕСКОЙ ЗАЩИТЫ)",
+  "position": "Начальник управления",
+  "sort_order": 122
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "УПРАВЛЕНИЕ (РАДИАЦИОННОЙ, ХИМИЧЕСКОЙ И БИОЛОГИЧЕСКОЙ ЗАЩИТЫ)",
+  "position": "Зам. нач. управления",
+  "sort_order": 123
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА РАДИАЦИОННОЙ И ХИМИЧЕСКОЙ РАЗВЕДКИ",
+  "position": "Водитель автомобиля",
+  "sort_order": 124
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА РАДИАЦИОННОЙ И ХИМИЧЕСКОЙ РАЗВЕДКИ",
+  "position": "Водитель автомобиля",
+  "sort_order": 125
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА РАДИАЦИОННОЙ И ХИМИЧЕСКОЙ РАЗВЕДКИ",
+  "position": "Водитель автомобиля",
+  "sort_order": 126
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА РАДИАЦИОННОЙ И ХИМИЧЕСКОЙ РАЗВЕДКИ",
+  "position": "Водитель автомобиля",
+  "sort_order": 127
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (ДОЗИМЕТРИЧЕСКОГО КОНТРОЛЯ И ЭКОЛОГИЧЕСКОГО МОНИТОРИНГА)",
+  "position": "Специалист гражданской обороны 2802006 (Защита окружающей среды)",
+  "sort_order": 128
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (БИОЛОГИЧЕСКОЙ РАЗВЕДКИ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 129
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (БИОЛОГИЧЕСКОЙ РАЗВЕДКИ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 130
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (СПЕЦИАЛЬНОЙ ОБРАБОТКИ)",
+  "position": "Специалист гражданской обороны 2801036 (Защита в чрезвычайных ситуациях)",
+  "sort_order": 131
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (СПЕЦИАЛЬНОЙ ОБРАБОТКИ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 132
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (СПЕЦИАЛЬНОЙ ОБРАБОТКИ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 133
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (СПЕЦИАЛЬНОЙ ОБРАБОТКИ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 134
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (СПЕЦИАЛЬНОЙ ОБРАБОТКИ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 135
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (СПЕЦИАЛЬНОЙ ОБРАБОТКИ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 136
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (СПЕЦИАЛЬНЫХ РАБОТ)",
+  "position": "Специалист гражданской обороны 2801036 (Защита в чрезвычайных ситуациях)",
+  "sort_order": 137
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (СПЕЦИАЛЬНЫХ РАБОТ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 138
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (СПЕЦИАЛЬНЫХ РАБОТ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 139
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (СПЕЦИАЛЬНЫХ РАБОТ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 140
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (ТРАНСПОРТИРОВКИ РАДИАЦИОННЫХ ОТХОДОВ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 141
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОБЕСПЕЧЕНИЯ (РАДИАЦИОННОЙ, ХИМИЧЕСКОЙ И БИОЛОГИЧЕСКОЙ ЗАЩИТЫ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 142
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "УПРАВЛЕНИЕ (РОБОТОТЕХНИЧЕСКИХ СРЕДСТВ)",
+  "position": "Начальник управления",
+  "sort_order": 143
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "УПРАВЛЕНИЕ (РОБОТОТЕХНИЧЕСКИХ СРЕДСТВ)",
+  "position": "Заместитель начальника управления",
+  "sort_order": 144
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "УПРАВЛЕНИЕ (РОБОТОТЕХНИЧЕСКИХ СРЕДСТВ)",
+  "position": "Зам. НУ по вооружению",
+  "sort_order": 145
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "УПРАВЛЕНИЕ (РОБОТОТЕХНИЧЕСКИХ СРЕДСТВ)",
+  "position": "Специалист гражданской обороны 2204026 (Роботы и робототехнические системы)",
+  "sort_order": 146
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ УПРАВЛЕНИЯ (И РАЗВЕДКИ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 147
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ УПРАВЛЕНИЯ (И РАЗВЕДКИ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 148
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (РАБОТ ПРИ РАДИАЦИОННЫХ АВАРИЯХ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 149
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОБЕСПЕЧЕНИЯ (ПРОВЕДЕНИЯ АВАРИЙНО-СПАСАТЕЛЬНЫХ РАБОТ В ЗОНАХ ЧС)",
+  "position": "Водитель автомобиля",
+  "sort_order": 150
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОБЕСПЕЧЕНИЯ (ПРОВЕДЕНИЯ АВАРИЙНО-СПАСАТЕЛЬНЫХ РАБОТ В ЗОНАХ ЧС)",
+  "position": "Водитель автомобиля",
+  "sort_order": 151
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (ИНЖЕНЕРНО-ЭВАКУАЦИОННЫХ РАБОТ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 152
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (ИНЖЕНЕРНЫХ И СПЕЦИАЛЬНЫХ РАБОТ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 153
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (ИНЖЕНЕРНЫХ РАБОТ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 154
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА УПРАВЛЕНИЯ (ТЯЖЕЛЫХ РОБОТОТЕХНИЧЕСКИХ СРЕДСТВ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 155
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА УПРАВЛЕНИЯ (ТЯЖЕЛЫХ РОБОТОТЕХНИЧЕСКИХ СРЕДСТВ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 156
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (ИНЖЕНЕРНЫХ И РАЗГРАДИТЕЛЬНЫХ РАБОТ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 157
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (СПЕЦИАЛЬНЫХ РАБОТ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 158
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА ОБЕСПЕЧЕНИЯ (РОБОТОТЕХНИЧЕСКИХ РАБОТ)",
+  "position": "Специалист гражданской обороны 2204026 (Роботы и робототехническая система)",
+  "sort_order": 159
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА ОБЕСПЕЧЕНИЯ (РОБОТОТЕХНИЧЕСКИХ РАБОТ)",
+  "position": "Техник 19117 (Электромеханические приборные устройства)",
+  "sort_order": 160
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА ОБЕСПЕЧЕНИЯ (РОБОТОТЕХНИЧЕСКИХ РАБОТ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 161
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА ОБЕСПЕЧЕНИЯ (РОБОТОТЕХНИЧЕСКИХ РАБОТ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 162
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "УПРАВЛЕНИЕ (ПИРОТЕХНИЧЕСКИХ И СПЕЦИАЛЬНЫХ КИНОЛОГИЧЕСКИХ РАБОТ)",
+  "position": "Начальник управления",
+  "sort_order": 163
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "УПРАВЛЕНИЕ (ПИРОТЕХНИЧЕСКИХ И СПЕЦИАЛЬНЫХ КИНОЛОГИЧЕСКИХ РАБОТ)",
+  "position": "Зам. нач. управления",
+  "sort_order": 164
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "УПРАВЛЕНИЕ (ПИРОТЕХНИЧЕСКИХ И СПЕЦИАЛЬНЫХ КИНОЛОГИЧЕСКИХ РАБОТ)",
+  "position": "Зам. нач. управления (по вооружению)",
+  "sort_order": 165
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "УПРАВЛЕНИЕ (ПИРОТЕХНИЧЕСКИХ И СПЕЦИАЛЬНЫХ КИНОЛОГИЧЕСКИХ РАБОТ)",
+  "position": "Специалист гражданской обороны 2801036 (Защита в чрезвычайных ситуациях)",
+  "sort_order": 166
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (ОБЕСПЕЧЕНИЯ КИНОЛОГИЧЕСКОЙ ДЕЯТЕЛЬНОСТИ)",
+  "position": "Начальник группы 2801036 (Защита в чрезвычайных ситуациях)",
+  "sort_order": 167
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (ОБЕСПЕЧЕНИЯ КИНОЛОГИЧЕСКОЙ ДЕЯТЕЛЬНОСТИ)",
+  "position": "Специалист гражданской обороны 2801036 (Защита в чрезвычайных ситуациях)",
+  "sort_order": 168
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (ОБЕСПЕЧЕНИЯ КИНОЛОГИЧЕСКОЙ ДЕЯТЕЛЬНОСТИ)",
+  "position": "Специалист гражданской обороны 2801036 (Защита в чрезвычайных ситуациях)",
+  "sort_order": 169
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ПИРОТЕХНИЧЕСКИЙ ОТДЕЛ",
+  "position": "Специалист гражданской обороны 1304086 (Взрывное дело)",
+  "sort_order": 170
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ПИРОТЕХНИЧЕСКИЙ ОТДЕЛ",
+  "position": "Водитель автомобиля",
+  "sort_order": 171
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ПИРОТЕХНИЧЕСКИЙ ОТДЕЛ",
+  "position": "Специалист гражданской обороны 1304086 (Взрывное дело)",
+  "sort_order": 172
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ПИРОТЕХНИЧЕСКИЙ ОТДЕЛ",
+  "position": "Водитель автомобиля",
+  "sort_order": 173
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ПИРОТЕХНИЧЕСКИЙ ОТДЕЛ",
+  "position": "Специалист гражданской обороны 1304086 (Взрывное дело)",
+  "sort_order": 174
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ПИРОТЕХНИЧЕСКИЙ ОТДЕЛ",
+  "position": "Водитель автомобиля",
+  "sort_order": 175
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ПИРОТЕХНИЧЕСКИЙ ОТДЕЛ",
+  "position": "Техник 20027 (Оптические и оптико-электронные приборы и системы)",
+  "sort_order": 176
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ПИРОТЕХНИЧЕСКИЙ ОТДЕЛ",
+  "position": "Техник 20027 (Оптические и оптико-электронные приборы и системы)",
+  "sort_order": 177
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ПИРОТЕХНИЧЕСКИЙ ОТДЕЛ",
+  "position": "Техник 20027 (Оптические и оптико-электронные приборы и системы)",
+  "sort_order": 178
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ПИРОТЕХНИЧЕСКИЙ ОТДЕЛ",
+  "position": "Водитель автомобиля",
+  "sort_order": 179
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ПИРОТЕХНИЧЕСКИЙ ОТДЕЛ",
+  "position": "Водитель автомобиля",
+  "sort_order": 180
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ПИРОТЕХНИЧЕСКИЙ ОТДЕЛ",
+  "position": "Водитель автомобиля",
+  "sort_order": 181
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ПИРОТЕХНИЧЕСКИЙ ОТДЕЛ",
+  "position": "Водитель автомобиля",
+  "sort_order": 182
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ПИРОТЕХНИЧЕСКИЙ ОТДЕЛ",
+  "position": "Водитель автомобиля",
+  "sort_order": 183
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ПИРОТЕХНИЧЕСКИЙ ОТДЕЛ",
+  "position": "Водитель автомобиля",
+  "sort_order": 184
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (СПЕЦИАЛЬНЫХ КИНОЛОГИЧЕСКИХ РАБОТ)",
+  "position": "Ветеринарный врач 1105026 (Ветеринария)",
+  "sort_order": 185
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (МИННО-РОЗЫСКНЫХ И ПОИСКОВО-СПАСАТЕЛЬНЫХ РАБОТ)",
+  "position": "Специалист гражданской обороны 2801036 (Защита в чрезвычайных ситуациях)",
+  "sort_order": 186
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ГРУППА (МИННО-РОЗЫСКНЫХ И ПОИСКОВО-СПАСАТЕЛЬНЫХ РАБОТ)",
+  "position": "Специалист гражданской обороны 2801036 (Защита в чрезвычайных ситуациях)",
+  "sort_order": 187
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "УПРАВЛЕНИЕ (МЕДИКО- СПАСАТЕЛЬНОЕ)",
+  "position": "Начальник управления – нач. медицинской службы",
+  "sort_order": 188
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "УПРАВЛЕНИЕ (МЕДИКО- СПАСАТЕЛЬНОЕ)",
+  "position": "Заместитель начальника управления",
+  "sort_order": 189
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "УПРАВЛЕНИЕ (МЕДИКО- СПАСАТЕЛЬНОЕ)",
+  "position": "Заведующий складом 06017 (Экономика, бух учет и контроль)",
+  "sort_order": 190
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (МЕДИКО-СПАСАТЕЛЬНЫЙ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 191
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (МЕДИКО-СПАСАТЕЛЬНЫЙ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 192
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (МЕДИКО-СПАСАТЕЛЬНЫЙ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 193
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (МЕДИКО-СПАСАТЕЛЬНЫЙ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 194
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "МЕДИЦИНСКИЙ ОТДЕЛ",
+  "position": "Начальник отдела 0601016 (Лечебное дело)",
+  "sort_order": 195
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ТЕРАПЕВТИЧЕСКИЙ КАБИНЕТ",
+  "position": "Врач-терапевт 0601016 (Лечебное дело)",
+  "sort_order": 196
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ТЕРАПЕВТИЧЕСКИЙ КАБИНЕТ",
+  "position": "Врач-терапевт 0601016 (Лечебное дело)",
+  "sort_order": 197
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ТЕРАПЕВТИЧЕСКИЙ КАБИНЕТ",
+  "position": "Фельдшер- лаборант 04077 (Лабораторная диагностика)",
+  "sort_order": 198
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ТЕРАПЕВТИЧЕСКИЙ КАБИНЕТ",
+  "position": "Медицинская сестра 04067 (Сестринское дело)",
+  "sort_order": 199
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "МЕДИЦИНСКОЕ ОТДЕЛЕНИЕ (ДНЕВНОЙ СТАЦИОНАР НА 5 КОЕК)",
+  "position": "Заведующий отделением (врач-терапевт) 0601016 (Лечебное дело)",
+  "sort_order": 200
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "МЕДИЦИНСКОЕ ОТДЕЛЕНИЕ (ДНЕВНОЙ СТАЦИОНАР НА 5 КОЕК)",
+  "position": "Старшая медицинская сестра 04067 (Сестринское дело)",
+  "sort_order": 201
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "МЕДИЦИНСКОЕ ОТДЕЛЕНИЕ (ДНЕВНОЙ СТАЦИОНАР НА 5 КОЕК)",
+  "position": "Медицинская сестра 04067 (Сестринское дело)",
+  "sort_order": 202
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "КАБИНЕТ ФУНКЦИОНАЛЬНОЙ ДИАГНОСТИ",
+  "position": "Врач функциональной диагностики 0601016 (Лечебное дело)",
+  "sort_order": 203
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "КАБИНЕТ ФУНКЦИОНАЛЬНОЙ ДИАГНОСТИ",
+  "position": "Медицинская сестра 04067 (Сестринское дело)",
+  "sort_order": 204
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "СТОМАТОЛОГИЧЕСКИЙ КАБИНЕТ",
+  "position": "Врач-стоматолог 0601056 (Стоматология)",
+  "sort_order": 205
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "СТОМАТОЛОГИЧЕСКИЙ КАБИНЕТ",
+  "position": "Врач-стоматолог 0601056 (Стоматология)",
+  "sort_order": 206
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "СТОМАТОЛОГИЧЕСКИЙ КАБИНЕТ",
+  "position": "Медицинская сестра 04067 (Сестринское дело)",
+  "sort_order": 207
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "АПТЕКА",
+  "position": "Заведующий аптекой 0601086 (Фармацея /провизор/)",
+  "sort_order": 208
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "МЕДИЦИНСКИЙ ПУНКТ",
+  "position": "Врач-терапевт 0601016 (Лечебное дело)",
+  "sort_order": 209
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "МЕДИЦИНСКИЙ ПУНКТ",
+  "position": "Врач-хирург 0601016 (Лечебное дело)",
+  "sort_order": 210
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "МЕДИЦИНСКИЙ ПУНКТ",
+  "position": "Медицинская сестра 04067 (Сестринское дело)",
+  "sort_order": 211
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "МЕДИЦИНСКИЙ ПУНКТ",
+  "position": "Водитель автомобиля",
+  "sort_order": 212
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "УПРАВЛЕНИЕ (ОХРАНЫ ОБЪЕКТОВ И РАЙОНОВ ВЕДЕНИЯ АВАРИЙНО-СПАСАТЕЛЬНЫХ РАБОТ)",
+  "position": "Заместитель начальника Центра - начальник управления",
+  "sort_order": 213
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "УПРАВЛЕНИЕ (ОХРАНЫ ОБЪЕКТОВ И РАЙОНОВ ВЕДЕНИЯ АВАРИЙНО-СПАСАТЕЛЬНЫХ РАБОТ)",
+  "position": "Заместитель начальника управления",
+  "sort_order": 214
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОХРАНЫ (ОБЪЕКТОВ)",
+  "position": "Специалист гражданской обороны 2801036 (Защита в чрезвычайных ситуациях)",
+  "sort_order": 215
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОХРАНЫ (ОБЪЕКТОВ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 216
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОХРАНЫ (ОБЪЕКТОВ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 217
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОХРАНЫ (ОБЪЕКТОВ)",
+  "position": "Специалист гражданской обороны 2801036 (Защита в чрезвычайных ситуациях)",
+  "sort_order": 218
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОХРАНЫ (ОБЪЕКТОВ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 219
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОХРАНЫ (ОБЪЕКТОВ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 220
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОХРАНЫ",
+  "position": "Специалист гражданской обороны 2801036 (Защита в чрезвычайных ситуациях)",
+  "sort_order": 221
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОХРАНЫ",
+  "position": "Специалист гражданской обороны 2801036 (Защита в чрезвычайных ситуациях)",
+  "sort_order": 222
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОХРАНЫ",
+  "position": "Водитель автомобиля",
+  "sort_order": 223
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОХРАНЫ",
+  "position": "Водитель автомобиля",
+  "sort_order": 224
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОБЕСПЕЧЕНИЯ (ПРОПУСКНОГО РЕЖИМА)",
+  "position": "Специалист гражданской обороны 0320016 (Документоведение, документационное обеспечение управления)",
+  "sort_order": 225
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОБЕСПЕЧЕНИЯ (ПРОПУСКНОГО РЕЖИМА)",
+  "position": "Специалист гражданской обороны 0320016 (Документоведение, документационное обеспечение управления)",
+  "sort_order": 226
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОБЕСПЕЧЕНИЯ (ПРОПУСКНОГО РЕЖИМА)",
+  "position": "Инженер 2101056 (Электронные приборы и устройства)",
+  "sort_order": 227
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОБЕСПЕЧЕНИЯ (ПРОПУСКНОГО РЕЖИМА)",
+  "position": "Документовед 0320016 (документоведение, документационное обеспечение управления)",
+  "sort_order": 228
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОБЕСПЕЧЕНИЯ (ПРОПУСКНОГО РЕЖИМА)",
+  "position": "Документовед 0320016 (документоведение, документационное обеспечение управления)",
+  "sort_order": 229
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОБЕСПЕЧЕНИЯ (ПРОПУСКНОГО РЕЖИМА)",
+  "position": "Заведующий бюро пропусков",
+  "sort_order": 230
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОБЕСПЕЧЕНИЯ (ПРОПУСКНОГО РЕЖИМА)",
+  "position": "Заведующий бюро пропусков",
+  "sort_order": 231
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ ОБЕСПЕЧЕНИЯ (ПРОПУСКНОГО РЕЖИМА)",
+  "position": "Делопроизводитель",
+  "sort_order": 232
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "УПРАВЛЕНИЕ (ПРИМЕНЕНИЯ БЕСПИЛОТНЫХ ЛЕТАТЕЛЬНЫХ АППАРАТОВ И ВЫСОКОТЕХНОЛОГИЧНЫХ АВАРИЙНО-СПАСАТЕЛЬНЫХ СРЕДСТВ В ЗОНАХ ЧС)",
+  "position": "Начальник управления",
+  "sort_order": 233
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (ПЕРСПЕКТИВНОГО РАЗВИТИЯ НАУКИ И ТЕХНОЛОГИЙ)",
+  "position": "Зам. НУ – нач. отдела",
+  "sort_order": 234
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (ПЕРСПЕКТИВНОГО РАЗВИТИЯ НАУКИ И ТЕХНОЛОГИЙ)",
+  "position": "Специалист гражданской обороны 2204026 (Роботы и робототехнические системы)",
+  "sort_order": 235
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (ПЕРСПЕКТИВНОГО РАЗВИТИЯ НАУКИ И ТЕХНОЛОГИЙ)",
+  "position": "Специалист гражданской обороны 2801036 (Защита в чрезвычайных ситуациях)",
+  "sort_order": 236
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (ПЕРСПЕКТИВНОГО РАЗВИТИЯ НАУКИ И ТЕХНОЛОГИЙ)",
+  "position": "Специалист гражданской обороны 2801036 (Защита в чрезвычайных ситуациях)",
+  "sort_order": 237
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (ПЕРСПЕКТИВНОГО РАЗВИТИЯ НАУКИ И ТЕХНОЛОГИЙ)",
+  "position": "Специалист гражданской обороны 2801036 (Защита в чрезвычайных ситуациях)",
+  "sort_order": 238
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (ПЕРСПЕКТИВНОГО РАЗВИТИЯ НАУКИ И ТЕХНОЛОГИЙ)",
+  "position": "Оператор электронно- вычислительных и вычислительных машин",
+  "sort_order": 239
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (ОБЕСПЕЧЕНИЯ РАБОТ ПО СЕРТИФИКАЦИИ, СТАНДАРТИЗАЦИИ И ВНЕДРЕНИЮ ВЫСОКОТЕХНОЛОГИЧНЫХ АВАРИЙНО-СПАСАТЕЛЬНЫХ СРЕДСТВ)",
+  "position": "Специалист гражданской обороны 2204026 (Роботы и робототехнические системы)",
+  "sort_order": 240
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (ОБЕСПЕЧЕНИЯ РАБОТ ПО СЕРТИФИКАЦИИ, СТАНДАРТИЗАЦИИ И ВНЕДРЕНИЮ ВЫСОКОТЕХНОЛОГИЧНЫХ АВАРИЙНО-СПАСАТЕЛЬНЫХ СРЕДСТВ)",
+  "position": "Специалист гражданской обороны 2204026 (Роботы и робототехнические системы)",
+  "sort_order": 241
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (ОБЕСПЕЧЕНИЯ РАБОТ ПО СЕРТИФИКАЦИИ, СТАНДАРТИЗАЦИИ И ВНЕДРЕНИЮ ВЫСОКОТЕХНОЛОГИЧНЫХ АВАРИЙНО-СПАСАТЕЛЬНЫХ СРЕДСТВ)",
+  "position": "Специалист гражданской обороны 2204026 (Роботы и робототехнические системы)",
+  "sort_order": 242
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (ОБЕСПЕЧЕНИЯ РАБОТ ПО СЕРТИФИКАЦИИ, СТАНДАРТИЗАЦИИ И ВНЕДРЕНИЮ ВЫСОКОТЕХНОЛОГИЧНЫХ АВАРИЙНО-СПАСАТЕЛЬНЫХ СРЕДСТВ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 243
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (БЕСПИЛОТНЫХ ЛЕТАТЕЛЬНЫХ АППАРАТОВ)",
+  "position": "Специалист гражданской обороны 1604036 (Системы управления летательными аппаратами)",
+  "sort_order": 244
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (БЕСПИЛОТНЫХ ЛЕТАТЕЛЬНЫХ АППАРАТОВ)",
+  "position": "Техник 17037 (Техническая эксплуатация летательных аппаратов и двигателей)",
+  "sort_order": 245
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (ОРГАНИЗАЦИИ БЕЗОПАСНОСТИ ДОРОЖНОГО ДВИЖЕНИЯ ВОЕННОЙ АВТОМОБИЛЬНОЙ ИНСПЕКЦИИ МЧС РОССИИ)",
+  "position": "Начальник отдела",
+  "sort_order": 246
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (ОРГАНИЗАЦИИ БЕЗОПАСНОСТИ ДОРОЖНОГО ДВИЖЕНИЯ ВОЕННОЙ АВТОМОБИЛЬНОЙ ИНСПЕКЦИИ МЧС РОССИИ)",
+  "position": "Специалист гражданской обороны 0320016 (Документоведение, документационное обеспечение управления)",
+  "sort_order": 247
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "БАЗА (ОБЕСПЕЧЕНИЯ)",
+  "position": "Начальник базы",
+  "sort_order": 248
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "БАЗА (ОБЕСПЕЧЕНИЯ)",
+  "position": "Зам. нач. базы по МТО",
+  "sort_order": 249
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "БАЗА (ОБЕСПЕЧЕНИЯ)",
+  "position": "Зам. нач. базы (по восп. раб.)",
+  "sort_order": 250
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "БАЗА (ОБЕСПЕЧЕНИЯ)",
+  "position": "Специалист гражданской обороны 0805056 (Управление персоналом)",
+  "sort_order": 251
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "БАЗА (ОБЕСПЕЧЕНИЯ)",
+  "position": "Оператор электронно- вычислительных и вычислительных машин",
+  "sort_order": 252
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ТРАНСПОРТНЫЙ ОТДЕЛ",
+  "position": "Водитель автомобиля",
+  "sort_order": 253
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ТРАНСПОРТНЫЙ ОТДЕЛ",
+  "position": "Водитель автомобиля",
+  "sort_order": 254
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ТРАНСПОРТНЫЙ ОТДЕЛ",
+  "position": "Водитель автомобиля",
+  "sort_order": 255
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ТРАНСПОРТНЫЙ ОТДЕЛ",
+  "position": "Водитель автомобиля",
+  "sort_order": 256
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ТРАНСПОРТНЫЙ ОТДЕЛ",
+  "position": "Водитель автомобиля",
+  "sort_order": 257
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ТРАНСПОРТНЫЙ ОТДЕЛ",
+  "position": "Водитель автомобиля",
+  "sort_order": 258
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ТРАНСПОРТНЫЙ ОТДЕЛ",
+  "position": "Водитель автомобиля",
+  "sort_order": 259
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ТРАНСПОРТНЫЙ ОТДЕЛ",
+  "position": "Водитель автомобиля",
+  "sort_order": 260
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (ИНЖЕНЕРНОЙ И СПЕЦИАЛЬНОЙ ТЕХНИКИ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 261
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (ИНЖЕНЕРНОЙ И СПЕЦИАЛЬНОЙ ТЕХНИКИ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 262
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (ИНЖЕНЕРНОЙ И СПЕЦИАЛЬНОЙ ТЕХНИКИ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 263
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (ИНЖЕНЕРНОЙ И СПЕЦИАЛЬНОЙ ТЕХНИКИ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 264
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (ИНЖЕНЕРНОЙ И СПЕЦИАЛЬНОЙ ТЕХНИКИ)",
+  "position": "Водитель автомобиля",
+  "sort_order": 265
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОТДЕЛ (ИНЖЕНЕРНОЙ И СПЕЦИАЛЬНОЙ ТЕХНИКИ)",
+  "position": "Машинист крана (крановщик) 015900",
+  "sort_order": 266
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "отделение технического обслуживания",
+  "position": "Водитель автомобиля",
+  "sort_order": 267
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОФИЦЕРСКАЯ СТОЛОВАЯ",
+  "position": "Заведующий производством 27117 (Технология продуктов общественного питания)",
+  "sort_order": 268
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОФИЦЕРСКАЯ СТОЛОВАЯ",
+  "position": "Бухгалтер 06017 (экономика, бух учет и контроль)",
+  "sort_order": 269
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОФИЦЕРСКАЯ СТОЛОВАЯ",
+  "position": "Повар",
+  "sort_order": 270
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОФИЦЕРСКАЯ СТОЛОВАЯ",
+  "position": "Повар",
+  "sort_order": 271
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОФИЦЕРСКАЯ СТОЛОВАЯ",
+  "position": "Повар",
+  "sort_order": 272
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОФИЦЕРСКАЯ СТОЛОВАЯ",
+  "position": "Повар",
+  "sort_order": 273
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОФИЦЕРСКАЯ СТОЛОВАЯ",
+  "position": "Повар",
+  "sort_order": 274
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "СТОЛОВАЯ",
+  "position": "Повар",
+  "sort_order": 275
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "СКЛАДЫ",
+  "position": "Кладовщик",
+  "sort_order": 276
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "КЛУБ",
+  "position": "Начальник клуба",
+  "sort_order": 277
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "КЛУБ",
+  "position": "Специалист гражданской обороны 0613006 (Документоведение и документационное обеспечение управления)",
+  "sort_order": 278
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "КЛУБ",
+  "position": "Специалист гражданской обороны 0613006 (Документоведение и документационное обеспечение управления)",
+  "sort_order": 279
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "КЛУБ",
+  "position": "Специалист гражданской обороны 0613006 (Документоведение и документационное обеспечение управления)",
+  "sort_order": 280
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "КЛУБ",
+  "position": "Специалист гражданской обороны 0613006 (Документоведение и документационное обеспечение управления)",
+  "sort_order": 281
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "КЛУБ",
+  "position": "Библиотекарь 05177 (Библиотечное дело)",
+  "sort_order": 282
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "КЛУБ",
+  "position": "Оператор электронно- вычислительных и вычислительных машин",
+  "sort_order": 283
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОРКЕСТР",
+  "position": "Артист оркестра 05017 (Инструментальное исполнительство)",
+  "sort_order": 284
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОРКЕСТР",
+  "position": "Артист оркестра 05017 (Инструментальное исполнительство)",
+  "sort_order": 285
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОРКЕСТР",
+  "position": "Артист оркестра 05017 (Инструментальное исполнительство)",
+  "sort_order": 286
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОРКЕСТР",
+  "position": "Артист оркестра 05017 (Инструментальное исполнительство)",
+  "sort_order": 287
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОРКЕСТР",
+  "position": "Артист оркестра 05017 (Инструментальное исполнительство)",
+  "sort_order": 288
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОРКЕСТР",
+  "position": "Артист оркестра 05017 (Инструментальное исполнительство)",
+  "sort_order": 289
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОРКЕСТР",
+  "position": "Артист оркестра 05017 (Инструментальное исполнительство)",
+  "sort_order": 290
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОРКЕСТР",
+  "position": "Артист оркестра 05017 (Инструментальное исполнительство)",
+  "sort_order": 291
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОРКЕСТР",
+  "position": "Артист оркестра 05017 (Инструментальное исполнительство)",
+  "sort_order": 292
+ },
+ {
+  "source": "osnovnoy_shtat",
+  "kes_group": null,
+  "department": "ОРКЕСТР",
+  "position": "Артист оркестра 05017 (Инструментальное исполнительство)",
+  "sort_order": 293
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "1-КЭС",
+  "department": null,
+  "position": "уборщик служебных помещений 1 разряд",
+  "sort_order": 294
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "1-КЭС",
+  "department": null,
+  "position": "уборщик служебных помещений 1 разряд",
+  "sort_order": 295
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "1-КЭС",
+  "department": null,
+  "position": "уборщик служебных помещений 1 разряд",
+  "sort_order": 296
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "1-КЭС",
+  "department": null,
+  "position": "уборщик служебных помещений 1 разряд",
+  "sort_order": 297
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "1-КЭС",
+  "department": null,
+  "position": "уборщик служебных помещений 1 разряд",
+  "sort_order": 298
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "1-КЭС",
+  "department": null,
+  "position": "уборщик служебных помещений 1 разряд",
+  "sort_order": 299
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "1-КЭС",
+  "department": null,
+  "position": "уборщик служебных помещений 1 разряд",
+  "sort_order": 300
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "1-КЭС",
+  "department": null,
+  "position": "уборщик служебных помещений 1 разряд",
+  "sort_order": 301
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ЭЛЕКТРОХОЗЯЙСТВО ВОЕННЫХ ГОРОДКОВ",
+  "position": "начальник электрохозяйства",
+  "sort_order": 302
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ЭЛЕКТРОХОЗЯЙСТВО ВОЕННЫХ ГОРОДКОВ",
+  "position": "электромонтер по обслуживанию и ремонту электрооборудования 6 р.",
+  "sort_order": 303
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ЭЛЕКТРОХОЗЯЙСТВО ВОЕННЫХ ГОРОДКОВ",
+  "position": "электромонтер по обслуживанию и ремонту электрооборудования 6 р.",
+  "sort_order": 304
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ЭЛЕКТРОХОЗЯЙСТВО ВОЕННЫХ ГОРОДКОВ",
+  "position": "электромонтер по обслуживанию и ремонту электрооборудования 6 р.",
+  "sort_order": 305
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ЭЛЕКТРОХОЗЯЙСТВО ВОЕННЫХ ГОРОДКОВ",
+  "position": "электромонтер по обслуживанию и ремонту электрооборудования 5 р.",
+  "sort_order": 306
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ЭЛЕКТРОХОЗЯЙСТВО ВОЕННЫХ ГОРОДКОВ",
+  "position": "электромонтер по обслуживанию и ремонту электрооборудования 5 р.",
+  "sort_order": 307
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ЭЛЕКТРОХОЗЯЙСТВО ВОЕННЫХ ГОРОДКОВ",
+  "position": "электромонтер по обслуживанию и ремонту электрооборудования 5 р.",
+  "sort_order": 308
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ЭЛЕКТРОХОЗЯЙСТВО ВОЕННЫХ ГОРОДКОВ",
+  "position": "электромонтер по обслуживанию и ремонту электрооборудования (дежурный) 5 р.",
+  "sort_order": 309
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ВОДОПРОВОДНО-КАНАЛИЗАЦИОННОЕ ХОЗЯЙСТВО",
+  "position": "начальник ВКХ",
+  "sort_order": 310
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ВОДОПРОВОДНО-КАНАЛИЗАЦИОННОЕ ХОЗЯЙСТВО",
+  "position": "мастер ВКХ",
+  "sort_order": 311
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ВОДОПРОВОДНО-КАНАЛИЗАЦИОННОЕ ХОЗЯЙСТВО",
+  "position": "слесарь аварийно-восстановительных работ 6 разряд",
+  "sort_order": 312
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ВОДОПРОВОДНО-КАНАЛИЗАЦИОННОЕ ХОЗЯЙСТВО",
+  "position": "слесарь аварийно-восстановительных работ 5 разряд",
+  "sort_order": 313
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ВОДОПРОВОДНО-КАНАЛИЗАЦИОННОЕ ХОЗЯЙСТВО",
+  "position": "электрогазосварщик 6 разряд",
+  "sort_order": 314
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ВОДОПРОВОДНО-КАНАЛИЗАЦИОННОЕ ХОЗЯЙСТВО",
+  "position": "слесарь-сантехник 6 разряд",
+  "sort_order": 315
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ВОДОПРОВОДНО-КАНАЛИЗАЦИОННОЕ ХОЗЯЙСТВО",
+  "position": "слесарь-сантехник 5 разряд",
+  "sort_order": 316
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ВОДОПРОВОДНО-КАНАЛИЗАЦИОННОЕ ХОЗЯЙСТВО",
+  "position": "слесарь-сантехник 5 разряд",
+  "sort_order": 317
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ВОДОПРОВОДНО-КАНАЛИЗАЦИОННОЕ ХОЗЯЙСТВО",
+  "position": "машинист насосных установок при обслуживании насосных установок (в смену) 4 р.",
+  "sort_order": 318
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ВОДОПРОВОДНО-КАНАЛИЗАЦИОННОЕ ХОЗЯЙСТВО",
+  "position": "машинист насосных установок при обслуживании насосных установок (в смену) 4 р.",
+  "sort_order": 319
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ВОДОПРОВОДНО-КАНАЛИЗАЦИОННОЕ ХОЗЯЙСТВО",
+  "position": "машинист насосных установок при обслуживании насосных установок (в смену) 4 р.",
+  "sort_order": 320
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ВОДОПРОВОДНО-КАНАЛИЗАЦИОННОЕ ХОЗЯЙСТВО",
+  "position": "машинист насосных установок при обслуживании насосных установок (в смену) 4 р.",
+  "sort_order": 321
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ТЕПЛОВОЕ ХОЗЯЙСТВО",
+  "position": "начальник теплового хозяйства",
+  "sort_order": 322
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ТЕПЛОВОЕ ХОЗЯЙСТВО",
+  "position": "слесарь-ремонтник 6 разряд",
+  "sort_order": 323
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ТЕПЛОВОЕ ХОЗЯЙСТВО",
+  "position": "слесарь-ремонтник 6 разряд",
+  "sort_order": 324
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ТЕПЛОВОЕ ХОЗЯЙСТВО",
+  "position": "слесарь по КИПиА 5 разряд",
+  "sort_order": 325
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ТЕПЛОВОЕ ХОЗЯЙСТВО",
+  "position": "слесарь по обслуживанию тепловых сетей 5 разряд",
+  "sort_order": 326
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ВЕНТИЛЯЦИОННОЕ ХОЗЯЙСТВО",
+  "position": "слесарь-ремонтник 5 разряд",
+  "sort_order": 327
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "2-КЭС",
+  "department": "ВЕНТИЛЯЦИОННОЕ ХОЗЯЙСТВО",
+  "position": "жестянщик 3 разряд",
+  "sort_order": 328
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "3-КЭС",
+  "department": null,
+  "position": "маляр 5 разряд",
+  "sort_order": 329
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "3-КЭС",
+  "department": null,
+  "position": "столяр 5 разряд",
+  "sort_order": 330
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "3-КЭС",
+  "department": null,
+  "position": "штукатур 4 разряд",
+  "sort_order": 331
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "5-КЭС",
+  "department": null,
+  "position": "заведующий общежитием",
+  "sort_order": 332
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "5-КЭС",
+  "department": null,
+  "position": "бухгалтер 2 категория",
+  "sort_order": 333
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "5-КЭС",
+  "department": null,
+  "position": "дежурный по общежитию",
+  "sort_order": 334
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "5-КЭС",
+  "department": null,
+  "position": "дежурный по общежитию",
+  "sort_order": 335
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "5-КЭС",
+  "department": "СТОЛОВАЯ",
+  "position": "бухгалтер 2 категория",
+  "sort_order": 336
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "5-КЭС",
+  "department": "СТОЛОВАЯ",
+  "position": "официант 4 разряд",
+  "sort_order": 337
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "5-КЭС",
+  "department": "СТОЛОВАЯ",
+  "position": "официант 4 разряд",
+  "sort_order": 338
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "5-КЭС",
+  "department": "СТОЛОВАЯ",
+  "position": "кухонный рабочий 2 разряд",
+  "sort_order": 339
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "5-КЭС",
+  "department": "СТОЛОВАЯ",
+  "position": "кухонный рабочий 2 разряд",
+  "sort_order": 340
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "5-КЭС",
+  "department": "СТОЛОВАЯ",
+  "position": "мойщик посуды 2 разряд",
+  "sort_order": 341
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "5-КЭС",
+  "department": "СТОЛОВАЯ",
+  "position": "мойщик посуды 2 разряд",
+  "sort_order": 342
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "5-КЭС",
+  "department": "СТОЛОВАЯ",
+  "position": "буфетчик 2 разряд",
+  "sort_order": 343
+ },
+ {
+  "source": "kes_2025",
+  "kes_group": "5-КЭС",
+  "department": "СТОЛОВАЯ",
+  "position": "изготовитель пищевых полуфабрикатов 3 разряд",
+  "sort_order": 344
+ }
+]

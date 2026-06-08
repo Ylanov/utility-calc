@@ -1,0 +1,232 @@
+<!-- static/components/admin/tab_safety.html -->
+<div id="safety" class="tab-content">
+    <!-- KPI-сводка по реестру охраны труда. Грузится из /api/admin/ot/summary
+         параллельно с таблицей. Пусто до ответа, затем рендерится safety.js::renderSummary. -->
+    <div id="safetyStats" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px;">
+        <div style="padding:16px; text-align:center; color:var(--text-secondary); grid-column: 1/-1;">
+            <i class="fa-solid fa-spinner fa-spin"></i> Загрузка аналитики…
+        </div>
+    </div>
+
+    <div class="grid-2-col" style="grid-template-columns: 340px 1fr;">
+        <!-- Левая колонка: Сигналы по срокам -->
+        <div class="card" style="align-self: start;">
+            <div class="card-header">
+                <h3><i class="fa-solid fa-bell" style="color: var(--warning-color); margin-right: 8px;"></i> Сигналы</h3>
+                <button id="btnRefreshSafety" class="icon-btn" title="Обновить"><i class="fa-solid fa-rotate-right"></i></button>
+            </div>
+            <p style="font-size: 11px; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.4;">
+                Приближающиеся и просроченные сроки обучения по ОТ и медосмотров. Красным — просрочено, оранжевым — скоро.
+            </p>
+            <div id="safetyAlerts" style="display:flex; flex-direction:column; gap:8px;">
+                <div style="padding:14px; text-align:center; color:var(--text-secondary);">
+                    <i class="fa-solid fa-spinner fa-spin"></i> Загрузка…
+                </div>
+            </div>
+        </div>
+
+        <!-- Правая колонка: Реестр сотрудников -->
+        <div class="card" style="margin: 0;">
+            <div class="card-header">
+                <h3>Реестр должностей</h3>
+                <div class="toolbar-controls">
+                    <select id="safetySourceFilter" title="Источник штата">
+                        <option value="">Все источники</option>
+                    </select>
+                    <select id="safetyKesGroupFilter" title="КЭС-группа">
+                        <option value="">Все группы</option>
+                    </select>
+                    <select id="safetyDeptFilter" title="Подразделение">
+                        <option value="">Все подразделения</option>
+                    </select>
+                    <select id="safetyStatusFilter" title="Фильтр по статусу сроков">
+                        <option value="">Все статусы</option>
+                        <option value="due">⏰ К действию</option>
+                        <option value="overdue">🔴 Просрочено</option>
+                        <option value="soon">🟠 Скоро</option>
+                    </select>
+                    <input type="text" id="safetySearchInput" placeholder="Поиск (ФИО, должность)...">
+                    <button id="btnSafetySeed" class="action-btn secondary-btn" style="padding:5px 10px; font-size:12px; white-space:nowrap; display:none;" title="Создать реестр должностей из встроенных шаблонов (основной штат + КЭС-2025).">
+                        <i class="fa-solid fa-file-import"></i> Импортировать структуру
+                    </button>
+                    <button id="btnSafetyAdd" class="action-btn primary-btn" style="padding:5px 10px; font-size:12px; white-space:nowrap;">
+                        <i class="fa-solid fa-plus"></i> Добавить должность
+                    </button>
+                </div>
+            </div>
+            <div class="table-responsive">
+                <table class="sticky-header-table">
+                    <thead>
+                        <tr>
+                            <th>Подразделение</th>
+                            <th>Должность</th>
+                            <th>ФИО</th>
+                            <th>Обучение ОТ</th>
+                            <th>Медосмотр</th>
+                            <th>СОУТ</th>
+                            <th>Гр. ЭБ</th>
+                            <th class="text-center">Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody id="safetyTableBody">
+                        <tr><td colspan="8" class="text-center" style="padding: 40px; color: var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка данных...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- МОДАЛКА: ДОБАВЛЕНИЕ / РЕДАКТИРОВАНИЕ ЗАПИСИ ОХРАНЫ ТРУДА -->
+    <div id="safetyModal" class="modal-overlay">
+        <div class="modal-window" style="width: 640px; max-height: 90vh; overflow-y: auto;">
+            <div class="modal-header">
+                <h3 id="safetyModalTitle">Добавить должность</h3>
+                <button class="close-btn close-icon" data-safety-close>&times;</button>
+            </div>
+            <form id="safetyForm" class="styled-form">
+                <div class="modal-form">
+                    <input type="hidden" id="safetyEditId">
+                    <input type="hidden" id="safetyUserId">
+
+                    <!-- Позиция в структуре -->
+                    <div class="form-grid-2" style="margin-bottom: 16px;">
+                        <div class="form-group">
+                            <label>Источник</label>
+                            <select id="safetySource">
+                                <option value="osnovnoy_shtat">Основной штат</option>
+                                <option value="kes_2025">КЭС-2025</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>КЭС-группа</label>
+                            <input type="text" id="safetyKesGroup" list="safetyKesGroupList" placeholder="например: Электрики">
+                            <datalist id="safetyKesGroupList"></datalist>
+                        </div>
+                    </div>
+
+                    <div class="form-grid-2" style="margin-bottom: 16px;">
+                        <div class="form-group">
+                            <label>Подразделение</label>
+                            <input type="text" id="safetyDepartment" list="safetyDeptList" placeholder="например: АХО">
+                            <datalist id="safetyDeptList"></datalist>
+                        </div>
+                        <div class="form-group">
+                            <label>Должность *</label>
+                            <input type="text" id="safetyPosition" required placeholder="например: Слесарь-сантехник">
+                        </div>
+                    </div>
+
+                    <!-- ФИО с автоподстановкой жильца -->
+                    <div class="form-group" style="margin-bottom: 16px;">
+                        <label>ФИО сотрудника</label>
+                        <input type="text" id="safetyFullName" list="safetyLinkList" placeholder="Начните вводить ФИО — подскажем из базы жильцов" autocomplete="off">
+                        <datalist id="safetyLinkList"></datalist>
+                        <p class="hint-text" style="font-size:11px; margin:4px 0 0;">
+                            При выборе из подсказки запись привяжется к жильцу (для сверки). Можно ввести ФИО вручную — должность останется вакантной.
+                        </p>
+                    </div>
+
+                    <!-- ОБУЧЕНИЕ ОТ -->
+                    <h4 style="margin: 4px 0 8px; font-size: 14px; border-bottom: 1px solid var(--border-color); padding-bottom: 6px;">
+                        <i class="fa-solid fa-graduation-cap" style="color:#2563eb;"></i> Обучение по охране труда
+                    </h4>
+                    <div class="form-grid-2" style="margin-bottom: 16px;">
+                        <div class="form-group">
+                            <label>Дата обучения ОТ</label>
+                            <input type="date" id="safetyOtTrainingDate">
+                        </div>
+                        <div class="form-group">
+                            <label>Периодичность (мес.)</label>
+                            <input type="number" id="safetyOtTrainingPeriod" min="1" placeholder="например: 36">
+                        </div>
+                    </div>
+
+                    <!-- МЕДОСМОТР -->
+                    <h4 style="margin: 4px 0 8px; font-size: 14px; border-bottom: 1px solid var(--border-color); padding-bottom: 6px;">
+                        <i class="fa-solid fa-stethoscope" style="color:#16a34a;"></i> Медицинский осмотр
+                    </h4>
+                    <div class="form-grid-2" style="margin-bottom: 12px;">
+                        <div class="form-group">
+                            <label>Дата медосмотра</label>
+                            <input type="date" id="safetyMedicalDate">
+                        </div>
+                        <div class="form-group">
+                            <label>Периодичность (мес.)</label>
+                            <input type="number" id="safetyMedicalPeriod" min="1" placeholder="например: 12">
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 16px;">
+                        <label>Тип медосмотра</label>
+                        <input type="text" id="safetyMedicalType" placeholder="например: Периодический">
+                    </div>
+
+                    <!-- СОУТ -->
+                    <h4 style="margin: 4px 0 8px; font-size: 14px; border-bottom: 1px solid var(--border-color); padding-bottom: 6px;">
+                        <i class="fa-solid fa-clipboard-check" style="color:#7c3aed;"></i> СОУТ
+                    </h4>
+                    <div class="form-grid-2" style="margin-bottom: 16px;">
+                        <div class="form-group">
+                            <label>Дата СОУТ</label>
+                            <input type="date" id="safetySoutDate">
+                        </div>
+                        <div class="form-group">
+                            <label>Класс условий труда</label>
+                            <input type="text" id="safetySoutClass" placeholder="например: 2">
+                        </div>
+                    </div>
+
+                    <!-- ИНСТРУКТАЖИ / СТАЖИРОВКА / СИЗ / ЭБ -->
+                    <h4 style="margin: 4px 0 8px; font-size: 14px; border-bottom: 1px solid var(--border-color); padding-bottom: 6px;">
+                        <i class="fa-solid fa-list-check" style="color:#d97706;"></i> Инструктажи и допуски
+                    </h4>
+                    <div class="form-grid-2" style="margin-bottom: 16px;">
+                        <div class="form-group">
+                            <label>Вводный инструктаж</label>
+                            <input type="date" id="safetyInductionDate">
+                        </div>
+                        <div class="form-group">
+                            <label>Инструктаж по ОТ</label>
+                            <input type="date" id="safetyOtInstructionsDate">
+                        </div>
+                    </div>
+                    <div class="form-grid-2" style="margin-bottom: 16px;">
+                        <div class="form-group">
+                            <label>Стажировка</label>
+                            <input type="date" id="safetyInternshipDate">
+                        </div>
+                        <div class="form-group">
+                            <label>Группа по электробезопасности</label>
+                            <input type="text" id="safetyEbGroup" placeholder="например: III">
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-bottom: 16px;">
+                        <label>СИЗ (примечание)</label>
+                        <input type="text" id="safetySizNote" placeholder="Средства индивидуальной защиты">
+                    </div>
+
+                    <div class="form-grid-2" style="margin-bottom: 8px;">
+                        <div class="form-group">
+                            <label>Дата рождения</label>
+                            <input type="date" id="safetyBirthDate">
+                        </div>
+                        <div class="form-group" style="display:flex; align-items:flex-end;">
+                            <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:13px; margin:0;">
+                                <input type="checkbox" id="safetyIsActive" checked style="width:16px; height:16px;">
+                                <span>Запись активна</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="form-group" style="margin-bottom: 4px;">
+                        <label>Заметка</label>
+                        <input type="text" id="safetyNote" placeholder="Произвольный комментарий">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="action-btn secondary-btn" data-safety-close>Отмена</button>
+                    <button type="submit" class="action-btn primary-btn confirm-btn">Сохранить</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>

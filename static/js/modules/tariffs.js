@@ -84,6 +84,14 @@ export const TariffsModule = {
             assignDormSelect: document.getElementById('assignDormSelect'),
             btnAssignDorm: document.getElementById('btnAssignDorm'),
             btnUnassignDorm: document.getElementById('btnUnassignDorm'),
+            // Модалка «Квартиры на тарифе» — углублённое управление привязками.
+            btnTariffRooms: document.getElementById('btnTariffRooms'),
+            tariffRoomsBtnCount: document.getElementById('tariffRoomsBtnCount'),
+            roomsModal: document.getElementById('tariffRoomsModal'),
+            roomsName: document.getElementById('tariffRoomsName'),
+            roomsSummary: document.getElementById('tariffRoomsSummary'),
+            roomsNote: document.getElementById('tariffRoomsNote'),
+            roomsTableWrap: document.getElementById('tariffRoomsTableWrap'),
             // Сезонные переключатели (отопление / подогрев ГВС).
             seasonalLoading: document.getElementById('seasonalLoading'),
             seasonalBody: document.getElementById('seasonalBody'),
@@ -219,6 +227,15 @@ export const TariffsModule = {
         // Массовая привязка к общежитию
         this.dom.btnAssignDorm?.addEventListener('click', () => this.assignToDormitory(false));
         this.dom.btnUnassignDorm?.addEventListener('click', () => this.assignToDormitory(true));
+
+        // Модалка «Квартиры на тарифе».
+        this.dom.btnTariffRooms?.addEventListener('click', () => this.openRoomsModal());
+        // Закрытие: крестик / кнопка «Закрыть» / клик по фону.
+        this.dom.roomsModal?.addEventListener('click', (e) => {
+            if (e.target === this.dom.roomsModal || e.target.closest('[data-tariff-rooms-close]')) {
+                this.dom.roomsModal.classList.remove('open');
+            }
+        });
 
         // Сезонные переключатели.
         // Клик по slider или по самому label — переключает чекбокс. Это
@@ -589,6 +606,9 @@ export const TariffsModule = {
         if (this.dom.btnDelete) this.dom.btnDelete.style.display = 'none';
         // Скрываем «Где применяется» — у нового тарифа ещё некого
         if (this.dom.usageBlock) this.dom.usageBlock.style.display = 'none';
+        // Сбрасываем кеш usage — у нового тарифа привязок ещё нет.
+        this._usageTariffId = null;
+        this._usageData = null;
         this.recalcPreview();
     },
 
@@ -667,11 +687,15 @@ export const TariffsModule = {
     // ====================================================================
     async loadUsage(tariffId) {
         if (!this.dom.usageBlock) return;
+        this._usageTariffId = tariffId;
+        this._usageData = null;
         this.dom.usageBlock.style.display = 'block';
         this.dom.usageStats.innerHTML = '<span style="color:var(--text-secondary);">Загрузка…</span>';
         this.dom.usageDetails.innerHTML = '';
         try {
             const data = await api.get(`/tariffs/${tariffId}/usage`);
+            // Кешируем для модалки «Квартиры» — не дёргаем сервер повторно.
+            this._usageData = data;
             this._renderUsage(data);
         } catch (e) {
             this.dom.usageStats.innerHTML = `<span style="color:var(--danger-color);">Ошибка: ${escapeHtml(e.message)}</span>`;
@@ -679,6 +703,11 @@ export const TariffsModule = {
     },
 
     _renderUsage(d) {
+        // Счётчик комнат на кнопке «Квартиры (N)».
+        if (this.dom.tariffRoomsBtnCount) {
+            const n = d.by_room?.rooms_count ?? 0;
+            this.dom.tariffRoomsBtnCount.textContent = `(${n})`;
+        }
         const stat = (label, value, color) => `
             <div style="background:var(--bg-page); padding:10px 12px; border-radius:8px;">
                 <div style="font-size:11px; color:var(--text-secondary); text-transform:uppercase;">${escapeHtml(label)}</div>
@@ -713,6 +742,171 @@ export const TariffsModule = {
             </div>`;
         }
         this.dom.usageDetails.innerHTML = detailsHtml || '';
+    },
+
+    // ====================================================================
+    // МОДАЛКА «КВАРТИРЫ НА ТАРИФЕ» — углублённое управление привязками
+    // ====================================================================
+    /** Открывает модалку со списком комнат текущего тарифа. Данные берём из
+     *  кеша loadUsage (this._usageData); если их нет — догружаем сами. */
+    async openRoomsModal() {
+        if (!this.dom.roomsModal) return;
+        const tariffId = this._usageTariffId || parseInt(this.dom.inputId?.value);
+        if (!tariffId) return toast('Сначала выберите тариф', 'warning');
+
+        // Имя тарифа в шапку.
+        const tariff = this.tariffsList.find(t => t.id === tariffId);
+        if (this.dom.roomsName) this.dom.roomsName.textContent = tariff ? tariff.name : `#${tariffId}`;
+
+        this.dom.roomsModal.classList.add('open');
+
+        let data = this._usageData;
+        if (!data) {
+            this.dom.roomsTableWrap.innerHTML = '<div style="padding:20px; text-align:center; color:var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка…</div>';
+            this.dom.roomsSummary.innerHTML = '';
+            this.dom.roomsNote.innerHTML = '';
+            try {
+                data = await api.get(`/tariffs/${tariffId}/usage`);
+                this._usageData = data;
+            } catch (e) {
+                this.dom.roomsTableWrap.innerHTML = `<div style="padding:16px; color:var(--danger-color);">Ошибка загрузки: ${escapeHtml(e.message)}</div>`;
+                return;
+            }
+        }
+        this._renderRoomsModal(data);
+    },
+
+    _renderRoomsModal(d) {
+        const byRoom = d.by_room || {};
+        const rooms = byRoom.rooms || [];
+
+        // Сводка: комнат / жильцов + чипы по общежитиям.
+        const dormChips = (byRoom.by_dormitory || []).map(g => `
+            <span style="display:inline-block; margin:2px; padding:3px 8px; background:#dbeafe; color:#1e40af; border-radius:10px; font-size:11px; font-weight:600;">
+                <i class="fa-solid fa-building"></i> ${escapeHtml(g.dormitory)} — ${g.rooms_count} комн.
+            </span>`).join('');
+        this.dom.roomsSummary.innerHTML = `
+            <div style="display:flex; gap:18px; flex-wrap:wrap; margin-bottom:8px;">
+                <div>
+                    <div style="font-size:11px; color:var(--text-secondary); text-transform:uppercase;">Комнат</div>
+                    <div style="font-size:20px; font-weight:700; color:#3b82f6;" id="tariffRoomsCount">${byRoom.rooms_count ?? 0}</div>
+                </div>
+                <div>
+                    <div style="font-size:11px; color:var(--text-secondary); text-transform:uppercase;">Жильцов</div>
+                    <div style="font-size:20px; font-weight:700; color:#10b981;">${byRoom.users_in_rooms ?? 0}</div>
+                </div>
+            </div>
+            ${dormChips ? `<div>${dormChips}</div>` : ''}`;
+
+        // Примечание о персональных привязках (устар.).
+        const directCount = d.by_user_direct?.count ?? 0;
+        this.dom.roomsNote.innerHTML = directCount > 0
+            ? `<div style="font-size:12px; color:#92400e; background:#fef3c7; border:1px solid #fde68a; border-radius:6px; padding:8px 12px;">
+                   <i class="fa-solid fa-triangle-exclamation"></i>
+                   У ${directCount} жильцов тариф назначен напрямую (устар.).
+               </div>`
+            : '';
+
+        this._renderRoomsTable(rooms);
+    },
+
+    /** Рисует таблицу комнат с кнопкой «Убрать» по каждой строке. */
+    _renderRoomsTable(rooms) {
+        if (!rooms.length) {
+            this.dom.roomsTableWrap.innerHTML = `
+                <div style="padding:20px; text-align:center; color:var(--text-secondary); font-style:italic;">
+                    К этому тарифу не привязано ни одной комнаты.
+                </div>`;
+            return;
+        }
+        const rows = rooms.map(r => `
+            <tr data-room-id="${r.id}">
+                <td style="padding:8px 10px; border-bottom:1px solid var(--border-color);">${escapeHtml(r.dormitory || '—')}</td>
+                <td style="padding:8px 10px; border-bottom:1px solid var(--border-color); font-weight:600;">${escapeHtml(r.number || '—')}</td>
+                <td style="padding:8px 10px; border-bottom:1px solid var(--border-color); text-align:right;">
+                    <button type="button" class="action-btn secondary-btn" data-remove-room="${r.id}" style="padding:5px 12px; font-size:12px; border-radius:6px;" title="Убрать комнату с этого тарифа — она вернётся на дефолтный">
+                        <i class="fa-solid fa-link-slash"></i> Убрать
+                    </button>
+                </td>
+            </tr>`).join('');
+        this.dom.roomsTableWrap.innerHTML = `
+            <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                <thead>
+                    <tr style="text-align:left; color:var(--text-secondary); font-size:11px; text-transform:uppercase;">
+                        <th style="padding:6px 10px; border-bottom:2px solid var(--border-color);">Общежитие</th>
+                        <th style="padding:6px 10px; border-bottom:2px solid var(--border-color);">Номер</th>
+                        <th style="padding:6px 10px; border-bottom:2px solid var(--border-color); text-align:right;">Действие</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>`;
+
+        // Делегируем клик по «Убрать» на контейнер (вешаем один раз).
+        if (!this._roomsTableBound) {
+            this.dom.roomsTableWrap.addEventListener('click', (e) => {
+                const btn = e.target.closest('[data-remove-room]');
+                if (btn) this.removeRoomFromTariff(parseInt(btn.dataset.removeRoom), btn);
+            });
+            this._roomsTableBound = true;
+        }
+    },
+
+    /** Убирает комнату с тарифа: PUT /rooms/{id} {tariff_id:null} → комната
+     *  падает на дефолтный тариф. После успеха убираем строку, обновляем
+     *  счётчики и перезагружаем список тарифов (this.load). */
+    async removeRoomFromTariff(roomId, btn) {
+        if (!roomId) return;
+        if (!await showConfirm(
+            'Убрать эту комнату с тарифа?\nОна вернётся на дефолтный тариф.',
+            { confirmText: 'Убрать' }
+        )) return;
+
+        const original = btn ? btn.innerHTML : '';
+        if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>'; }
+
+        try {
+            await api.put(`/rooms/${roomId}`, { tariff_id: null });
+            api.invalidateCache('/tariffs');
+
+            // Обновляем локальный кеш usage: убираем комнату + правим счётчики.
+            if (this._usageData?.by_room) {
+                const br = this._usageData.by_room;
+                const removed = (br.rooms || []).find(r => r.id === roomId);
+                br.rooms = (br.rooms || []).filter(r => r.id !== roomId);
+                br.rooms_count = Math.max(0, (br.rooms_count ?? br.rooms.length) - 1);
+                // Уменьшаем счётчик по общежитию убранной комнаты.
+                if (removed && Array.isArray(br.by_dormitory)) {
+                    const g = br.by_dormitory.find(x => x.dormitory === removed.dormitory);
+                    if (g) {
+                        g.rooms_count = Math.max(0, g.rooms_count - 1);
+                        if (g.rooms_count === 0) {
+                            br.by_dormitory = br.by_dormitory.filter(x => x !== g);
+                        }
+                    }
+                }
+            }
+
+            // Убираем строку из таблицы (или перерисовываем пустое состояние).
+            const tr = this.dom.roomsTableWrap.querySelector(`tr[data-room-id="${roomId}"]`);
+            if (tr) tr.remove();
+            const remaining = this._usageData?.by_room?.rooms || [];
+            if (!remaining.length) this._renderRoomsTable(remaining);
+
+            // Обновляем счётчик в модалке и кнопке.
+            const cntEl = document.getElementById('tariffRoomsCount');
+            const newCount = this._usageData?.by_room?.rooms_count ?? remaining.length;
+            if (cntEl) cntEl.textContent = String(newCount);
+            if (this.dom.tariffRoomsBtnCount) this.dom.tariffRoomsBtnCount.textContent = `(${newCount})`;
+
+            toast('Комната убрана с тарифа', 'success');
+
+            // Перезагружаем список тарифов (счётчики жильцов в селекторе) +
+            // блок «Где применяется» под формой. Сохраняем текущий выбор.
+            await this.load(this._usageTariffId);
+        } catch (e) {
+            toast('Ошибка: ' + e.message, 'error');
+            if (btn) { btn.disabled = false; btn.innerHTML = original; }
+        }
     },
 
     /** Загружает уникальные общежития из существующих тарифов/комнат
