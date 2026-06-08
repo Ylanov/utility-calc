@@ -71,17 +71,23 @@
         const year = new Date().getFullYear();
         // Стартовое содержимое — без реквизитов. После /api/settings/operator-info
         // подставим имя организации и email/телефон (см. fetchOperatorInfo ниже).
+        // Ссылки на ДОКУМЕНТЫ (политика + отдельное согласие) держим вместе и
+        // ОТДЕЛЬНО от email-контакта — иначе авто-сканеры РКН принимают mailto
+        // за «ссылку на политику» и ругаются на битую ссылку.
         footer.innerHTML = `
-            <div style="max-width: 720px; margin: 0 auto;">
+            <div style="max-width: 760px; margin: 0 auto;">
                 <div style="margin-bottom: 8px;">
                     <a href="/privacy.html" style="color: inherit; text-decoration: underline;">Политика обработки персональных данных</a>
                     <span style="margin: 0 8px; opacity: 0.4;">·</span>
-                    <a id="legalFooterContactLink" href="mailto:privacy@asy-tk.ru" style="color: inherit; text-decoration: underline;">Связаться с оператором</a>
+                    <a href="/consent.html" style="color: inherit; text-decoration: underline;">Согласие на обработку персональных данных</a>
                 </div>
-                <div style="opacity: 0.7;">
-                    © ${year} <span id="legalFooterOrgName">ЖКХ Лидер</span>. Все права защищены.
+                <div style="opacity: 0.75;">
+                    © ${year} <span id="legalFooterOrgName">ЖКХ Лидер</span><span id="legalFooterReqs"></span>
                 </div>
-                <div id="legalFooterReqs" style="opacity: 0.55; margin-top: 4px; font-size: 11px;"></div>
+                <div style="opacity: 0.6; margin-top: 4px; font-size: 11px;">
+                    Email для обращений по персональным данным:
+                    <a id="legalFooterContactLink" href="mailto:privacy@asy-tk.ru" style="color: inherit; text-decoration: underline;">privacy@asy-tk.ru</a>
+                </div>
             </div>
         `;
         document.body.appendChild(footer);
@@ -99,14 +105,16 @@
                 }
                 if (info.operator_email) {
                     const a = document.getElementById('legalFooterContactLink');
-                    if (a) a.href = 'mailto:' + info.operator_email;
+                    if (a) { a.href = 'mailto:' + info.operator_email; a.textContent = info.operator_email; }
                 }
-                // Кратко: ИНН + город из юр. адреса (если есть). Без переполнения футера.
+                // Реквизиты оператора в подвале (152-ФЗ / ПП-693): ИНН, ОГРН,
+                // юр. адрес — чтобы посетитель знал, кому передаёт данные.
                 const reqs = [];
                 if (info.operator_inn) reqs.push('ИНН ' + info.operator_inn);
-                if (info.operator_phone) reqs.push(info.operator_phone);
+                if (info.operator_ogrn) reqs.push('ОГРН ' + info.operator_ogrn);
+                if (info.operator_legal_address) reqs.push(info.operator_legal_address);
                 const reqsEl = document.getElementById('legalFooterReqs');
-                if (reqsEl && reqs.length) reqsEl.textContent = reqs.join(' · ');
+                if (reqsEl && reqs.length) reqsEl.textContent = ' · ' + reqs.join(' · ');
             })
             .catch(() => {});
     }
@@ -121,9 +129,10 @@
         }
     }
 
-    function ackBanner() {
+    function ackBanner(choice) {
         try {
             localStorage.setItem(COOKIE_BANNER_KEY, COOKIE_BANNER_VERSION);
+            if (choice) localStorage.setItem('cookie_banner_choice', choice);
         } catch {}
     }
 
@@ -157,7 +166,8 @@
             gap: 10px;
         `;
         // На тёмной теме фон/текст инверсируем (если страница использует dark mode).
-        if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+        const isDarkBanner = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (isDarkBanner) {
             banner.style.background = '#1f1f1f';
             banner.style.color = '#f3f4f6';
             banner.style.borderColor = '#2a2a2a';
@@ -170,7 +180,17 @@
                 пользовательских настроек. Подробнее — в
                 <a href="/privacy.html" style="color: #2563eb; font-weight: 600;">Политике обработки персональных данных</a>.
             </div>
-            <div style="display: flex; gap: 8px; justify-content: flex-end;">
+            <div style="display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap;">
+                <button id="cookie-banner-reject" style="
+                    padding: 8px 18px;
+                    border-radius: 10px;
+                    border: 1px solid ${isDarkBanner ? '#3f3f46' : '#d1d5db'};
+                    background: transparent;
+                    color: inherit;
+                    font-weight: 600;
+                    font-size: 13px;
+                    cursor: pointer;
+                ">Отклонить все</button>
                 <button id="cookie-banner-ack" style="
                     padding: 8px 18px;
                     border-radius: 10px;
@@ -180,19 +200,22 @@
                     font-weight: 600;
                     font-size: 13px;
                     cursor: pointer;
-                ">Понятно</button>
+                ">Принять</button>
             </div>
         `;
         document.body.appendChild(banner);
-        const btn = document.getElementById('cookie-banner-ack');
-        if (btn) {
-            btn.addEventListener('click', () => {
-                ackBanner();
-                banner.style.transition = 'opacity 200ms ease';
-                banner.style.opacity = '0';
-                setTimeout(() => banner.remove(), 220);
-            });
-        }
+        const closeBanner = (choice) => {
+            ackBanner(choice);
+            banner.style.transition = 'opacity 200ms ease';
+            banner.style.opacity = '0';
+            setTimeout(() => banner.remove(), 220);
+        };
+        const ackBtn = document.getElementById('cookie-banner-ack');
+        const rejectBtn = document.getElementById('cookie-banner-reject');
+        // Сайт не ставит сторонних/аналитических cookie — «Отклонить все» просто
+        // фиксирует выбор; функциональное хранилище (вход в ЛК) остаётся.
+        if (ackBtn) ackBtn.addEventListener('click', () => closeBanner('accepted'));
+        if (rejectBtn) rejectBtn.addEventListener('click', () => closeBanner('rejected'));
     }
 
     // ─── Init ─────────────────────────────────────────────────────

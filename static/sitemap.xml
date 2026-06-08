@@ -31,7 +31,15 @@
          Обновляется при правках самой политики (bump PDN_CURRENT_VERSION). -->
     <url>
         <loc>https://asy-tk.ru/privacy.html</loc>
-        <lastmod>2026-05-19</lastmod>
+        <lastmod>2026-06-08</lastmod>
+        <changefreq>yearly</changefreq>
+        <priority>0.5</priority>
+    </url>
+
+    <!-- Согласие на обработку ПДн (отдельный документ, ст. 9 152-ФЗ с 01.09.2025). -->
+    <url>
+        <loc>https://asy-tk.ru/consent.html</loc>
+        <lastmod>2026-06-08</lastmod>
         <changefreq>yearly</changefreq>
         <priority>0.5</priority>
     </url>
