@@ -192,9 +192,14 @@ if settings.ENVIRONMENT == "production":
         )
 
     if settings.SECRET_KEY in _INSECURE_SECRET_KEYS:
-        raise RuntimeError(
-            "В production SECRET_KEY не должен равняться плейсхолдеру из репозитория. "
-            "Сгенерируйте новый: `openssl rand -hex 32` и пропишите в .env."
+        # НЕ hard-fail: прод .env сейчас может содержать этот плейсхолдер (rsync
+        # из репо), и падение уронило бы уже работающий прод. Громко алертим;
+        # переключить на raise RuntimeError ПОСЛЕ ротации ключа на сервере.
+        import logging as _logging
+        _logging.getLogger("uvicorn.error").critical(
+            "[SECURITY] SECRET_KEY равен ПУБЛИЧНОМУ плейсхолдеру из репозитория — "
+            "JWT подписываются угадываемым ключом, токены можно подделать. "
+            "СРОЧНО смените: `openssl rand -hex 32` → .env (PROD_ENV_FILE), рестарт."
         )
 
     if not settings.ENCRYPTION_KEY:
