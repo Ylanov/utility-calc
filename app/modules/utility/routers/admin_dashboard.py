@@ -466,23 +466,32 @@ async def get_revenue_trend(
         .limit(months)
     )).scalars().all()
 
-    items = []
-    for p in periods:
-        row = (await db.execute(
+    # Аудит perf: один GROUP BY вместо N запросов в цикле (раньше — отдельный
+    # агрегат на каждый период, до 12 полных проходов партиц-таблицы readings).
+    _pids = [p.id for p in periods]
+    _agg = {}
+    if _pids:
+        _rows = (await db.execute(
             select(
+                MeterReading.period_id,
                 func.count(MeterReading.id),
                 func.coalesce(func.sum(MeterReading.total_cost), 0),
             ).where(
-                MeterReading.period_id == p.id,
+                MeterReading.period_id.in_(_pids),
                 MeterReading.is_approved.is_(True),
-            )
-        )).one()
+            ).group_by(MeterReading.period_id)
+        )).all()
+        _agg = {r[0]: (int(r[1] or 0), float(r[2] or 0)) for r in _rows}
+
+    items = []
+    for p in periods:
+        cnt, s = _agg.get(p.id, (0, 0.0))
         items.append({
             "period_id": p.id,
             "name": p.name,
             "is_active": bool(p.is_active),
-            "count": int(row[0] or 0),
-            "approved_sum": float(row[1] or 0),
+            "count": cnt,
+            "approved_sum": s,
         })
 
     # На фронте удобнее в хронологическом порядке (старые → новые)

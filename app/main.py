@@ -564,13 +564,17 @@ async def _well_known(path: str):
     Файлы лежат в static/.well-known/. Если файла нет — честный 404,
     а не SPA-HTML (иначе сканеры подумают что есть валидный документ).
     """
-    safe = path.replace("..", "").lstrip("/")
-    full_path = os.path.join("static", ".well-known", safe)
-    if os.path.isfile(full_path):
-        # security.txt по RFC должен отдаваться text/plain.
-        media = "text/plain" if safe.endswith(".txt") else "application/octet-stream"
-        return FileResponse(full_path, media_type=media)
-    raise HTTPException(status_code=404)
+    # Аудит безопасности: защита от path-traversal через нормализацию пути и
+    # проверку, что результат строго внутри static/.well-known (наивный
+    # replace("..") был хрупок). Python 3.14 → Path.is_relative_to доступен.
+    from pathlib import Path
+    base = Path("static/.well-known").resolve()
+    target = (base / path).resolve()
+    if not target.is_relative_to(base) or not target.is_file():
+        raise HTTPException(status_code=404)
+    # security.txt по RFC должен отдаваться text/plain.
+    media = "text/plain" if target.suffix == ".txt" else "application/octet-stream"
+    return FileResponse(str(target), media_type=media)
 
 
 # =====================================================================
