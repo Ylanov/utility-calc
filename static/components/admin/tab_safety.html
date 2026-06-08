@@ -1,5 +1,41 @@
 <!-- static/components/admin/tab_safety.html -->
 <div id="safety" class="tab-content">
+    <!-- Жёсткая раскладка таблицы реестра: без fixed-layout длинные
+         «Подразделение/Должность» растягивали таблицу за границы карточки,
+         а дата-колонки схлопывались. Фиксируем ширины (сумма 100%) и
+         переносим длинный текст. Scoped к #safety, чужие таблицы не трогаем. -->
+    <style>
+        #safety .sticky-header-table { table-layout: fixed; width: 100%; }
+        #safety .sticky-header-table th,
+        #safety .sticky-header-table td {
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            vertical-align: top;
+            white-space: normal;
+        }
+        #safety .sticky-header-table th:nth-child(1),
+        #safety .sticky-header-table td:nth-child(1) { width: 15%; }   /* Подразделение */
+        #safety .sticky-header-table th:nth-child(2),
+        #safety .sticky-header-table td:nth-child(2) { width: 22%; }   /* Должность */
+        #safety .sticky-header-table th:nth-child(3),
+        #safety .sticky-header-table td:nth-child(3) { width: 14%; }   /* ФИО */
+        #safety .sticky-header-table th:nth-child(4),
+        #safety .sticky-header-table td:nth-child(4) { width: 12%; }   /* Обучение ОТ */
+        #safety .sticky-header-table th:nth-child(5),
+        #safety .sticky-header-table td:nth-child(5) { width: 12%; }   /* Медосмотр */
+        #safety .sticky-header-table th:nth-child(6),
+        #safety .sticky-header-table td:nth-child(6) { width: 10%; }   /* СОУТ */
+        #safety .sticky-header-table th:nth-child(7),
+        #safety .sticky-header-table td:nth-child(7) { width: 7%; }    /* Гр. ЭБ */
+        #safety .sticky-header-table th:nth-child(8),
+        #safety .sticky-header-table td:nth-child(8) { width: 8%; }    /* Действия */
+        /* На узких экранах — горизонтальный скролл вместо вылезания. */
+        @media (max-width: 1100px) {
+            #safety .grid-2-col { grid-template-columns: 1fr !important; }
+            #safety .sticky-header-table { min-width: 760px; }
+        }
+    </style>
+
     <!-- KPI-сводка по реестру охраны труда. Грузится из /api/admin/ot/summary
          параллельно с таблицей. Пусто до ответа, затем рендерится safety.js::renderSummary. -->
     <div id="safetyStats" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px;">
