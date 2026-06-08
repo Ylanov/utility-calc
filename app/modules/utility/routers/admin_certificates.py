@@ -15,6 +15,7 @@
 ролей не делают (get_current_user + автоматически свой user_id).
 Здесь все endpoint-ы требуют роль accountant/admin.
 """
+import asyncio
 from datetime import date, datetime
 from app.core.time_utils import utcnow
 from typing import Optional, List, Literal
@@ -365,12 +366,13 @@ async def regenerate_cert_pdf(
         from app.modules.utility.services.certificate_pdf import generate_flc_pdf
         from app.modules.utility.services.s3_client import s3_service
 
-        pdf_bytes = generate_flc_pdf(
+        pdf_bytes = await asyncio.to_thread(
+            generate_flc_pdf,
             user=user, family=family, contract=contract,
             period_from=period_from, period_to=period_to, purpose=purpose,
         )
         s3_key = f"certificates/{user.id}/{cert.id}.pdf"
-        if not s3_service.upload_bytes(pdf_bytes, s3_key, content_type="application/pdf"):
+        if not await asyncio.to_thread(s3_service.upload_bytes, pdf_bytes, s3_key, content_type="application/pdf"):
             raise RuntimeError("Не удалось загрузить PDF в хранилище")
         cert.pdf_s3_key = s3_key
         if cert.status == "pending":
@@ -399,7 +401,7 @@ async def admin_download_cert(cert_id: int, db: AsyncSession = Depends(get_db)):
 
     from app.modules.utility.services.s3_client import s3_service
     import io
-    data = s3_service.download_fileobj(cert.pdf_s3_key)
+    data = await asyncio.to_thread(s3_service.download_fileobj, cert.pdf_s3_key)
     if data is None:
         raise HTTPException(500, "Файл не найден в хранилище")
 
@@ -424,7 +426,7 @@ async def delete_cert(
 
     if cert.pdf_s3_key:
         from app.modules.utility.services.s3_client import s3_service
-        s3_service.delete_object(cert.pdf_s3_key)
+        await asyncio.to_thread(s3_service.delete_object, cert.pdf_s3_key)
 
     await write_audit_log(
         db, user_id=current_user.id, username=current_user.username,
@@ -614,7 +616,7 @@ async def admin_upload_contract(
         from app.modules.utility.services.s3_client import s3_service
         s3_key = f"rental_contracts/{user_id}/{_uuid.uuid4().hex}.{ext}"
         ctype = "application/pdf" if ext == "pdf" else f"image/{ext}"
-        if not s3_service.upload_bytes(body, s3_key, content_type=ctype):
+        if not await asyncio.to_thread(s3_service.upload_bytes, body, s3_key, content_type=ctype):
             raise HTTPException(500, "Не удалось сохранить файл в хранилище")
         file_name = file.filename
         file_size = len(body)
@@ -722,7 +724,7 @@ async def admin_delete_contract(
         raise HTTPException(404, "Договор не найден")
     if contract.file_s3_key:
         from app.modules.utility.services.s3_client import s3_service
-        s3_service.delete_object(contract.file_s3_key)
+        await asyncio.to_thread(s3_service.delete_object, contract.file_s3_key)
     await write_audit_log(
         db, user_id=current_user.id, username=current_user.username,
         action="contract_delete", entity_type="rental_contract", entity_id=contract.id,
@@ -746,7 +748,7 @@ async def admin_download_contract(
 
     from app.modules.utility.services.s3_client import s3_service
     import io
-    data = s3_service.download_fileobj(contract.file_s3_key)
+    data = await asyncio.to_thread(s3_service.download_fileobj, contract.file_s3_key)
     if data is None:
         raise HTTPException(500, "Файл не найден в хранилище")
 

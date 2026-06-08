@@ -25,6 +25,7 @@ Endpoints в этом файле:
 
 Админские endpoints — в отдельном admin_certificates.py (волна 3).
 """
+import asyncio
 from datetime import date, datetime
 from typing import Optional, List, Literal
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
@@ -449,7 +450,7 @@ async def delete_my_contract(
         )
     if contract.file_s3_key:
         from app.modules.utility.services.s3_client import s3_service
-        s3_service.delete_object(contract.file_s3_key)
+        await asyncio.to_thread(s3_service.delete_object, contract.file_s3_key)
     await db.delete(contract)
     await db.commit()
     return None
@@ -492,14 +493,14 @@ async def upload_my_contract_pdf(
     # Старый файл — чистим, чтобы не плодить мусор в MinIO.
     if contract.file_s3_key:
         try:
-            s3_service.delete_object(contract.file_s3_key)
+            await asyncio.to_thread(s3_service.delete_object, contract.file_s3_key)
         except Exception:
             # Не критично — новый файл всё равно перезапишет ссылку.
             pass
 
     s3_key = f"rental_contracts/{current_user.id}/{_uuid.uuid4().hex}.{ext}"
     ctype = "application/pdf" if ext == "pdf" else f"image/{ext}"
-    if not s3_service.upload_bytes(body, s3_key, content_type=ctype):
+    if not await asyncio.to_thread(s3_service.upload_bytes, body, s3_key, content_type=ctype):
         raise HTTPException(500, "Не удалось сохранить файл в хранилище")
 
     contract.file_s3_key = s3_key
@@ -524,7 +525,7 @@ async def download_my_contract(
 
     from app.modules.utility.services.s3_client import s3_service
     import io
-    data = s3_service.download_fileobj(contract.file_s3_key)
+    data = await asyncio.to_thread(s3_service.download_fileobj, contract.file_s3_key)
     if data is None:
         raise HTTPException(500, "Не удалось получить файл из хранилища")
 
@@ -686,7 +687,8 @@ async def create_certificate_request(
         # Если lives_alone, в PDF идёт пустой список (отдельно отметим флаг).
         pdf_family = [] if current_user.lives_alone else family_rows
 
-        pdf_bytes = generate_flc_pdf(
+        pdf_bytes = await asyncio.to_thread(
+            generate_flc_pdf,
             user=current_user,
             family=pdf_family,
             contract=contract,
@@ -696,7 +698,7 @@ async def create_certificate_request(
         )
 
         s3_key = f"certificates/{current_user.id}/{cert.id}.pdf"
-        uploaded = s3_service.upload_bytes(pdf_bytes, s3_key, content_type="application/pdf")
+        uploaded = await asyncio.to_thread(s3_service.upload_bytes, pdf_bytes, s3_key, content_type="application/pdf")
         if uploaded:
             cert.pdf_s3_key = s3_key
             cert.status = "generated"
@@ -727,7 +729,7 @@ async def download_my_certificate(
 
     from app.modules.utility.services.s3_client import s3_service
     import io
-    data = s3_service.download_fileobj(cert.pdf_s3_key)
+    data = await asyncio.to_thread(s3_service.download_fileobj, cert.pdf_s3_key)
     if data is None:
         raise HTTPException(500, "Не удалось получить файл")
 
