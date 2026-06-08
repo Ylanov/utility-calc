@@ -245,15 +245,17 @@ function setupAdminProfile() {
                     });
                 }
 
-                // Если введен новый логин — меняем логин
-                if (newLogin && newLogin !== user.username) {
-                    await api.put(`/users/${user.id}`, {
-                        username: newLogin
+                // Если введён новый ЛОГИН — меняем ТОЛЬКО логин входа.
+                // РАНЬШЕ слали PUT /users/{id} {username:newLogin} → это
+                // переписывало ФИО (username = ключ сверки 1С/ГИС!) значением
+                // логина → ломало сверку. Теперь через /me/change-login:
+                // меняется только login, ФИО/сверка не трогаются. Шапку
+                // (adminName = ФИО) НЕ обновляем — сменился лишь логин.
+                if (newLogin && newLogin !== user.login) {
+                    await api.post('/users/me/change-login', {
+                        new_login: newLogin,
+                        old_password: oldPass
                     });
-                    // Обновляем данные в сессии и шапке
-                    Auth.setSession(user.role, newLogin);
-                    const adminNameEl = document.getElementById('adminName');
-                    if(adminNameEl) adminNameEl.textContent = newLogin;
                 }
 
                 toast('Профиль успешно обновлен!', 'success');

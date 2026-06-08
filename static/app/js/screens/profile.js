@@ -11,7 +11,7 @@
  * с anchor'ом (например `/?tab=profile&action=password`). PWA-нативные
  * формы появятся в Фазе 3.
  */
-import { setToken } from '../api.js';
+import { setToken, getToken } from '../api.js';
 import { getCachedMe, initialsFor } from '../auth.js';
 
 export async function renderProfile(root) {
@@ -187,13 +187,29 @@ function bindHandlers(root) {
 
     const logout = root.querySelector('#logoutBtn');
     if (logout) {
-        logout.addEventListener('click', () => {
+        logout.addEventListener('click', async () => {
             const ok = confirm('Выйти из аккаунта?');
             if (!ok) return;
-            setToken(null);
-            // Чистим и role из sessionStorage (старый портал его использует).
-            try { sessionStorage.removeItem('role'); } catch {}
-            try { sessionStorage.removeItem('username'); } catch {}
+            // Отзываем сессию НА СЕРВЕРЕ (бамп token_version → старый JWT
+            // инвалидируется сразу, не живёт до exp) — раньше PWA-logout этого
+            // не делал, и утёкший токен оставался валиден.
+            try {
+                const t = getToken();
+                await fetch('/api/logout', {
+                    method: 'POST',
+                    headers: t ? { 'Authorization': `Bearer ${t}` } : {},
+                });
+            } catch (e) { /* сервер недоступен — продолжаем локальную очистку */ }
+            setToken(null);  // чистит токен в обоих хранилищах
+            // Полная очистка — не оставляем role/username/кэши прошлой учётки.
+            try { sessionStorage.clear(); } catch {}
+            try { localStorage.clear(); } catch {}
+            // Синхронно разлогиниваем остальные вкладки (портал слушает этот канал).
+            try {
+                if (typeof BroadcastChannel !== 'undefined') {
+                    new BroadcastChannel('jkh-auth-sync').postMessage({ type: 'logout' });
+                }
+            } catch {}
             window.location.href = '/login.html';
         });
     }

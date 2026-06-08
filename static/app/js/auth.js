@@ -6,6 +6,7 @@
 import { api, getToken, setToken } from './api.js';
 
 let _meCache = null;
+let _meCacheToken = null;  // токен, под которым закэширован _meCache
 
 /**
  * Проверяет наличие токена и грузит профиль. Если токена нет — редирект
@@ -28,9 +29,15 @@ export async function ensureAuthenticated() {
     // чтобы любая последующая навигация (старый портал / PWA) видела его.
     setToken(token);
 
-    if (_meCache) return _meCache;
+    // Кэш профиля привязан к ТОКЕНУ: если токен сменился (вошла другая учётка),
+    // старый _meCache невалиден — иначе показали бы профиль прежнего юзера
+    // (усиливало ощущение «оказался в чужой учётке»).
+    if (_meCache && _meCacheToken === token) return _meCache;
+    _meCache = null;
+    _meCacheToken = null;
     try {
         _meCache = await api.get('/me');
+        _meCacheToken = token;
     } catch (e) {
         // 401 обработается в api.js (редирект). Любая другая ошибка — кидаем.
         if (e.status !== 401) throw e;
