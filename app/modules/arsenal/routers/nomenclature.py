@@ -185,10 +185,7 @@ async def print_labels(
     """
     # Внешний ресурс /qr будет недоступен изнутри weasyprint без хоста — в prod
     # этот endpoint вряд ли сгенерит идеальные PDF; но структуру оставим для будущего.
-    # Аудит perf: weasyprint write_pdf — CPU-bound, в async-хендлере блокировал
-    # event loop; выносим в thread-pool (как admin_reports/client_readings).
-    import asyncio
-    pdf_bytes = await asyncio.to_thread(lambda: HTML(string=html, base_url="/").write_pdf())
+    pdf_bytes = HTML(string=html, base_url="/").write_pdf()
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",

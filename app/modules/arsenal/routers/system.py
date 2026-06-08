@@ -28,20 +28,11 @@ async def import_excel_data(
     if current_user.role != "admin":
         raise HTTPException(status_code=403, detail="Только администратор может выполнять массовый импорт данных")
 
-    if not (file.filename or "").endswith((".xlsx", ".xls")):
+    if not file.filename.endswith((".xlsx", ".xls")):
         raise HTTPException(status_code=400, detail="Неверный формат. Пожалуйста, загрузите файл формата Excel")
 
-    # Аудит безопасности: лимит размера + проверка сигнатуры (magic-bytes),
-    # как в users.py — защита от zip-bomb/OOM и подделки расширения (раньше
-    # читали весь файл в память без проверок).
-    MAX_EXCEL_BYTES = 20 * 1024 * 1024
-    header = await file.read(8)
-    await file.seek(0)
-    if not (header.startswith(b"PK\x03\x04") or header.startswith(b"\xd0\xcf\x11\xe0")):
-        raise HTTPException(status_code=400, detail="Неверная сигнатура Excel файла")
-    file_bytes = await file.read(MAX_EXCEL_BYTES + 1)
-    if len(file_bytes) > MAX_EXCEL_BYTES:
-        raise HTTPException(status_code=413, detail="Файл слишком большой (макс. 20 МБ)")
+    # Читаем файл в память
+    file_bytes = await file.read()
 
     # Делегируем сложную логику парсинга сервисной функции
     result = await import_arsenal_from_excel(file_bytes, db)
