@@ -26,7 +26,7 @@ from app.modules.utility.schemas import (
     DeviceTokenCreate, RelocateUserSchema
 )
 from app.core.dependencies import get_current_user, RoleChecker
-from app.core.auth import get_password_hash, verify_password
+from app.core.auth import get_password_hash, verify_password, create_access_token
 from app.modules.utility.services.excel_service import import_users_from_excel
 from app.modules.utility.services.user_service import (
     delete_user_service, countable_resident_condition,
@@ -152,7 +152,19 @@ async def initial_setup(
     )
 
     await db.commit()
-    return {"status": "success", "message": "Данные успешно обновлены."}
+    # Если меняли пароль — token_version инкрементирован, и ТЕКУЩИЙ токен стал
+    # невалидным (tv не совпадёт). Возвращаем свежий токен, чтобы приложение
+    # после первичной настройки НЕ разлогинивалось и не «висело» на 401
+    # (раньше отсюда «долго крутит + перезаход»). Прочие устройства отозваны.
+    resp = {"status": "success", "message": "Данные успешно обновлены."}
+    if data.new_password:
+        resp["access_token"] = create_access_token(data={
+            "sub": str(current_user.id),
+            "role": current_user.role,
+            "scope": "full",
+            "tv": current_user.token_version or 0,
+        })
+    return resp
 
 
 @router.post(
@@ -187,7 +199,20 @@ async def change_password(
     )
 
     await db.commit()
-    return {"status": "success", "message": "Пароль успешно изменен"}
+    # Возвращаем свежий токен (token_version инкрементирован) — ТЕКУЩАЯ сессия
+    # продолжается без перелогина, прочие устройства разлогинены. Иначе
+    # приложение оставалось со старым токеном → 401 на каждом запросе.
+    access_token = create_access_token(data={
+        "sub": str(current_user.id),
+        "role": current_user.role,
+        "scope": "full",
+        "tv": current_user.token_version or 0,
+    })
+    return {
+        "status": "success",
+        "message": "Пароль успешно изменен",
+        "access_token": access_token,
+    }
 
 
 @router.post(
