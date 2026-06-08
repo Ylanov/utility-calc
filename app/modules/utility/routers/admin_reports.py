@@ -1555,31 +1555,31 @@ async def _build_explain_response(reading_id: int, db: AsyncSession) -> dict:
     calc_error = None
     calc_result = None
     is_baseline = prev is None
+    # Сезонные флаги — «Проверить расчёт» обязан использовать тот же набор,
+    # что и реальный /api/calculate: global + per-tariff.
+    from app.modules.utility.routers.settings import _load_seasonal
+    _seasonal = await _load_seasonal(db)
+    _heating = _seasonal.heating_season_active and tariff.is_heating_active_now()
+    _hw = _seasonal.hot_water_heating_active and tariff.is_hw_heating_active_now()
     try:
-        if is_baseline:
-            # baseline = всё 0, расчёт не делается (см. логику в client_readings)
-            calc_result = {
-                "cost_hot_water": z, "cost_cold_water": z,
-                "cost_sewage": z, "cost_electricity": z,
-                "cost_maintenance": z, "cost_social_rent": z,
-                "cost_waste": z, "cost_fixed_part": z,
-                "total_cost": z, "sanity_warning": None,
-            }
-        else:
-            # Сезонные флаги — отчёт «Проверить расчёт» обязан использовать
-            # тот же набор что и реальный /api/calculate: global + per-tariff.
-            from app.modules.utility.routers.settings import _load_seasonal
-            _seasonal = await _load_seasonal(db)
-            _heating = _seasonal.heating_season_active and tariff.is_heating_active_now()
-            _hw = _seasonal.hot_water_heating_active and tariff.is_hw_heating_active_now()
-            calc_result = calculate_utilities(
-                user=user, room=room, tariff=tariff,
-                volume_hot=d_hot, volume_cold=d_cold,
-                volume_sewage=d_sewage,
-                volume_electricity_share=elect_share,
-                heating_season_active=_heating,
-                hot_water_heating_active=_hw,
-            )
+        # BASELINE: потребление-зависимые статьи (вода/свет) = 0 (счётчик
+        # «накручен», дельту от 0 брать нельзя), НО area-based (содержание/
+        # наём/ТКО/отопление) ПЛАТЯТСЯ ВСЕГДА (Bug L — см.
+        # reading_calculator.compute_reading_breakdown, инцидент Резунов 04.2026).
+        # Раньше тут был ХАРДКОД всех нулей → «Проверка расчёта» показывала
+        # ЛОЖНОЕ расхождение на КАЖДОМ baseline (формула 0 vs БД area-based
+        # ~5000-7000 ₽). Реальный биллинг и батч-анализатор периода считают
+        # baseline правильно (area-based) — теперь и эта модалка тоже:
+        # calculate_utilities с volume_*=0 для baseline.
+        calc_result = calculate_utilities(
+            user=user, room=room, tariff=tariff,
+            volume_hot=(z if is_baseline else d_hot),
+            volume_cold=(z if is_baseline else d_cold),
+            volume_sewage=(z if is_baseline else d_sewage),
+            volume_electricity_share=(z if is_baseline else elect_share),
+            heating_season_active=_heating,
+            hot_water_heating_active=_hw,
+        )
     except CalculationError as e:
         calc_error = str(e)
 

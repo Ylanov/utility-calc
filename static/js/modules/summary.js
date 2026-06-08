@@ -1358,7 +1358,7 @@ export const SummaryModule = {
                     ${esc(String(u.residents_count))} из ${esc(String(room.total_room_residents))} жильцов в комнате
                 </div>
                 ${r.is_baseline
-                    ? '<div style="margin-top:8px; padding:6px 10px; background:#fef3c7; color:#92400e; border-radius:4px; font-size:12px;"><i class="fa-solid fa-info-circle"></i> Это BASELINE — первая подача жильца, начисления = 0 намеренно.</div>'
+                    ? '<div style="margin-top:8px; padding:6px 10px; background:#fef3c7; color:#92400e; border-radius:4px; font-size:12px;"><i class="fa-solid fa-info-circle"></i> Это BASELINE (первая подача): потребление (вода/свет) НЕ начисляется — счётчик может быть «накручен» за годы. Но содержание, наём, ТКО и отопление начисляются по площади ВСЕГДА.</div>'
                     : ''}
                 ${d.calculation_error
                     ? `<div style="margin-top:8px; padding:8px 12px; background:#fee2e2; color:#991b1b; border-radius:4px; font-size:12px;"><i class="fa-solid fa-circle-exclamation"></i> Ошибка расчёта: ${esc(d.calculation_error)}</div>`
