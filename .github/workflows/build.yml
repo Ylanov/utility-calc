@@ -383,10 +383,17 @@ jobs:
       # force-recreate контейнера + слепым sleep 15 (~2 мин на шаг). Теперь легко:
       #   1) ждём ГОТОВНОСТИ бэкенда опросом (а не вслепую) — чтобы nginx переключился
       #      сразу на живой backend;
-      #   2) graceful `nginx -s reload`: перечитывает конфиг, ПЕРЕРЕЗОЛВИТ upstream и
-      #      сбрасывает старые keepalive — ~1с, без пересоздания и без простоя (старые
-      #      воркеры дорабатывают). Фолбэк на recreate, если reload не прошёл.
-      - name: Reload nginx after backend ready
+      #   2) ПЕРЕСОЗДАЁМ nginx (а не `nginx -s reload`). Причина (инцидент
+      #      08.06.2026, фикс 404 не подхватился): конфиг примонтирован как ОДИН
+      #      файл (./nginx/conf.d/default.conf). rsync заменяет его новым inode,
+      #      а `nginx -s reload` внутри контейнера читает СТАРЫЙ inode (bind-mount
+      #      одного файла привязан к inode на старте контейнера) → правки конфига
+      #      НЕ применяются, reload «успешен» со старым конфигом, фолбэк не
+      #      срабатывает. Recreate перепривязывает свежий файл И перерезолвит
+      #      upstream web_jkh (фикс 502). ~1-2с. Статика (./static) монтируется
+      #      директорией, поэтому она и так обновляется — пересоздание для неё не
+      #      требуется, но nginx всё равно увидит новые файлы.
+      - name: Recreate nginx after backend ready
         working-directory: /opt/utility_calc
         run: |
           echo "Ждём готовности бэкенда web_jkh…"
@@ -398,15 +405,11 @@ jobs:
             sleep 2
           done
           docker exec utility_nginx find /var/cache/nginx -type f -delete 2>/dev/null || true
-          if docker exec utility_nginx nginx -s reload 2>/dev/null; then
-            echo "[nginx] reload OK (upstream перерезолвлен)"
-          else
-            echo "[nginx] reload не удался — фолбэк на пересоздание"
-            docker compose up -d --force-recreate --no-deps nginx || {
-              docker rm -f utility_nginx || true
-              docker compose up -d --no-deps nginx
-            }
-          fi
+          docker compose up -d --force-recreate --no-deps nginx || {
+            docker rm -f utility_nginx || true
+            docker compose up -d --no-deps nginx
+          }
+          echo "[nginx] пересоздан (свежий конфиг + перерезолв upstream)"
 
       - name: Health check
         working-directory: /opt/utility_calc
