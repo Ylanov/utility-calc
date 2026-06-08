@@ -5,6 +5,16 @@
          а дата-колонки схлопывались. Фиксируем ширины (сумма 100%) и
          переносим длинный текст. Scoped к #safety, чужие таблицы не трогаем. -->
     <style>
+        /* Грид-элемент и карточка ДОЛЖНЫ ужиматься (min-width:0) — иначе широкий
+           селект «Все подразделения» (длинные названия) и таблица раздувают
+           карточку за пределы экрана (появлялся горизонтальный скролл, правые
+           колонки уезжали). */
+        #safety .grid-2-col { min-width: 0; }
+        #safety .grid-2-col > .card { min-width: 0; }
+        #safety .card-header { flex-wrap: wrap; gap: 8px; }
+        #safety .toolbar-controls { flex-wrap: wrap; }
+        #safety .toolbar-controls select,
+        #safety .toolbar-controls input[type="text"] { max-width: 200px; }
         #safety .sticky-header-table { table-layout: fixed; width: 100%; }
         #safety .sticky-header-table th,
         #safety .sticky-header-table td {
