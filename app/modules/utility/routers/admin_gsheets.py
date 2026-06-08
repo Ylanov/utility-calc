@@ -142,11 +142,22 @@ async def trigger_sync(
             detail="Не задан sheet_id (ни в запросе, ни в GSHEETS_SHEET_ID env).",
         )
 
+    # Аудит безопасности: sheet_id/gid идут в URL httpx с follow_redirects —
+    # валидируем формат, чтобы в URL не попали '/','?','#','@' (ограниченный SSRF).
+    import re as _re
+    from app.modules.utility.services.gsheets_sync import extract_sheet_id
+    sheet_id = extract_sheet_id(sheet_id)  # если вставили полный URL — вытащим ID
+    if not _re.fullmatch(r"[A-Za-z0-9_-]+", sheet_id):
+        raise HTTPException(status_code=400, detail="Некорректный sheet_id")
+    _gid = str(data.gid or settings.GSHEETS_GID or "0")
+    if not _re.fullmatch(r"[0-9]+", _gid):
+        raise HTTPException(status_code=400, detail="Некорректный gid")
+
     from app.modules.utility.tasks import sync_gsheets_task
 
     task = sync_gsheets_task.delay(
         sheet_id=sheet_id,
-        gid=data.gid or settings.GSHEETS_GID or "0",
+        gid=_gid,
         limit=data.limit,
     )
     return {"task_id": task.id, "status": "queued"}

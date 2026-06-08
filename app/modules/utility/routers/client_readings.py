@@ -202,20 +202,21 @@ async def get_reading_state(
     # Дефолт май 2026: '5_3_strict' (РОВНО 8 цифр = 5 целых + 3 дробных) —
     # стандарт российских счётчиков воды. Раньше жильцы подавали кто 1,
     # кто 2, кто 8 цифр, расчёт ехал.
+    # Аудит perf: 3 настройки одним запросом, а не тремя db.get (горячий путь —
+    # главный экран PWA жильца дёргается при каждом открытии).
     from app.modules.utility.models import SystemSetting
-    fmt_row = await db.get(SystemSetting, "meter_format_hint")
-    ex_row = await db.get(SystemSetting, "meter_example_hot")
-    instr_row = await db.get(SystemSetting, "meter_instructions")
-    meter_format_value = (fmt_row.value if fmt_row else "5_3_strict")
-    meter_example_value = (
-        ex_row.value if ex_row else "01433.887"
-    )
-    meter_instructions_value = (
-        instr_row.value if instr_row else
+    _ss = {r.key: r.value for r in (await db.execute(
+        select(SystemSetting).where(SystemSetting.key.in_(
+            ["meter_format_hint", "meter_example_hot", "meter_instructions"]))
+    )).scalars().all()}
+    meter_format_value = _ss.get("meter_format_hint", "5_3_strict")
+    meter_example_value = _ss.get("meter_example_hot", "01433.887")
+    meter_instructions_value = _ss.get(
+        "meter_instructions",
         "ВСЕГДА вводите все 8 цифр счётчика: 5 цифр до точки + 3 после. "
         "Если на счётчике значение короткое (например «1.4») — допишите "
         "ведущие нули: «00001.400». Это стандарт счётчиков воды в РФ. "
-        "Пример: «01433.887»."
+        "Пример: «01433.887».",
     )
 
     # Наличие счётчиков — приоритет КОМНАТЫ (meters_002, статично), fallback
