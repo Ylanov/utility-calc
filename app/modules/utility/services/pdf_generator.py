@@ -143,6 +143,33 @@ def generate_receipt_pdf(
     vol_sewage = (vol_hot + vol_cold) - corr_sewage
 
     # =========================
+    # charge-флаги + база площади для квитанции
+    # =========================
+    # charge_* эффективного тарифа (None→True, как calculations._charge): PDF
+    # НЕ должен показывать строки услуг, которые тариф не начисляет (иначе
+    # жилец видит «начисление» при cost=0 / тариф «только наём»).
+    def _chg(field):
+        v = getattr(tariff, field, None) if tariff else None
+        return True if v is None else bool(v)
+    charge = {
+        "hot_water": _chg("charge_hot_water"), "cold_water": _chg("charge_cold_water"),
+        "sewage": _chg("charge_sewage"), "electricity": _chg("charge_electricity"),
+        "maintenance": _chg("charge_maintenance"), "social_rent": _chg("charge_social_rent"),
+        "heating": _chg("charge_heating"), "waste": _chg("charge_waste"),
+    }
+    # База площади для area-based статей (наём/содержание/ТКО/отопление): у
+    # холостяцкой квартиры area/max_capacity, чтобы «Объём×Тариф» в квитанции
+    # совпадал с «Начислено» (зеркалит calculations.py area_base, см. singles).
+    _area = D(room.apartment_area if room and room.apartment_area else 0)
+    if room and getattr(room, "is_singles_apartment", False):
+        _cap = getattr(room, "max_capacity", None)
+        if not (_cap and int(_cap) > 0):
+            _cap = room.total_room_residents if (room and room.total_room_residents and room.total_room_residents > 0) else 1
+        area_base = _area / D(_cap)
+    else:
+        area_base = _area
+
+    # =========================
     # QR (ИЗМЕНЕНИЕ: передаем room)
     # =========================
     qr_rent = generate_qr_base64(KBC_RENT, total_205_due, user, room, "Плата за наем")
@@ -156,6 +183,8 @@ def generate_receipt_pdf(
         "room": room,  # <-- Передаем комнату в шаблон!
         "period": period,
         "tariff": tariff,
+        "charge": charge,        # charge_*-флаги (None→True) для скрытия строк
+        "area_base": area_base,  # база площади (singles=area/max_capacity)
         "reading": reading,
         "prev_reading": prev_reading,
         "adjustments": adjustments,
