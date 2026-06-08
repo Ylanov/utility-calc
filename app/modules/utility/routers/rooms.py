@@ -197,6 +197,12 @@ async def get_rooms(
         missing_meter: Optional[bool] = Query(
             None, description="Отсутствует хотя бы один из серийников счётчиков",
         ),
+        no_meters: Optional[bool] = Query(
+            None,
+            description="Квартиры БЕЗ счётчиков вообще (has_hw/cw/el_meter = все false). "
+                        "Им не начисляется норматив по приборам и НЕ применяется санкция ×3. "
+                        "Композится с place_type (напр. dormitory).",
+        ),
         db: AsyncSession = Depends(get_db)
 ):
     """Список комнат с пагинацией и расширенными фильтрами."""
@@ -262,6 +268,18 @@ async def get_rooms(
             (Room.hw_meter_serial.is_(None)) | (Room.hw_meter_serial == "")
             | (Room.cw_meter_serial.is_(None)) | (Room.cw_meter_serial == "")
             | (Room.el_meter_serial.is_(None)) | (Room.el_meter_serial == "")
+        )
+        query = query.where(cond)
+        count_query = count_query.where(cond)
+
+    if no_meters is True:
+        # «Квартиры без счётчиков» — учёт по образцу домов. Комната, где НЕТ
+        # ни одного прибора (все has_*_meter явно false). Им норматив по
+        # счётчикам не начисляется и санкция ×3 исключена (_growing_norm_volumes).
+        cond = (
+            Room.has_hw_meter.is_(False)
+            & Room.has_cw_meter.is_(False)
+            & Room.has_el_meter.is_(False)
         )
         query = query.where(cond)
         count_query = count_query.where(cond)

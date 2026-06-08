@@ -61,9 +61,13 @@
                         <option value="full">✅ Полные</option>
                         <option value="overcrowded">🔴 Переполненные</option>
                     </select>
-                    <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-secondary); white-space:nowrap;">
+                    <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-secondary); white-space:nowrap;" title="Не заполнен хотя бы один серийный номер счётчика.">
                         <input type="checkbox" id="filterMissingMeter" style="margin:0;">
-                        Без счётчика
+                        Без серийника
+                    </label>
+                    <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-secondary); white-space:nowrap;" title="Квартиры/дома, где НЕТ ни одного прибора учёта (все счётчики выключены). Им начисляется только норматив/наём — санкция ×3 за пропуски НЕ применяется.">
+                        <input type="checkbox" id="filterNoMeters" style="margin:0;">
+                        🚫 Без приборов
                     </label>
                     <select id="roomsLimitSelect">
                         <option value="25">25 строк</option>

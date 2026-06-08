@@ -53,6 +53,7 @@ export const HousingModule = {
             // Новые фильтры
             filterOccupancy: document.getElementById('filterOccupancy'),
             filterMissingMeter: document.getElementById('filterMissingMeter'),
+            filterNoMeters: document.getElementById('filterNoMeters'),
 
             // KPI
             statsHost: document.getElementById('housingStats'),
@@ -157,6 +158,7 @@ export const HousingModule = {
         if (this.dom.dormFilterSelect) this.dom.dormFilterSelect.addEventListener('change', refilter);
         if (this.dom.filterOccupancy) this.dom.filterOccupancy.addEventListener('change', refilter);
         if (this.dom.filterMissingMeter) this.dom.filterMissingMeter.addEventListener('change', refilter);
+        if (this.dom.filterNoMeters) this.dom.filterNoMeters.addEventListener('change', refilter);
 
         if (this.dom.btnExport) {
             this.dom.btnExport.addEventListener('click', () => this.exportExcel());
@@ -310,6 +312,7 @@ export const HousingModule = {
                 const params = { ...this._buildingFilterParams() };
                 if (this.dom.filterOccupancy?.value) params.occupancy = this.dom.filterOccupancy.value;
                 if (this.dom.filterMissingMeter?.checked) params.missing_meter = 'true';
+                if (this.dom.filterNoMeters?.checked) params.no_meters = 'true';
                 return params;
             },
             renderRow: (room) => this.renderRoomRow(room),
@@ -661,6 +664,7 @@ export const HousingModule = {
         const params = new URLSearchParams(this._buildingFilterParams());
         if (this.dom.filterOccupancy?.value) params.append('occupancy', this.dom.filterOccupancy.value);
         if (this.dom.filterMissingMeter?.checked) params.append('missing_meter', 'true');
+        if (this.dom.filterNoMeters?.checked) params.append('no_meters', 'true');
         const qs = params.toString() ? `?${params.toString()}` : '';
         setLoading(this.dom.btnExport, true);
         try {

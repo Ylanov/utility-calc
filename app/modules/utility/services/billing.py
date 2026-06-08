@@ -40,6 +40,7 @@ def _growing_norm_volumes(
     user_tariff,
     residents: Decimal,
     miss_count: int,
+    room=None,
 ) -> tuple[Decimal, Decimal, Decimal, Decimal]:
     """Норматив × пороговый коэффициент. БЕЗ умножения на residents.
 
@@ -64,8 +65,6 @@ def _growing_norm_volumes(
     per-capita по ПП №354 — добавим обратно `* residents`.
     """
     _ = residents  # явно отмечаем что параметр не используется (см. v4)
-    cap = D(getattr(user_tariff, "norm_coefficient", 0) or 3)
-    effective = cap if miss_count >= NORM_SANCTION_THRESHOLD else D(1)
 
     # Тариф может НЕ начислять меру (charge_*=False — напр. дом без счётчиков):
     # тогда норматив-объём = 0. Иначе авто-добивка накручивала бы виртуальное
@@ -77,9 +76,33 @@ def _growing_norm_volumes(
         v = getattr(user_tariff, field, None)
         return True if v is None else bool(v)
 
-    vol_hot = D(user_tariff.hw_norm_per_capita or 0) * effective if _ch("charge_hot_water") else D(0)
-    vol_cold = D(user_tariff.cw_norm_per_capita or 0) * effective if _ch("charge_cold_water") else D(0)
-    vol_el = D(user_tariff.el_norm_per_capita or 0) * effective if _ch("charge_electricity") else D(0)
+    # Наличие счётчика у КОМНАТЫ (приоритет комнаты, None=да — прежнее поведение).
+    # Зеркалит _has_meter в calculations.py (но без user-fallback: сюда room
+    # приходит из user.room на обеих точках вызова).
+    def _has(field: str) -> bool:
+        v = getattr(room, field, None) if room is not None else None
+        return True if v is None else bool(v)
+
+    # Ресурс «нормируется», только если он И начисляется (charge_*), И у комнаты
+    # есть счётчик (has_*_meter). Раньше проверялся ТОЛЬКО charge_* — из-за чего
+    # квартира БЕЗ счётчиков в общежитии (has_*_meter=false) получала норматив и
+    # эскалировала до санкции ×3 за «пропуски», хотя подавать ей нечем.
+    avail_hot = _ch("charge_hot_water") and _has("has_hw_meter")
+    avail_cold = _ch("charge_cold_water") and _has("has_cw_meter")
+    avail_el = _ch("charge_electricity") and _has("has_el_meter")
+
+    # Санкция ×коэффициент применяется ТОЛЬКО если есть хоть один начисляемый
+    # мётрируемый ресурс (жилец реально мог подать). Нет счётчиков вообще →
+    # эскалации нет (коэф ×1): они не виноваты, что подавать нечего. Стоимость
+    # по нормативу для безсчётчиковых всё равно посчитает calculate_utilities,
+    # но уже БЕЗ ×3, и «показание» не раздувается (vol=0).
+    any_metered = avail_hot or avail_cold or avail_el
+    cap = D(getattr(user_tariff, "norm_coefficient", 0) or 3)
+    effective = cap if (miss_count >= NORM_SANCTION_THRESHOLD and any_metered) else D(1)
+
+    vol_hot = D(user_tariff.hw_norm_per_capita or 0) * effective if avail_hot else D(0)
+    vol_cold = D(user_tariff.cw_norm_per_capita or 0) * effective if avail_cold else D(0)
+    vol_el = D(user_tariff.el_norm_per_capita or 0) * effective if avail_el else D(0)
     return vol_hot, vol_cold, vol_el, effective
 
 
@@ -277,16 +300,14 @@ async def close_current_period(db: AsyncSession, admin_user_id: int, generate_no
             last_elect = D(history[0].electricity) if history else zero
 
             vol_hot, vol_cold, delta_elect, _coef = _growing_norm_volumes(
-                user_tariff, residents, miss_count,
+                user_tariff, residents, miss_count, room=user.room,
             )
             new_hot = last_hot + vol_hot
             new_cold = last_cold + vol_cold
             new_elect = last_elect + delta_elect
-            anomaly_flag = (
-                "AUTO_NORM_SANCTION"
-                if miss_count >= NORM_SANCTION_THRESHOLD
-                else "AUTO_NORM"
-            )
+            # Флаг по ФАКТИЧЕСКОМУ коэффициенту: безсчётчиковым санкция не
+            # применяется (_coef=1) → AUTO_NORM, а не AUTO_NORM_SANCTION.
+            anomaly_flag = "AUTO_NORM_SANCTION" if _coef > D(1) else "AUTO_NORM"
 
             total_residents = D(
                 user.room.total_room_residents
@@ -503,16 +524,14 @@ async def auto_fill_period_readings(
         last_elect = D(history[0].electricity) if history else zero
 
         vol_hot, vol_cold, delta_elect, _coef = _growing_norm_volumes(
-            user_tariff, residents, miss_count,
+            user_tariff, residents, miss_count, room=user.room,
         )
         new_hot = last_hot + vol_hot
         new_cold = last_cold + vol_cold
         new_elect = last_elect + delta_elect
-        anomaly_flag = (
-            "AUTO_NORM_SANCTION"
-            if miss_count >= NORM_SANCTION_THRESHOLD
-            else "AUTO_NORM"
-        )
+        # Флаг по ФАКТИЧЕСКОМУ коэффициенту: безсчётчиковым санкция не
+        # применяется (_coef=1) → AUTO_NORM, а не AUTO_NORM_SANCTION.
+        anomaly_flag = "AUTO_NORM_SANCTION" if _coef > D(1) else "AUTO_NORM"
 
         total_residents = D(
             user.room.total_room_residents
