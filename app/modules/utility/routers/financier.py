@@ -3476,8 +3476,10 @@ async def debts_stats(
         .order_by(desc("total_debt"))
         .limit(10)
     )
+    # У домов dormitory_name = NULL (адрес в street/house/apartment), поэтому
+    # группа без названия — это дома. Подписываем её «🏠 Дома», а не «—».
     by_dorm = [
-        {"name": r[0] or "—", "total_debt": float(r[1] or 0), "debtors": int(r[2] or 0)}
+        {"name": r[0] or "🏠 Дома", "total_debt": float(r[1] or 0), "debtors": int(r[2] or 0)}
         for r in (await db.execute(by_dorm_q)).all()
     ]
 

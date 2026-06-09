@@ -383,6 +383,23 @@ export const HousingModule = {
                 style: { color: '#2563eb', marginRight: '6px', fontSize: '11px' },
               }, '🏢');
 
+        // Компактный текстовый бейдж типа помещения рядом с адресом.
+        const typeBadge = isHouse
+            ? el('span', {
+                style: {
+                    background: '#f3e8ff', color: '#6b21a8',
+                    fontSize: '11px', padding: '2px 6px',
+                    borderRadius: '4px', marginLeft: '6px',
+                },
+              }, 'Дом')
+            : el('span', {
+                style: {
+                    background: '#dbeafe', color: '#1e40af',
+                    fontSize: '11px', padding: '2px 6px',
+                    borderRadius: '4px', marginLeft: '6px',
+                },
+              }, 'Общага');
+
         const dashCell = (color) => el('td', {
             class: 'text-sm font-mono',
             style: { color: color, textAlign: 'center' },
@@ -396,7 +413,7 @@ export const HousingModule = {
         },
             el('td', { class: 'text-center' }, chevron),
             el('td', { class: 'text-gray-500 text-sm' }, `#${room.id}`),
-            el('td', { style: { fontWeight: 'bold', color: '#1f2937' } }, typeIcon, placeLabel),
+            el('td', { style: { fontWeight: 'bold', color: '#1f2937' } }, typeIcon, placeLabel, typeBadge),
             numberCell,
             el('td', {}, `${Number(room.apartment_area).toFixed(1)} м²`),
             el('td', { class: 'text-center' }, String(cap)),

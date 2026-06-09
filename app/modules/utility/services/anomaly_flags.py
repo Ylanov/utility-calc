@@ -47,6 +47,7 @@ SOURCE_MARKERS: frozenset[str] = frozenset({
     "AUTO_NO_HISTORY",
     "MANUAL_RECEIPT",     # admin создал квитанцию вручную (без подачи показаний)
     "POST_SKIP_RECALC",   # маркер reading'а прошедшего retroactive recalc
+    "STATIC_RENT",        # статичное начисление наёма дому (place_type=house), без счётчиков
 })
 
 # Маркеры-префиксы (data-patches помеченные датой). Используется

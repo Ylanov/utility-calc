@@ -11,6 +11,7 @@
 
 import { api } from '../core/api.js';
 import { el, toast, setLoading, showConfirm } from '../core/dom.js';
+import { formatRoomAddress } from '../core/format-address.js';
 
 function esc(s) {
     if (s == null) return '';
@@ -1942,7 +1943,11 @@ ${(d.orphans || []).length ? `<h2>Не найдены в базе (1С/ГИС е
             else if (totalDebt >= 1000) rowBg = 'background:#fffbeb;';
             else if ((o209 + o205) > 0) rowBg = 'background:#f0fdf4;';
 
-            const room = u.room ? `${u.room.dormitory_name || '—'} / ${u.room.room_number || '—'}` : '—';
+            // Адрес помещения — единый формат для общаги и дома (E2-A).
+            // Раньше склеивали dormitory_name/room_number вручную, из-за чего
+            // у домов (оба поля NULL) выводилось «— / —». formatRoomAddress
+            // сам ветвится по place_type: дом → «ул. X, д. Y, кв. Z».
+            const room = u.room ? formatRoomAddress(u.room) : '—';
 
             // Bug AH: ячейка сальдо с inline-микроисторией движения средств.
             // Раньше показывали только текущее значение + tooltip — админу
@@ -3711,7 +3716,9 @@ ${(d.orphans || []).length ? `<h2>Не найдены в базе (1С/ГИС е
         // Старт = end + Кр_оборот − Дт_оборот (обратное вычисление по дебетовому счёту 209/205).
         const start209 = d209 + oc209 - od209;
         const start205 = d205 + oc205 - od205;
-        const room = u.room ? `${u.room.dormitory_name || '—'} / ${u.room.room_number || '—'}` : '—';
+        // Единый адрес для общаги и дома (E2-A): у домов dormitory_name/room_number
+        // NULL, formatRoomAddress сам соберёт «ул. X, д. Y, кв. Z».
+        const room = u.room ? formatRoomAddress(u.room) : '—';
 
         const f = (v) => {
             const abs = Math.abs(v);

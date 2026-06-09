@@ -10,7 +10,7 @@ from decimal import Decimal
 import logging
 from collections import defaultdict
 
-from app.modules.utility.models import User, MeterReading, BillingPeriod, Tariff
+from app.modules.utility.models import User, MeterReading, BillingPeriod, Tariff, Room
 from app.modules.utility.services.calculations import calculate_utilities, D
 from app.modules.utility.services.period_helpers import period_chron_key
 
@@ -593,6 +593,157 @@ async def auto_fill_period_readings(
         "would_create": len(preview) if dry_run else None,
         "skipped_has_reading": len(existing_user_ids),
         "by_strategy": dict(by_strategy),
+        "preview": preview[:50] if dry_run else None,
+        "dry_run": dry_run,
+    }
+
+
+async def charge_static_rent_for_houses(
+    db: AsyncSession,
+    period_id: int,
+    dry_run: bool = False,
+) -> dict:
+    """СТАТИЧНОЕ начисление (наём 205) для жильцов ДОМОВ (place_type='house')
+    в указанном периоде — ЧЕРНОВИКОМ (is_approved=False).
+
+    У домов нет счётчиков и нет потребления-зависимых статей: весь счёт —
+    статика (площадь × тариф, обычно только наём 205). Поэтому начисление
+    создаётся СРАЗУ (при открытии периода / по кнопке), не дожидаясь закрытия —
+    админ видит его в реестре. На закрытии периода черновик утверждается штатно
+    (close_current_period финализирует все is_approved=False) → квитанции как
+    обычно. Наём — НЕ норматив, 2-шаговую политику норматива это не нарушает.
+
+    Идемпотентно: жильцы, у кого УЖЕ есть reading в этом периоде, пропускаются
+    (повтор/смена тарифа лечатся перерасчётом). Вакантные комнаты — пропуск.
+    reading.room_id = текущая комната жильца (иммутабельность к переезду).
+
+    Returns dict: {processed, created, skipped_has_reading, by_room, dry_run}.
+    """
+    target_period = await db.get(BillingPeriod, period_id)
+    if not target_period:
+        raise ValueError(f"Период id={period_id} не найден")
+
+    # Baseline-период (Начальный) — не для начислений (как в auto_fill).
+    if period_chron_key(target_period.name) == (0, 0):
+        raise ValueError(
+            f"Период id={period_id} ('{target_period.name}') — baseline, "
+            "не предназначен для начисления наёма."
+        )
+
+    tariffs_result = await db.execute(select(Tariff).where(Tariff.is_active))
+    active_tariffs = tariffs_result.scalars().all()
+    if not active_tariffs:
+        raise ValueError("Нет активных тарифов")
+    default_tariff = next((t for t in active_tariffs if t.id == 1), active_tariffs[0])
+
+    existing_user_ids = set((await db.execute(
+        select(MeterReading.user_id).where(
+            MeterReading.period_id == target_period.id,
+            MeterReading.user_id.is_not(None),
+        )
+    )).scalars().all())
+
+    # Жильцы ДОМОВ; в Python отсекаем уже начисленных и вакантные (как auto_fill).
+    users_all = (await db.execute(
+        select(User)
+        .options(selectinload(User.room))
+        .join(Room, User.room_id == Room.id)
+        .where(
+            User.role == "user",
+            User.is_deleted.is_(False),
+            User.room_id.is_not(None),
+            Room.place_type == "house",
+        )
+    )).scalars().all()
+    users_to_process = [
+        u for u in users_all
+        if u.id not in existing_user_ids and not (u.room and u.room.is_vacant)
+    ]
+
+    if not users_to_process:
+        return {
+            "status": "ok", "period_id": target_period.id,
+            "period_name": target_period.name,
+            "processed": 0, "created": 0,
+            "skipped_has_reading": len(existing_user_ids),
+            "by_room": {}, "dry_run": dry_run,
+        }
+
+    from app.modules.utility.routers.settings import _load_seasonal
+    from app.modules.utility.services.tariff_cache import tariff_cache
+    _seasonal = await _load_seasonal(db)
+    zero = Decimal("0.000")
+    zero_money = Decimal("0.00")
+    insert_values = []
+    preview = []
+    by_room: dict[str, int] = {}
+
+    for user in users_to_process:
+        tariff = (tariff_cache.get_effective_tariff(user=user, room=user.room)
+                  or default_tariff)
+        # Статика: объёмы=0 → вода/свет=0, area-based (наём и т.п.) начислятся.
+        _heating = _seasonal.heating_season_active and tariff.is_heating_active_now()
+        _hw = _seasonal.hot_water_heating_active and tariff.is_hw_heating_active_now()
+        costs = calculate_utilities(
+            user=user, room=user.room, tariff=tariff,
+            volume_hot=zero, volume_cold=zero,
+            volume_sewage=zero, volume_electricity_share=zero,
+            heating_season_active=_heating,
+            hot_water_heating_active=_hw,
+        )
+        cost_205 = costs.get("cost_social_rent", zero_money)
+        cost_209 = costs.get("total_cost", zero_money) - cost_205
+        addr = user.room.format_address if user.room else "—"
+        by_room[addr] = by_room.get(addr, 0) + 1
+
+        if dry_run:
+            preview.append({
+                "user_id": user.id, "username": user.username,
+                "room": addr, "total_205": float(cost_205),
+                "total_cost": float(costs.get("total_cost", zero_money)),
+            })
+            continue
+
+        insert_values.append({
+            "user_id": user.id, "room_id": user.room_id, "period_id": target_period.id,
+            # Дом счётчиков не подаёт — показания нулевые.
+            "hot_water": zero, "cold_water": zero, "electricity": zero,
+            "debt_209": zero_money, "overpayment_209": zero_money,
+            "debt_205": zero_money, "overpayment_205": zero_money,
+            "cost_hot_water": costs.get("cost_hot_water", zero_money),
+            "cost_cold_water": costs.get("cost_cold_water", zero_money),
+            "cost_sewage": costs.get("cost_sewage", zero_money),
+            "cost_electricity": costs.get("cost_electricity", zero_money),
+            "cost_maintenance": costs.get("cost_maintenance", zero_money),
+            "cost_social_rent": cost_205,
+            "cost_waste": costs.get("cost_waste", zero_money),
+            "cost_fixed_part": costs.get("cost_fixed_part", zero_money),
+            "total_209": cost_209, "total_205": cost_205,
+            "total_cost": costs.get("total_cost", zero_money),
+            # ЧЕРНОВИК — админ проверяет, на закрытии периода утвердится штатно.
+            "is_approved": False,
+            "anomaly_flags": "STATIC_RENT", "anomaly_score": 0,
+            "created_at": datetime.now(timezone.utc).replace(tzinfo=None),
+        })
+
+    created = 0
+    if insert_values and not dry_run:
+        await db.execute(insert(MeterReading), insert_values)
+        created = len(insert_values)
+        await db.commit()
+        logger.info(
+            "[STATIC-RENT] period=%s created=%d houses",
+            target_period.name, created,
+        )
+
+    return {
+        "status": "ok", "period_id": target_period.id,
+        "period_name": target_period.name,
+        "processed": len(users_to_process),
+        "created": created if not dry_run else 0,
+        "would_create": len(preview) if dry_run else None,
+        "skipped_has_reading": len(existing_user_ids),
+        "by_room": by_room,
         "preview": preview[:50] if dry_run else None,
         "dry_run": dry_run,
     }

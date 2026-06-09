@@ -280,6 +280,15 @@ async def api_open_period(data: PeriodCreate, background_tasks: BackgroundTasks,
         raise HTTPException(status_code=500, detail="Внутренняя ошибка при открытии периода.")
 
     await _safe_clear_cache("periods")
+    # Сразу начисляем статичный наём (205) жильцам ДОМОВ — наём не норматив,
+    # ждать закрытия не нужно. Best-effort: ошибка не ломает открытие периода.
+    # Идемпотентно (жильцы с reading в периоде пропускаются).
+    try:
+        from app.modules.utility.services.billing import charge_static_rent_for_houses
+        await charge_static_rent_for_houses(db, new_period.id)
+    except Exception as e:
+        logger.warning(f"[open_period] charge_static_rent_for_houses failed: {e}")
+
     background_tasks.add_task(_send_period_push, new_period.name)
     return {"status": "opened", "period": new_period.name}
 

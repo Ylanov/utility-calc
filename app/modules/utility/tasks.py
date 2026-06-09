@@ -792,6 +792,13 @@ def check_auto_period_task():
                         db.add(new_period)
                         db.commit()
                         logger.info(f"[AUTO] Opened new period: {period_name}")
+                        # Сразу начисляем статичный наём (205) домам — не ждём
+                        # закрытия. Отдельной Celery-задачей, чтобы ошибка не
+                        # сломала beat-цикл (изолировано). Наём — не норматив.
+                        try:
+                            charge_houses_rent_task.delay(new_period.id)
+                        except Exception:
+                            logger.exception("[AUTO] enqueue charge_houses_rent_task failed")
             elif active:
                 # Сегодня ВНЕ окна подачи, но период активен.
                 # КРИТИЧНО (фикс июнь 2026): закрываем ТОЛЬКО когда окно уже
@@ -1677,4 +1684,46 @@ def auto_recalc_drift_task():
         return result
     except Exception as e:
         logger.exception("[auto_recalc_drift_task] crashed")
+        return {"crashed": True, "error": str(e)}
+
+
+@celery.task(name="charge_houses_rent_task")
+def charge_houses_rent_task(period_id: int | None = None):
+    """Авто-начисление статичного наёма (205) жильцам ДОМОВ (place_type=house)
+    при открытии периода. Вызывается из check_auto_period_task после
+    авто-открытия. Изолирован: ошибка НЕ ломает beat-задачу. Идемпотентно
+    (жильцы с reading в периоде пропускаются)."""
+    async def _run():
+        from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession as _AS
+        from sqlalchemy.orm import sessionmaker as _smaker
+        from sqlalchemy import select as _select
+        from app.modules.utility.models import BillingPeriod as _BP
+        from app.modules.utility.services.billing import charge_static_rent_for_houses
+        _engine = create_async_engine(
+            settings.DATABASE_URL_ASYNC,
+            echo=False, future=True, pool_pre_ping=True,
+            connect_args={"prepared_statement_cache_size": 0,
+                          "statement_cache_size": 0, "command_timeout": 120},
+        )
+        _mk = _smaker(bind=_engine, class_=_AS, expire_on_commit=False, autoflush=False)
+        try:
+            async with _mk() as db:
+                pid = period_id
+                if pid is None:
+                    period = (await db.execute(
+                        _select(_BP).where(_BP.is_active.is_(True))
+                    )).scalars().first()
+                    if not period:
+                        return {"skipped": "no_active_period"}
+                    pid = period.id
+                return await charge_static_rent_for_houses(db, pid)
+        finally:
+            await _engine.dispose()
+
+    try:
+        result = asyncio.run(_run())
+        logger.info("[charge_houses_rent_task] %s", result)
+        return result
+    except Exception as e:
+        logger.exception("[charge_houses_rent_task] crashed")
         return {"crashed": True, "error": str(e)}

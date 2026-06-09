@@ -283,6 +283,7 @@ PREV_SKIP_FLAGS = frozenset({
     # Валидный prev после замены — METER_REPLACEMENT (новый baseline, малое
     # начальное значение) — он НЕ в skip.
     "METER_CLOSED",
+    "STATIC_RENT",         # статичный наём дома (place_type=house) — не meter-событие
 })
 
 

@@ -294,6 +294,21 @@ export const SummaryModule = {
             autoFillBtn.addEventListener('click', () => this.autoFillSelectedPeriod());
             this.dom.periodSelector.appendChild(autoFillBtn);
 
+            // Начислить наём (205) для помещений-домов. Дома платят только
+            // наём, статично — начисляем сразу, не дожидаясь закрытия периода.
+            // Двухстадийно (dry-run → подтверждение → apply), идемпотентно:
+            // сервер пропускает дома, у которых reading за период уже есть.
+            const rentBtn = document.createElement('button');
+            rentBtn.type = 'button';
+            rentBtn.style.cssText =
+                'padding:7px 12px; margin-left:10px; font-size:12px; background:#0891b2; color:#fff; ' +
+                'border:none; border-radius:4px; cursor:pointer; font-weight:500;';
+            rentBtn.title = 'Дома платят только наём (205), статично. Начисляется сразу, ' +
+                'не дожидаясь закрытия периода. На закрытии утвердится как обычно.';
+            rentBtn.innerHTML = '<i class="fa-solid fa-key"></i> Начислить наём домам';
+            rentBtn.addEventListener('click', () => this.chargeRentNowSelectedPeriod());
+            this.dom.periodSelector.appendChild(rentBtn);
+
             // Default = АКТИВНЫЙ период. Раньше брался periodsCache[0]
             // (самый новый по id), что не всегда совпадает с активным —
             // админ открывал Финотчёт и видел не текущий месяц.
@@ -1583,6 +1598,58 @@ export const SummaryModule = {
             await this.loadData();
         } catch (e) {
             toast('Ошибка авто-добивки: ' + (e.message || e), 'error');
+        }
+    },
+
+    /** «Начислить наём домам» для выбранного периода.
+     *  Дома платят только наём (205), статично — начисляем сразу, не дожидаясь
+     *  закрытия периода. Двухстадийно: dry-run → confirm с превью (сколько
+     *  домов и суммы) → реальный запуск → обновление таблицы. Идемпотентно:
+     *  сервер пропускает дома, у которых reading за период уже есть. */
+    async chargeRentNowSelectedPeriod() {
+        const pid = Number(this.state.selectedPeriodId);
+        if (!pid) {
+            toast('Сначала выберите период', 'warning');
+            return;
+        }
+        const period = (this.periodsCache || []).find(p => Number(p.id) === pid);
+        const pName = period?.name || `id=${pid}`;
+        let preview;
+        try {
+            preview = await api.post(`/admin/billing/charge-rent-now/${pid}?dry_run=true`);
+        } catch (e) {
+            toast('Не удалось получить preview: ' + (e.message || e), 'error');
+            return;
+        }
+        const willCreate = preview.would_create || 0;
+        const skipped = preview.skipped_has_reading || 0;
+        if (willCreate === 0) {
+            toast(`В периоде «${pName}» нет домов для начисления наёма. ` +
+                  (skipped ? `${skipped} уже начислены.` : 'Все уже начислены или домов нет.'), 'info');
+            return;
+        }
+        // Превью: список домов с суммой наёма (205). Ограничиваем вывод, чтобы
+        // confirm не превратился в портянку при большом числе домов.
+        const previewRows = preview.preview || [];
+        const lines = previewRows.slice(0, 20)
+            .map(p => `  • ${p.room || p.username}: ${fmtMoney(p.total_205)}`).join('\n');
+        const more = previewRows.length > 20 ? `\n  …и ещё ${previewRows.length - 20}` : '';
+        const ok = await showConfirm(
+            `Начислить наём (205) домам в периоде «${pName}»?\n\n` +
+            `Будет начислено ${willCreate} домам:\n${lines}${more}\n` +
+            (skipped ? `\nПропущено (уже начислено): ${skipped}.\n` : '') +
+            `\nДома платят только наём (205), статично. Начисляется сразу, ` +
+            `не дожидаясь закрытия периода. На закрытии утвердится как обычно. ` +
+            `Повтор не дублирует.`,
+            { title: 'Начислить наём домам', confirmText: 'Начислить' }
+        );
+        if (!ok) return;
+        try {
+            const res = await api.post(`/admin/billing/charge-rent-now/${pid}`);
+            toast(`Начислен наём ${res.created} домам в периоде «${res.period_name}»`, 'success');
+            await this.loadData();
+        } catch (e) {
+            toast('Ошибка начисления наёма: ' + (e.message || e), 'error');
         }
     },
 
