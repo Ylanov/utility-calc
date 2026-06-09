@@ -39,6 +39,7 @@ from app.modules.utility.services.gsheets_sync import (
     normalize_fio as _normalize_fio,
     canonical_initials,
 )
+from app.modules.utility.services.search_utils import like_contains
 
 router = APIRouter(prefix="/api/admin/gsheets", tags=["Admin GSheets"])
 
@@ -2193,12 +2194,12 @@ async def search_users(
     )
 
     if is_numeric:
-        stmt = stmt.where(User.room.has(Room.room_number.ilike(f"%{q}%")))
+        stmt = stmt.where(User.room.has(Room.room_number.ilike(like_contains(q))))
     elif full_words:
         # AND по полнословным токенам — иначе «иванов петров» вернёт всех
         # у кого ЛИБО фамилия «иванов» ЛИБО имя «петров».
         for fw in full_words:
-            stmt = stmt.where(User.username.ilike(f"%{fw}%"))
+            stmt = stmt.where(User.username.ilike(like_contains(fw)))
     elif initials:
         # Только инициалы — слишком размыто (вернёт пол-базы), не ищем.
         return {"items": []}
@@ -2342,9 +2343,9 @@ async def relative_candidates(
         import re as _re2
         room_clean = raw_room.strip()
         room_digits = "".join(_re2.findall(r"\d+", room_clean))  # только цифры
-        room_conds = [Room.room_number.ilike(f"%{room_clean}%")]
+        room_conds = [Room.room_number.ilike(like_contains(room_clean))]
         if room_digits and room_digits != room_clean:
-            room_conds.append(Room.room_number.ilike(f"%{room_digits}%"))
+            room_conds.append(Room.room_number.ilike(like_contains(room_digits)))
 
         room_query = select(User).options(selectinload(User.room)).where(
             User.is_deleted.is_(False),

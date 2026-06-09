@@ -232,6 +232,19 @@ def decrypt_totp_secret(db_secret: str) -> str:
 
     if db_secret.startswith("enc:"):
         encrypted_data = db_secret[4:]
-        return fernet.decrypt(encrypted_data.encode()).decode()
+        try:
+            return fernet.decrypt(encrypted_data.encode()).decode()
+        except Exception:
+            # InvalidToken: секрет повреждён или сменился ENCRYPTION_KEY.
+            # Раньше пробрасывалось как 500 — отдаём понятную 400 (security-аудит).
+            import logging as _l
+            from fastapi import HTTPException as _HTTPException
+            _l.getLogger(__name__).error(
+                "[2FA] TOTP-секрет не расшифровывается (повреждён / сменился ENCRYPTION_KEY)"
+            )
+            raise _HTTPException(
+                status_code=400,
+                detail="Ошибка 2FA: секрет повреждён. Обратитесь к администратору для сброса 2FA.",
+            )
 
     return db_secret

@@ -26,6 +26,7 @@ from app.core.auth import fernet
 from app.modules.utility.schemas import PaginatedResponse, UserDebtResponse
 from app.modules.utility.tasks import import_debts_task
 from app.modules.utility.services.user_service import countable_resident_condition
+from app.modules.utility.services.search_utils import like_contains
 
 router = APIRouter(prefix="/api/financier", tags=["Financier"])
 logger = logging.getLogger(__name__)
@@ -1476,7 +1477,7 @@ async def gisgmp_create_missing_residents(
     for fio in create_list:
         login = fio
         if login.lower() in existing_logins:
-            login = f"{fio} {secrets.token_hex(2)}"
+            login = f"{fio} {secrets.token_hex(4)}"
         existing_logins.add(login.lower())
         db.add(User(
             username=fio, login=login,
@@ -3055,7 +3056,7 @@ async def get_users_with_debts(
 
     search_condition = None
     if search:
-        search_value = f"%{search.lower()}%"
+        search_value = like_contains(search.lower())
         search_condition = or_(
             func.lower(User.username).like(search_value),
             func.lower(Room.dormitory_name).like(search_value),
@@ -3219,7 +3220,7 @@ async def get_rooms_with_debts(
     )
     search_condition = None
     if search:
-        sv = f"%{search.lower()}%"
+        sv = like_contains(search.lower())
         search_condition = or_(
             func.lower(Room.dormitory_name).like(sv),
             func.lower(Room.room_number).like(sv),
@@ -3623,7 +3624,7 @@ async def debts_export(
     ).where(User.is_deleted.is_(False), User.role == "user")
 
     if search:
-        sv = f"%{search.lower()}%"
+        sv = like_contains(search.lower())
         stmt = stmt.where(or_(
             func.lower(User.username).like(sv),
             func.lower(Room.dormitory_name).like(sv),
@@ -5775,7 +5776,7 @@ async def debts_find_candidates(
         tokens = [t for t in q_norm.split() if t]
         filtered = base_query
         for tok in tokens:
-            filtered = filtered.where(func.lower(User.username).like(f"%{tok}%"))
+            filtered = filtered.where(func.lower(User.username).like(like_contains(tok)))
         users_raw = (await db.execute(filtered.limit(limit))).scalars().all()
 
         candidates = []

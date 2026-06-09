@@ -31,7 +31,9 @@ logger = logging.getLogger(__name__)
 
 # Пути, для которых НЕ логируем 500 в копилку. Health-checks и /metrics
 # падают редко, но если что — Sentry уже их видит, не засоряем error_log.
-_SKIP_PATHS = ("/health", "/healthz", "/metrics", "/favicon.ico")
+# /api/q/ — анонимный QR-портал: в пути секретный токен квартиры, не должен
+# попадать в error_log (security-аудит 2026-06-09).
+_SKIP_PATHS = ("/health", "/healthz", "/metrics", "/favicon.ico", "/api/q/")
 
 
 class ErrorCaptureMiddleware(BaseHTTPMiddleware):
