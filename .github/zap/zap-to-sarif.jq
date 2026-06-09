@@ -8,6 +8,15 @@
 def lvl(rc): if rc=="3" then "error" elif rc=="2" then "warning" elif rc=="1" then "note" else "none" end;
 def sev(rc): if rc=="3" then "8.0" elif rc=="2" then "5.0" elif rc=="1" then "3.0" else "0.0" end;
 def strip: (. // "") | gsub("<[^>]*>"; " ") | gsub("[[:space:]]+"; " ") | gsub("^ +| +$"; "");
+# GitHub Code Scanning отвергает URI со схемой http (ждёт относительный путь
+# файла). DAST-находки — про runtime-URL, файла нет → маппим web-URL в
+# синтетический относительный путь DAST/<host><path> (без схемы/запроса).
+# Реальный URL остаётся в тексте сообщения.
+def relpath(u): "DAST/" + ((u // "/")
+  | sub("^[a-zA-Z][a-zA-Z0-9+.-]*://"; "")
+  | sub("[?#].*$"; "")
+  | sub("/$"; "")
+  | (if . == "" then "root" else . end));
 
 {
   "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
@@ -45,7 +54,11 @@ def strip: (. // "") | gsub("<[^>]*>"; " ") | gsub("[[:space:]]+"; " ") | gsub("
                 "ruleId": ($a.pluginid // "0" | tostring),
                 "level": lvl($a.riskcode | tostring),
                 "message": { "text": (($a.alert // $a.name // "ZAP Alert") + " — " + ($a.desc | strip)) },
-                "locations": [ { "physicalLocation": { "artifactLocation": { "uri": (.uri // "/") } } } ]
+                "locations": [ { "physicalLocation": {
+                  "artifactLocation": { "uri": relpath(.uri) },
+                  "region": { "startLine": 1 }
+                } } ],
+                "properties": { "url": (.uri // "/") }
               } )
           )
         | flatten
