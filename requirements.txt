@@ -22,7 +22,7 @@ python-multipart==0.0.27   # чинит CVE-2026-40347/-42561 (starlette ≥1.0.
 passlib[bcrypt]==1.7.4
 bcrypt==4.1.2             # 4.x совместима с Python 3.14 (есть cp314-колёса)
 python-jose[cryptography]==3.5.0
-cryptography==46.0.7    # 46.0.6/46.0.7 чинят PYSEC-2026-35/-36
+cryptography==48.0.0    # 46.0.6/46.0.7 чинят PYSEC-2026-35/-36
 pyotp==2.9.0
 argon2-cffi==25.1.0
 
