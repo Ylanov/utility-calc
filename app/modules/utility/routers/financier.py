@@ -2958,10 +2958,21 @@ async def gisgmp_relay_py(authorization: Optional[str] = Header(None)):
     p = Path(__file__).resolve().parents[4] / "relay" / "gisgmp" / "relay.py"
     if not p.is_file():
         raise HTTPException(404, "relay.py не найден в образе")
+    src = p.read_text(encoding="utf-8")
+    headers = {"Cache-Control": "no-store"}
+    # Подпись кода (RCE-защита #19): релей проверит HMAC ПЕРЕД execv. Ключ
+    # RELAY_UPDATE_SECRET — отдельный, по сети не ходит. Пусто → без подписи.
+    _relay_secret = (settings.RELAY_UPDATE_SECRET or "").strip()
+    if _relay_secret:
+        import hmac as _hmac
+        import hashlib as _hashlib
+        headers["X-Relay-Signature"] = _hmac.new(
+            _relay_secret.encode(), src.encode("utf-8"), _hashlib.sha256
+        ).hexdigest()
     return Response(
-        content=p.read_text(encoding="utf-8"),
+        content=src,
         media_type="text/x-python; charset=utf-8",
-        headers={"Cache-Control": "no-store"},
+        headers=headers,
     )
 
 

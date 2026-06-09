@@ -26,6 +26,9 @@ REGISTRY = os.environ.get("REGISTRY_URL", "https://gisgmp.cgu.mchs.ru").rstrip("
 PASSPORT = os.environ.get("PASSPORT_URL", "https://passport.cgu.mchs.ru").rstrip("/")
 JKH_URL = os.environ.get("JKH_URL", "https://asy-tk.ru").rstrip("/")
 JKH_TOKEN = os.environ.get("GISGMP_SYNC_TOKEN", "")
+# Ключ проверки подписи само-обновления (RCE-защита). ОТДЕЛЬНЫЙ от JKH_TOKEN
+# (тот летит в каждом запросе → виден MITM). По сети не передаётся.
+RELAY_UPDATE_SECRET = os.environ.get("RELAY_UPDATE_SECRET", "").strip()
 USERNAME = os.environ.get("PASSPORT_USERNAME", "")
 PASSWORD = os.environ.get("PASSPORT_PASSWORD", "")
 MAX_PAGES = int(os.environ.get("MAX_PAGES", "500"))      # потолок (первый полный проход)
@@ -371,6 +374,24 @@ def _install_new_relay():
     r = requests.get(f"{JKH_URL}/api/financier/gisgmp/relay.py", headers=_auth(), timeout=60)
     r.raise_for_status()
     src = r.text
+    # RCE-защита (#19): проверяем HMAC-подпись кода ПЕРЕД исполнением. Ключ
+    # RELAY_UPDATE_SECRET по сети не ходит → MITM/подмену кода отвергаем.
+    # Если ключ задан — подпись ОБЯЗАТЕЛЬНА; нет/неверна → не ставим, остаёмся
+    # на рабочем коде. Если ключ не задан — старое поведение (предупреждаем).
+    if RELAY_UPDATE_SECRET:
+        import hmac
+        import hashlib
+        expected = hmac.new(
+            RELAY_UPDATE_SECRET.encode(), src.encode("utf-8"), hashlib.sha256
+        ).hexdigest()
+        got = (r.headers.get("X-Relay-Signature") or "").strip()
+        if not got or not hmac.compare_digest(got, expected):
+            log("[relay] ОТКАЗ обновления: подпись relay.py не совпала "
+                "(возможна подмена) — остаёмся на текущем коде")
+            return False
+    else:
+        log("[relay] ВНИМАНИЕ: RELAY_UPDATE_SECRET не задан — "
+            "обновление БЕЗ проверки подписи")
     compile(src, "relay.py", "exec")  # SyntaxError → исключение, файл не трогаем
     path = os.path.abspath(sys.argv[0]) if sys.argv and sys.argv[0] else os.path.abspath(__file__)
     with open(path, "w", encoding="utf-8") as f:

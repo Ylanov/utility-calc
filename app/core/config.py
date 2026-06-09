@@ -97,6 +97,17 @@ class Settings(BaseSettings):
     # Сгенерировать: `python -c "import secrets; print(secrets.token_urlsafe(32))"`
     SECURITY_SYNC_TOKEN: str = ""
 
+    # =========================================
+    # Подпись само-обновления релея ГИС ГМП (RCE-защита)
+    # =========================================
+    # HMAC-ключ, которым сервер подписывает relay.py при отдаче на самообновление,
+    # а релей проверяет подпись ПЕРЕД исполнением кода. ВАЖНО: это ОТДЕЛЬНЫЙ секрет
+    # (не GISGMP_SYNC_TOKEN — тот летит в каждом запросе и виден MITM). Никогда не
+    # передаётся по сети. Пусто → подпись не ставится (обратная совместимость).
+    # Тот же ключ задать в relay.env на машине релея (aleks). Security-аудит #19.
+    # Сгенерировать: `python -c "import secrets; print(secrets.token_urlsafe(32))"`
+    RELAY_UPDATE_SECRET: str = ""
+
     @property
     def DATABASE_URL_ASYNC(self) -> str:
         return (
