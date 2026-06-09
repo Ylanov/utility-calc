@@ -295,9 +295,11 @@ function handleRoute() {
     // для обратной совместимости.
     // ВАЖНО: при добавлении новой вкладки — обязательно добавить её сюда,
     // иначе clickByHash сделает fallback на dashboard.
-    const validTabs = ['dashboard', 'tools', 'housing', 'users', 'debts', 'certs', 'safety', 'security', 'audit', 'tickets', 'errors', 'llm'];
+    const validTabs = ['dashboard', 'tools', 'housing', 'users', 'debts', 'certs', 'safety', 'audit', 'tickets', 'errors', 'llm'];
     let tabToLoad = validTabs.includes(hash) ? hash : defaultTab;
     if (hash === 'readings') tabToLoad = 'dashboard';
+    // «Безопасность» объединена с «Ошибки» (2026-06-09) — старый хеш ведёт туда.
+    if (hash === 'security') tabToLoad = 'errors';
     if (hash === 'manual' || hash === 'tariffs' || hash === 'accountant') tabToLoad = 'tools';
 
     switchTab(tabToLoad);
@@ -423,6 +425,13 @@ async function initModule(tabId) {
                     loadedModules.errors = ErrorsModule;
                 }
                 loadedModules.errors.init();
+                // Вкладка объединена с «Безопасность» — инициализируем и сводку
+                // сканеров (её DOM теперь в tab_errors.html).
+                if (!loadedModules.security) {
+                    const { SecurityModule } = await import('./modules/security.js');
+                    loadedModules.security = SecurityModule;
+                }
+                loadedModules.security.init();
                 break;
             // L4: «ИИ-помощник» — настройки GigaChat-провайдера, тест,
             // статистика расходов, последние вызовы LLM.
