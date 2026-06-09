@@ -937,11 +937,19 @@ async def _prepare_client_receipt_context(
     if not reading.is_approved:
         raise HTTPException(400, "Квитанция еще не сформирована")
 
-    # Эффективный тариф жильца (Room.tariff_id → User.tariff_id → default id=1) —
-    # тот же, что использует billing при расчёте. РАНЬШЕ брался «первый активный
-    # по valid_from», что могло вернуть пустой тариф (ФИЛИ/Благодать с нулевыми
-    # ставками) → в PDF-квитанции все ставки = 0, хотя cost_* посчитаны верным
-    # тарифом при подаче (рассинхрон «расчёт есть, тарифы по нулям»).
+    tariff, prev, adjustments = await _build_receipt_context(reading, db)
+    return reading, tariff, prev, adjustments
+
+
+async def _build_receipt_context(reading: MeterReading, db: AsyncSession):
+    """Тариф / предыдущее показание / корректировки для PDF — БЕЗ проверки
+    доступа (её делает вызывающий). Переиспользуется резидентским скачиванием
+    И анонимным QR-порталом (там доступ = сам токен квартиры).
+
+    Эффективный тариф (Room.tariff_id → User.tariff_id → default id=1) — тот же,
+    что billing при расчёте. РАНЬШЕ брался «первый активный по valid_from», что
+    мог вернуть пустой тариф → в PDF все ставки 0 при верных cost_*.
+    """
     from app.modules.utility.services.tariff_cache import tariff_cache
     tariff = tariff_cache.get_effective_tariff(user=reading.user, room=reading.room)
     if tariff is None:
@@ -969,7 +977,7 @@ async def _prepare_client_receipt_context(
         )
     )).scalars().all()
 
-    return reading, tariff, prev, adjustments
+    return tariff, prev, adjustments
 
 
 @router.get("/api/client/receipts/{reading_id}")

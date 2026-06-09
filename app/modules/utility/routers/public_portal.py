@@ -11,19 +11,26 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.modules.utility.models import (
-    BillingPeriod, MeterReading, Tariff, User,
+    BillingPeriod, MeterReading, SupportTicket, Tariff, User,
 )
 from app.modules.utility.schemas import ReadingSchema
 from app.modules.utility.routers.client_readings import (
     perform_reading_submission, _is_submission_day_open,
+    _build_receipt_context, generate_receipt_pdf,
 )
 from app.modules.utility.services.qr_portal import (
     resolve_room_by_token, pick_representative_user_id,
@@ -106,6 +113,15 @@ async def portal_state(token: str, db: AsyncSession = Depends(get_db)):
             "electricity": str(src.electricity) if src.electricity is not None else "",
         }
 
+    # Квитанция доступна, если есть ЛЮБОЕ утверждённое показание комнаты
+    # (даже за прошлый период — текущий мог ещё не закрыться).
+    latest_approved = (await db.execute(
+        select(MeterReading).options(selectinload(MeterReading.period))
+        .where(MeterReading.room_id == room.id, MeterReading.is_approved.is_(True))
+        .order_by(MeterReading.period_id.desc(), MeterReading.created_at.desc())
+        .limit(1)
+    )).scalars().first()
+
     return {
         "period": period.name if period else None,
         "has_period": bool(period),
@@ -117,6 +133,8 @@ async def portal_state(token: str, db: AsyncSession = Depends(get_db)):
         "approved": bool(approved),         # утверждено → правка закрыта, квитанция готова
         "editable": bool(draft) and not bool(approved),
         "current": cur,
+        "receipt_available": bool(latest_approved),
+        "receipt_period": latest_approved.period.name if (latest_approved and latest_approved.period) else None,
     }
 
 
@@ -136,3 +154,88 @@ async def portal_submit(token: str, data: ReadingSchema, db: AsyncSession = Depe
     result = await perform_reading_submission(db, rep_id, data)
     logger.info("[QR-PORTAL] подача room=%s rep_user=%s", room.id, rep_id)
     return result
+
+
+@router.get("/{token}/receipt")
+async def portal_receipt(token: str, db: AsyncSession = Depends(get_db)):
+    """Скачать PDF квитанции квартиры (последнее утверждённое показание).
+    Доступ = сам токен (QR внутри квартиры). Проверки user_id нет — токен
+    привязан к комнате."""
+    room = await _resolve_or_404(db, token)
+    reading = (await db.execute(
+        select(MeterReading)
+        .options(
+            selectinload(MeterReading.user),
+            selectinload(MeterReading.period),
+            selectinload(MeterReading.room),
+        )
+        .where(MeterReading.room_id == room.id, MeterReading.is_approved.is_(True))
+        .order_by(MeterReading.period_id.desc(), MeterReading.created_at.desc())
+        .limit(1)
+    )).scalars().first()
+    if not reading:
+        raise HTTPException(404, "Квитанция ещё не сформирована.")
+
+    tariff, prev, adjustments = await _build_receipt_context(reading, db)
+    try:
+        pdf_path = await asyncio.to_thread(
+            generate_receipt_pdf,
+            reading=reading, user=reading.user, room=reading.room,
+            period=reading.period, tariff=tariff, prev_reading=prev,
+            adjustments=adjustments,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("[QR-PORTAL] receipt gen failed room=%s: %s", room.id, e, exc_info=True)
+        raise HTTPException(500, "Ошибка генерации квитанции. Попробуйте позже.")
+
+    if not os.path.exists(pdf_path):
+        raise HTTPException(500, "Не удалось получить файл квитанции.")
+
+    period_label = (reading.period.name or "period").replace(" ", "_")
+    filename = quote(f"Kvitanciya_{period_label}.pdf")
+    return FileResponse(
+        path=pdf_path, media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename*=utf-8''{filename}",
+            "Cache-Control": "no-store, must-revalidate",
+        },
+    )
+
+
+class ContactBody(BaseModel):
+    message: str = Field(..., min_length=5, max_length=2000)
+
+
+@router.post("/{token}/contact")
+async def portal_contact(token: str, body: ContactBody, db: AsyncSession = Depends(get_db)):
+    """Связаться с админом по коду квартиры → создаёт обращение (SupportTicket),
+    привязанное к «представителю комнаты» (админ видит, от какой квартиры)."""
+    room = await _resolve_or_404(db, token)
+    rep_id = await pick_representative_user_id(db, room.id, None)
+    if not rep_id:
+        raise HTTPException(
+            status_code=400,
+            detail="По этому коду нет зарегистрированных жильцов. Обратитесь к администратору лично.",
+        )
+    # Лёгкий анти-спам: не плодим открытые тикеты по одной квартире.
+    open_cnt = (await db.execute(
+        select(SupportTicket).where(
+            SupportTicket.user_id == rep_id,
+            SupportTicket.status.in_(["open", "in_progress"]),
+        ).limit(5)
+    )).scalars().all()
+    if len(open_cnt) >= 5:
+        raise HTTPException(429, "Слишком много открытых обращений. Дождитесь ответа администратора.")
+
+    ticket = SupportTicket(
+        user_id=rep_id,
+        subject="Обращение с QR-портала",
+        message=body.message.strip(),
+        status="open",
+    )
+    db.add(ticket)
+    await db.commit()
+    logger.info("[QR-PORTAL] обращение room=%s rep_user=%s", room.id, rep_id)
+    return {"status": "ok"}
