@@ -297,10 +297,30 @@ async def save_reading(
         current_user: User = Depends(require_resident),
         db: AsyncSession = Depends(get_db)
 ):
+    # Тонкая обёртка над общим сервисом. Вся логика подачи — в
+    # perform_reading_submission, который зовёт и анонимный QR-портал
+    # (/api/q/{token}/submit) по «представителю комнаты». Один источник
+    # правды для биллинг-критичного пути — без дублирования.
+    return await perform_reading_submission(db, current_user.id, data)
+
+
+async def perform_reading_submission(
+        db: AsyncSession,
+        user_id: int,
+        data: ReadingSchema,
+) -> dict:
+    """ЯДРО подачи показаний (биллинг-критично). Единый источник правды для
+    резидентской ручки /api/calculate И анонимного QR-портала.
+
+    user_id — чей лицевой счёт ведёт подачу. Для QR-портала это
+    «представитель комнаты» (детерминированный активный жилец). Показания
+    привязаны к КОМНАТЕ (room_id); для холостяцких квартир
+    (is_singles_apartment) подача тиражируется на всех жильцов (SINGLES_SHARED).
+    """
     hot, cold, elect = ReadingService.parse_input(data)
 
     user = (await db.execute(
-        select(User).options(selectinload(User.room)).where(User.id == current_user.id)
+        select(User).options(selectinload(User.room)).where(User.id == user_id)
     )).scalars().first()
 
     # housing_001/E2-B: жильцы домов (place_type='house') не имеют

@@ -510,11 +510,77 @@ export const HousingModule = {
                 if (action === 'edit')    this.openModal(r);
                 if (action === 'initial') this.openInitialModal(r);
                 if (action === 'meter')   this.openMeterModal(r);
+                if (action === 'qr')      this.showRoomQr(r);
             });
             this._roomHubBound = true;
         }
 
         modal.classList.add('open');
+    },
+
+    // QR-код квартиры: get-or-create токен → показать QR (через /api/qr) +
+    // ссылку + печать + перевыпуск. Токен во фрагменте URL (#...) — на сервер
+    // не уходит. Жилец сканирует и подаёт показания без логина.
+    async showRoomQr(room) {
+        let data;
+        try {
+            data = await api.post(`/rooms/${room.id}/qr`);
+        } catch (e) {
+            toast('Не удалось получить QR: ' + (e.message || e), 'error');
+            return;
+        }
+        const url = location.origin + data.portal_path;
+        const addr = formatRoomAddress(room);
+        const qrSrc = '/api/qr?text=' + encodeURIComponent(url) + '&box_size=8&border=2';
+
+        const esc = s => { const d = document.createElement('div'); d.textContent = String(s == null ? '' : s); return d.innerHTML; };
+        const ov = document.createElement('div');
+        ov.className = 'modal-overlay open';
+        ov.style.zIndex = '4000';
+        ov.innerHTML = `
+            <div class="modal-window" style="max-width:380px; text-align:center;">
+                <div class="modal-header"><h3><i class="fa-solid fa-qrcode"></i> QR-код квартиры</h3>
+                    <button class="close-btn close-icon" data-qr-close>&times;</button></div>
+                <div class="modal-body">
+                    <div style="font-weight:600; margin-bottom:10px;">${esc(addr)}</div>
+                    <img src="${qrSrc}" alt="QR" style="width:240px; height:240px; border:1px solid #e2e8f0; border-radius:8px;">
+                    <div style="font-size:11px; color:var(--text-secondary); word-break:break-all; margin:10px 0;">${esc(url)}</div>
+                    <div style="font-size:12px; color:var(--text-secondary);">Наклеить внутри квартиры у счётчика. Жилец сканирует → подаёт показания без логина.</div>
+                </div>
+                <div class="modal-footer" style="display:flex; gap:8px; justify-content:center;">
+                    <button class="action-btn primary-btn" data-qr-print><i class="fa-solid fa-print"></i> Печать</button>
+                    <button class="action-btn secondary-btn" data-qr-regen><i class="fa-solid fa-rotate"></i> Перевыпустить</button>
+                    <button class="action-btn secondary-btn" data-qr-close>Закрыть</button>
+                </div>
+            </div>`;
+        document.body.appendChild(ov);
+
+        const close = () => ov.remove();
+        ov.addEventListener('click', (e) => { if (e.target === ov || e.target.closest('[data-qr-close]')) close(); });
+
+        ov.querySelector('[data-qr-print]').addEventListener('click', () => {
+            const w = window.open('', '_blank', 'width=420,height=560');
+            if (!w) { toast('Разрешите всплывающие окна для печати', 'warning'); return; }
+            w.document.write(`<html><head><title>QR — ${esc(addr)}</title></head>
+                <body style="font-family:sans-serif; text-align:center; padding:24px;">
+                <h2 style="font-size:18px;">${esc(addr)}</h2>
+                <p style="color:#555;">Подача показаний счётчиков</p>
+                <img src="${qrSrc}" style="width:300px;height:300px;" onload="window.focus();window.print();">
+                <p style="font-size:12px;color:#777;margin-top:14px;">Отсканируйте камерой телефона</p>
+                </body></html>`);
+            w.document.close();
+        });
+
+        ov.querySelector('[data-qr-regen]').addEventListener('click', async () => {
+            if (!await showConfirm('Перевыпустить QR? Старый код перестанет работать — нужно будет распечатать и наклеить новый.', { title: 'Перевыпуск QR', confirmText: 'Перевыпустить' })) return;
+            try {
+                const nd = await api.post(`/rooms/${room.id}/qr/regenerate`);
+                close();
+                toast('QR перевыпущен', 'success');
+                this.showRoomQr(room);   // покажем новый
+                void nd;
+            } catch (e) { toast('Ошибка перевыпуска: ' + (e.message || e), 'error'); }
+        });
     },
 
     async toggleExpand(room) {

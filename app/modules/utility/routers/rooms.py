@@ -1114,6 +1114,43 @@ async def normalize_serials(
     }
 
 
+@router.post("/{room_id}/qr", dependencies=[Depends(allow_management)])
+async def get_room_qr(
+    room_id: int,
+    db: AsyncSession = Depends(get_db),
+):
+    """Получить (создать при отсутствии) QR-токен квартиры для портала подачи.
+    Возвращает токен и относительный путь /q/<token>; полный URL и картинку
+    QR строит фронт (origin + путь → /api/qr?text=...)."""
+    room = await db.get(Room, room_id)
+    if not room:
+        raise HTTPException(404, "Помещение не найдено")
+    from app.modules.utility.services.qr_portal import get_or_create_room_token
+    token = await get_or_create_room_token(db, room)
+    return {"room_id": room_id, "token": token, "portal_path": f"/qr.html#{token}"}
+
+
+@router.post("/{room_id}/qr/regenerate", dependencies=[Depends(allow_management)])
+async def regenerate_room_qr(
+    room_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Перевыпустить QR-токен квартиры (отзыв): старый QR перестаёт работать."""
+    room = await db.get(Room, room_id)
+    if not room:
+        raise HTTPException(404, "Помещение не найдено")
+    from app.modules.utility.services.qr_portal import regenerate_room_token
+    token = await regenerate_room_token(db, room)
+    from app.modules.utility.routers.admin_dashboard import write_audit_log
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action="regenerate_room_qr", entity_type="room", entity_id=room_id,
+    )
+    await db.commit()
+    return {"room_id": room_id, "token": token, "portal_path": f"/qr.html#{token}"}
+
+
 @router.post("/{room_id}/make-singles", dependencies=[Depends(allow_management)])
 async def make_room_singles(
     room_id: int,

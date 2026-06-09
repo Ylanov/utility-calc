@@ -172,6 +172,18 @@
                             Закрыть старый счётчик, установить новый с корректным серийником и начальными показаниями.
                         </div>
                     </button>
+                    <button type="button" class="room-hub-btn" data-room-action="qr"
+                            style="display:flex; flex-direction:column; align-items:flex-start; gap:6px; padding:14px; border:1px solid var(--border-color); border-radius:10px; background:var(--bg-card); cursor:pointer; text-align:left; grid-column: span 2;">
+                        <div style="display:flex; align-items:center; gap:10px; width:100%;">
+                            <div style="width:36px; height:36px; border-radius:8px; background:#eff6ff; color:#1e40af; display:flex; align-items:center; justify-content:center;">
+                                <i class="fa-solid fa-qrcode"></i>
+                            </div>
+                            <strong style="font-size:14px;">QR-код квартиры</strong>
+                        </div>
+                        <div style="font-size:11px; color:var(--text-secondary); line-height:1.4;">
+                            Печать QR для подачи показаний. Жилец сканирует → вводит показания без логина. Наклеить внутри квартиры у счётчика.
+                        </div>
+                    </button>
                 </div>
             </div>
             <div class="modal-footer">
