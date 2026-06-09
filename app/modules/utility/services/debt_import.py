@@ -27,6 +27,22 @@ _CONTRACT_NUM_AFTER_HASH_RE = re.compile(r"№\s*([^\s,;]+)", re.IGNORECASE)
 _CONTRACT_NUM_BARE_RE = re.compile(r"^договор\s+(\d[^\s]*)\s+от", re.IGNORECASE)
 
 
+def _normalize_saldo(debt: Decimal, over: Decimal) -> tuple[Decimal, Decimal]:
+    """Нормализует (долг, переплата) к НЕОТРИЦАТЕЛЬНЫМ через нетирование Дт−Кр.
+
+    Долг и переплата по своей природе >= 0. Если в строке ОСВ отрицательное
+    Дт-сальдо (битый/злонамеренный файл) или заполнены обе колонки — нетим:
+    net>0 → долг, net<0 → переплата (как в вычисляемом пути). Легитимные
+    одностолбцовые строки (X,0)/(0,Y) НЕ меняются. Security-аудит 2026-06-09 (#5).
+    """
+    net = (debt or Decimal("0")) - (over or Decimal("0"))
+    if net > 0:
+        return net, Decimal("0")
+    if net < 0:
+        return Decimal("0"), -net
+    return Decimal("0"), Decimal("0")
+
+
 def pick_saldo_pair(
     row,
     end_debit_col: int,
@@ -75,7 +91,7 @@ def pick_saldo_pair(
     if has_end_data:
         debt = clean_decimal(end_d) if end_d is not None else Decimal("0")
         over = clean_decimal(end_c) if end_c is not None else Decimal("0")
-        return debt, over
+        return _normalize_saldo(debt, over)
 
     # Bug U-fix6: проверяем, были ли обороты. Если да — вычисляем сальдо
     # математически (end = start + obor_d - obor_c).
@@ -103,7 +119,7 @@ def pick_saldo_pair(
     start_c = _read(start_credit_col)
     debt = clean_decimal(start_d) if start_d is not None else Decimal("0")
     over = clean_decimal(start_c) if start_c is not None else Decimal("0")
-    return debt, over
+    return _normalize_saldo(debt, over)
 
 
 # DEPRECATED: оставлен для обратной совместимости со старыми unit-тестами
