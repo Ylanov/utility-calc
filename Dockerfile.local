@@ -8,7 +8,7 @@
 #   - Добавлены dev-инструменты: pytest, debugpy, watchfiles
 #   - Нет multi-stage build — один слой для скорости пересборки
 
-FROM python:3.13-slim-bookworm
+FROM python:3.14-slim-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
