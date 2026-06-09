@@ -506,6 +506,139 @@ jobs:
         run: docker compose -p zapscan down -v --remove-orphans || true
 
 # ==========================================
+# ===== OWASP ZAP API AUTH SCAN (Фаза 2: за логином, НЕ блокирует) =====
+# ==========================================
+  zap-api:
+    name: OWASP ZAP API auth scan (non-blocking)
+    # Аутентифицированный DAST по OpenAPI-спеке. Для SPA crawl бесполезен (ZAP
+    # не исполняет JS) — поэтому скан идёт по openapi.json (все эндпоинты). В
+    # prod-режиме openapi выключен → поднимаем стенд в DEV-режиме (openapi on,
+    # initial_data сбрасывает admin/admin), логинимся, берём JWT и шлём его
+    # заголовком на каждый запрос. Эфемерный стенд → active-скан безопасен.
+    # Прод-ЗАГОЛОВКИ проверяет другой джоб (zap, prod-режим). non-blocking.
+    needs: build
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate throwaway .env (DEV-режим → openapi доступен)
+        run: |
+          SECRET=$(openssl rand -hex 32)
+          ENCKEY=$(python3 -c "import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())")
+          DBPW=$(openssl rand -hex 16)
+          cat > .env <<EOF
+          ENVIRONMENT=development
+          POSTGRES_USER=zapapi
+          POSTGRES_PASSWORD=${DBPW}
+          POSTGRES_DB=utility_db
+          DB_USER=zapapi
+          DB_PASS=${DBPW}
+          DB_HOST=pgbouncer
+          DB_PORT=5432
+          DB_NAME=utility_db
+          ARSENAL_DB_NAME=arsenal_db
+          SECRET_KEY=${SECRET}
+          ENCRYPTION_KEY=${ENCKEY}
+          SKIP_S3_DEFAULT_CHECK=1
+          USE_PGBOUNCER=true
+          EOF
+          echo "dev .env создан (ENVIRONMENT=development → openapi on, admin/admin)"
+
+      - name: Bring up ephemeral stack (dev)
+        run: |
+          docker compose -p zapapi pull --quiet migration_job web_jkh web_arsenal_gsm nginx pgbouncer || true
+          docker compose -p zapapi up -d db pgbouncer redis minio migration_job web_jkh web_arsenal_gsm nginx
+          echo "Ждём готовности (http://localhost:8001/health — web_jkh напрямую)…"
+          ok=false
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8001/health || true)
+            if [ "$code" = "200" ]; then ok=true; echo "[health] готов на попытке $i"; break; fi
+            sleep 5
+          done
+          if [ "$ok" != "true" ]; then
+            echo "::warning::Стенд не поднялся — дамп логов"
+            docker compose -p zapapi logs --tail 80 migration_job web_jkh || true
+            exit 1
+          fi
+
+      - name: Login (admin/admin) → JWT
+        id: jwt
+        run: |
+          # initial_data в dev-режиме сбрасывает admin на admin/admin.
+          # /api/token — OAuth2 password flow (form-encoded). web_jkh на :8001.
+          TOKEN=$(curl -s --max-time 20 -X POST http://localhost:8001/api/token \
+            -d 'username=admin&password=admin' | jq -r '.access_token // empty')
+          if [ -z "$TOKEN" ]; then
+            echo "::warning::не получили JWT — скан пойдёт неаутентифицированным"
+          else
+            echo "JWT получен (длина ${#TOKEN})"
+          fi
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
+          echo "openapi:"; curl -s -o /dev/null -w "  http %{http_code}\n" http://localhost:8001/openapi.json || true
+
+      - name: Run ZAP API scan (authenticated, по OpenAPI)
+        timeout-minutes: 15
+        env:
+          ZAP_TOKEN: ${{ steps.jwt.outputs.token }}
+        run: |
+          mkdir -p zapapi-work && chmod 777 zapapi-work
+          # ZAP-контейнер цепляем в сеть и бьём по app напрямую (web_jkh:8000),
+          # где в dev доступен /openapi.json. JWT — replacer'ом в Authorization.
+          docker run --rm --network zapapi_utility_net \
+            -v "$PWD/zapapi-work:/zap/wrk:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-api-scan.py -t http://web_jkh:8000/openapi.json -f openapi \
+              -J zapapi.json -r zapapi.html -I \
+              -z "-config replacer.full_list(0).description=auth -config replacer.full_list(0).enabled=true -config replacer.full_list(0).matchtype=REQ_HEADER -config replacer.full_list(0).matchstr=Authorization -config replacer.full_list(0).regex=false -config replacer.full_list(0).replacement=Bearer ${ZAP_TOKEN}" \
+            || true
+          echo "ZAP API scan завершён."
+
+      - name: Send ZAP-API summary to platform
+        if: always()
+        env:
+          SECURITY_SYNC_TOKEN: ${{ secrets.SECURITY_SYNC_TOKEN }}
+        run: |
+          [ -f zapapi-work/zapapi.json ] || { echo "нет отчёта — пропуск"; exit 0; }
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          jq -n --slurpfile r zapapi-work/zapapi.json --arg url "$RUN_URL" '
+            [ (($r[0].site) // [])[].alerts[]? ] as $a
+            | { tool:"zap-api", label:"OWASP ZAP (за логином, API)", run_url:$url,
+                status: (if ([$a[]|select((.riskcode|tonumber)>=2)]|length)>0 then "issues" else "clean" end),
+                counts: {
+                  high:   ([$a[]|select(.riskcode=="3")]|length),
+                  medium: ([$a[]|select(.riskcode=="2")]|length),
+                  low:    ([$a[]|select(.riskcode=="1")]|length),
+                  info:   ([$a[]|select(.riskcode=="0")]|length) },
+                top: ([ $a[] | select((.riskcode|tonumber)>=1) | {
+                  sev: (if .riskcode=="3" then "high" elif .riskcode=="2" then "medium" elif .riskcode=="1" then "low" else "info" end),
+                  title: .alert, where: ((.instances[0].uri) // "-") } ] | .[0:30]) }
+          ' | bash .github/security/post-finding.sh
+
+      - name: Upload ZAP-API report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-api-report
+          path: zapapi-work/zapapi.*
+          if-no-files-found: warn
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose -p zapapi down -v --remove-orphans || true
+
+# ==========================================
 # ===== BUILD ===============================
 # ==========================================
   build:
