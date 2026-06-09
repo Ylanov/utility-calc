@@ -196,6 +196,145 @@ jobs:
             -Dsonar.exclusions=alembic/**,alembic_arsenal/**,app/tests/**,static/generated_files/**
 
 # ==========================================
+# ===== OWASP ZAP DAST (параллельно, НЕ блокирует деплой) =====
+# ==========================================
+  zap:
+    name: OWASP ZAP DAST (non-blocking)
+    # DAST в синергии с SonarQube (SAST): Sonar смотрит КОД, ZAP атакует
+    # ЗАПУЩЕННОЕ приложение по HTTP. Поднимаем эфемерный прод-подобный стек
+    # (через nginx, ENVIRONMENT=production) и гоняем passive baseline-скан —
+    # без атакующих payload'ов (заголовки, CSP, флаги cookie, утечки, версии).
+    #
+    # По образцу sonarqube: continue-on-error + НЕ в deploy.needs → идёт
+    # параллельно, провал/находки НЕ валят деплой. needs: build — нужен свежий
+    # образ из GHCR. НИКОГДА не сканирует прод (asy-tk.ru) — только одноразовый
+    # стенд в CI с throwaway-секретами и без прод-данных.
+    needs: build
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      contents: read
+      packages: read           # pull образа из GHCR
+      security-events: write   # upload SARIF в Security tab (публичный репо → бесплатно)
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Generate throwaway .env (БЕЗ прод-секретов)
+        # ENVIRONMENT=production → тестируем РЕАЛЬНУЮ прод-постуру (strict CSP,
+        # docs off, security-заголовки). Случайные секреты, DB_PASS≠postgres,
+        # ENCRYPTION_KEY≠дефолт, SKIP_S3_DEFAULT_CHECK=1 — иначе config.py не
+        # стартует в production. .env гитигнорится — на чистом checkout нет
+        # .env.local (иначе config.py упал бы по защите prod-режима).
+        run: |
+          SECRET=$(openssl rand -hex 32)
+          ENCKEY=$(python3 -c "import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())")
+          DBPW=$(openssl rand -hex 16)
+          cat > .env <<EOF
+          ENVIRONMENT=production
+          POSTGRES_USER=zapci
+          POSTGRES_PASSWORD=${DBPW}
+          POSTGRES_DB=utility_db
+          DB_USER=zapci
+          DB_PASS=${DBPW}
+          DB_HOST=pgbouncer
+          DB_PORT=5432
+          DB_NAME=utility_db
+          ARSENAL_DB_NAME=arsenal_db
+          SECRET_KEY=${SECRET}
+          ENCRYPTION_KEY=${ENCKEY}
+          SKIP_S3_DEFAULT_CHECK=1
+          USE_PGBOUNCER=true
+          EOF
+          echo "throwaway .env создан (ENVIRONMENT=production, без прод-данных)"
+
+      - name: Bring up ephemeral stack (через nginx)
+        # Проект -p zapscan → docker-сеть zapscan_utility_net (нужна ZAP-шагу).
+        # Поднимаем только HTTP-ярус (без workers/beat/backup). migration_job
+        # отрабатывает миграции и выходит; web_jkh ждёт его completed.
+        run: |
+          docker compose -p zapscan pull --quiet migration_job web_jkh web_arsenal_gsm nginx pgbouncer || true
+          docker compose -p zapscan up -d db pgbouncer redis minio migration_job web_jkh web_arsenal_gsm nginx
+          echo "Ждём готовности приложения через nginx (http://localhost/health)…"
+          ok=false
+          for i in $(seq 1 60); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost/health || true)
+            if [ "$code" = "200" ]; then ok=true; echo "[health] готов на попытке $i"; break; fi
+            sleep 5
+          done
+          if [ "$ok" != "true" ]; then
+            echo "::warning::Приложение не поднялось — дамп статуса и логов"
+            docker compose -p zapscan ps || true
+            docker compose -p zapscan logs --tail 80 migration_job web_jkh nginx || true
+            exit 1
+          fi
+
+      - name: Run ZAP baseline scan (passive, через nginx)
+        # ZAP-контейнер цепляем в ту же docker-сеть и бьём по сервису nginx —
+        # faithful: реальные заголовки/CSP/rate-limits прод-конфига. -a alpha
+        # passive-правила, -m 5 минут на паука, -I не падать на warning
+        # (всё равно || true — отчёт нужен в любом случае).
+        run: |
+          mkdir -p zap-work && chmod 777 zap-work
+          docker run --rm --network zapscan_utility_net \
+            -v "$PWD/zap-work:/zap/wrk:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t http://nginx \
+              -J zap-report.json -r zap-report.html -w zap-report.md \
+              -a -I -m 5 || true
+          echo "ZAP-скан завершён."
+
+      - name: Publish report to job summary
+        if: always()
+        run: |
+          {
+            echo "## OWASP ZAP DAST — passive baseline (через nginx, prod-режим)"
+            echo ""
+            if [ -f zap-work/zap-report.md ]; then
+              cat zap-work/zap-report.md
+            else
+              echo "_Отчёт не сформирован — см. логи шага скана._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Convert ZAP JSON → SARIF
+        if: always()
+        run: |
+          if [ -f zap-work/zap-report.json ]; then
+            jq -f .github/zap/zap-to-sarif.jq zap-work/zap-report.json > zap.sarif \
+              || echo '{"version":"2.1.0","runs":[]}' > zap.sarif
+          else
+            echo '{"version":"2.1.0","runs":[]}' > zap.sarif
+          fi
+
+      - name: Upload SARIF to GitHub Security
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: zap.sarif
+          category: owasp-zap-dast
+
+      - name: Upload ZAP report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zap-dast-report
+          path: zap-work/zap-report.*
+          if-no-files-found: warn
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose -p zapscan down -v --remove-orphans || true
+
+# ==========================================
 # ===== BUILD ===============================
 # ==========================================
   build:
