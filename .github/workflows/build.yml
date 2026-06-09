@@ -168,9 +168,16 @@ jobs:
       - name: Validate nginx config (gate деплоя)
         # deploy.needs включает quality-check → битый nginx-конфиг НЕ доедет до
         # прода (раньше deploy force-recreate'ил nginx без проверки → риск
-        # уронить сайт). nginx -t парсит синтаксис без резолва upstream/DNS.
+        # уронить сайт).
+        # nginx -t РЕЗОЛВИТ хосты upstream-блоков на старте → в изоляции падает
+        # «host not found in upstream web_jkh». Подсовываем заглушку через
+        # --add-host (nginx читает /etc/hosts) — резолв проходит, тест парсит
+        # ВЕСЬ конфиг (синтаксис, заголовки, location). Список = upstream'ы из
+        # default.conf (jkh_backend→web_jkh, arsenal_gsm_backend→web_arsenal_gsm).
         run: |
           docker run --rm \
+            --add-host web_jkh:127.0.0.1 \
+            --add-host web_arsenal_gsm:127.0.0.1 \
             -v "$PWD/nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf:ro" \
             nginx:alpine nginx -t
 
