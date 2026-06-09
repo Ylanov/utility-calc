@@ -1,0 +1,5 @@
+# CI-хелперы ОБЯЗАНЫ быть с LF: bash на Linux-раннере спотыкается о CRLF (\r),
+# а ZAP baseline.conf парсится по табам. Точечно, без репо-вайд ренормализации.
+.github/security/*.sh text eol=lf
+.github/zap/baseline.conf text eol=lf
+.github/zap/*.jq text eol=lf

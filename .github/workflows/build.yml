@@ -14,6 +14,8 @@ on:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # Куда CI шлёт сводки сканеров (POST /api/admin/security/report). Прод-домен.
+  SECURITY_REPORT_URL: https://asy-tk.ru
   # Все JS-actions обновлены до major-версий с native Node 24 поддержкой
   # (apr 2026): checkout@v5, setup-python@v6, cache@v5, docker/*@v4-v7.
   # Раньше тут стоял `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true` как
@@ -211,6 +213,136 @@ jobs:
             -Dsonar.sources=app,static,templates
             -Dsonar.exclusions=alembic/**,alembic_arsenal/**,app/tests/**,static/generated_files/**
 
+      - name: Send SonarQube summary to platform
+        if: always()
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SECURITY_SYNC_TOKEN: ${{ secrets.SECURITY_SYNC_TOKEN }}
+        run: |
+          set +e
+          [ -z "$SONAR_HOST_URL" ] && { echo "нет SONAR_HOST_URL — пропуск"; exit 0; }
+          # Текущие метрики/гейт с сервера Sonar (последний обработанный анализ;
+          # свежий мог ещё считаться — для обзора eventual-consistency ок).
+          GATE=$(curl -sS --max-time 30 -u "$SONAR_TOKEN:" "$SONAR_HOST_URL/api/qualitygates/project_status?projectKey=utility-calc" 2>/dev/null || echo '{}')
+          MEAS=$(curl -sS --max-time 30 -u "$SONAR_TOKEN:" "$SONAR_HOST_URL/api/measures/component?component=utility-calc&metricKeys=vulnerabilities,bugs,security_hotspots,code_smells" 2>/dev/null || echo '{}')
+          echo "$MEAS" | jq --arg url "$SONAR_HOST_URL/dashboard?id=utility-calc" --argjson gate "$GATE" '
+            ((.component.measures) // []) | (reduce .[] as $m ({}; .[$m.metric] = (($m.value // "0") | tonumber))) as $v
+            | { tool:"sonarqube", label:"SonarQube (SAST)", run_url:$url,
+                status: (($gate.projectStatus.status) // "—"),
+                counts: {
+                  high: ($v.vulnerabilities // 0),
+                  bugs: ($v.bugs // 0),
+                  hotspots: ($v.security_hotspots // 0),
+                  code_smells: ($v.code_smells // 0) },
+                top: [] }
+          ' | bash .github/security/post-finding.sh
+
+# ==========================================
+# ===== BANDIT (Python SAST, параллельно, НЕ блокирует) =====
+# ==========================================
+  bandit:
+    name: Bandit Python SAST (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Run Bandit
+        run: |
+          pip install bandit
+          # Только наш код (app), тесты исключаем. JSON для парсинга сводки.
+          bandit -r app -x app/tests -f json -o bandit.json || true
+          echo "Bandit готов."
+      - name: Send Bandit summary to platform
+        if: always()
+        env:
+          SECURITY_SYNC_TOKEN: ${{ secrets.SECURITY_SYNC_TOKEN }}
+        run: |
+          [ -f bandit.json ] || { echo "нет отчёта — пропуск"; exit 0; }
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          jq -n --slurpfile r bandit.json --arg url "$RUN_URL" '
+            (($r[0].results) // []) as $res
+            | { tool:"bandit", label:"Bandit (Python SAST)", run_url:$url,
+                status: (if ([$res[]|select(.issue_severity=="HIGH")]|length)>0 then "issues" else "ok" end),
+                counts: {
+                  high:   ([$res[]|select(.issue_severity=="HIGH")]|length),
+                  medium: ([$res[]|select(.issue_severity=="MEDIUM")]|length),
+                  low:    ([$res[]|select(.issue_severity=="LOW")]|length) },
+                top: ([ $res[] | select(.issue_severity=="HIGH" or .issue_severity=="MEDIUM") | {
+                  sev: (.issue_severity|ascii_downcase), title: (.test_id+": "+.issue_text),
+                  where: (.filename+":"+(.line_number|tostring)) } ] | .[0:30]) }
+          ' | bash .github/security/post-finding.sh
+      - name: Upload Bandit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit.json
+          if-no-files-found: warn
+
+# ==========================================
+# ===== TRIVY CONFIG + HADOLINT (IaC мисконфиги, НЕ блокирует) =====
+# ==========================================
+  trivy-config:
+    name: Trivy config + Hadolint (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+      - name: Trivy config scan (Dockerfile/compose/IaC misconfig)
+        run: |
+          mkdir -p .trivy-cache
+          docker run --rm -u $(id -u):$(id -g) \
+            -e TRIVY_CACHE_DIR=/tmp/tc -e XDG_CACHE_HOME=/tmp \
+            -v "$PWD:/app" -v "$PWD/.trivy-cache:/tmp/tc" \
+            aquasec/trivy:0.50.1 config /app \
+            --format json --output /app/trivy-config.json \
+            --severity MEDIUM,HIGH,CRITICAL || true
+      - name: Hadolint (Dockerfile lint)
+        run: |
+          docker run --rm -i hadolint/hadolint hadolint --format json - < Dockerfile > hadolint.json || true
+          head -c 400 hadolint.json || true
+      - name: Send Trivy-config + Hadolint summaries
+        if: always()
+        env:
+          SECURITY_SYNC_TOKEN: ${{ secrets.SECURITY_SYNC_TOKEN }}
+        run: |
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if [ -f trivy-config.json ]; then
+            jq -n --slurpfile r trivy-config.json --arg url "$RUN_URL" '
+              [ ((($r[0].Results) // [])[].Misconfigurations? // [])[] ] as $m
+              | { tool:"trivy-config", label:"Trivy config (IaC)", run_url:$url,
+                  status: (if ([$m[]|select(.Severity=="CRITICAL" or .Severity=="HIGH")]|length)>0 then "issues" else "ok" end),
+                  counts: {
+                    critical: ([$m[]|select(.Severity=="CRITICAL")]|length),
+                    high:     ([$m[]|select(.Severity=="HIGH")]|length),
+                    medium:   ([$m[]|select(.Severity=="MEDIUM")]|length) },
+                  top: ([ $m[] | select(.Severity=="CRITICAL" or .Severity=="HIGH") | {
+                    sev:(.Severity|ascii_downcase), title:(.ID+": "+.Title),
+                    where:((.CauseMetadata.Resource) // "-") } ] | .[0:20]) }
+            ' | bash .github/security/post-finding.sh
+          fi
+          if [ -f hadolint.json ]; then
+            jq -n --slurpfile r hadolint.json --arg url "$RUN_URL" '
+              (($r[0]) // []) as $h
+              | { tool:"hadolint", label:"Hadolint (Dockerfile)", run_url:$url,
+                  status: (if ([$h[]|select(.level=="error")]|length)>0 then "issues" else "ok" end),
+                  counts: {
+                    high:   ([$h[]|select(.level=="error")]|length),
+                    medium: ([$h[]|select(.level=="warning")]|length),
+                    low:    ([$h[]|select(.level=="info" or .level=="style")]|length) },
+                  top: ([ $h[] | select(.level=="error" or .level=="warning") | {
+                    sev:(if .level=="error" then "high" else "medium" end),
+                    title:(.code+": "+.message), where:("Dockerfile:"+((.line // 0)|tostring)) } ] | .[0:20]) }
+            ' | bash .github/security/post-finding.sh
+          fi
+
 # ==========================================
 # ===== OWASP ZAP DAST (параллельно, НЕ блокирует деплой) =====
 # ==========================================
@@ -299,13 +431,36 @@ jobs:
         # (всё равно || true — отчёт нужен в любом случае).
         run: |
           mkdir -p zap-work && chmod 777 zap-work
+          # baseline.conf подавляет шум (Sec-Fetch-*/Modern-WebApp/cacheable).
+          cp .github/zap/baseline.conf zap-work/baseline.conf
           docker run --rm --network zapscan_utility_net \
             -v "$PWD/zap-work:/zap/wrk:rw" \
             ghcr.io/zaproxy/zaproxy:stable \
             zap-baseline.py -t http://nginx \
               -J zap-report.json -r zap-report.html -w zap-report.md \
-              -a -I -m 5 || true
+              -c baseline.conf -a -I -m 5 || true
           echo "ZAP-скан завершён."
+
+      - name: Send ZAP summary to platform
+        if: always()
+        env:
+          SECURITY_SYNC_TOKEN: ${{ secrets.SECURITY_SYNC_TOKEN }}
+        run: |
+          [ -f zap-work/zap-report.json ] || { echo "нет отчёта — пропуск"; exit 0; }
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          jq -n --slurpfile r zap-work/zap-report.json --arg url "$RUN_URL" '
+            [ (($r[0].site) // [])[].alerts[]? ] as $a
+            | { tool:"zap", label:"OWASP ZAP", run_url:$url,
+                status: (if ([$a[]|select((.riskcode|tonumber)>=2)]|length)>0 then "issues" else "clean" end),
+                counts: {
+                  high:   ([$a[]|select(.riskcode=="3")]|length),
+                  medium: ([$a[]|select(.riskcode=="2")]|length),
+                  low:    ([$a[]|select(.riskcode=="1")]|length),
+                  info:   ([$a[]|select(.riskcode=="0")]|length) },
+                top: ([ $a[] | select((.riskcode|tonumber)>=1) | {
+                  sev: (if .riskcode=="3" then "high" elif .riskcode=="2" then "medium" elif .riskcode=="1" then "low" else "info" end),
+                  title: .alert, where: ((.instances[0].uri) // "-") } ] | .[0:30]) }
+          ' | bash .github/security/post-finding.sh
 
       - name: Publish report to job summary
         if: always()
