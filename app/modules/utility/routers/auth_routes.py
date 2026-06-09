@@ -133,6 +133,22 @@ async def login(
     user.failed_login_count = 0
     user.locked_until = None
 
+    # Личные кабинеты жильцов могут быть отключены админом (переход на QR-портал).
+    # Сотрудники (admin/accountant/financier) входят как обычно. role='user' — нет.
+    # Дефолт (нет настройки) = включено. Только явное "0" блокирует.
+    if user.role == "user":
+        from app.modules.utility.models import SystemSetting
+        _ra = await db.get(SystemSetting, "resident_login_enabled")
+        if _ra is not None and str(_ra.value) == "0":
+            await db.commit()  # сохранить сброс счётчика выше
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Личные кабинеты жильцов отключены. Подавайте показания и "
+                    "скачивайте квитанции через QR-код в вашей квартире."
+                ),
+            )
+
     # Миграция старых паролей на argon2 (один раз за сессию).
     if not user.hashed_password.startswith("$argon2"):
         user.hashed_password = get_password_hash(form_data.password)

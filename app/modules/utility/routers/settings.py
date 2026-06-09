@@ -4,7 +4,7 @@ import logging
 from typing import Literal, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 from pydantic import BaseModel, Field
 
 from app.core.database import get_db
@@ -444,3 +444,67 @@ async def update_seasonal_settings(
         raise HTTPException(500, "Не удалось сохранить сезонные настройки")
 
     return await _load_seasonal(db)
+
+
+# =====================================================================
+# ЛИЧНЫЕ КАБИНЕТЫ ЖИЛЬЦОВ — мастер-выключатель (переход на QR-портал)
+# =====================================================================
+# Флаг SystemSetting 'resident_login_enabled' ("1"/"0", дефолт включено).
+# При выключении: жильцы (role='user') не могут войти (гейт в /api/token),
+# а активные сессии отзываются bump'ом token_version. Сотрудники не затронуты.
+# Только admin (отключение всех ЛК — серьёзное действие).
+allow_admin_only = RoleChecker(["admin"])
+
+
+class ResidentAccessBody(BaseModel):
+    enabled: bool
+
+
+@router.get("/resident-access")
+async def get_resident_access(
+    current_user: User = Depends(allow_accountant_or_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    row = await db.get(SystemSetting, "resident_login_enabled")
+    enabled = not (row is not None and str(row.value) == "0")
+    return {"enabled": enabled}
+
+
+@router.post("/resident-access")
+async def set_resident_access(
+    data: ResidentAccessBody,
+    current_user: User = Depends(allow_admin_only),
+    db: AsyncSession = Depends(get_db),
+):
+    """Вкл/выкл личные кабинеты жильцов. Выкл → жильцы не входят + все их
+    активные сессии отзываются (token_version++). Сотрудники не затронуты."""
+    row = await db.get(SystemSetting, "resident_login_enabled")
+    val = "1" if data.enabled else "0"
+    if row:
+        row.value = val
+    else:
+        db.add(SystemSetting(
+            key="resident_login_enabled", value=val,
+            description="Личные кабинеты жильцов вкл/выкл (переход на QR-портал)",
+        ))
+
+    revoked = 0
+    if not data.enabled:
+        # Отзыв активных сессий жильцов: инкремент token_version у всех role='user'.
+        res = await db.execute(
+            update(User)
+            .where(User.role == "user")
+            .values(token_version=(User.token_version + 1))
+        )
+        revoked = res.rowcount or 0
+
+    from app.modules.utility.routers.admin_dashboard import write_audit_log
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action="set_resident_access", entity_type="system",
+        details={"enabled": data.enabled, "sessions_revoked": revoked},
+    )
+    await db.commit()
+    logger.info("[resident-access] enabled=%s revoked=%d by=%s",
+                data.enabled, revoked, current_user.username)
+    return {"enabled": data.enabled, "sessions_revoked": revoked}
