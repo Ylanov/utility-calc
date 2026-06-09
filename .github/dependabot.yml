@@ -1,0 +1,32 @@
+# Dependabot — авто-PR на уязвимые/устаревшие зависимости.
+# Дополняет pip-audit (тот только алертит в CI — Dependabot чинит PR'ом).
+# Три экосистемы: Python (requirements.txt), сами GitHub Actions, базовый
+# образ Dockerfile. minor/patch группируем в один PR, чтобы не шуметь.
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "security"]
+    groups:
+      python-minor-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "ci"]
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    labels: ["dependencies", "docker"]

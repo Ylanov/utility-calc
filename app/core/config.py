@@ -87,6 +87,16 @@ class Settings(BaseSettings):
     # Сгенерировать: `python -c "import secrets; print(secrets.token_urlsafe(32))"`
     GISGMP_SYNC_TOKEN: str = ""
 
+    # =========================================
+    # Сводка безопасности — приём отчётов сканеров из CI
+    # =========================================
+    # Статический токен, которым CI (GitHub Actions) POST'ит сводки находок
+    # SonarQube/ZAP/Trivy/Bandit на POST /api/admin/security/report. Машинный
+    # канал «CI → платформа», без пользовательского JWT (как GISGMP_SYNC_TOKEN).
+    # Пусто → эндпоинт приёма отвечает 503 (вкладка просто покажет «нет данных»).
+    # Сгенерировать: `python -c "import secrets; print(secrets.token_urlsafe(32))"`
+    SECURITY_SYNC_TOKEN: str = ""
+
     @property
     def DATABASE_URL_ASYNC(self) -> str:
         return (

@@ -1,0 +1,53 @@
+<!-- static/components/admin/tab_security.html -->
+<!-- Обзорная вкладка «Безопасность»: сводки сканеров (SonarQube/ZAP/Trivy/…),
+     которые CI присылает на POST /api/admin/security/report. Канон находок —
+     в GitHub Security / SonarQube UI; тут обзор + топ-находки + ссылки. -->
+<div id="security" class="tab-content">
+    <div class="card" style="margin-bottom: 16px;">
+        <div class="card-header">
+            <h3><i class="fa-solid fa-shield-halved" style="color: var(--primary-color); margin-right: 8px;"></i> Безопасность — сводка сканеров</h3>
+            <div class="toolbar-controls">
+                <button id="btnRefreshSecurity" class="action-btn secondary-btn" style="padding:5px 10px; font-size:12px;">
+                    <i class="fa-solid fa-rotate-right"></i> Обновить
+                </button>
+            </div>
+        </div>
+        <p style="font-size: 12px; color: var(--text-secondary); margin: 0 0 4px 0; line-height: 1.5;">
+            SAST (SonarQube, Bandit), DAST (OWASP ZAP), зависимости/образ (Trivy, pip-audit),
+            секреты (Gitleaks). Данные присылает CI после каждого прогона. Полные находки —
+            в GitHub Security и SonarQube (ссылки на карточках).
+        </p>
+    </div>
+
+    <!-- Агрегат по severity -->
+    <div id="securityTotals" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 16px;">
+        <div style="padding:16px; text-align:center; color:var(--text-secondary); grid-column: 1/-1;">
+            <i class="fa-solid fa-spinner fa-spin"></i> Загрузка сводки…
+        </div>
+    </div>
+
+    <!-- Карточки по инструментам -->
+    <div id="securityTools" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-bottom: 16px;"></div>
+
+    <!-- Топ-находки (объединённая таблица) -->
+    <div class="card">
+        <div class="card-header">
+            <h3>Топ-находки</h3>
+        </div>
+        <div class="table-responsive">
+            <table class="sticky-header-table">
+                <thead>
+                    <tr>
+                        <th style="width: 110px;">Severity</th>
+                        <th style="width: 130px;">Инструмент</th>
+                        <th>Находка</th>
+                        <th style="width: 30%;">Где</th>
+                    </tr>
+                </thead>
+                <tbody id="securityFindingsBody">
+                    <tr><td colspan="4" class="text-center" style="padding: 32px; color: var(--text-secondary);">—</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
