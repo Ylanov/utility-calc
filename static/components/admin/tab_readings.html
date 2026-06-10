@@ -46,10 +46,14 @@
     <!-- ==== ДЕТАЛЬНАЯ РАБОТА ПО ИСТОЧНИКАМ (исправления, переназначение,
          разбор конфликтов, корректировки при утверждении). Единый список выше —
          для быстрого обзора и утверждения «как есть». ==== -->
-    <div style="font-size:13px; color:var(--text-secondary); margin:6px 0 10px; padding-left:4px;">
-        <i class="fa-solid fa-screwdriver-wrench" style="margin-right:6px;"></i>
-        Детальная работа по источникам (переназначение, конфликты, корректировки) — в блоках ниже.
-    </div>
+    <!-- Детальные блоки по источникам свёрнуты (Фаза 3): единый список выше —
+         основной. Разворачиваем для разбора конфликтов / переназначения /
+         корректировок при утверждении. -->
+    <details style="margin-bottom:4px;">
+        <summary style="cursor:pointer; font-size:14px; font-weight:600; color:var(--text-secondary); padding:10px 4px; user-select:none;">
+            <i class="fa-solid fa-screwdriver-wrench" style="margin-right:8px; color:var(--primary-color);"></i>
+            Детальная работа по источникам (переназначение, конфликты, корректировки)
+        </summary>
 
     <!-- ==== БУФЕР GOOGLE SHEETS (перенесён из «Операции», объединение реестров
          2026-06-09). Сопоставление импортов из таблицы → утверждение в
@@ -216,4 +220,6 @@
             </div>
         </div>
     </div>
+
+    </details>
 </div>

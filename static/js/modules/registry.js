@@ -94,10 +94,18 @@ export const RegistryModule = {
       var place = (r.dormitory ? esc(r.dormitory) + ' / ' : '') + esc(r.room || '—');
       var sum = (r.sum != null) ? Number(r.sum).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽' : '—';
       var canApprove = (r.status === 'draft' || r.status === 'pending' || r.status === 'auto_approved');
-      var act = canApprove
-        ? '<button class="action-btn success-btn" style="padding:4px 10px; font-size:12px;" data-reg-approve data-rt="' + r.row_type + '" data-id="' + r.id + '"><i class="fa-solid fa-check"></i> Утвердить</button>'
-        : (r.status === 'conflict' || r.status === 'unmatched'
-            ? '<span style="font-size:11px; color:var(--text-secondary);">разбор ниже ↓</span>' : '');
+      var act = '';
+      if (canApprove) {
+        act += '<button class="action-btn success-btn" style="padding:4px 9px; font-size:12px;" data-reg-approve data-rt="' + r.row_type + '" data-id="' + r.id + '" title="Утвердить как есть"><i class="fa-solid fa-check"></i></button> ';
+      }
+      // Отклонить — только для строк буфера GSheets (плохой импорт). Боевые
+      // черновики не удаляем — это реальные подачи (разбор в блоке ниже).
+      if (r.row_type === 'gsheets' && r.status !== 'approved' && r.status !== 'rejected') {
+        act += '<button class="action-btn" style="padding:4px 9px; font-size:12px; background:#fee2e2; color:#991b1b; border:1px solid #fecaca;" data-reg-reject data-id="' + r.id + '" title="Отклонить строку импорта"><i class="fa-solid fa-xmark"></i></button> ';
+      }
+      if (!canApprove && (r.status === 'conflict' || r.status === 'unmatched')) {
+        act += '<span style="font-size:11px; color:var(--text-secondary);">разбор ↓</span>';
+      }
       return '<tr>' +
         '<td>' + badge(SRC[r.source], r.source) + '</td>' +
         '<td style="font-size:12px; color:var(--text-secondary);">' + esc(when) + '</td>' +
@@ -113,6 +121,22 @@ export const RegistryModule = {
     this.dom.body.querySelectorAll('[data-reg-approve]').forEach((btn) => {
       btn.addEventListener('click', () => this.approve(btn.dataset.rt, btn.dataset.id, btn));
     });
+    this.dom.body.querySelectorAll('[data-reg-reject]').forEach((btn) => {
+      btn.addEventListener('click', () => this.reject(btn.dataset.id, btn));
+    });
+  },
+
+  async reject(id, btn) {
+    if (!await showConfirm('Отклонить эту строку импорта Google Sheets? Показание не будет создано.', { title: 'Отклонить', confirmText: 'Отклонить' })) return;
+    btn.disabled = true;
+    try {
+      await api.post('/admin/gsheets/rows/' + id + '/reject', {});
+      toast('Строка отклонена', 'success');
+      this.load();
+    } catch (e) {
+      btn.disabled = false;
+      toast('Не удалось отклонить: ' + (e.message || e), 'error');
+    }
   },
 
   async approve(rowType, id, btn) {
