@@ -295,9 +295,8 @@ function handleRoute() {
     // для обратной совместимости.
     // ВАЖНО: при добавлении новой вкладки — обязательно добавить её сюда,
     // иначе clickByHash сделает fallback на dashboard.
-    const validTabs = ['dashboard', 'tools', 'housing', 'users', 'debts', 'certs', 'safety', 'audit', 'tickets', 'errors', 'llm'];
+    const validTabs = ['dashboard', 'readings', 'tools', 'housing', 'users', 'debts', 'certs', 'safety', 'audit', 'tickets', 'errors', 'llm'];
     let tabToLoad = validTabs.includes(hash) ? hash : defaultTab;
-    if (hash === 'readings') tabToLoad = 'dashboard';
     // «Безопасность» объединена с «Ошибки» (2026-06-09) — старый хеш ведёт туда.
     if (hash === 'security') tabToLoad = 'errors';
     if (hash === 'manual' || hash === 'tariffs' || hash === 'accountant') tabToLoad = 'tools';
@@ -382,11 +381,15 @@ async function initModule(tabId) {
                     const { DashboardModule } = await import('./modules/dashboard.js');
                     loadedModules.dashboard = DashboardModule;
                 }
+                loadedModules.dashboard.init();
+                break;
+            // «Реестр показаний» вынесен из дашборда в отдельную вкладку
+            // (2026-06-09): все показания MeterReading из всех источников.
+            case 'readings':
                 if (!loadedModules.readings) {
                     const { ReadingsModule } = await import('./modules/readings.js');
                     loadedModules.readings = ReadingsModule;
                 }
-                loadedModules.dashboard.init();
                 loadedModules.readings.init();
                 break;
             case 'housing':
@@ -607,15 +610,15 @@ function refreshModuleData(tabId) {
     if (!mod || !mod.isInitialized) return;
 
     switch (tabId) {
-        // При возврате на дашборд — обновляем KPI, виджет GSheets и реестр.
-        case 'dashboard': {
+        // При возврате на дашборд — обновляем KPI и виджет GSheets.
+        case 'dashboard':
             if (typeof mod.loadKPI === 'function') mod.loadKPI();
             if (typeof mod.loadGsheetsWidget === 'function') mod.loadGsheetsWidget();
-            // Реестр показаний встроен в дашборд, обновим и его таблицу.
-            const readingsMod = loadedModules.readings;
-            if (readingsMod?.table) readingsMod.table.refresh();
             break;
-        }
+        // «Реестр показаний» — отдельная вкладка (вынесен из дашборда).
+        case 'readings':
+            if (mod.table) mod.table.refresh();
+            break;
         case 'housing':
         case 'users':
             if (mod.table) mod.table.refresh();
