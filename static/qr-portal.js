@@ -157,14 +157,31 @@
     return { value: b + '.' + r };
   }
 
+  // Какие счётчики спрашивать у этой квартиры (state.meters). Дом «только
+  // вода» → электричество не рендерим вовсе (его вносят электрики через
+  // админку). Старый сервер без поля meters → все три (обратная совместимость).
+  function metersOf(state) {
+    var m = (state && state.meters) || {};
+    return {
+      hot: m.hot !== false,
+      cold: m.cold !== false,
+      el: m.el !== false,
+    };
+  }
+
   // Блок «Ваши последние показания» + пометка про норматив за пропуски (#2).
   function lastActualBlock(state) {
     var out = '';
     var la = state.last_actual;
+    var m = metersOf(state);
     if (la) {
+      var vals = [];
+      if (m.hot) vals.push('🔥 ГВС ' + esc(la.hot_water));
+      if (m.cold) vals.push('💧 ХВС ' + esc(la.cold_water));
+      if (m.el) vals.push('⚡ ' + esc(la.electricity));
       out += '<div style="background:#f0f9ff; border-left:3px solid var(--pri); border-radius:8px; padding:10px 12px; margin:10px 0; font-size:13px; line-height:1.6;">' +
         '<b>Ваши последние показания</b>' + (la.period ? ' (за ' + esc(la.period) + ')' : '') + ':<br>' +
-        '🔥 ГВС ' + esc(la.hot_water) + ' &nbsp; 💧 ХВС ' + esc(la.cold_water) + ' &nbsp; ⚡ ' + esc(la.electricity) +
+        vals.join(' &nbsp; ') +
         '<div style="color:var(--muted); margin-top:4px;">Новые показания не могут быть меньше этих.</div>' +
         '</div>';
     }
@@ -182,6 +199,7 @@
   function showForm(state) {
     var cur = state.current || {};
     var editing = state.editable;
+    var m = metersOf(state);
     app.className = '';
     app.innerHTML = '' +
       '<div class="card">' +
@@ -190,23 +208,34 @@
       (editing ? banner('b-warn', 'Показания за этот период уже переданы. Можно исправить — измените и отправьте снова.') : '') +
       lastActualBlock(state) +
       '  <div class="hint">Вводите как на счётчике: крупные (чёрные) цифры до запятой, мелкие (красные, 3 шт.) — после. Красные пишите, даже если их «не считают».</div>' +
-      meterBlock('hot', 'Горячая вода (ГВС)', '🔥', cur.hot_water) +
-      meterBlock('cold', 'Холодная вода (ХВС)', '💧', cur.cold_water) +
-      meterBlock('el', 'Электричество', '⚡', cur.electricity) +
+      (m.hot ? meterBlock('hot', 'Горячая вода (ГВС)', '🔥', cur.hot_water) : '') +
+      (m.cold ? meterBlock('cold', 'Холодная вода (ХВС)', '💧', cur.cold_water) : '') +
+      (m.el ? meterBlock('el', 'Электричество', '⚡', cur.electricity) : '') +
       '  <button class="primary" id="send">' + (editing ? 'Исправить показания' : 'Передать показания') + '</button>' +
       '  <div id="msg"></div>' +
       '</div>' + footer(state);
 
     document.getElementById('send').addEventListener('click', function () {
       var btn = this, msg = document.getElementById('msg');
-      var hot = readMeter('hot'), cold = readMeter('cold'), el = readMeter('el');
       var errs = [];
       var FMT = 'введите ВСЕ цифры: 5 чёрных и 3 красные';
-      if (hot.empty || hot.error) errs.push('Горячая вода — ' + FMT + '.');
-      if (cold.empty || cold.error) errs.push('Холодная вода — ' + FMT + '.');
-      if (el.empty || el.error) errs.push('Электричество — ' + FMT + '.');
+      var payload = {};
+      if (m.hot) {
+        var hot = readMeter('hot');
+        if (hot.empty || hot.error) errs.push('Горячая вода — ' + FMT + '.');
+        else payload.hot_water = hot.value;
+      }
+      if (m.cold) {
+        var cold = readMeter('cold');
+        if (cold.empty || cold.error) errs.push('Холодная вода — ' + FMT + '.');
+        else payload.cold_water = cold.value;
+      }
+      if (m.el) {
+        var el = readMeter('el');
+        if (el.empty || el.error) errs.push('Электричество — ' + FMT + '.');
+        else payload.electricity = el.value;
+      }
       if (errs.length) { msg.innerHTML = banner('b-err', errs.join('<br>')); return; }
-      var payload = { hot_water: hot.value, cold_water: cold.value, electricity: el.value };
       btn.disabled = true; btn.textContent = 'Отправляем…';
       api('/submit', {
         method: 'POST',

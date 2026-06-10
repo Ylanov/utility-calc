@@ -420,9 +420,14 @@ class AdjustmentResponse(BaseModel):
 # ======================================================
 
 class ReadingSchema(BaseModel):
-    hot_water: Decimal = Field(..., ge=0, le=99999, decimal_places=3)
-    cold_water: Decimal = Field(..., ge=0, le=99999, decimal_places=3)
-    electricity: Decimal = Field(..., ge=0, le=999999, decimal_places=3)
+    # Поля опциональны на уровне схемы: у комнаты может не быть части
+    # счётчиков (Room.has_*_meter — например дом «только вода», электричество
+    # вносят электрики через админку). ОБЯЗАТЕЛЬНОСТЬ проверяет
+    # perform_reading_submission по флагам комнаты: отсутствующий счётчик
+    # не требуется (значение подставляется = prev), требуемый без значения → 400.
+    hot_water: Optional[Decimal] = Field(None, ge=0, le=99999, decimal_places=3)
+    cold_water: Optional[Decimal] = Field(None, ge=0, le=99999, decimal_places=3)
+    electricity: Optional[Decimal] = Field(None, ge=0, le=999999, decimal_places=3)
 
 
 class ReadingStateResponse(BaseModel):

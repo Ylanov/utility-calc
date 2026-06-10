@@ -74,12 +74,13 @@ class ReadingService:
 
     @staticmethod
     def parse_input(data: ReadingSchema):
+        # None пропускаем как есть: поле может отсутствовать у комнаты без
+        # этого счётчика (has_*_meter=False) — обязательность проверяет
+        # perform_reading_submission по флагам комнаты.
+        def _cv(v):
+            return None if v is None else Decimal(str(v))
         try:
-            return (
-                Decimal(str(data.hot_water)),
-                Decimal(str(data.cold_water)),
-                Decimal(str(data.electricity))
-            )
+            return _cv(data.hot_water), _cv(data.cold_water), _cv(data.electricity)
         except Exception:
             raise HTTPException(400, "Некорректный формат данных")
 
@@ -368,9 +369,26 @@ async def perform_reading_submission(
     if not user or not user.room_id:
         raise HTTPException(status_code=400, detail="Вы не привязаны к помещению для подачи показаний.")
 
+    # Какие счётчики у комнаты есть физически (приоритет комнаты, fallback
+    # на жильца — та же логика, что _has_meter в calculate_utilities).
+    # Отсутствующий счётчик НЕ требуем и НЕ валидируем: его значение ниже
+    # подставится = prev (расход 0). Биллинг при has_*=False всё равно
+    # считает объём по нормативу тарифа, а реальные цифры вносит
+    # электрик/админ вручную через админку. Кейс: дом «только вода» —
+    # QR-портал спрашивает 2 счётчика, электричество не требует.
+    def _need_meter(attr: str) -> bool:
+        rv = getattr(user.room, attr, None) if user.room else None
+        return bool(rv) if rv is not None else bool(getattr(user, attr, True))
+    need = {
+        "hot_water": _need_meter("has_hw_meter"),
+        "cold_water": _need_meter("has_cw_meter"),
+        "electricity": _need_meter("has_el_meter"),
+    }
+
     # Проверка raw-формата (если включён 5_3_strict — жёсткий 5+3).
     # Делается ДО parse_input, чтобы вернуть жильцу конкретную ошибку
-    # «не 8 цифр» вместо «некорректный формат данных».
+    # «не 8 цифр» вместо «некорректный формат данных». Только для
+    # счётчиков, которые у комнаты есть.
     from app.modules.utility.models import SystemSetting
     from app.modules.utility.services.reading_validators import validate_raw_format
     fmt_row = await db.get(SystemSetting, "meter_format_hint")
@@ -381,6 +399,8 @@ async def perform_reading_submission(
             ("cold_water", data.cold_water),
             ("electricity", data.electricity),
         ]:
+            if not need[name]:
+                continue
             # raw_input приходит как Pydantic-validated number или строка;
             # приводим к str для проверки на pattern.
             err = validate_raw_format(str(raw) if raw is not None else None, fmt)
@@ -505,6 +525,19 @@ async def perform_reading_submission(
     p_hot = prev_latest.hot_water if prev_latest else zero
     p_cold = prev_latest.cold_water if prev_latest else zero
     p_elect = prev_latest.electricity if prev_latest else zero
+
+    # Отсутствующие у комнаты счётчики: значение = prev (дельта 0, монотонность
+    # не ломается; объём биллинг и так берёт по нормативу). Требуемые без
+    # значения — понятная 400 (а не TypeError в расчёте).
+    if not need["hot_water"]:
+        hot = p_hot or zero
+    if not need["cold_water"]:
+        cold = p_cold or zero
+    if not need["electricity"]:
+        elect = p_elect or zero
+    for _name, _val in [("hot_water", hot), ("cold_water", cold), ("electricity", elect)]:
+        if need[_name] and _val is None:
+            raise HTTPException(400, f"{_name}: значение не задано")
 
     # synth-baseline: meaningful prev отсутствует, но какая-то AUTO_GENERATED
     # запись была. Тогда дельту от 0 проверяем строже, чтобы не пропустить

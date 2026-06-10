@@ -99,6 +99,7 @@ async def portal_state(
     # Нужно ли вообще подавать счётчики (дом / койко-место / тариф без счётчиков)?
     metered = not _is_house(room)
     rep = None
+    charge = {"hot": True, "cold": True, "el": True}
     if rep_id:
         rep = (await db.execute(select(User).where(User.id == rep_id))).scalars().first()
         if rep and getattr(rep, "billing_mode", "by_meter") == "per_capita":
@@ -106,12 +107,31 @@ async def portal_state(
         if metered and rep:
             from app.modules.utility.services.tariff_cache import tariff_cache
             t = tariff_cache.get_effective_tariff(user=rep, room=room)
-            if t and not any([
-                bool(getattr(t, "charge_hot_water", True)),
-                bool(getattr(t, "charge_cold_water", True)),
-                bool(getattr(t, "charge_electricity", True)),
-            ]):
-                metered = False
+            if t:
+                charge = {
+                    "hot": bool(getattr(t, "charge_hot_water", True)),
+                    "cold": bool(getattr(t, "charge_cold_water", True)),
+                    "el": bool(getattr(t, "charge_electricity", True)),
+                }
+                if not any(charge.values()):
+                    metered = False
+
+    # Какие счётчики СПРАШИВАТЬ на портале: есть физически у комнаты
+    # (Room.has_*_meter, приоритет комнаты — fallback на жильца, как в
+    # биллинге) И начисляется тарифом. Дом «только вода» → электричество
+    # не спрашиваем (его вносят электрики вручную через админку).
+    def _has(attr: str) -> bool:
+        rv = getattr(room, attr, None)
+        if rv is not None:
+            return bool(rv)
+        return bool(getattr(rep, attr, True)) if rep else True
+    meters = {
+        "hot": bool(metered and charge["hot"] and _has("has_hw_meter")),
+        "cold": bool(metered and charge["cold"] and _has("has_cw_meter")),
+        "el": bool(metered and charge["el"] and _has("has_el_meter")),
+    }
+    if metered and not any(meters.values()):
+        metered = False
 
     day_open, today_day, start_day, end_day = await _is_submission_day_open(db)
 
@@ -180,6 +200,7 @@ async def portal_state(
         "period": period.name if period else None,
         "has_period": bool(period),
         "metered": metered,
+        "meters": meters,            # какие счётчики спрашивать (hot/cold/el)
         "no_residents": rep_id is None,
         "window_open": day_open,
         "window": {"start": start_day, "end": end_day, "today": today_day},
