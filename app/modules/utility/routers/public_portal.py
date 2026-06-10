@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.modules.utility.models import (
-    BillingPeriod, MeterReading, SupportTicket, Tariff, User,
+    BillingPeriod, MeterReading, SupportTicket, User,
 )
 from app.modules.utility.schemas import ReadingSchema
 from app.modules.utility.routers.client_readings import (

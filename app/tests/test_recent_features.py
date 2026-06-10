@@ -3,17 +3,20 @@
 # Юнит-тесты для нового/критичного кода (июнь 2026): QR-портал, объединённый
 # реестр, security-фиксы. Чистые функции — без БД, быстро. Защита от регрессий.
 
+import re
 from decimal import Decimal
 
 import pytest
+
+from app.modules.utility.routers.admin_registry import _reading_source
+from app.modules.utility.services.debt_import import _normalize_saldo
+from app.modules.utility.services.qr_portal import generate_qr_token
+from app.modules.utility.services.search_utils import like_contains
 
 
 # ──────────────────────────────────────────────────────────────
 # like_contains — экранирование LIKE-инъекции (security-аудит #6/7/14-17)
 # ──────────────────────────────────────────────────────────────
-from app.modules.utility.services.search_utils import like_contains
-
-
 @pytest.mark.parametrize("inp, expected", [
     ("иванов", "%иванов%"),
     ("a%b", "%ab%"),        # % из ввода удаляется (не метасимвол)
@@ -37,9 +40,6 @@ def test_like_contains_no_wildcards_remain():
 # ──────────────────────────────────────────────────────────────
 # _normalize_saldo — защита от отрицательного долга в импорте ОСВ (#5)
 # ──────────────────────────────────────────────────────────────
-from app.modules.utility.services.debt_import import _normalize_saldo
-
-
 def test_normalize_saldo_single_column_unchanged():
     # Легитимные одностолбцовые строки НЕ меняются.
     assert _normalize_saldo(Decimal("100.00"), Decimal("0")) == (Decimal("100.00"), Decimal("0"))
@@ -74,9 +74,6 @@ def test_normalize_saldo_never_negative():
 # ──────────────────────────────────────────────────────────────
 # _reading_source — источник боевого показания по anomaly_flags (реестр)
 # ──────────────────────────────────────────────────────────────
-from app.modules.utility.routers.admin_registry import _reading_source
-
-
 @pytest.mark.parametrize("flags, src", [
     ("GSHEETS_AUTO", "gsheets"),
     ("GSHEETS_AUTO_BASELINE", "gsheets"),
@@ -99,9 +96,6 @@ def test_reading_source(flags, src):
 # ──────────────────────────────────────────────────────────────
 # generate_qr_token — неугадываемый токен квартиры (QR-портал)
 # ──────────────────────────────────────────────────────────────
-from app.modules.utility.services.qr_portal import generate_qr_token
-
-
 def test_qr_token_strong_and_unique():
     a = generate_qr_token()
     b = generate_qr_token()
@@ -109,5 +103,4 @@ def test_qr_token_strong_and_unique():
     assert len(a) >= 40                      # 32 байта → ~43 url-safe символа
     assert a != b                            # каждый вызов уникален
     # url-safe алфавит (без +, /, =)
-    import re
     assert re.fullmatch(r"[A-Za-z0-9_\-]+", a)
