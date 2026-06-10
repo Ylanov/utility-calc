@@ -5,6 +5,7 @@
 
 import { api } from '../core/api.js';
 import { toast, showConfirm } from '../core/dom.js';
+import { GSheetsModule } from './gsheets.js';
 
 function esc(s) {
   if (s === null || s === undefined) return '';
@@ -98,13 +99,16 @@ export const RegistryModule = {
       if (canApprove) {
         act += '<button class="action-btn success-btn" style="padding:4px 9px; font-size:12px;" data-reg-approve data-rt="' + r.row_type + '" data-id="' + r.id + '" title="Утвердить как есть"><i class="fa-solid fa-check"></i></button> ';
       }
-      // Отклонить — только для строк буфера GSheets (плохой импорт). Боевые
-      // черновики не удаляем — это реальные подачи (разбор в блоке ниже).
+      // Буфер GSheets: переназначить жильца (inline, делегирует проверенной
+      // модалке GSheetsModule.reassignPrompt) + отклонить плохой импорт.
+      // Боевые черновики не удаляем — это реальные подачи (корректировки —
+      // в свёрнутом детальном блоке ниже).
       if (r.row_type === 'gsheets' && r.status !== 'approved' && r.status !== 'rejected') {
+        act += '<button class="action-btn secondary-btn" style="padding:4px 9px; font-size:12px;" data-reg-reassign data-id="' + r.id + '" title="Переназначить жильца"><i class="fa-solid fa-user-pen"></i></button> ';
         act += '<button class="action-btn" style="padding:4px 9px; font-size:12px; background:#fee2e2; color:#991b1b; border:1px solid #fecaca;" data-reg-reject data-id="' + r.id + '" title="Отклонить строку импорта"><i class="fa-solid fa-xmark"></i></button> ';
       }
-      if (!canApprove && (r.status === 'conflict' || r.status === 'unmatched')) {
-        act += '<span style="font-size:11px; color:var(--text-secondary);">разбор ↓</span>';
+      if (r.row_type === 'reading' && r.status === 'draft') {
+        act += '<span style="font-size:11px; color:var(--text-secondary);" title="Корректировки при утверждении — в детальном блоке ниже">корр. ↓</span>';
       }
       return '<tr>' +
         '<td>' + badge(SRC[r.source], r.source) + '</td>' +
@@ -124,6 +128,21 @@ export const RegistryModule = {
     this.dom.body.querySelectorAll('[data-reg-reject]').forEach((btn) => {
       btn.addEventListener('click', () => this.reject(btn.dataset.id, btn));
     });
+    this.dom.body.querySelectorAll('[data-reg-reassign]').forEach((btn) => {
+      btn.addEventListener('click', () => this.reassign(btn.dataset.id));
+    });
+  },
+
+  async reassign(id) {
+    // Делегируем проверенной модалке буфера (она сама ищет строку в своём
+    // state, грузит кандидатов, шлёт /reassign и помнит алиас).
+    if (!GSheetsModule || typeof GSheetsModule.reassignPrompt !== 'function') {
+      toast('Переназначение — в детальном блоке ниже', 'warning');
+      return;
+    }
+    try { await GSheetsModule.reassignPrompt(Number(id)); }
+    catch (e) { /* модалка показывает свою ошибку */ }
+    this.load();   // обновить единый список после переназначения
   },
 
   async reject(id, btn) {
