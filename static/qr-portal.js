@@ -36,10 +36,32 @@
     }
     parts.push('<button class="ghost" data-act="contact-toggle">✉️ Связаться с администратором</button>');
     parts.push('<div data-contact-box style="display:none; margin-top:10px;">' +
+      '<div data-contact-history style="margin-bottom:10px;"></div>' +
       '<textarea data-contact-msg rows="4" style="width:100%; box-sizing:border-box; border:2px solid #cbd5e1; border-radius:10px; padding:10px; font-size:15px;" placeholder="Опишите вопрос администратору…"></textarea>' +
       '<button class="primary" data-act="contact-send" style="margin-top:8px;">Отправить</button>' +
       '<div data-contact-out></div></div>');
     return '<div class="card">' + parts.join('') + '</div>';
+  }
+
+  // Переписка с админом (вопрос жильца + ответ админа). Авто-удаляется через 5 дней.
+  function renderMessages(list) {
+    var box = app.querySelector('[data-contact-history]');
+    if (!box) return;
+    if (!list || !list.length) {
+      box.innerHTML = '<div style="font-size:12px; color:var(--muted);">Здесь появится ваша переписка с администратором (хранится 5 дней).</div>';
+      return;
+    }
+    box.innerHTML = list.slice().reverse().map(function (m) {
+      var you = '<div style="background:#eef2ff; border-radius:8px; padding:8px 10px; margin-bottom:6px; font-size:13px;"><b>Вы:</b> ' + esc(m.message) + '</div>';
+      var adm = m.admin_response
+        ? '<div style="background:#dcfce7; border-radius:8px; padding:8px 10px; margin:0 0 12px 12px; font-size:13px;"><b>Администратор:</b> ' + esc(m.admin_response) + '</div>'
+        : '<div style="font-size:11px; color:var(--muted); margin:0 0 12px 12px;">⏳ Ожидает ответа администратора…</div>';
+      return you + adm;
+    }).join('');
+  }
+
+  function loadMessages() {
+    api('/messages').then(function (r) { renderMessages(r.messages || []); }).catch(function () {});
   }
 
   var footerWired = false;
@@ -48,7 +70,11 @@
     app.addEventListener('click', function (e) {
       if (e.target.closest('[data-act="contact-toggle"]')) {
         var box = app.querySelector('[data-contact-box]');
-        if (box) box.style.display = (box.style.display === 'none' ? 'block' : 'none');
+        if (box) {
+          var opening = (box.style.display === 'none');
+          box.style.display = opening ? 'block' : 'none';
+          if (opening) loadMessages();   // подтянуть переписку + ответы админа
+        }
         return;
       }
       var send = e.target.closest('[data-act="contact-send"]');
@@ -60,9 +86,10 @@
       send.disabled = true; send.textContent = 'Отправляем…';
       api('/contact', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: msg }) })
         .then(function () {
-          if (out) out.innerHTML = banner('b-ok', 'Обращение отправлено — администратор увидит его в системе.');
-          if (ta) { ta.value = ''; ta.disabled = true; }
-          send.style.display = 'none';
+          if (out) out.innerHTML = banner('b-ok', 'Отправлено. Ответ администратора появится здесь.');
+          if (ta) ta.value = '';
+          send.disabled = false; send.textContent = 'Отправить';
+          loadMessages();   // показать только что отправленное + будущие ответы
         })
         .catch(function (e2) {
           send.disabled = false; send.textContent = 'Отправить';

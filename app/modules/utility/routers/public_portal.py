@@ -19,7 +19,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, desc
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,6 +38,10 @@ from app.modules.utility.services.qr_portal import (
 
 router = APIRouter(prefix="/api/q", tags=["QR Portal (public)"])
 logger = logging.getLogger(__name__)
+
+# Маркер обращений с QR-портала (по нему показываем ответы и авто-удаляем
+# переписку через 5 дней — cleanup_qr_tickets_task).
+QR_TICKET_SUBJECT = "Обращение с QR-портала"
 
 
 async def _resolve_or_404(db: AsyncSession, token: str):
@@ -257,7 +261,7 @@ async def portal_contact(token: str, body: ContactBody, db: AsyncSession = Depen
 
     ticket = SupportTicket(
         user_id=rep_id,
-        subject="Обращение с QR-портала",
+        subject=QR_TICKET_SUBJECT,
         message=body.message.strip(),
         status="open",
     )
@@ -265,3 +269,30 @@ async def portal_contact(token: str, body: ContactBody, db: AsyncSession = Depen
     await db.commit()
     logger.info("[QR-PORTAL] обращение room=%s rep_user=%s", room.id, rep_id)
     return {"status": "ok"}
+
+
+@router.get("/{token}/messages")
+async def portal_messages(token: str, db: AsyncSession = Depends(get_db)):
+    """Переписка квартиры с админом по QR (последние 20). Включает ответ админа,
+    чтобы жилец видел его на портале. Авто-удаляются через 5 дней."""
+    room = await _resolve_or_404(db, token)
+    rep_id = await pick_representative_user_id(db, room.id, None)
+    if not rep_id:
+        return {"messages": []}
+    rows = (await db.execute(
+        select(SupportTicket)
+        .where(
+            SupportTicket.user_id == rep_id,
+            SupportTicket.subject == QR_TICKET_SUBJECT,
+        )
+        .order_by(desc(SupportTicket.created_at))
+        .limit(20)
+    )).scalars().all()
+    return {"messages": [{
+        "id": t.id,
+        "message": t.message,
+        "status": t.status,
+        "admin_response": t.admin_response,
+        "created_at": t.created_at.isoformat() if t.created_at else None,
+        "responded_at": t.responded_at.isoformat() if t.responded_at else None,
+    } for t in rows]}

@@ -126,6 +126,12 @@ celery.conf.beat_schedule = {
         "task": "cleanup_debt_archives_task",
         "schedule": crontab(minute=15, hour=3, day_of_week=0),
     },
+    # Privacy: переписки с админом, начатые с QR-портала, живут 5 дней и
+    # авто-удаляются (cleanup_qr_tickets_task). Ежедневно в 03:50.
+    "cleanup-qr-tickets-daily": {
+        "task": "cleanup_qr_tickets_task",
+        "schedule": crontab(minute=50, hour=3),
+    },
     # Ежедневное напоминание жильцам о подаче показаний — push на за 3, 1
     # и 0 дней до конца окна `submission_end_day`. В прочие дни задача
     # сама выходит без рассылки. 10:00 МСК = время когда люди уже

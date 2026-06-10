@@ -1727,3 +1727,22 @@ def charge_houses_rent_task(period_id: int | None = None):
     except Exception as e:
         logger.exception("[charge_houses_rent_task] crashed")
         return {"crashed": True, "error": str(e)}
+
+
+@celery.task(name="cleanup_qr_tickets_task")
+def cleanup_qr_tickets_task(retention_days: int = 5):
+    """Авто-удаление переписок с админом, начатых с QR-портала, старше N дней
+    (по умолчанию 5). Privacy: эти данные долго не храним. Раз в сутки (beat).
+    Маркер — subject «Обращение с QR-портала» (public_portal.QR_TICKET_SUBJECT)."""
+    from datetime import datetime, timezone, timedelta
+    from app.modules.utility.models import SupportTicket
+    QR_SUBJECT = "Обращение с QR-портала"
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=retention_days)
+    with sync_db_session() as db:
+        deleted = db.query(SupportTicket).filter(
+            SupportTicket.subject == QR_SUBJECT,
+            SupportTicket.created_at < cutoff,
+        ).delete(synchronize_session=False)
+        db.commit()
+    logger.info("[cleanup_qr_tickets] удалено %d QR-переписок старше %d дн.", deleted, retention_days)
+    return {"deleted": deleted, "retention_days": retention_days}
