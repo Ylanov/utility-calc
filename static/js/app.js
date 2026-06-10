@@ -391,6 +391,14 @@ async function initModule(tabId) {
                     loadedModules.readings = ReadingsModule;
                 }
                 loadedModules.readings.init();
+                // Объединение реестров (2026-06-09): буфер Google Sheets теперь
+                // в этом же табе — инициализируем и его модуль (его DOM в
+                // tab_readings.html). gsheets.js самодостаточен.
+                if (!loadedModules.gsheets) {
+                    const { GSheetsModule } = await import('./modules/gsheets.js');
+                    loadedModules.gsheets = GSheetsModule;
+                }
+                loadedModules.gsheets.init();
                 break;
             case 'housing':
                 if (!loadedModules.housing) {
@@ -616,8 +624,12 @@ function refreshModuleData(tabId) {
             if (typeof mod.loadGsheetsWidget === 'function') mod.loadGsheetsWidget();
             break;
         // «Реестр показаний» — отдельная вкладка (вынесен из дашборда).
+        // Объединена с буфером Google Sheets — обновляем и его.
         case 'readings':
             if (mod.table) mod.table.refresh();
+            if (loadedModules.gsheets && typeof loadedModules.gsheets.refresh === 'function') {
+                loadedModules.gsheets.refresh();
+            }
             break;
         case 'housing':
         case 'users':
