@@ -87,14 +87,37 @@
       '</div>';
   }
 
+  // Строгая проверка 5+3: РОВНО 5 чёрных и 3 красные цифры (8 всего).
+  // empty — оба поля пусты; error — заполнено частично/не 5+3.
   function readMeter(key) {
     var b = (app.querySelector('[data-k="' + key + '-b"]') || {}).value || '';
     var r = (app.querySelector('[data-k="' + key + '-r"]') || {}).value || '';
     b = b.replace(/\D/g, ''); r = r.replace(/\D/g, '');
-    if (!b && !r) return null;            // пусто → не передаём (электричество опц.)
-    if (!b) b = '0';
-    while (r.length < 3) r += '0';        // красные дополняем до 3
-    return b + '.' + r.slice(0, 3);
+    if (!b && !r) return { empty: true };
+    if (b.length !== 5 || r.length !== 3) return { error: true };
+    return { value: b + '.' + r };
+  }
+
+  // Блок «Ваши последние показания» + пометка про норматив за пропуски (#2).
+  function lastActualBlock(state) {
+    var out = '';
+    var la = state.last_actual;
+    if (la) {
+      out += '<div style="background:#f0f9ff; border-left:3px solid var(--pri); border-radius:8px; padding:10px 12px; margin:10px 0; font-size:13px; line-height:1.6;">' +
+        '<b>Ваши последние показания</b>' + (la.period ? ' (за ' + esc(la.period) + ')' : '') + ':<br>' +
+        '🔥 ГВС ' + esc(la.hot_water) + ' &nbsp; 💧 ХВС ' + esc(la.cold_water) + ' &nbsp; ⚡ ' + esc(la.electricity) +
+        '<div style="color:var(--muted); margin-top:4px;">Новые показания не могут быть меньше этих.</div>' +
+        '</div>';
+    }
+    var ns = state.norm_since || [];
+    if (ns.length) {
+      var lines = ns.map(function (n) {
+        var amt = (n.amount != null) ? (' — по нормативу ' + n.amount.toLocaleString('ru-RU') + ' ₽') : '';
+        return esc(n.period) + amt;
+      }).join('<br>');
+      out += banner('b-warn', '⚠️ За эти периоды вы не подавали показания — начислено по нормативу:<br>' + lines);
+    }
+    return out;
   }
 
   function showForm(state) {
@@ -106,6 +129,7 @@
       '  <h1>Подача показаний</h1>' +
       '  <p class="sub">Период: ' + esc(state.period || '—') + '</p>' +
       (editing ? banner('b-warn', 'Показания за этот период уже переданы. Можно исправить — измените и отправьте снова.') : '') +
+      lastActualBlock(state) +
       '  <div class="hint">Вводите как на счётчике: крупные (чёрные) цифры до запятой, мелкие (красные, 3 шт.) — после. Красные пишите, даже если их «не считают».</div>' +
       meterBlock('hot', 'Горячая вода (ГВС)', '🔥', cur.hot_water) +
       meterBlock('cold', 'Холодная вода (ХВС)', '💧', cur.cold_water) +
@@ -116,11 +140,14 @@
 
     document.getElementById('send').addEventListener('click', function () {
       var btn = this, msg = document.getElementById('msg');
-      var payload = { hot_water: readMeter('hot'), cold_water: readMeter('cold'), electricity: readMeter('el') };
-      if (!payload.hot_water || !payload.cold_water) {
-        msg.innerHTML = banner('b-err', 'Заполните показания горячей и холодной воды.');
-        return;
-      }
+      var hot = readMeter('hot'), cold = readMeter('cold'), el = readMeter('el');
+      var errs = [];
+      var FMT = 'введите ВСЕ цифры: 5 чёрных и 3 красные';
+      if (hot.empty || hot.error) errs.push('Горячая вода — ' + FMT + '.');
+      if (cold.empty || cold.error) errs.push('Холодная вода — ' + FMT + '.');
+      if (el.empty || el.error) errs.push('Электричество — ' + FMT + '.');
+      if (errs.length) { msg.innerHTML = banner('b-err', errs.join('<br>')); return; }
+      var payload = { hot_water: hot.value, cold_water: cold.value, electricity: el.value };
       btn.disabled = true; btn.textContent = 'Отправляем…';
       api('/submit', {
         method: 'POST',

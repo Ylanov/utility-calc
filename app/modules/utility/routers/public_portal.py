@@ -113,14 +113,38 @@ async def portal_state(token: str, db: AsyncSession = Depends(get_db)):
             "electricity": str(src.electricity) if src.electricity is not None else "",
         }
 
-    # Квитанция доступна, если есть ЛЮБОЕ утверждённое показание комнаты
-    # (даже за прошлый период — текущий мог ещё не закрыться).
-    latest_approved = (await db.execute(
+    # Все утверждённые показания комнаты (свежие первыми). Из них:
+    #  - latest_approved → доступность квитанции;
+    #  - last_actual → последнее РЕАЛЬНО ПОДАННОЕ жильцом (is_meaningful_prev:
+    #    не норматив/авто) — то, с чем сверяется монотонность (#2);
+    #  - norm_since → периоды ПОСЛЕ него, где начислено по нормативу (пропуски).
+    from app.modules.utility.services.reading_calculator import is_meaningful_prev
+    approved_all = (await db.execute(
         select(MeterReading).options(selectinload(MeterReading.period))
         .where(MeterReading.room_id == room.id, MeterReading.is_approved.is_(True))
         .order_by(MeterReading.period_id.desc(), MeterReading.created_at.desc())
-        .limit(1)
-    )).scalars().first()
+    )).scalars().all()
+    latest_approved = approved_all[0] if approved_all else None
+
+    last_actual_obj = next((r for r in approved_all if is_meaningful_prev(r)), None)
+    last_actual = None
+    if last_actual_obj and metered:
+        last_actual = {
+            "period": last_actual_obj.period.name if last_actual_obj.period else None,
+            "hot_water": str(last_actual_obj.hot_water) if last_actual_obj.hot_water is not None else "—",
+            "cold_water": str(last_actual_obj.cold_water) if last_actual_obj.cold_water is not None else "—",
+            "electricity": str(last_actual_obj.electricity) if last_actual_obj.electricity is not None else "—",
+        }
+    norm_since = []
+    if last_actual_obj:
+        for r in approved_all:
+            if (r.period_id and last_actual_obj.period_id
+                    and r.period_id > last_actual_obj.period_id
+                    and not is_meaningful_prev(r)):
+                norm_since.append({
+                    "period": r.period.name if r.period else None,
+                    "amount": round(float(r.total_cost or 0), 2),
+                })
 
     return {
         "period": period.name if period else None,
@@ -135,6 +159,8 @@ async def portal_state(token: str, db: AsyncSession = Depends(get_db)):
         "current": cur,
         "receipt_available": bool(latest_approved),
         "receipt_period": latest_approved.period.name if (latest_approved and latest_approved.period) else None,
+        "last_actual": last_actual,   # последние ВАШИ показания (не норматив)
+        "norm_since": norm_since,     # периоды по нормативу после них (пропуски)
     }
 
 
