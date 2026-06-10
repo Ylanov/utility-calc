@@ -584,10 +584,14 @@ export const HousingModule = {
                     <img src="${qrSrc}" alt="QR" style="width:240px; height:240px; border:1px solid #e2e8f0; border-radius:8px;">
                     <div style="font-size:11px; color:var(--text-secondary); word-break:break-all; margin:10px 0;">${esc(url)}</div>
                     <div style="font-size:12px; color:var(--text-secondary);">Наклеить внутри квартиры у счётчика. Жилец сканирует → подаёт показания без логина.</div>
+                    <div style="font-size:12px; margin-top:8px; padding:6px 10px; border-radius:8px; display:inline-block; background:${data.password_set ? '#dcfce7' : '#fef3c7'}; color:${data.password_set ? '#166534' : '#92400e'};">
+                        ${data.password_set ? '🔒 Пароль портала установлен жильцом' : '🔓 Пароль не установлен — портал попросит при первом входе'}
+                    </div>
                 </div>
-                <div class="modal-footer" style="display:flex; gap:8px; justify-content:center;">
+                <div class="modal-footer" style="display:flex; gap:8px; justify-content:center; flex-wrap:wrap;">
                     <button class="action-btn primary-btn" data-qr-print><i class="fa-solid fa-print"></i> Печать</button>
                     <button class="action-btn secondary-btn" data-qr-regen><i class="fa-solid fa-rotate"></i> Перевыпустить</button>
+                    ${data.password_set ? '<button class="action-btn warning-btn" data-qr-resetpass><i class="fa-solid fa-key"></i> Сбросить пароль</button>' : ''}
                     <button class="action-btn secondary-btn" data-qr-close>Закрыть</button>
                 </div>
             </div>`;
@@ -610,7 +614,7 @@ export const HousingModule = {
         });
 
         ov.querySelector('[data-qr-regen]').addEventListener('click', async () => {
-            if (!await showConfirm('Перевыпустить QR? Старый код перестанет работать — нужно будет распечатать и наклеить новый.', { title: 'Перевыпуск QR', confirmText: 'Перевыпустить' })) return;
+            if (!await showConfirm('Перевыпустить QR? Старый код перестанет работать (и пароль портала сбросится) — нужно будет распечатать и наклеить новый.', { title: 'Перевыпуск QR', confirmText: 'Перевыпустить' })) return;
             try {
                 const nd = await api.post(`/rooms/${room.id}/qr/regenerate`);
                 close();
@@ -618,6 +622,16 @@ export const HousingModule = {
                 this.showRoomQr(room);   // покажем новый
                 void nd;
             } catch (e) { toast('Ошибка перевыпуска: ' + (e.message || e), 'error'); }
+        });
+
+        ov.querySelector('[data-qr-resetpass]')?.addEventListener('click', async () => {
+            if (!await showConfirm('Сбросить пароль портала этой квартиры? Жилец при следующем входе придумает новый. QR-код остаётся прежним.', { title: 'Сброс пароля', confirmText: 'Сбросить' })) return;
+            try {
+                await api.post(`/rooms/${room.id}/qr/reset-password`);
+                close();
+                toast('Пароль сброшен', 'success');
+                this.showRoomQr(room);
+            } catch (e) { toast('Ошибка сброса: ' + (e.message || e), 'error'); }
         });
     },
 

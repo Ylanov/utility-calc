@@ -12,7 +12,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.core.dependencies import RoleChecker
 from app.modules.utility.models import (
-    MeterReading, GSheetsImportRow, BillingPeriod,
+    MeterReading, GSheetsImportRow, BillingPeriod, Tariff, User,
 )
 
 router = APIRouter(prefix="/api/admin/registry", tags=["Admin Registry (unified)"])
@@ -60,6 +61,17 @@ async def unified_registry(
 
     items: list[dict] = []
 
+    # Имена тарифов одним запросом. Эффективный тариф = тариф КОМНАТЫ
+    # (room.tariff_id) с fallback на дефолтный id=1 — как в tariff_cache
+    # (персональный User.tariff_id с roles_001 не учитывается).
+    tariff_names = dict((await db.execute(select(Tariff.id, Tariff.name))).all())
+    default_tariff = tariff_names.get(1) or "Базовый тариф"
+
+    def _room_tariff(room) -> Optional[str]:
+        if not room:
+            return None
+        return tariff_names.get(room.tariff_id) or default_tariff
+
     # --- Боевые MeterReading за период ---
     if period:
         mr = (await db.execute(
@@ -77,6 +89,7 @@ async def unified_registry(
                 "fio": r.user.username if r.user else "—",
                 "dormitory": (room.dormitory_name if room else None),
                 "room": ((room.room_number or room.apartment_number) if room else None),
+                "tariff": _room_tariff(room),
                 "hot": str(r.hot_water) if r.hot_water is not None else None,
                 "cold": str(r.cold_water) if r.cold_water is not None else None,
                 "elect": str(r.electricity) if r.electricity is not None else None,
@@ -93,7 +106,21 @@ async def unified_registry(
             GSheetsImportRow.status.in_(["pending", "conflict", "unmatched", "auto_approved"]),
         )
     )).scalars().all()
+
+    # Сопоставленные жильцы буфера — ФИО/комната/тариф одним запросом
+    # (в старом gsheets-UI была колонка «Сопоставлено» — возвращаем её данные).
+    matched_ids = [g.matched_user_id for g in gs if g.matched_user_id]
+    matched_users: dict[int, User] = {}
+    if matched_ids:
+        for u in (await db.execute(
+            select(User).options(selectinload(User.room))
+            .where(User.id.in_(set(matched_ids)))
+        )).scalars().all():
+            matched_users[u.id] = u
+
     for g in gs:
+        mu = matched_users.get(g.matched_user_id) if g.matched_user_id else None
+        mu_room = mu.room if mu else None
         items.append({
             "row_type": "gsheets", "id": g.id,
             "source": "buffer", "source_label": "📄 Google Sheets (буфер)",
@@ -102,6 +129,7 @@ async def unified_registry(
             "fio": g.raw_fio,
             "dormitory": g.raw_dormitory,
             "room": g.raw_room_number,
+            "tariff": _room_tariff(mu_room),
             "hot": str(g.hot_water) if g.hot_water is not None else None,
             "cold": str(g.cold_water) if g.cold_water is not None else None,
             "elect": None,
@@ -110,6 +138,9 @@ async def unified_registry(
             "anomaly_score": None,
             "matched": {
                 "user_id": g.matched_user_id,
+                "fio": mu.username if mu else None,
+                "room": ((mu_room.room_number or mu_room.apartment_number)
+                         if mu_room else None),
                 "score": int(g.match_score or 0),
                 "reason": g.conflict_reason,
             },
@@ -133,3 +164,42 @@ async def unified_registry(
         "period": period.name if period else None,
         "period_id": period.id if period else None,
     }
+
+
+class RejectBody(BaseModel):
+    reason: Optional[str] = Field(None, max_length=300)
+
+
+@router.post("/readings/{reading_id}/reject")
+async def reject_reading(
+    reading_id: int,
+    body: RejectBody,
+    current_user: User = Depends(allow_management),
+    db: AsyncSession = Depends(get_db),
+):
+    """Отклонить ЧЕРНОВИК боевого показания: запись удаляется (жилец подаст
+    заново — так же рекомендует анализатор), жильцу уходит уведомление в
+    переписку QR-портала. Утверждённые не отклоняем — сначала «вернуть в
+    черновик» (unapprove), иначе админ случайно снёс бы готовую квитанцию."""
+    reading = (await db.execute(
+        select(MeterReading).options(selectinload(MeterReading.period))
+        .where(MeterReading.id == reading_id)
+    )).scalars().first()
+    if not reading:
+        raise HTTPException(404, "Показание не найдено")
+    if reading.is_approved:
+        raise HTTPException(
+            400, "Показание уже утверждено. Сначала верните его в черновик.")
+
+    user_id = reading.user_id
+    period_name = reading.period.name if reading.period else None
+
+    # delete_reading: отвязка gsheets-строк + audit_log со снапшотом + commit.
+    from app.modules.utility.services.admin_readings_manual import delete_reading
+    await delete_reading(db, reading_id, actor=current_user)
+
+    if user_id:
+        from app.modules.utility.services.qr_portal import notify_reading_rejected
+        notify_reading_rejected(db, user_id, period_name, body.reason)
+        await db.commit()
+    return {"status": "rejected"}

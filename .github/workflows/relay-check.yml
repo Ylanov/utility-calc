@@ -1,0 +1,62 @@
+# Диагностика ГИС ГМП релея на машине aleks (где живут прод-контейнеры,
+# self-hosted runner и systemd-юнит gisgmp-relay). Только чтение статуса.
+#
+# ВАЖНО: репозиторий публичный — в лог НЕ выводим journalctl (там могут быть
+# УИНы/суммы/ФИО) и НЕ выводим содержимое SystemSetting целиком (там может
+# лежать pending credentials). Только безопасные поля: active/uptime/рестарты
+# + last_poll_at/last_status/версия из БД.
+#
+# НЕ дёргаем GET /gisgmp/relay-config: это claim-на-выдаче — поглотит
+# pending-команды (run_now/control) и обновит last_poll_at, маскируя мёртвый релей.
+name: Relay health check (aleks)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  relay-check:
+    name: gisgmp-relay status
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: systemd unit status
+        run: |
+          echo "## Релей ГИС ГМП на aleks" >> "$GITHUB_STEP_SUMMARY"
+          state=$(systemctl is-active gisgmp-relay 2>/dev/null || true)
+          echo "systemd: ${state:-нет юнита}"
+          echo "- **systemd**: \`${state:-нет юнита}\`" >> "$GITHUB_STEP_SUMMARY"
+          systemctl show gisgmp-relay \
+            -p ActiveState,SubState,NRestarts,ExecMainStartTimestamp 2>/dev/null \
+            | tee -a "$GITHUB_STEP_SUMMARY" || true
+
+      - name: heartbeat из БД (только безопасные поля)
+        # SystemSetting key='gisgmp_relay' — берём ТОЛЬКО last_poll_at /
+        # last_status / last_report_at / relay_version (без credentials).
+        run: |
+          db_ctr=$(docker ps --format '{{.Names}}' | grep -E '(^|[-_])db([-_]|$)' | head -1)
+          if [ -z "$db_ctr" ]; then echo "контейнер БД не найден"; exit 0; fi
+          docker exec "$db_ctr" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tA -c "
+            SELECT
+              value::jsonb->>'\''last_poll_at'\'',
+              value::jsonb->>'\''last_status'\'',
+              value::jsonb->>'\''last_report_at'\'',
+              value::jsonb->>'\''relay_version'\'',
+              value::jsonb->>'\''relay_poll_seconds'\''
+            FROM system_settings WHERE key='\''gisgmp_relay'\'';"' \
+          | awk -F'|' '{
+              printf "last_poll_at=%s\nlast_status=%s\nlast_report_at=%s\nrelay_version=%s\npoll_seconds=%s\n", $1, $2, $3, $4, $5
+            }' | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: вердикт (онлайн = poll моложе 6 минут)
+        run: |
+          db_ctr=$(docker ps --format '{{.Names}}' | grep -E '(^|[-_])db([-_]|$)' | head -1)
+          [ -z "$db_ctr" ] && exit 0
+          age=$(docker exec "$db_ctr" sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tA -c "
+            SELECT EXTRACT(EPOCH FROM (now() at time zone '\''utc'\'' - (value::jsonb->>'\''last_poll_at'\'')::timestamp))::int
+            FROM system_settings WHERE key='\''gisgmp_relay'\'';"' | tr -d '[:space:]')
+          echo "возраст последнего опроса: ${age:-?} сек"
+          if [ -n "$age" ] && [ "$age" -lt 360 ]; then
+            echo "- **Вердикт: 🟢 релей ОНЛАЙН** (опрос ${age}с назад)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "- **Вердикт: 🔴 релей не выходил на связь ${age:-?}с** (порог 360с)" >> "$GITHUB_STEP_SUMMARY"
+          fi

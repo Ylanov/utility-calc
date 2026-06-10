@@ -16,13 +16,14 @@ import logging
 import os
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select, desc
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.auth import get_password_hash, verify_password
 from app.core.database import get_db
 from app.modules.utility.models import (
     BillingPeriod, MeterReading, SupportTicket, User,
@@ -33,15 +34,11 @@ from app.modules.utility.routers.client_readings import (
     _build_receipt_context, generate_receipt_pdf,
 )
 from app.modules.utility.services.qr_portal import (
-    resolve_room_by_token, pick_representative_user_id,
+    QR_TICKET_SUBJECT, resolve_room_by_token, pick_representative_user_id,
 )
 
 router = APIRouter(prefix="/api/q", tags=["QR Portal (public)"])
 logger = logging.getLogger(__name__)
-
-# Маркер обращений с QR-портала (по нему показываем ответы и авто-удаляем
-# переписку через 5 дней — cleanup_qr_tickets_task).
-QR_TICKET_SUBJECT = "Обращение с QR-портала"
 
 
 async def _resolve_or_404(db: AsyncSession, token: str):
@@ -50,6 +47,23 @@ async def _resolve_or_404(db: AsyncSession, token: str):
         # Намеренно глухой 404 — не раскрываем, существует токен или нет.
         raise HTTPException(status_code=404, detail="Код не найден или больше не действует.")
     return room
+
+
+async def _require_password(room, x_qr_key: str | None) -> None:
+    """Парольный гейт портала. Пароль — второй фактор к токену (QR-наклейку
+    могут сфотографировать посторонние). Хеш argon2 на Room.qr_password_hash.
+
+    Не установлен → 403 password_setup_required (фронт покажет установку).
+    Нет/неверный ключ → 401 password_required (фронт спросит пароль).
+    Брутфорс упирается в nginx-rate-limit /api/q/ (8r/s) + медленный argon2.
+    """
+    if not room.qr_password_hash:
+        raise HTTPException(status_code=403, detail="password_setup_required")
+    ok = bool(x_qr_key) and await asyncio.to_thread(
+        verify_password, x_qr_key, room.qr_password_hash
+    )
+    if not ok:
+        raise HTTPException(status_code=401, detail="password_required")
 
 
 def _is_house(room) -> bool:
@@ -64,9 +78,21 @@ async def _active_period(db: AsyncSession):
 
 
 @router.get("/{token}/state")
-async def portal_state(token: str, db: AsyncSession = Depends(get_db)):
-    """Состояние портала для квартиры. Без ФИО/адреса."""
+async def portal_state(
+    token: str,
+    db: AsyncSession = Depends(get_db),
+    x_qr_key: str | None = Header(None, alias="X-QR-Key"),
+):
+    """Состояние портала для квартиры. Без ФИО/адреса.
+
+    Пароль не установлен → отдаём ТОЛЬКО флаг установки (фронт покажет
+    модалку «придумайте пароль»). Кто первый зашёл — тот и установил:
+    для анонимного портала это неустранимо, но жилец сразу заметит
+    (его попросят чужой пароль) и админ сбросит. Дальше — обычный гейт."""
     room = await _resolve_or_404(db, token)
+    if not room.qr_password_hash:
+        return {"password_setup_required": True}
+    await _require_password(room, x_qr_key)
     period = await _active_period(db)
     rep_id = await pick_representative_user_id(db, room.id, period.id if period else None)
 
@@ -168,10 +194,38 @@ async def portal_state(token: str, db: AsyncSession = Depends(get_db)):
     }
 
 
+class PasswordBody(BaseModel):
+    password: str = Field(..., min_length=4, max_length=64)
+
+
+@router.post("/{token}/password")
+async def portal_set_password(
+    token: str, body: PasswordBody, db: AsyncSession = Depends(get_db),
+):
+    """Первичная установка пароля портала (модалка первого входа).
+    Только если пароль ещё НЕ установлен — менять установленный нельзя
+    (забыли → админ сбрасывает в модалке QR, и портал снова попросит новый)."""
+    room = await _resolve_or_404(db, token)
+    if room.qr_password_hash:
+        raise HTTPException(
+            status_code=409,
+            detail="Пароль уже установлен. Если вы его забыли — обратитесь к администратору.",
+        )
+    room.qr_password_hash = await asyncio.to_thread(get_password_hash, body.password)
+    db.add(room)
+    await db.commit()
+    logger.info("[QR-PORTAL] установлен пароль room=%s", room.id)
+    return {"status": "ok"}
+
+
 @router.post("/{token}/submit")
-async def portal_submit(token: str, data: ReadingSchema, db: AsyncSession = Depends(get_db)):
+async def portal_submit(
+    token: str, data: ReadingSchema, db: AsyncSession = Depends(get_db),
+    x_qr_key: str | None = Header(None, alias="X-QR-Key"),
+):
     """Подача/правка показаний по QR-токену. Вся логика — общий сервис."""
     room = await _resolve_or_404(db, token)
+    await _require_password(room, x_qr_key)
     period = await _active_period(db)
     rep_id = await pick_representative_user_id(db, room.id, period.id if period else None)
     if not rep_id:
@@ -187,11 +241,14 @@ async def portal_submit(token: str, data: ReadingSchema, db: AsyncSession = Depe
 
 
 @router.get("/{token}/receipt")
-async def portal_receipt(token: str, db: AsyncSession = Depends(get_db)):
+async def portal_receipt(
+    token: str, db: AsyncSession = Depends(get_db),
+    x_qr_key: str | None = Header(None, alias="X-QR-Key"),
+):
     """Скачать PDF квитанции квартиры (последнее утверждённое показание).
-    Доступ = сам токен (QR внутри квартиры). Проверки user_id нет — токен
-    привязан к комнате."""
+    Доступ = токен + пароль портала (фронт качает fetch'ем с заголовком)."""
     room = await _resolve_or_404(db, token)
+    await _require_password(room, x_qr_key)
     reading = (await db.execute(
         select(MeterReading)
         .options(
@@ -239,10 +296,14 @@ class ContactBody(BaseModel):
 
 
 @router.post("/{token}/contact")
-async def portal_contact(token: str, body: ContactBody, db: AsyncSession = Depends(get_db)):
+async def portal_contact(
+    token: str, body: ContactBody, db: AsyncSession = Depends(get_db),
+    x_qr_key: str | None = Header(None, alias="X-QR-Key"),
+):
     """Связаться с админом по коду квартиры → создаёт обращение (SupportTicket),
     привязанное к «представителю комнаты» (админ видит, от какой квартиры)."""
     room = await _resolve_or_404(db, token)
+    await _require_password(room, x_qr_key)
     rep_id = await pick_representative_user_id(db, room.id, None)
     if not rep_id:
         raise HTTPException(
@@ -272,17 +333,28 @@ async def portal_contact(token: str, body: ContactBody, db: AsyncSession = Depen
 
 
 @router.get("/{token}/messages")
-async def portal_messages(token: str, db: AsyncSession = Depends(get_db)):
+async def portal_messages(
+    token: str, db: AsyncSession = Depends(get_db),
+    x_qr_key: str | None = Header(None, alias="X-QR-Key"),
+):
     """Переписка квартиры с админом по QR (последние 20). Включает ответ админа,
-    чтобы жилец видел его на портале. Авто-удаляются через 5 дней."""
+    чтобы жилец видел его на портале. Авто-удаляются через 5 дней.
+
+    Фильтр — по ВСЕМ жильцам комнаты, не по «представителю»: представитель
+    вычисляется на момент запроса и может смениться (черновик удалили,
+    жильца перевели) — тогда тикеты, созданные на прежнего, пропадали бы
+    из переписки вместе с ответами админа."""
     room = await _resolve_or_404(db, token)
-    rep_id = await pick_representative_user_id(db, room.id, None)
-    if not rep_id:
+    await _require_password(room, x_qr_key)
+    user_ids = (await db.execute(
+        select(User.id).where(User.room_id == room.id, User.is_deleted.is_(False))
+    )).scalars().all()
+    if not user_ids:
         return {"messages": []}
     rows = (await db.execute(
         select(SupportTicket)
         .where(
-            SupportTicket.user_id == rep_id,
+            SupportTicket.user_id.in_(user_ids),
             SupportTicket.subject == QR_TICKET_SUBJECT,
         )
         .order_by(desc(SupportTicket.created_at))

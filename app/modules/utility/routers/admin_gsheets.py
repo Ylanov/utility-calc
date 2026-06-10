@@ -1841,6 +1841,13 @@ async def reject_row(
     row.processed_at = utcnow()
     row.processed_by_id = current_user.id
 
+    # Уведомление жильцу в переписку QR-портала (если строка сопоставлена) —
+    # человек должен узнать, что подача отклонена, и переподать.
+    if row.matched_user_id:
+        from app.modules.utility.services.qr_portal import notify_reading_rejected
+        when = row.sheet_timestamp.strftime("%d.%m.%Y") if row.sheet_timestamp else None
+        notify_reading_rejected(db, row.matched_user_id, when)
+
     await write_audit_log(
         db, current_user.id, current_user.username,
         action="gsheets_reject", entity_type="gsheets_row", entity_id=row_id,

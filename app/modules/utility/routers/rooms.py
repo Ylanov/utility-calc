@@ -1127,7 +1127,10 @@ async def get_room_qr(
         raise HTTPException(404, "Помещение не найдено")
     from app.modules.utility.services.qr_portal import get_or_create_room_token
     token = await get_or_create_room_token(db, room)
-    return {"room_id": room_id, "token": token, "portal_path": f"/qr.html#{token}"}
+    return {
+        "room_id": room_id, "token": token, "portal_path": f"/qr.html#{token}",
+        "password_set": bool(room.qr_password_hash),
+    }
 
 
 @router.post("/{room_id}/qr/regenerate", dependencies=[Depends(allow_management)])
@@ -1149,6 +1152,27 @@ async def regenerate_room_qr(
     )
     await db.commit()
     return {"room_id": room_id, "token": token, "portal_path": f"/qr.html#{token}"}
+
+
+@router.post("/{room_id}/qr/reset-password", dependencies=[Depends(allow_management)])
+async def reset_room_qr_password(
+    room_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Сбросить пароль QR-портала квартиры (жилец забыл). Портал при
+    следующем входе попросит установить новый. Токен НЕ меняется."""
+    room = await db.get(Room, room_id)
+    if not room:
+        raise HTTPException(404, "Помещение не найдено")
+    room.qr_password_hash = None
+    from app.modules.utility.routers.admin_dashboard import write_audit_log
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action="reset_room_qr_password", entity_type="room", entity_id=room_id,
+    )
+    await db.commit()
+    return {"status": "ok"}
 
 
 @router.post("/{room_id}/make-singles", dependencies=[Depends(allow_management)])

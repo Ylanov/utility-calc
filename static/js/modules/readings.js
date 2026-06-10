@@ -80,7 +80,9 @@ export const ReadingsModule = {
     cacheDOM() {
         this.dom = {
             btnRefresh: document.getElementById('btnRefreshReadings'),
-            btnBulk: document.getElementById('btnBulkApprove'),
+            // btnBulkApproveSafe, НЕ btnBulkApprove: тот id занят кнопкой
+            // gsheets-буфера в этом же табе (дубль ловил первый элемент).
+            btnBulk: document.getElementById('btnBulkApproveSafe'),
             filterAnomalies: document.getElementById('filterAnomalies'),
             filterPeriod: document.getElementById('readingsFilterPeriod'),
             filterRisk: document.getElementById('readingsFilterRisk'),

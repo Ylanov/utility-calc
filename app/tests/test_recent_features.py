@@ -10,7 +10,9 @@ import pytest
 
 from app.modules.utility.routers.admin_registry import _reading_source
 from app.modules.utility.services.debt_import import _normalize_saldo
-from app.modules.utility.services.qr_portal import generate_qr_token
+from app.modules.utility.services.qr_portal import (
+    QR_TICKET_SUBJECT, generate_qr_token, notify_reading_rejected,
+)
 from app.modules.utility.services.search_utils import like_contains
 
 
@@ -104,3 +106,38 @@ def test_qr_token_strong_and_unique():
     assert a != b                            # каждый вызов уникален
     # url-safe алфавит (без +, /, =)
     assert re.fullmatch(r"[A-Za-z0-9_\-]+", a)
+
+
+# ──────────────────────────────────────────────────────────────
+# notify_reading_rejected — уведомление жильцу при отклонении показания
+# ──────────────────────────────────────────────────────────────
+class _FakeDb:
+    def __init__(self):
+        self.added = []
+
+    def add(self, obj):
+        self.added.append(obj)
+
+
+def test_notify_rejected_creates_qr_ticket():
+    db = _FakeDb()
+    notify_reading_rejected(db, user_id=7, period_name="Июнь 2026", reason="не совпадает со счётчиком")
+    assert len(db.added) == 1
+    t = db.added[0]
+    # Тема — QR-маркер: иначе /messages портала уведомление не отдаст,
+    # а cleanup_qr_tickets_task не подчистит через 5 дней.
+    assert t.subject == QR_TICKET_SUBJECT
+    assert t.user_id == 7
+    assert t.status == "answered"            # системное — отвечать не на что
+    assert "Июнь 2026" in t.admin_response
+    assert "не совпадает со счётчиком" in t.admin_response
+    assert "заново" in t.admin_response      # призыв переподать
+
+
+def test_notify_rejected_without_period_and_reason():
+    db = _FakeDb()
+    notify_reading_rejected(db, user_id=3)
+    t = db.added[0]
+    assert t.subject == QR_TICKET_SUBJECT
+    assert "отклонены администратором" in t.admin_response
+    assert "Причина" not in t.admin_response   # нет причины — нет пустой строки

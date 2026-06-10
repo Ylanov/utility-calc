@@ -14,7 +14,20 @@
     });
   }
 
+  // Пароль портала: второй фактор к токену (QR могут сфотографировать).
+  // Запоминаем на устройстве жильца — вводится один раз, чужому телефону
+  // пароль неизвестен. localStorage может быть недоступен (приватный режим).
+  var KEY_STORE = 'qrkey:' + token;
+  function getKey() { try { return localStorage.getItem(KEY_STORE) || ''; } catch (e) { return ''; } }
+  function setKey(v) { try { localStorage.setItem(KEY_STORE, v); } catch (e) {} }
+  function clearKey() { try { localStorage.removeItem(KEY_STORE); } catch (e) {} }
+
   function api(path, opts) {
+    opts = opts || {};
+    var headers = opts.headers || {};
+    var k = getKey();
+    if (k) headers['X-QR-Key'] = k;
+    opts.headers = headers;
     return fetch('/api/q/' + encodeURIComponent(token) + path, opts).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (body) {
         if (!r.ok) { var e = new Error(body.detail || ('Ошибка ' + r.status)); e.status = r.status; throw e; }
@@ -30,9 +43,9 @@
     var s = state || {};
     var parts = [];
     if (s.receipt_available) {
-      parts.push('<a class="ghost" style="display:block; text-align:center; text-decoration:none; line-height:1.3; padding:14px; border-radius:12px;" href="/api/q/' +
-        encodeURIComponent(token) + '/receipt">📄 Скачать квитанцию' +
-        (s.receipt_period ? ' за ' + esc(s.receipt_period) : '') + '</a>');
+      // Кнопка + fetch (не <a href>): квитанция за паролем, нужен заголовок X-QR-Key.
+      parts.push('<button class="ghost" data-act="receipt">📄 Скачать квитанцию' +
+        (s.receipt_period ? ' за ' + esc(s.receipt_period) : '') + '</button>');
     }
     parts.push('<button class="ghost" data-act="contact-toggle">✉️ Связаться с администратором</button>');
     parts.push('<div data-contact-box style="display:none; margin-top:10px;">' +
@@ -68,6 +81,25 @@
   function wireFooterOnce() {
     if (footerWired) return; footerWired = true;
     app.addEventListener('click', function (e) {
+      var rc = e.target.closest('[data-act="receipt"]');
+      if (rc) {
+        rc.disabled = true; var was = rc.textContent; rc.textContent = 'Скачиваем…';
+        fetch('/api/q/' + encodeURIComponent(token) + '/receipt', { headers: { 'X-QR-Key': getKey() } })
+          .then(function (r) {
+            if (!r.ok) throw new Error('Не удалось скачать квитанцию (' + r.status + ').');
+            return r.blob();
+          })
+          .then(function (blob) {
+            var a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'kvitanciya.pdf';
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(function () { URL.revokeObjectURL(a.href); }, 30000);
+          })
+          .catch(function (err) { alert(err.message); })
+          .then(function () { rc.disabled = false; rc.textContent = was; });
+        return;
+      }
       if (e.target.closest('[data-act="contact-toggle"]')) {
         var box = app.querySelector('[data-contact-box]');
         if (box) {
@@ -183,6 +215,7 @@
       }).then(function () {
         showThanks(state);
       }).catch(function (e) {
+        if (e.status === 401) { showEnterPassword('Сессия истекла — введите пароль ещё раз.'); return; }
         btn.disabled = false; btn.textContent = editing ? 'Исправить показания' : 'Передать показания';
         msg.innerHTML = banner('b-err', esc(e.message));
       });
@@ -203,7 +236,67 @@
     document.getElementById('fix').addEventListener('click', load);
   }
 
+  // Первый вход: пароль ещё не установлен — жилец придумывает его здесь.
+  function showSetPassword() {
+    app.className = '';
+    app.innerHTML = '' +
+      '<div class="card">' +
+      '  <div style="font-size:44px; text-align:center;">🔐</div>' +
+      '  <h1 style="text-align:center;">Придумайте пароль</h1>' +
+      '  <p class="sub" style="text-align:center;">Это первый вход по QR-коду вашей квартиры. ' +
+      'Пароль защитит подачу показаний от посторонних — его будете знать только вы.</p>' +
+      '  <input type="password" id="pw1" autocomplete="new-password" placeholder="Пароль (минимум 4 символа)" ' +
+      '     style="width:100%; box-sizing:border-box; border:2px solid #cbd5e1; border-radius:10px; padding:12px; font-size:16px; margin-bottom:8px;">' +
+      '  <input type="password" id="pw2" autocomplete="new-password" placeholder="Повторите пароль" ' +
+      '     style="width:100%; box-sizing:border-box; border:2px solid #cbd5e1; border-radius:10px; padding:12px; font-size:16px;">' +
+      '  <button class="primary" id="pwSave" style="margin-top:10px;">Сохранить пароль</button>' +
+      '  <div id="pwMsg"></div>' +
+      '  <div style="font-size:12px; color:var(--muted); margin-top:10px;">Запишите пароль. Если забудете — администратор сбросит его, и вы придумаете новый.</div>' +
+      '</div>';
+    document.getElementById('pwSave').addEventListener('click', function () {
+      var btn = this, msg = document.getElementById('pwMsg');
+      var p1 = document.getElementById('pw1').value, p2 = document.getElementById('pw2').value;
+      if (p1.length < 4) { msg.innerHTML = banner('b-err', 'Пароль слишком короткий — минимум 4 символа.'); return; }
+      if (p1 !== p2) { msg.innerHTML = banner('b-err', 'Пароли не совпадают.'); return; }
+      btn.disabled = true; btn.textContent = 'Сохраняем…';
+      api('/password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: p1 }) })
+        .then(function () { setKey(p1); load(); })
+        .catch(function (e) {
+          btn.disabled = false; btn.textContent = 'Сохранить пароль';
+          // 409 — кто-то успел установить раньше (другой жилец квартиры).
+          if (e.status === 409) { showEnterPassword(e.message); return; }
+          msg.innerHTML = banner('b-err', esc(e.message));
+        });
+    });
+  }
+
+  // Пароль установлен, на этом устройстве его нет/он неверный — спросить.
+  function showEnterPassword(errText) {
+    clearKey();
+    app.className = '';
+    app.innerHTML = '' +
+      '<div class="card">' +
+      '  <div style="font-size:44px; text-align:center;">🔒</div>' +
+      '  <h1 style="text-align:center;">Введите пароль</h1>' +
+      '  <p class="sub" style="text-align:center;">Подача показаний по этой квартире защищена паролем.</p>' +
+      (errText ? banner('b-err', esc(errText)) : '') +
+      '  <input type="password" id="pwIn" autocomplete="current-password" placeholder="Пароль" ' +
+      '     style="width:100%; box-sizing:border-box; border:2px solid #cbd5e1; border-radius:10px; padding:12px; font-size:16px;">' +
+      '  <button class="primary" id="pwGo" style="margin-top:10px;">Войти</button>' +
+      '  <div style="font-size:12px; color:var(--muted); margin-top:10px;">Забыли пароль? Обратитесь к администратору — он сбросит, и вы придумаете новый.</div>' +
+      '</div>';
+    var go = function () {
+      var v = document.getElementById('pwIn').value;
+      if (!v) return;
+      setKey(v);
+      load();
+    };
+    document.getElementById('pwGo').addEventListener('click', go);
+    document.getElementById('pwIn').addEventListener('keydown', function (e) { if (e.key === 'Enter') go(); });
+  }
+
   function render(state) {
+    if (state.password_setup_required) { showSetPassword(); return; }
     if (state.no_residents) {
       app.className = ''; app.innerHTML = '<div class="card">' + banner('b-warn',
         'По этому коду пока нет зарегистрированных жильцов. Обратитесь к администратору.') + '</div>';
@@ -238,7 +331,14 @@
 
   function load() {
     app.className = 'center'; app.innerHTML = '<span class="spin" style="margin-top:80px;"></span>';
+    var hadKey = !!getKey();
     api('/state').then(render).catch(function (e) {
+      if (e.status === 401) {
+        // Был сохранён ключ и он не подошёл (пароль сброшен/изменён) либо
+        // ключа нет вовсе — спросить. Текст ошибки только если ключ БЫЛ.
+        showEnterPassword(hadKey ? 'Пароль не подошёл. Попробуйте ещё раз.' : '');
+        return;
+      }
       app.className = '';
       app.innerHTML = '<div class="card">' + banner('b-err',
         e.status === 404 ? 'Код не найден или больше не действует.' : esc(e.message)) + '</div>';
