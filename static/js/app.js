@@ -399,6 +399,12 @@ async function initModule(tabId) {
                     loadedModules.gsheets = GSheetsModule;
                 }
                 loadedModules.gsheets.init();
+                // Фаза 2: единый список (боевые ∪ буфер) — отдельный модуль.
+                if (!loadedModules.registry) {
+                    const { RegistryModule } = await import('./modules/registry.js');
+                    loadedModules.registry = RegistryModule;
+                }
+                loadedModules.registry.init();
                 break;
             case 'housing':
                 if (!loadedModules.housing) {
@@ -629,6 +635,9 @@ function refreshModuleData(tabId) {
             if (mod.table) mod.table.refresh();
             if (loadedModules.gsheets && typeof loadedModules.gsheets.refresh === 'function') {
                 loadedModules.gsheets.refresh();
+            }
+            if (loadedModules.registry && typeof loadedModules.registry.refresh === 'function') {
+                loadedModules.registry.refresh();
             }
             break;
         case 'housing':

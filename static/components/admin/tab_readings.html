@@ -5,6 +5,52 @@
      «Операции → Центр анализа». Модуль readings.js. -->
 <div id="readings" class="tab-content">
 
+    <!-- ==== ЕДИНЫЙ СПИСОК (Фаза 2 объединения, 2026-06-09): боевые MeterReading
+         ∪ буфер GSheets в одном списке с бейджем источника. Модуль registry.js,
+         данные /api/admin/registry. Утверждение «как есть»; детальная правка/
+         переназначение/конфликты — в блоках ниже. ==== -->
+    <div class="card" style="margin: 0 0 16px 0;">
+        <div class="card-header" style="flex-wrap:wrap; gap:10px;">
+            <h3 style="margin:0;"><i class="fa-solid fa-layer-group" style="color:var(--primary-color); margin-right:8px;"></i> Реестр показаний — единый список</h3>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                <select id="registrySource" style="font-size:12px;">
+                    <option value="">Все источники</option>
+                    <option value="user">📱 QR/приложение</option>
+                    <option value="gsheets">📄 Google Sheets</option>
+                    <option value="buffer">📄 Sheets (буфер)</option>
+                    <option value="auto">🤖 Норматив/авто</option>
+                    <option value="manual">✍️ Вручную</option>
+                </select>
+                <input type="text" id="registrySearch" placeholder="Поиск ФИО / комната…" style="font-size:12px; min-width:180px;">
+                <button id="btnRegistryRefresh" class="icon-btn" title="Обновить"><i class="fa-solid fa-rotate-right"></i></button>
+            </div>
+        </div>
+        <div id="registryTotal" style="font-size:12px; color:var(--text-secondary); margin-bottom:10px;"></div>
+        <div class="table-responsive">
+            <table class="sticky-header-table" style="min-width:920px;">
+                <thead><tr>
+                    <th style="width:135px;">Источник</th>
+                    <th style="width:110px;">Дата</th>
+                    <th>ФИО</th>
+                    <th style="width:170px;">Объект</th>
+                    <th style="text-align:right; width:160px;">ГВС/ХВС/Свет</th>
+                    <th style="width:140px;">Статус</th>
+                    <th style="width:110px; text-align:right;">Сумма</th>
+                    <th style="width:120px; text-align:right;">Действия</th>
+                </tr></thead>
+                <tbody id="registryBody"><tr><td colspan="8" style="padding:30px; text-align:center; color:var(--text-secondary);">Загрузка…</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- ==== ДЕТАЛЬНАЯ РАБОТА ПО ИСТОЧНИКАМ (исправления, переназначение,
+         разбор конфликтов, корректировки при утверждении). Единый список выше —
+         для быстрого обзора и утверждения «как есть». ==== -->
+    <div style="font-size:13px; color:var(--text-secondary); margin:6px 0 10px; padding-left:4px;">
+        <i class="fa-solid fa-screwdriver-wrench" style="margin-right:6px;"></i>
+        Детальная работа по источникам (переназначение, конфликты, корректировки) — в блоках ниже.
+    </div>
+
     <!-- ==== БУФЕР GOOGLE SHEETS (перенесён из «Операции», объединение реестров
          2026-06-09). Сопоставление импортов из таблицы → утверждение в
          MeterReading. Модуль gsheets.js — инициализируется вместе с readings.js
