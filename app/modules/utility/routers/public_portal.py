@@ -31,8 +31,12 @@ from app.modules.utility.models import (
 from app.modules.utility.schemas import ReadingSchema
 from app.modules.utility.routers.client_readings import (
     perform_reading_submission, _is_submission_day_open,
-    _build_receipt_context, generate_receipt_pdf,
+    _build_receipt_context,
 )
+# generate_receipt_pdf — напрямую из сервиса, а НЕ ре-экспортом через
+# client_readings: после вычистки резидентских ручек он там стал
+# неиспользуемым и ruff --fix его удаляет → ре-экспорт ломался (ImportError).
+from app.modules.utility.services.pdf_generator import generate_receipt_pdf
 from app.modules.utility.services.qr_portal import (
     QR_TICKET_SUBJECT, resolve_room_by_token, pick_representative_user_id,
 )
