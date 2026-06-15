@@ -153,6 +153,7 @@ export const ExcelReadingsModule = {
         chip('🔍 Не найдены', c.unmatched, '#fee2e2') +
         chip('📊 По нормативу', c.norm, '#f3e8ff') +
         '</div>' +
+        this.gsheetsLine(p.gsheets) +
         '<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">' +
         '<span style="font-size:12px; color:var(--text-secondary);">Фильтр:</span>' +
         ['all|Все', 'approve|К утверждению', 'warning|Проверить', 'error|Ошибки', 'unmatched|Не найдены', 'ok|ОК']
@@ -168,7 +169,7 @@ export const ExcelReadingsModule = {
     // Динамические заголовки колонок показаний под реальные листы (вкл. электричество).
     const headRow = document.getElementById('xlHeadRow');
     if (headRow) headRow.innerHTML = this.headRowHtml(meters);
-    const colspan = 6 + meters.length;
+    const colspan = 7 + meters.length;   // +1 за колонку Google Sheets
     const rows = this.filteredItems().map((it) => this.rowHtml(it, p.items.indexOf(it), meters)).join('');
     body.innerHTML = rows ||
       '<tr><td colspan="' + colspan + '" style="padding:24px; text-align:center; color:var(--text-secondary);">Нет строк по фильтру.</td></tr>';
@@ -205,6 +206,20 @@ export const ExcelReadingsModule = {
         (cons != null ? '<br><span style="color:#15803d;">+' + fmtNum(cons) + '</span>' : '') + '</td>';
     }).join('');
 
+    // Ячейка сверки с Google Sheets (буфер за окно вокруг месяца).
+    const g = it.gsheets || {};
+    let gsCell;
+    if (!g.present) {
+      gsCell = '<span style="font-size:11px; color:var(--text-secondary);">в гугл таблицах нет</span>';
+    } else {
+      const hot = g.mismatch_hot ? '<b style="color:#dc2626;">' + fmtNum(g.hot) + '</b>' : fmtNum(g.hot);
+      const cold = g.mismatch_cold ? '<b style="color:#dc2626;">' + fmtNum(g.cold) + '</b>' : fmtNum(g.cold);
+      gsCell = '<span style="font-family:monospace; font-size:12px;">' +
+        (g.mismatch ? '⚠️ ' : '') + hot + ' / ' + cold + '</span>' +
+        (g.date ? '<br><span style="font-size:10px; color:var(--text-secondary);">' + esc(g.date) +
+          (g.count > 1 ? ' · ' + g.count + ' подач' : '') + '</span>' : '');
+    }
+
     const reasons = (it.reasons || []).length
       ? '<div style="font-size:11px; color:var(--text-secondary); margin-top:3px;">' +
         it.reasons.map(esc).join('<br>') + '</div>' : '';
@@ -230,6 +245,7 @@ export const ExcelReadingsModule = {
       '<td style="font-size:12px;">' + place + '</td>' +
       '<td style="font-size:11px; color:var(--text-secondary);">' + (m ? esc(m.tariff || '—') : '—') + '</td>' +
       meterCells +
+      '<td style="text-align:right;">' + gsCell + '</td>' +
       '<td>' + badge(VERDICT[it.verdict] || VERDICT.error) + (it.status === 'norm' ? '<br><span style="font-size:10px; color:#6b21a8;">норматив</span>' : '') + '</td>' +
       '<td style="text-align:right; font-weight:600; color:#15803d; white-space:nowrap;">' + fmtMoney(it.preview_total) + '</td>' +
       '<td style="text-align:center; white-space:nowrap;">' + addBtn + reassign + '</td>' +
@@ -451,7 +467,7 @@ export const ExcelReadingsModule = {
       '    <div style="font-size:12px; color:var(--text-secondary); margin-bottom:12px;">Формат: листы «горячая» / «холодная» / «электричество», колонки <b>ФИО | Предыдущий месяц | Текущий месяц</b>. Предыдущий — база (апрель), текущий — расчётный (май). Не подавшим начислится норматив.</div>' +
       '    <div id="xlSummary"></div>' +
       '    <div class="table-responsive" style="max-height:48vh;">' +
-      '      <table class="sticky-header-table" style="min-width:980px;">' +
+      '      <table class="sticky-header-table" style="min-width:1120px;">' +
       '        <thead><tr id="xlHeadRow">' + this.headRowHtml(['hot', 'cold']) + '</tr></thead>' +
       '        <tbody id="xlBody"><tr><td colspan="9" style="padding:30px; text-align:center; color:var(--text-secondary);">Выберите месяц и файл, затем «Разобрать».</td></tr></tbody>' +
       '      </table>' +
@@ -469,9 +485,22 @@ export const ExcelReadingsModule = {
     document.getElementById('xlCommitBtn').addEventListener('click', () => this.commit());
   },
 
+  gsheetsLine(gs) {
+    if (!gs || !gs.checked) {
+      return '<div style="font-size:12px; color:var(--text-secondary); margin-bottom:8px;">📄 Сверка с Google Sheets: выберите месяц с распознаваемым именем («Май 2026»).</div>';
+    }
+    const w = gs.window;
+    return '<div style="font-size:12px; margin-bottom:8px; padding:6px 10px; background:#f0fdf4; border-radius:6px;">' +
+      '📄 Сверено с буфером Google Sheets за ' + (w ? esc(w.start) + '–' + esc(w.end) : 'окно') + ': ' +
+      'найдено <b>' + (gs.present || 0) + '</b>' +
+      (gs.mismatch ? ', из них <b style="color:#dc2626;">' + gs.mismatch + ' с расхождением ⚠️</b>' : '') +
+      '. Остальным — «в гугл таблицах нет».</div>';
+  },
+
   headRowHtml(meters) {
     return '<th style="width:34px;"></th><th>ФИО / жилец</th><th style="width:150px;">Объект</th><th style="width:120px;">Тариф</th>' +
       meters.map((r) => '<th style="text-align:right; width:120px;">' + RES_LABEL[r] + ' (пред→тек)</th>').join('') +
+      '<th style="width:120px; text-align:right;" title="Сверка с буфером Google Sheets за окно вокруг месяца">Google Sheets<br><span style="font-weight:400; font-size:10px;">ГВС / ХВС</span></th>' +
       '<th style="width:120px;">Вердикт</th><th style="width:100px; text-align:right;">Сумма</th><th style="width:48px;"></th>';
   },
 };

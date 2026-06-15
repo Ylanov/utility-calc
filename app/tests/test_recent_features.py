@@ -225,3 +225,30 @@ def test_parse_readings_workbook():
     sidorov = next(v for v in people.values() if v["fio"].startswith("Сидоров"))
     assert sidorov["hot"]["prev"] == Decimal("200")
     assert sidorov["hot"]["cur"] == Decimal("180")
+
+
+# ──────────────────────────────────────────────────────────────
+# _gsheets_window — окно сверки с буфером Google Sheets по месяцу
+# ──────────────────────────────────────────────────────────────
+def test_gsheets_window_may():
+    from app.modules.utility.services.excel_readings_import import _gsheets_window
+    w = _gsheets_window("Май 2026")
+    assert w is not None
+    start, end = w
+    # Май → 16 марта 00:00 … 31 мая 23:59 (май+апрель целиком + 2-я половина марта)
+    assert (start.year, start.month, start.day) == (2026, 3, 16)
+    assert (end.year, end.month, end.day) == (2026, 5, 31)
+
+
+def test_gsheets_window_january_rollover():
+    from app.modules.utility.services.excel_readings_import import _gsheets_window
+    # Январь → позапрошлый = ноябрь ПРОШЛОГО года.
+    start, end = _gsheets_window("Январь 2026")
+    assert (start.year, start.month, start.day) == (2025, 11, 16)
+    assert (end.year, end.month, end.day) == (2026, 1, 31)
+
+
+def test_gsheets_window_unparseable():
+    from app.modules.utility.services.excel_readings_import import _gsheets_window
+    assert _gsheets_window("мусор") is None
+    assert _gsheets_window(None) is None

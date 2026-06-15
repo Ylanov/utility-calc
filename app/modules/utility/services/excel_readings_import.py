@@ -20,8 +20,10 @@
 from __future__ import annotations
 
 import asyncio
+import calendar
 import io
 import logging
+from datetime import datetime
 from decimal import Decimal
 from typing import Optional
 
@@ -31,7 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.modules.utility.models import (
-    BillingPeriod, MeterReading, Room, Tariff, User, Adjustment,
+    BillingPeriod, GSheetsImportRow, MeterReading, Room, Tariff, User, Adjustment,
 )
 from app.modules.utility.services.calculations import (
     calculate_utilities, costs_for_model_fields, CalculationError, D,
@@ -152,6 +154,91 @@ def _seasonal_for_tariff(seasonal, tariff: Tariff) -> tuple[bool, bool]:
     heating = seasonal.heating_season_active and tariff.is_heating_active_now()
     hw = seasonal.hot_water_heating_active and tariff.is_hw_heating_active_now()
     return heating, hw
+
+
+# =====================================================================
+# Сверка с Google Sheets (буфер GSheetsImportRow) за окно вокруг периода
+# =====================================================================
+
+def _gsheets_window(period_name: Optional[str]) -> Optional[tuple[datetime, datetime]]:
+    """Окно сверки по выбранному месяцу: с 16-го ПОЗАПРОШЛОГО месяца по конец
+    выбранного. Май → 16 марта … 31 мая (май+апрель целиком + 2-я половина
+    марта). Без парсящегося имени периода — None."""
+    from app.modules.utility.services.period_helpers import parse_period_name
+    parsed = parse_period_name(period_name or "")
+    if not parsed:
+        return None
+    y, m = parsed
+    mm2, yy2 = m - 2, y
+    while mm2 <= 0:
+        mm2 += 12
+        yy2 -= 1
+    start = datetime(yy2, mm2, 16, 0, 0, 0)
+    end = datetime(y, m, calendar.monthrange(y, m)[1], 23, 59, 59)
+    return start, end
+
+
+async def _load_gsheets_lookup(
+    db: AsyncSession, window: Optional[tuple[datetime, datetime]]
+) -> tuple[dict[str, dict], dict[int, dict]]:
+    """Буфер GSheets за окно → два индекса: по нормализованному ФИО и по
+    matched_user_id. На каждого — последняя подача (по sheet_timestamp) +
+    счётчик. Пусто, если окна нет."""
+    if not window:
+        return {}, {}
+    from app.modules.utility.services.gsheets_sync import normalize_fio
+    start, end = window
+    rows = (await db.execute(
+        select(GSheetsImportRow).where(
+            GSheetsImportRow.sheet_timestamp.is_not(None),
+            GSheetsImportRow.sheet_timestamp >= start,
+            GSheetsImportRow.sheet_timestamp <= end,
+        ).order_by(GSheetsImportRow.sheet_timestamp.asc())
+    )).scalars().all()
+    by_fio: dict[str, dict] = {}
+    by_uid: dict[int, dict] = {}
+    for r in rows:
+        rec = {
+            "hot": (float(r.hot_water) if r.hot_water is not None else None),
+            "cold": (float(r.cold_water) if r.cold_water is not None else None),
+            "date": r.sheet_timestamp.strftime("%d.%m.%Y") if r.sheet_timestamp else None,
+            "raw_fio": r.raw_fio,
+        }
+        key = normalize_fio(r.raw_fio or "")
+        # asc по дате → последняя подача перезаписывает; копим count.
+        if key:
+            rec["count"] = by_fio.get(key, {}).get("count", 0) + 1
+            by_fio[key] = rec
+        if r.matched_user_id:
+            rec2 = dict(rec)
+            rec2["count"] = by_uid.get(r.matched_user_id, {}).get("count", 0) + 1
+            by_uid[r.matched_user_id] = rec2
+    return by_fio, by_uid
+
+
+def _gsheets_for_row(row: dict, by_fio: dict, by_uid: dict) -> dict:
+    """Сводка GSheets для строки Excel + пометка расхождений с Excel-текущим."""
+    m = row.get("matched") or {}
+    gs = None
+    if m.get("user_id") and by_uid.get(m["user_id"]):
+        gs = by_uid[m["user_id"]]
+    elif by_fio.get(row["key"]):
+        gs = by_fio[row["key"]]
+    if not gs:
+        return {"present": False}
+    # Расхождение с Excel-текущим (целые м³ — сравниваем точно).
+    cur_hot = (row.get("hot") or {}).get("cur")
+    cur_cold = (row.get("cold") or {}).get("cur")
+    mis_hot = (gs["hot"] is not None and cur_hot is not None
+               and abs(float(gs["hot"]) - float(cur_hot)) > 0.001)
+    mis_cold = (gs["cold"] is not None and cur_cold is not None
+                and abs(float(gs["cold"]) - float(cur_cold)) > 0.001)
+    return {
+        "present": True, "hot": gs["hot"], "cold": gs["cold"],
+        "date": gs["date"], "count": gs.get("count", 1),
+        "mismatch": bool(mis_hot or mis_cold),
+        "mismatch_hot": bool(mis_hot), "mismatch_cold": bool(mis_cold),
+    }
 
 
 async def _load_adjustments(
@@ -294,6 +381,10 @@ async def build_preview(db: AsyncSession, parsed: dict, period_id: Optional[int]
     from app.modules.utility.routers.settings import _load_seasonal
     from app.modules.utility.services.reading_validators import validate_total_cost
     seasonal = await _load_seasonal(db)
+    # Сверка с буфером Google Sheets за окно вокруг выбранного месяца.
+    period = await db.get(BillingPeriod, period_id) if period_id else None
+    window = _gsheets_window(period.name if period else None)
+    gs_by_fio, gs_by_uid = await _load_gsheets_lookup(db, window)
     users_by_id_orm: dict[int, User] = {}
     if matched_ids:
         for u in (await db.execute(
@@ -400,6 +491,21 @@ async def build_preview(db: AsyncSession, parsed: dict, period_id: Optional[int]
         counts[verdict] = counts.get(verdict, 0) + 1
         items.append(row)
 
+    # Сверка с Google Sheets — на каждую строку (вкл. ненайденных, по ФИО).
+    gs_present = gs_mismatch = 0
+    for row in items:
+        g = _gsheets_for_row(row, gs_by_fio, gs_by_uid)
+        row["gsheets"] = g
+        if g.get("present"):
+            gs_present += 1
+            if g.get("mismatch"):
+                gs_mismatch += 1
+                if row["verdict"] == "ok":
+                    row["verdict"] = "warning"
+                    counts["ok"] = max(0, counts.get("ok", 0) - 1)
+                    counts["warning"] = counts.get("warning", 0) + 1
+                row["reasons"].append("Расходится с Google Sheets — проверьте показания")
+
     items.sort(key=lambda x: ({"error": 0, "unmatched": 1, "warning": 2, "ok": 3}.get(x["verdict"], 9),
                               x["fio"]))
     return {
@@ -408,6 +514,14 @@ async def build_preview(db: AsyncSession, parsed: dict, period_id: Optional[int]
         "total_people": len(items),
         "meters_present": parsed.get("meters_present", []),
         "skipped_rows": parsed.get("skipped_rows", 0),
+        "gsheets": {
+            "checked": bool(window),
+            "window": (
+                {"start": window[0].strftime("%d.%m.%Y"), "end": window[1].strftime("%d.%m.%Y")}
+                if window else None
+            ),
+            "present": gs_present, "mismatch": gs_mismatch,
+        },
     }
 
 
