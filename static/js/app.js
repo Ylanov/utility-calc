@@ -405,6 +405,13 @@ async function initModule(tabId) {
                     loadedModules.registry = RegistryModule;
                 }
                 loadedModules.registry.init();
+                // Импорт показаний из Excel (2026-06-15): модалка с разбором
+                // и прямым утверждением в финотчётность. Самодостаточный модуль.
+                if (!loadedModules.excelReadings) {
+                    const { ExcelReadingsModule } = await import('./modules/excel_readings.js');
+                    loadedModules.excelReadings = ExcelReadingsModule;
+                }
+                loadedModules.excelReadings.init();
                 break;
             case 'housing':
                 if (!loadedModules.housing) {

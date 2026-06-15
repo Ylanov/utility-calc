@@ -53,6 +53,7 @@ from app.modules.utility.routers import (
     admin_ot_staff,
     admin_security,
     admin_registry,
+    admin_excel_readings,
     public_portal,
     tickets,
     admin_certificates,
@@ -502,6 +503,7 @@ app.include_router(admin_notifications.router)
 app.include_router(admin_ot_staff.router)
 app.include_router(admin_security.router)
 app.include_router(admin_registry.router)
+app.include_router(admin_excel_readings.router)
 app.include_router(public_portal.router)
 app.include_router(tickets.router_admin)
 app.include_router(admin_certificates.router)

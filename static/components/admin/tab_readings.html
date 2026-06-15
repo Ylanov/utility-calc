@@ -14,7 +14,15 @@
              одной строкой-тулбаром ниже (по образцу карточки gsheets-буфера). -->
         <div class="card-header" style="margin-bottom:12px; padding-bottom:12px;">
             <h3 style="margin:0;"><i class="fa-solid fa-layer-group" style="color:var(--primary-color); margin-right:8px;"></i> Реестр показаний</h3>
-            <div id="registryTotal" style="font-size:12px; color:var(--text-secondary); white-space:nowrap;"></div>
+            <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                <div id="registryTotal" style="font-size:12px; color:var(--text-secondary); white-space:nowrap;"></div>
+                <!-- Импорт показаний из Excel (2026-06-15): загрузка пары
+                     прев/текущий по каждому жильцу → разбор всеми анализаторами
+                     → утверждение сразу в финотчётность за выбранный месяц. -->
+                <button id="btnExcelReadings" class="action-btn primary-btn" style="white-space:nowrap;">
+                    <i class="fa-solid fa-file-excel"></i> Загрузить из Excel
+                </button>
+            </div>
         </div>
         <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:12px;">
             <select id="registrySource" style="min-width:170px;">

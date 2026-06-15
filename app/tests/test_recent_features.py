@@ -10,6 +10,9 @@ import pytest
 
 from app.modules.utility.routers.admin_registry import _reading_source
 from app.modules.utility.services.debt_import import _normalize_saldo
+from app.modules.utility.services.excel_readings_import import (
+    _is_junk_fio, _num, _sheet_kind, parse_readings_workbook,
+)
 from app.modules.utility.services.qr_portal import (
     QR_TICKET_SUBJECT, generate_qr_token, notify_reading_rejected,
 )
@@ -141,3 +144,84 @@ def test_notify_rejected_without_period_and_reason():
     assert t.subject == QR_TICKET_SUBJECT
     assert "отклонены администратором" in t.admin_response
     assert "Причина" not in t.admin_response   # нет причины — нет пустой строки
+
+
+# ──────────────────────────────────────────────────────────────
+# excel_readings_import — парсер показаний из Excel (формат прев/текущий)
+# ──────────────────────────────────────────────────────────────
+@pytest.mark.parametrize("title, kind", [
+    ("горячая", "hot"), ("Горячая вода", "hot"), ("ГВС", "hot"),
+    ("холодная", "cold"), ("ХВС", "cold"),
+    ("электричество", "elect"), ("Свет", "elect"),
+    ("Лист2", None), ("", None), ("прочее", None),
+])
+def test_sheet_kind(title, kind):
+    assert _sheet_kind(title) == kind
+
+
+@pytest.mark.parametrize("inp, expected", [
+    (None, None), ("", None), ("  ", None),
+    (1466, Decimal("1466")), (12.5, Decimal("12.5")),
+    ("845", Decimal("845")), ("1 234", Decimal("1234")), ("12,5", Decimal("12.5")),
+    ("мусор", None),
+])
+def test_num_parse(inp, expected):
+    assert _num(inp) == expected
+
+
+@pytest.mark.parametrize("fio, junk", [
+    (None, True), ("", True), ("0", True), ("Итого:", True),
+    ("2 общежитие.", True), ("Этаж:", True), ("Ф.И.О.", True),
+    ("123", True), ("---", True),
+    ("Дронин Константин Николаевич", False), ("Оболенская Кира", False),
+])
+def test_is_junk_fio(fio, junk):
+    assert _is_junk_fio(fio) is junk
+
+
+def _make_workbook_bytes():
+    """Двухлистовый Excel как в реальном файле: горячая + холодная,
+    колонки ФИО|прев|тек, с мусорными строками и пустым текущим."""
+    import io
+    from openpyxl import Workbook
+    wb = Workbook()
+    hot = wb.active
+    hot.title = "горячая"
+    hot.append(["Ф.И.О.", "Предыдущий месяц", "Текущий месяц"])
+    hot.append(["2 общежитие.", None, None])          # мусор-разделитель
+    hot.append(["Итого:", None, None])                # мусор
+    hot.append(["Иванов Иван Иванович", 100, 110])    # норм подача
+    hot.append(["Петров Пётр", 50, None])             # не подал (пусто)
+    hot.append(["0", 5, 5])                           # мусор-ФИО
+    hot.append(["Сидоров Сидор Сидорович", 200, 180]) # откат счётчика
+    cold = wb.create_sheet("холодная")
+    cold.append(["Ф.И.О.", "Предыдущий месяц", "Текущий месяц"])
+    cold.append(["Иванов Иван Иванович", 300, 320])
+    cold.append(["Петров Пётр", 80, 85])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def test_parse_readings_workbook():
+    parsed = parse_readings_workbook(_make_workbook_bytes())
+    people = parsed["people"]
+    # 3 валидных человека (мусор/итого/0 отброшены).
+    assert len(people) == 3
+    assert set(parsed["meters_present"]) == {"hot", "cold"}
+    assert parsed["skipped_rows"] >= 3   # 2 общежитие + Итого + 0 + заголовки
+
+    # Иванов есть в обоих листах — объединён по нормализованному ключу.
+    ivanov = next(v for v in people.values() if v["fio"].startswith("Иванов"))
+    assert ivanov["hot"] == {"prev": Decimal("100"), "cur": Decimal("110")}
+    assert ivanov["cold"] == {"prev": Decimal("300"), "cur": Decimal("320")}
+
+    # Петров не подал ГВС (текущий пуст), но в холодной подал.
+    petrov = next(v for v in people.values() if v["fio"].startswith("Петров"))
+    assert petrov["hot"]["cur"] is None
+    assert petrov["cold"]["cur"] == Decimal("85")
+
+    # Сидоров — откат счётчика (только в горячей).
+    sidorov = next(v for v in people.values() if v["fio"].startswith("Сидоров"))
+    assert sidorov["hot"]["prev"] == Decimal("200")
+    assert sidorov["hot"]["cur"] == Decimal("180")
