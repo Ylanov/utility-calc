@@ -14,6 +14,12 @@ function esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+function banner(cls, html) {
+  const col = cls === 'b-err' ? '#991b1b' : '#166534';
+  const bg = cls === 'b-err' ? '#fee2e2' : '#dcfce7';
+  return '<div style="background:' + bg + '; color:' + col + '; padding:8px 10px; border-radius:8px; font-size:13px; margin-top:6px;">' + html + '</div>';
+}
+
 const VERDICT = {
   ok:        { t: '✅ ОК',          c: '#166534', b: '#dcfce7' },
   warning:   { t: '⚠️ Проверить',   c: '#92400e', b: '#fef3c7' },
@@ -173,6 +179,8 @@ export const ExcelReadingsModule = {
       }));
     body.querySelectorAll('[data-xl-reassign]').forEach((b) =>
       b.addEventListener('click', () => this.reassign(Number(b.dataset.xlReassign))));
+    body.querySelectorAll('[data-xl-add]').forEach((b) =>
+      b.addEventListener('click', () => this.createOrBind(Number(b.dataset.xlAdd), b.dataset.mode)));
 
     const commitBtn = document.getElementById('xlCommitBtn');
     if (commitBtn) commitBtn.disabled = approveCnt === 0;
@@ -205,7 +213,15 @@ export const ExcelReadingsModule = {
       ? '<input type="checkbox" data-xl-toggle="' + idx + '"' + (it._approve ? ' checked' : '') + '>'
       : '';
     const reassign = (it.verdict === 'unmatched' || (m && m.conflict))
-      ? '<button class="action-btn secondary-btn" style="padding:3px 8px; font-size:11px;" data-xl-reassign="' + idx + '" title="Назначить жильца вручную"><i class="fa-solid fa-user-pen"></i></button>'
+      ? '<button class="action-btn secondary-btn" style="padding:3px 8px; font-size:11px;" data-xl-reassign="' + idx + '" title="Найти существующего жильца"><i class="fa-solid fa-user-pen"></i></button>'
+      : '';
+    // Кнопка создать/привязать: нет привязки к комнате (не найден ИЛИ
+    // найден без помещения). У нас QR-коды → жилец = ФИО + квартира,
+    // без логина/пароля. Найден-без-комнаты → привязка; не найден → создание.
+    const needRoom = (m && m.user_id && !m.room) ? 'bind' : ((!m || !m.user_id) ? 'create' : null);
+    const addBtn = needRoom
+      ? '<button class="action-btn primary-btn" style="padding:3px 8px; font-size:11px;" data-xl-add="' + idx + '" data-mode="' + needRoom + '" title="' +
+        (needRoom === 'bind' ? 'Привязать жильца к квартире' : 'Создать жильца и привязать к квартире') + '"><i class="fa-solid fa-house-user"></i></button>'
       : '';
 
     return '<tr style="' + (it.verdict === 'error' || it.verdict === 'unmatched' ? 'background:rgba(239,68,68,0.04);' : (it.verdict === 'warning' ? 'background:rgba(245,158,11,0.05);' : '')) + '">' +
@@ -216,7 +232,7 @@ export const ExcelReadingsModule = {
       meterCells +
       '<td>' + badge(VERDICT[it.verdict] || VERDICT.error) + (it.status === 'norm' ? '<br><span style="font-size:10px; color:#6b21a8;">норматив</span>' : '') + '</td>' +
       '<td style="text-align:right; font-weight:600; color:#15803d; white-space:nowrap;">' + fmtMoney(it.preview_total) + '</td>' +
-      '<td style="text-align:center;">' + reassign + '</td>' +
+      '<td style="text-align:center; white-space:nowrap;">' + addBtn + reassign + '</td>' +
       '</tr>';
   },
 
@@ -253,6 +269,128 @@ export const ExcelReadingsModule = {
     it.reasons.push('Назначен вручную: ' + chosen.username);
     it._approve = true;
     this.renderPreview();
+  },
+
+  // ── Создать жильца / привязать к квартире ───────────────────
+  // У нас QR-коды: жилец = ФИО + квартира, без логина/пароля. mode:
+  //  'create' — нет в базе → создаём нового (POST /users) и привязываем;
+  //  'bind'   — есть в базе без помещения → привязываем (POST /users/{id}/relocate).
+  async createOrBind(idx, mode) {
+    const it = this.state.preview?.items[idx];
+    if (!it) return;
+    // Справочники для пикера комнат (кешируем на модуль).
+    if (!this._dorms) {
+      try { this._dorms = await api.get('/rooms/dormitories'); } catch (e) { this._dorms = []; }
+    }
+    const isBind = mode === 'bind';
+    const who = isBind ? (it.matched && it.matched.username) : it.fio;
+
+    const ov = document.createElement('div');
+    ov.id = 'xlAddModal';
+    ov.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:center; justify-content:center; z-index:10001; padding:20px;';
+    ov.innerHTML =
+      '<div class="modal-window" style="max-width:460px; width:100%;">' +
+      '  <div class="modal-header"><h3><i class="fa-solid fa-house-user"></i> ' +
+      (isBind ? 'Привязать к квартире' : 'Создать жильца') + '</h3>' +
+      '    <button class="close-btn close-icon" data-cb-close>&times;</button></div>' +
+      '  <div class="modal-body" style="display:flex; flex-direction:column; gap:12px;">' +
+      '    <div><label style="font-size:12px; color:var(--text-secondary);">ФИО</label>' +
+      '      <input type="text" id="cbFio" value="' + esc(who || '') + '"' + (isBind ? ' disabled' : '') + ' style="width:100%; box-sizing:border-box;"></div>' +
+      '    <div><label style="font-size:12px; color:var(--text-secondary);">Тип помещения</label>' +
+      '      <select id="cbPlace" style="width:100%;"><option value="dormitory">Общежитие</option><option value="house">Дом / квартира</option></select></div>' +
+      '    <div id="cbDormWrap"><label style="font-size:12px; color:var(--text-secondary);">Общежитие</label>' +
+      '      <select id="cbDorm" style="width:100%;"><option value="">— выберите —</option>' +
+      (this._dorms || []).map((d) => '<option value="' + esc(d) + '">' + esc(d) + '</option>').join('') + '</select></div>' +
+      '    <div><label style="font-size:12px; color:var(--text-secondary);">Квартира / комната</label>' +
+      '      <select id="cbRoom" style="width:100%;" disabled><option value="">— сначала выберите общежитие —</option></select></div>' +
+      (isBind ? '' :
+        '    <div style="display:flex; gap:10px;">' +
+        '      <div style="flex:1;"><label style="font-size:12px; color:var(--text-secondary);">Жильцов (платит за)</label>' +
+        '        <input type="number" id="cbResidents" value="1" min="1" max="20" style="width:100%; box-sizing:border-box;"></div>' +
+        '      <div style="flex:1;"><label style="font-size:12px; color:var(--text-secondary);">Тип жильца</label>' +
+        '        <select id="cbType" style="width:100%;"><option value="family">Семья</option><option value="single">Холостяк</option></select></div>' +
+        '    </div>') +
+      '    <div id="cbMsg"></div>' +
+      '  </div>' +
+      '  <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:8px;">' +
+      '    <button class="action-btn secondary-btn" data-cb-close>Отмена</button>' +
+      '    <button class="action-btn success-btn" id="cbSave">' + (isBind ? 'Привязать' : 'Создать и привязать') + '</button>' +
+      '  </div></div>';
+    document.body.appendChild(ov);
+    const closeCb = () => ov.remove();
+    ov.addEventListener('click', (e) => { if (e.target === ov || e.target.closest('[data-cb-close]')) closeCb(); });
+
+    const placeSel = ov.querySelector('#cbPlace');
+    const dormWrap = ov.querySelector('#cbDormWrap');
+    const dormSel = ov.querySelector('#cbDorm');
+    const roomSel = ov.querySelector('#cbRoom');
+
+    const loadRooms = async (query, label) => {
+      roomSel.innerHTML = '<option value="">Загрузка…</option>'; roomSel.disabled = true;
+      try {
+        const res = await api.get(query);
+        const rooms = res.items || res || [];
+        roomSel.innerHTML = '<option value="">— выберите —</option>' +
+          rooms.map((r) => '<option value="' + r.id + '">' + esc(label(r)) + '</option>').join('');
+        roomSel.disabled = false;
+      } catch (e) { roomSel.innerHTML = '<option value="">Ошибка загрузки</option>'; }
+    };
+    placeSel.addEventListener('change', () => {
+      if (placeSel.value === 'house') {
+        dormWrap.style.display = 'none';
+        loadRooms('/rooms?place_type=house&limit=1000',
+          (r) => [r.street, r.house_number, r.apartment_number ? 'кв.' + r.apartment_number : ''].filter(Boolean).join(' '));
+      } else {
+        dormWrap.style.display = '';
+        roomSel.innerHTML = '<option value="">— сначала выберите общежитие —</option>'; roomSel.disabled = true;
+      }
+    });
+    dormSel.addEventListener('change', () => {
+      if (!dormSel.value) { roomSel.innerHTML = '<option value="">— выберите общежитие —</option>'; roomSel.disabled = true; return; }
+      loadRooms('/rooms?dormitory=' + encodeURIComponent(dormSel.value) + '&limit=1000', (r) => r.room_number);
+    });
+
+    ov.querySelector('#cbSave').addEventListener('click', async () => {
+      const msg = ov.querySelector('#cbMsg');
+      const roomId = roomSel.value ? Number(roomSel.value) : null;
+      if (!roomId) { msg.innerHTML = banner('b-err', 'Выберите квартиру.'); return; }
+      const roomLabel = roomSel.options[roomSel.selectedIndex]?.text || '';
+      const dorm = (placeSel.value === 'dormitory') ? dormSel.value : null;
+      const saveBtn = ov.querySelector('#cbSave');
+      setLoading(saveBtn, true, '…');
+      try {
+        let userId, username;
+        if (isBind) {
+          userId = it.matched.user_id; username = it.matched.username;
+          await api.post('/users/' + userId + '/relocate', { new_room_id: roomId, is_eviction: false });
+        } else {
+          const fio = ov.querySelector('#cbFio').value.trim();
+          if (fio.length < 3) { msg.innerHTML = banner('b-err', 'Введите ФИО.'); setLoading(saveBtn, false, 'Создать и привязать'); return; }
+          const res = await api.post('/users', {
+            username: fio, role: 'user', room_id: roomId,
+            residents_count: Number(ov.querySelector('#cbResidents').value) || 1,
+            resident_type: ov.querySelector('#cbType').value || 'family',
+          });
+          userId = res.id; username = res.username || fio;
+        }
+        it.matched = {
+          user_id: userId, username,
+          room: roomLabel, dormitory: dorm,
+          tariff: it.matched?.tariff || null, score: 100, conflict: false,
+          residents: isBind ? (it.matched?.residents || 1) : (Number(ov.querySelector('#cbResidents').value) || 1),
+        };
+        it.verdict = (it.status === 'norm') ? 'warning' : 'ok';
+        it.reasons = (it.reasons || []).filter((r) => !/не найден|без помещения|несколько похожих/i.test(r));
+        it.reasons.push(isBind ? ('Привязан к квартире: ' + roomLabel) : ('Создан жилец: ' + username));
+        it._approve = true;
+        closeCb();
+        toast(isBind ? 'Жилец привязан к квартире' : 'Жилец создан и привязан', 'success');
+        this.renderPreview();
+      } catch (e) {
+        setLoading(saveBtn, false, isBind ? 'Привязать' : 'Создать и привязать');
+        msg.innerHTML = banner('b-err', esc(e.message || e));
+      }
+    });
   },
 
   // ── Утверждение ─────────────────────────────────────────────
