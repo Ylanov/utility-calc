@@ -354,15 +354,6 @@ class User(Base):
     # заполненный FamilyMember).
     lives_alone = Column(Boolean, default=False, nullable=False, server_default="false")
 
-    # Bug BB: запрос на актуализацию данных. Админ выставляет
-    # data_refresh_required=True (например после массового аудита). Жилец
-    # при следующем входе в моб-приложение видит popup один раз, отвечает,
-    # popup отправляет submission в data_refresh_submissions, флаг
-    # сбрасывается. Подробности — миграция data_refresh_001.
-    data_refresh_required = Column(Boolean, default=False, nullable=False,
-                                     server_default="false", index=True)
-    data_refresh_requested_at = Column(DateTime, nullable=True)
-
     # --------------------------------------------------------------
     # Валидаторы консистентности — срабатывают на setattr.
     # Защищают от ситуации когда поля рассыпаются («single» с 5 жильцами
@@ -769,95 +760,6 @@ class ErrorLog(Base):
     # Сколько раз эту запись копировали — метрика полезности.
     copied_count = Column(Integer, nullable=False, default=0, server_default="0")
 
-    # L5 (28.05.2026): фоновый AI-анализ ошибки (root_cause / severity /
-    # suggested_action). Заполняется celery-задачей llm_analyze_errors
-    # для записей где ai_analysis IS NULL И not resolved И свежие.
-    ai_analysis = Column(JSONB, nullable=True)
-    ai_analyzed_at = Column(DateTime, nullable=True)
-    ai_model = Column(String(64), nullable=True)
-
-
-# ======================================================
-# LLM SETTINGS (L1, 28.05.2026) — singleton конфиг ИИ-провайдера.
-#
-# Сейчас GigaChat Lite/Pro/Max через REST API, в будущем — vLLM/ollama
-# локально (тот же OpenAI-compat интерфейс, меняется только base_url).
-# Доступ к /api/admin/llm/* только для role='admin'. Токен зашифрован
-# Fernet с ключом из env LLM_SECRET_KEY.
-# ======================================================
-class LLMSetting(Base):
-    __tablename__ = "llm_settings"
-
-    id = Column(Integer, primary_key=True, default=1)
-    provider = Column(String(32), nullable=False, default="disabled",
-                      server_default="disabled")
-    model_name = Column(String(64), nullable=False, default="GigaChat",
-                        server_default="GigaChat")
-    # Fernet-зашифрованный токен (NULL = не настроен).
-    token_encrypted = Column(Text, nullable=True)
-    # Доп. URL для local_vllm / ollama.
-    base_url = Column(String(256), nullable=True)
-    # Главный выключатель.
-    enabled = Column(Boolean, nullable=False, default=False,
-                     server_default="false")
-    # Дневной бюджет в рублях. Используется когда monthly_budget_tokens=0
-    # (т.е. платная подписка с pay-per-request).
-    daily_budget_rub = Column(Numeric(10, 2), nullable=False,
-                              default=50, server_default="50")
-    # L8 (28.05.2026): Freemium-режим — фиксированный пакет токенов в
-    # месяц от Сбера (Lite=248k, Pro=38k, Max=50k). Если > 0 — это
-    # приоритетный лимит, daily_budget_rub игнорируется.
-    monthly_budget_tokens = Column(Integer, nullable=False,
-                                    default=0, server_default="0")
-    # Дата старта текущего периода подписки (когда обновятся токены).
-    # Используется для подсчёта потраченных токенов в этом периоде.
-    monthly_period_start = Column(Date, nullable=True)
-    # Авто-блок при превышении бюджета или hard error.
-    disabled_until = Column(DateTime, nullable=True)
-    disabled_reason = Column(String(200), nullable=True)
-    updated_at = Column(DateTime, nullable=True, onupdate=_utcnow)
-    updated_by_id = Column(Integer, nullable=True)
-    # Кастомная добавка к системному промпту: админ дописывает инструкции ИИ
-    # (тон, на что обращать внимание). ДОПОЛНЯЕТ встроенный SYSTEM_BASE, не
-    # заменяет. NULL = только дефолтный промпт. См. llm_003 + service.ask.
-    system_prompt = Column(Text, nullable=True)
-
-
-# ======================================================
-# LLM CALL — audit каждого вызова LLM (для бюджетного контроля и debug)
-# ======================================================
-class LLMCall(Base):
-    __tablename__ = "llm_calls"
-
-    id = Column(Integer, primary_key=True)
-    occurred_at = Column(
-        DateTime, nullable=False,
-        server_default=func.timezone("utc", func.now()), index=True,
-    )
-    # error_analysis | user_summary | daily_briefing | ticket_classify | test
-    purpose = Column(String(64), nullable=False, index=True)
-    provider = Column(String(32), nullable=False)
-    model_name = Column(String(64), nullable=False)
-
-    prompt_chars = Column(Integer, nullable=False)
-    response_chars = Column(Integer, nullable=True)
-    prompt_tokens = Column(Integer, nullable=True)
-    response_tokens = Column(Integer, nullable=True)
-
-    cost_rub = Column(Numeric(10, 4), nullable=True, index=True)
-    latency_ms = Column(Integer, nullable=True)
-    success = Column(Boolean, nullable=False, default=False,
-                     server_default="false")
-    error = Column(Text, nullable=True)
-    # Текст промпта (что ушло в ИИ) и ответа (что ИИ вернул) — для отчёта
-    # админу «что ИИ проверил / что нашёл / правильно ли». Хранятся обрезанными
-    # (см. service.ask), чтобы не раздувать БД. NULL у старых записей.
-    prompt_text = Column(Text, nullable=True)
-    response_text = Column(Text, nullable=True)
-
-    # Связанная сущность (error_log/user/ticket) — для линковки UI.
-    related_type = Column(String(32), nullable=True, index=True)
-    related_id = Column(Integer, nullable=True, index=True)
 
 
 # ======================================================
@@ -869,50 +771,6 @@ class SystemSetting(Base):
     key = Column(String, primary_key=True, index=True)
     value = Column(String, nullable=False)
     description = Column(String, nullable=True)
-
-
-# ======================================================
-# DEVICE TOKENS (Push-уведомления)
-# ======================================================
-class DeviceToken(Base):
-    __tablename__ = "device_tokens"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    token = Column(String, unique=True, nullable=False, index=True)
-    device_type = Column(String, nullable=True)
-    created_at = Column(DateTime, default=_utcnow)
-    user = relationship("User", backref="device_tokens")
-
-
-# ======================================================
-# DATA REFRESH SUBMISSION (Bug BB)
-# ======================================================
-class DataRefreshSubmission(Base):
-    """Ответ жильца на запрос актуализации данных.
-
-    Сценарий: админ выставил User.data_refresh_required=True →
-    жилец в моб-приложении видит popup и отправляет: общежитие, комната,
-    кол-во проживающих. Сохраняем как submission (history) — НЕ применяем
-    автоматически к User/Room (защита от ошибочных ответов).
-
-    Админ смотрит submissions, сравнивает с системой и при расхождении
-    правит вручную через стандартный flow редактирования жильца/комнаты.
-    """
-    __tablename__ = "data_refresh_submissions"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"),
-                     nullable=False, index=True)
-    # Когда админ запросил данные. NULL если жилец сам отправил без запроса.
-    requested_at = Column(DateTime, nullable=True)
-    # Что прислал жилец — свободные строки (мог переехать в другое общежитие).
-    dorm_name = Column(String(200), nullable=False)
-    room_number = Column(String(50), nullable=False)
-    residents_count = Column(Integer, nullable=False)
-    submitted_at = Column(DateTime, default=_utcnow, nullable=False, index=True)
-
-    user = relationship("User", backref="data_refresh_submissions")
 
 
 # ======================================================
@@ -1169,51 +1027,6 @@ class RoomAssignment(Base):
         Index("idx_assignment_user_active", "user_id", "moved_out_at"),
         # «Кто жил в комнате X в период Y»: фильтр по room_id + dates.
         Index("idx_assignment_room_dates", "room_id", "moved_in_at", "moved_out_at"),
-    )
-
-
-# ======================================================
-# APP RELEASE — версии мобильного приложения
-# ======================================================
-# Хранит метаданные APK-релизов, выложенных через админку.
-# Сами файлы лежат в static/apps/<filename> — отдаются nginx'ом напрямую.
-#
-# Модель публикации:
-# - Админ загружает APK с указанием версии и release notes.
-# - is_published управляется админом — недопубликованные не видны клиенту.
-# - "Текущая" версия для клиента — последний is_published=True по version_code DESC.
-# - Если задано min_required_version_code, и у клиента version_code меньше —
-#   приложение покажет force-update диалог без возможности отложить.
-# ======================================================
-class AppRelease(Base):
-    __tablename__ = "app_releases"
-
-    id = Column(Integer, primary_key=True, index=True)
-
-    # Семантическая версия (отображаемая) — "1.2.3"
-    version = Column(String, nullable=False)
-    # Числовое представление для сравнения — 10203 (1*10000+2*100+3)
-    # Удобно использовать как Android versionCode.
-    version_code = Column(Integer, nullable=False)
-
-    # Если у клиента version_code < этой — force-update.
-    min_required_version_code = Column(Integer, nullable=True)
-
-    # Файл
-    platform = Column(String, default="android", nullable=False, index=True)
-    file_name = Column(String, nullable=False)        # имя файла в static/apps/
-    file_size = Column(Integer, nullable=False)       # байты
-    file_hash = Column(String, nullable=True)         # SHA-256 для проверки целостности
-
-    release_notes = Column(Text, nullable=True)
-    is_published = Column(Boolean, default=False, nullable=False, index=True)
-
-    created_at = Column(DateTime, default=_utcnow, index=True)
-    created_by_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    created_by = relationship("User", foreign_keys=[created_by_id])
-
-    __table_args__ = (
-        Index("idx_app_release_platform_published", "platform", "is_published", "version_code"),
     )
 
 

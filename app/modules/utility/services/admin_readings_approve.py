@@ -1,6 +1,5 @@
 # app/modules/utility/services/admin_readings_approve.py
 
-import asyncio
 from decimal import Decimal
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,27 +10,11 @@ from sqlalchemy.orm import selectinload
 from app.modules.utility.models import User, MeterReading, Tariff, BillingPeriod, Adjustment, Room
 from app.modules.utility.schemas import ApproveRequest
 from app.modules.utility.services.calculations import calculate_utilities, D
-from app.modules.utility.services.notification_service import send_push_to_user
 
 # ИМПОРТ ДЛЯ ЖУРНАЛА ДЕЙСТВИЙ
 from app.modules.utility.routers.admin_dashboard import write_audit_log
 
 ZERO = Decimal("0.00")
-
-# Удерживаем strong-reference на fire-and-forget background tasks, иначе
-# event loop хранит только weak ref и сборщик мусора может убить таск
-# до завершения (см. CPython issue #88831 / asyncio.create_task docs).
-# Колбэк по завершении сам убирает таск из множества — утечки не будет.
-_BACKGROUND_TASKS: set[asyncio.Task] = set()
-
-
-def _spawn_background(coro) -> asyncio.Task:
-    """Создаёт background-task и удерживает strong-ref до его завершения."""
-    task = asyncio.create_task(coro)
-    _BACKGROUND_TASKS.add(task)
-    task.add_done_callback(_BACKGROUND_TASKS.discard)
-    return task
-
 
 async def bulk_approve_drafts(db: AsyncSession, current_user=None):
     """
@@ -568,14 +551,6 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
     # пуши тихо падали, dead device tokens не чистились.
     # Теперь — открываем свежую AsyncSession внутри background helper'а.
     final_sum = total_209 + total_205
-    _spawn_background(
-        _send_push_background(
-            user_id=user.id,
-            title="✅ Квитанция проверена",
-            body=f"Бухгалтерия утвердила ваши показания. Итого к оплате: {final_sum} руб."
-        )
-    )
-
     return {"status": "approved", "new_total": final_sum}
 
 
@@ -660,22 +635,3 @@ async def unapprove_single(db: AsyncSession, reading_id: int, current_user=None)
     return {"status": "unapproved", "reading_id": reading.id}
 
 
-async def _send_push_background(user_id: int, title: str, body: str):
-    """Открывает собственную AsyncSession для фоновой отправки пуша.
-
-    Привязка к request-scoped session не работает: к моменту выполнения
-    background-task'а исходный request lifecycle уже закрыл сессию.
-    """
-    from app.core.database import AsyncSessionLocal
-    import logging
-    _log = logging.getLogger(__name__)
-    try:
-        async with AsyncSessionLocal() as bg_db:
-            try:
-                await send_push_to_user(bg_db, user_id=user_id, title=title, body=body)
-            except Exception as e:
-                _log.warning(f"[PUSH] send_push_to_user failed for user_id={user_id}: {e}")
-    except Exception as e:
-        # Двойной try — на случай если AsyncSessionLocal сам падает (Redis/DB down).
-        # Ни в коем случае не валим пользовательский request — он уже завершён.
-        _log.warning(f"[PUSH] background session init failed: {e}")

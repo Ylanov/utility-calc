@@ -7,7 +7,7 @@
 ## Что это
 Биллинг ЖКХ для общежитий/домов: расчёт коммуналки (ГВС/ХВС/электр + найм/ТКО/отопление),
 импорт долгов из 1С, подача показаний жильцами. Три части:
-- **Backend**: FastAPI, `app/modules/utility/` (основной модуль). Также `arsenal` (ДЕПРЕКЕЙТ — не трогать) и `llm` (ИИ-пилот на GigaChat).
+- **Backend**: FastAPI, `app/modules/utility/` (основной модуль). Также `arsenal` (ДЕПРЕКЕЙТ — не трогать). ИИ-пилот (llm) и ЛК жильцов вычищены 2026-06-10 — жильцы работают только через анонимный QR-портал (/qr.html#токен).
 - **Admin SPA**: `static/` — ES-модули (`static/js/modules/*.js`), компоненты `static/components/admin/*.html`. Без сборщика, нативные модули.
 - **Flutter-приложение**: `AndroidStudioProjects/jkh_lider_app_1/` (Android, RuStore, пакет `ru.asytk.jkhlider`), ходит в `asy-tk.ru/api`.
 
@@ -15,7 +15,7 @@
 - **Роутеры**: `app/modules/utility/routers/` — `client_readings` (подача/расчёт), `financier` (долги 1С, KPI, сверка), `admin_reports` (финсводка v2, residents-finance), `admin_analyzer` (Центр анализа), `rooms` (Жилфонд), `settings`, `admin_*`.
 - **Сервисы**: `app/modules/utility/services/` — `calculations` (расчёт квитанции), `debt_import` (парсер ОСВ 1С), `billing` (закрытие периода/auto-fill), `finance_analyzer`, `resident_problem_scanner` (Монитор проблем), `auto_recalc_drift`, `room_audit` (типы квартир), `gsheets_sync`.
 - **Модели**: `app/modules/utility/models.py`. **Миграции**: `alembic/versions/` (линейная цепочка, 1 head).
-- **Celery**: `app/worker.py` (beat-расписание) + `tasks.py` + `llm/celery_tasks.py`.
+- **Celery**: `app/worker.py` (beat-расписание) + `tasks.py`.
 - **Frontend-модули**: `debts.js` (Долги 1С), `summary.js` (Финансовая отчётность v2), `analyzer.js` (Центр анализа), `housing.js` (Жилфонд), `tariffs.js`, `users.js`, `readings.js`, `dashboard.js`. Хелперы — `static/js/core/dom.js`, `api.js`.
 
 ## Ключевые доменные правила (НЕ нарушать)
@@ -58,4 +58,4 @@
 сложился долг. Реестр недоступен из интернета и из CI.
 
 ## Где детальная память
-Подробные заметки по фичам/багам — в auto-memory сессий (`~/.claude/.../memory/*.md`): `room_static_architecture`, `debts_per_user`, `meter_reading_validation`, `singles_apartment`, `tech_gotchas_devops/python`, `deploy_environment`, `llm_pilot_gigachat`. Этот CLAUDE.md — точка входа, там — детали.
+Подробные заметки по фичам/багам — в auto-memory сессий (`~/.claude/.../memory/*.md`): `room_static_architecture`, `debts_per_user`, `meter_reading_validation`, `singles_apartment`, `tech_gotchas_devops/python`, `deploy_environment`. Этот CLAUDE.md — точка входа, там — детали.

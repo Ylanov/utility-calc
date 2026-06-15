@@ -13,13 +13,12 @@ from fastapi_cache.decorator import cache
 from fastapi_cache import FastAPICache
 from fastapi_limiter.depends import RateLimiter
 
-from app.core.database import get_db, AsyncSessionLocal
+from app.core.database import get_db
 from app.modules.utility.models import User, BillingPeriod, MeterReading, Room
 from app.modules.utility.schemas import PeriodCreate, PeriodResponse
 from app.core.dependencies import get_current_user, RoleChecker
 from app.modules.utility.services.billing import open_new_period
 from app.modules.utility.tasks import close_period_task
-from app.modules.utility.services.notification_service import send_push_to_all
 from app.modules.utility.routers.admin_dashboard import write_audit_log
 
 router = APIRouter(tags=["Admin Periods"])
@@ -35,18 +34,6 @@ async def _safe_clear_cache(namespace: str = "periods"):
         await FastAPICache.clear(namespace=namespace)
     except Exception as e:
         logger.warning(f"Cache clear failed for '{namespace}': {e}")
-
-
-async def _send_period_push(period_name: str):
-    async with AsyncSessionLocal() as db:
-        try:
-            await send_push_to_all(
-                db,
-                title="\U0001f4e2 Открыт прием показаний!",
-                body=f"Начался расчётный период: {period_name}. Пожалуйста, передайте показания счётчиков в приложении."
-            )
-        except Exception as e:
-            logger.error(f"Push notification error: {e}", exc_info=True)
 
 
 @router.get("/api/admin/periods/close-preview", summary="Предпросмотр последствий закрытия периода")
@@ -289,7 +276,6 @@ async def api_open_period(data: PeriodCreate, background_tasks: BackgroundTasks,
     except Exception as e:
         logger.warning(f"[open_period] charge_static_rent_for_houses failed: {e}")
 
-    background_tasks.add_task(_send_period_push, new_period.name)
     return {"status": "opened", "period": new_period.name}
 
 @router.post("/api/admin/periods/close", summary="Закрыть текущий месяц (Фоновая задача)",

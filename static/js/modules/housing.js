@@ -32,44 +32,6 @@ export const HousingModule = {
         ]);
         this.initTable();
         this.loadStats();
-        this.loadResidentAccess();
-    },
-
-    // Мастер-выключатель личных кабинетов жильцов (переход на QR-портал).
-    async loadResidentAccess() {
-        const stEl = document.getElementById('residentAccessState');
-        const btn = document.getElementById('btnResidentAccess');
-        if (!stEl || !btn) return;
-        let enabled = true;
-        try {
-            const r = await api.get('/settings/resident-access');
-            enabled = !!r.enabled;
-        } catch (e) { stEl.textContent = 'нет данных'; return; }
-        this._residentAccessEnabled = enabled;
-        stEl.textContent = enabled ? '🟢 Включены' : '🔴 Выключены';
-        stEl.style.color = enabled ? 'var(--success-color)' : 'var(--danger-color)';
-        btn.disabled = false;
-        btn.textContent = enabled ? 'Выключить' : 'Включить';
-        btn.className = 'action-btn ' + (enabled ? 'secondary-btn' : 'primary-btn');
-        if (!btn._wired) {
-            btn._wired = true;
-            btn.addEventListener('click', () => this.toggleResidentAccess());
-        }
-    },
-
-    async toggleResidentAccess() {
-        const next = !this._residentAccessEnabled;
-        const msg = next
-            ? 'Включить личные кабинеты жильцов? Жильцы снова смогут входить в ЛК/приложение.'
-            : 'Выключить личные кабинеты жильцов? Они не смогут войти в ЛК/приложение — только QR-код в квартире. Активные сессии жильцов будут отозваны. Сотрудников не касается.';
-        if (!await showConfirm(msg, { title: 'Личные кабинеты жильцов', confirmText: next ? 'Включить' : 'Выключить' })) return;
-        try {
-            const r = await api.post('/settings/resident-access', { enabled: next });
-            toast(next ? 'Личные кабинеты включены' : `Личные кабинеты выключены${r.sessions_revoked ? ` (отозвано сессий: ${r.sessions_revoked})` : ''}`, 'success');
-            this.loadResidentAccess();
-        } catch (e) {
-            toast('Не удалось изменить: ' + (e.message || e), 'error');
-        }
     },
 
     cacheDOM() {

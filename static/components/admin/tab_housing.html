@@ -40,17 +40,6 @@
                 Анализ жилфонда — во вкладке «Операции» → «Центр анализа».
             </div>
 
-            <!-- Мастер-выключатель личных кабинетов жильцов (переход на QR-портал) -->
-            <div style="margin-top: 20px; padding-top: 16px; border-top: 1px dashed var(--border-color);">
-                <h4 style="font-size: 13px; color: var(--text-main); margin-bottom: 8px;"><i class="fa-solid fa-id-card" style="color:#0891b2; margin-right:6px;"></i> Личные кабинеты жильцов</h4>
-                <p style="font-size: 11px; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.4;">
-                    Выключение → жильцы не входят в ЛК/приложение, остаётся только QR-код в квартире (подача, квитанция, связь). Активные сессии жильцов отзываются. Сотрудников не касается.
-                </p>
-                <div style="display:flex; align-items:center; gap:10px;">
-                    <span id="residentAccessState" style="font-size:13px; font-weight:600;">…</span>
-                    <button id="btnResidentAccess" class="action-btn secondary-btn" style="font-size:12px; padding:6px 14px; white-space:nowrap;" disabled>…</button>
-                </div>
-            </div>
         </div>
 
         <!-- Правая колонка: Таблица помещений -->
@@ -327,7 +316,7 @@
                     <div id="meterFields">
                         <h4 style="margin-bottom: 8px; font-size: 14px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">Счётчики в помещении</h4>
                         <p class="hint-text" style="font-size:11px; margin:0 0 10px; color:var(--text-secondary);">
-                            Какие счётчики есть в квартире — настраивается ОДИН раз на помещение, жилец наследует. Нет счётчика → нет вкладки в ЛК, начисление по нормативу.
+                            Какие счётчики есть в квартире — настраивается ОДИН раз на помещение, жилец наследует. Нет счётчика → QR-портал его не спрашивает, начисление по нормативу.
                         </p>
                         <div style="display:flex; gap:18px; flex-wrap:wrap; align-items:center; margin-bottom:14px;">
                             <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-size:13px;">

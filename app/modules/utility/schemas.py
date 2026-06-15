@@ -231,9 +231,11 @@ BillingMode = Literal["by_meter", "per_capita"]
 
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=100)  # ФИО (ключ сопоставления)
-    # login — учётка для входа. None → берётся = username (жилец сменит сам).
+    # login — историческое поле учётки. None → берётся = username.
     login: Optional[str] = Field(None, min_length=3, max_length=100)
-    password: str = Field(..., min_length=8, max_length=128)
+    # Пароль нужен только админам (ЛК жильцов вычищен 2026-06-10): жильцы
+    # создаются без пароля — бэкенд ставит случайный неизвестный hash.
+    password: Optional[str] = Field(None, min_length=8, max_length=128)
     role: AllowedRole = "user"
     residents_count: int = Field(1, ge=1, le=20)
     tariff_id: Optional[int] = None
@@ -540,14 +542,6 @@ class OneTimeChargeSchema(BaseModel):
     amount: DecimalAmount
     description: str
     account_type: AllowedAccountType = "209"
-
-
-# ======================================================
-# DEVICE TOKEN SCHEMAS
-# ======================================================
-
-class DeviceTokenCreate(BaseModel):
-    token: str
 
 
 # ======================================================

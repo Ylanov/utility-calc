@@ -295,7 +295,7 @@ function handleRoute() {
     // для обратной совместимости.
     // ВАЖНО: при добавлении новой вкладки — обязательно добавить её сюда,
     // иначе clickByHash сделает fallback на dashboard.
-    const validTabs = ['dashboard', 'readings', 'tools', 'housing', 'users', 'debts', 'certs', 'safety', 'audit', 'tickets', 'errors', 'llm'];
+    const validTabs = ['dashboard', 'readings', 'tools', 'housing', 'users', 'debts', 'certs', 'safety', 'audit', 'tickets', 'errors'];
     let tabToLoad = validTabs.includes(hash) ? hash : defaultTab;
     // «Безопасность» объединена с «Ошибки» (2026-06-09) — старый хеш ведёт туда.
     if (hash === 'security') tabToLoad = 'errors';
@@ -450,15 +450,6 @@ async function initModule(tabId) {
                 }
                 loadedModules.security.init();
                 break;
-            // L4: «ИИ-помощник» — настройки GigaChat-провайдера, тест,
-            // статистика расходов, последние вызовы LLM.
-            case 'llm':
-                if (!loadedModules.llm) {
-                    const { LLMModule } = await import('./modules/llm.js');
-                    loadedModules.llm = LLMModule;
-                }
-                loadedModules.llm.init();
-                break;
             case 'debts':
                 if (!loadedModules.debts) {
                     const { DebtsModule } = await import('./modules/debts.js');
@@ -527,13 +518,6 @@ async function initModule(tabId) {
                             loadedModules.gsheets = GSheetsModule;
                         }
                         loadedModules.gsheets.init();
-                    },
-                    'app-releases': async () => {
-                        if (!loadedModules.appReleases) {
-                            const { AppReleasesModule } = await import('./modules/app_releases.js');
-                            loadedModules.appReleases = AppReleasesModule;
-                        }
-                        loadedModules.appReleases.init();
                     },
                     analyzer: async () => {
                         if (!loadedModules.analyzer) {

@@ -33,7 +33,6 @@ from app.modules.arsenal.models import ArsenalUser
 # === ЖКХ ===
 from app.modules.utility.routers import (
     admin_periods,
-    client_readings,
     admin_reports,
     auth_routes,
     tariffs,
@@ -50,8 +49,6 @@ from app.modules.utility.routers import (
     admin_system_health,
     admin_analyzer,
     admin_recalc,
-    client_certificates,
-    me_consent,
     admin_notifications,
     admin_ot_staff,
     admin_security,
@@ -60,12 +57,9 @@ from app.modules.utility.routers import (
     tickets,
     admin_certificates,
     admin_errors,
-    app_releases,
     qr,
 )
 
-# L4: ИИ-помощник админа — модуль вне utility/routers, отдельный импорт.
-from app.modules.llm.router import router as _llm_router
 
 # === АРСЕНАЛ ===
 
@@ -488,7 +482,6 @@ async def no_cache_api_headers(request: Request, call_next):
 # =====================================================================
 app.include_router(auth_routes.router)
 app.include_router(admin_periods.router)
-app.include_router(client_readings.router)
 app.include_router(admin_reports.router)
 app.include_router(tariffs.router)
 app.include_router(admin_readings.router)
@@ -505,21 +498,15 @@ app.include_router(admin_gsheets.router)
 app.include_router(admin_system_health.router)
 app.include_router(admin_analyzer.router)
 app.include_router(admin_recalc.router)
-app.include_router(client_certificates.router)
-app.include_router(me_consent.router)
 app.include_router(admin_notifications.router)
 app.include_router(admin_ot_staff.router)
 app.include_router(admin_security.router)
 app.include_router(admin_registry.router)
 app.include_router(public_portal.router)
-app.include_router(tickets.router_client)
 app.include_router(tickets.router_admin)
 app.include_router(admin_certificates.router)
 # E3-B: копилка ошибок — /api/admin/errors/* + /api/errors/frontend.
 app.include_router(admin_errors.router)
-# L4: ИИ-помощник админа — /api/admin/llm/*.
-app.include_router(_llm_router)
-app.include_router(app_releases.router)
 app.include_router(qr.router)
 
 # =====================================================================
@@ -587,11 +574,9 @@ async def _well_known(path: str):
 
 # =====================================================================
 # КОРНЕВАЯ СТРАНИЦА — лендинг portal.html, а не закрытый ЛК.
-# StaticFiles(html=True) по умолчанию отдаёт static/index.html на «/» —
-# но index.html это закрытый личный кабинет жильца с meta noindex.
-# Из-за этого Яндекс/Google не индексировали корень. Перенаправляем
-# вручную ДО mount'а StaticFiles, чтобы «/» = portal.html (открытая
-# индексируемая страница со всем SEO).
+# «/» = static/portal.html (публичный лендинг, индексируемый). index.html
+# (бывший ЛК жильца) вычищен 2026-06-10 — StaticFiles без явного роута
+# отдавал бы 404 на корень, поэтому маршрут остаётся обязательным.
 # =====================================================================
 @app.get("/", include_in_schema=False)
 async def _root():

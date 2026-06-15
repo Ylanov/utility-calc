@@ -357,9 +357,6 @@ def _to_full_dict(r: ErrorLog) -> dict:
         "resolved_notes": r.resolved_notes,
         "copied_count": r.copied_count,
         # L5: AI-анализ если есть.
-        "ai_analysis": r.ai_analysis,
-        "ai_analyzed_at": r.ai_analyzed_at.isoformat() if r.ai_analyzed_at else None,
-        "ai_model": r.ai_model,
     }
 
 

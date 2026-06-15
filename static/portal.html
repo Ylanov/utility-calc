@@ -8,28 +8,28 @@
     <!-- ============================================================
          SEO meta tags
          ============================================================ -->
-    <title>ЖКХ Лидер — Личный кабинет жильца общежития | asy-tk.ru</title>
-    <meta name="description" content="Личный кабинет жильца общежития: подача показаний счётчиков (ГВС, ХВС, электричество), просмотр квитанций ЖКХ, история платежей, заказ справки ФЛС онлайн.">
-    <meta name="keywords" content="личный кабинет ЖКХ, показания счётчиков, квитанции, общежитие, ФЛС, справка, asy-tk">
+    <title>ЖКХ Лидер — подача показаний по QR-коду | asy-tk.ru</title>
+    <meta name="description" content="Подача показаний счётчиков (ГВС, ХВС, электричество) по QR-коду в вашей квартире — без логинов и приложений. Квитанции ЖКХ и связь с администратором там же.">
+    <meta name="keywords" content="показания счётчиков, QR-код, квитанции, общежитие, ЖКХ, asy-tk">
     <meta name="author" content="ЖКХ Лидер">
     <meta name="robots" content="index, follow">
     <link rel="canonical" href="https://asy-tk.ru/portal.html">
 
     <!-- Open Graph -->
     <meta property="og:type" content="website">
-    <meta property="og:title" content="ЖКХ Лидер — Личный кабинет жильца">
+    <meta property="og:title" content="ЖКХ Лидер — подача показаний по QR-коду">
     <meta property="og:description" content="Подача показаний счётчиков, квитанции, справки онлайн для жильцов общежитий.">
     <meta property="og:url" content="https://asy-tk.ru/portal.html">
     <meta property="og:site_name" content="ЖКХ Лидер">
     <meta property="og:locale" content="ru_RU">
-    <meta property="og:image" content="https://asy-tk.ru/app/icons/icon.svg">
+    <meta property="og:image" content="https://asy-tk.ru/icons/icon.svg">
 
     <meta name="twitter:card" content="summary">
-    <meta name="twitter:title" content="ЖКХ Лидер — Личный кабинет жильца">
+    <meta name="twitter:title" content="ЖКХ Лидер — подача показаний по QR-коду">
     <meta name="twitter:description" content="Подача показаний счётчиков и оплата ЖКХ онлайн.">
 
-    <link rel="icon" type="image/svg+xml" href="/app/icons/icon.svg">
-    <link rel="apple-touch-icon" href="/app/icons/icon.svg">
+    <link rel="icon" type="image/svg+xml" href="/icons/icon.svg">
+    <link rel="apple-touch-icon" href="/icons/icon.svg">
 
     <!-- Локальные ассеты — без внешних CDN (cdnjs/Google Fonts тормозят/блочат в РФ).
          Шрифт — системный (стек -apple-system / Segoe UI / Roboto / Inter из CSS).
@@ -594,7 +594,7 @@
           "@id": "https://asy-tk.ru/#organization",
           "name": "ЖКХ Лидер",
           "url": "https://asy-tk.ru/",
-          "logo": "https://asy-tk.ru/app/icons/icon.svg",
+          "logo": "https://asy-tk.ru/icons/icon.svg",
           "description": "Информационная система управления коммунальными услугами общежитий.",
           "areaServed": "RU",
           "contactPoint": {
@@ -614,7 +614,7 @@
         },
         {
           "@type": "WebApplication",
-          "name": "ЖКХ Лидер — Личный кабинет",
+          "name": "ЖКХ Лидер — QR-портал показаний",
           "operatingSystem": "Any",
           "applicationCategory": "UtilitiesApplication",
           "browserRequirements": "Requires JavaScript. Modern browsers (Chrome, Firefox, Safari, Edge).",
@@ -628,10 +628,10 @@
       "@context": "https://schema.org",
       "@type": "FAQPage",
       "mainEntity": [
-        { "@type": "Question", "name": "Где взять логин и пароль для входа?", "acceptedAnswer": { "@type": "Answer", "text": "Логин — это ваш лицевой счёт (Л/С). Его выдают в общежитии при заселении вместе с временным паролем." } },
-        { "@type": "Question", "name": "Какие счётчики нужно подавать?", "acceptedAnswer": { "@type": "Answer", "text": "В личном кабинете отображаются только те счётчики, которые установлены в вашей комнате: горячая вода, холодная вода, электричество." } },
+        { "@type": "Question", "name": "Как подать показания?", "acceptedAnswer": { "@type": "Answer", "text": "Отсканируйте QR-код, наклеенный в вашей квартире у счётчика. При первом входе придумайте пароль квартиры — и подавайте показания без логинов и приложений." } },
+        { "@type": "Question", "name": "Какие счётчики нужно подавать?", "acceptedAnswer": { "@type": "Answer", "text": "Портал спрашивает только те счётчики, которые установлены в вашей квартире: горячая вода, холодная вода, электричество." } },
         { "@type": "Question", "name": "В какие дни принимаются показания?", "acceptedAnswer": { "@type": "Answer", "text": "Период приёма показаний устанавливается администрацией общежития, обычно с 15 числа по 3 число следующего месяца." } },
-        { "@type": "Question", "name": "Где скачать квитанцию для оплаты?", "acceptedAnswer": { "@type": "Answer", "text": "После утверждения показаний бухгалтерией квитанция в формате PDF появляется в разделе «История квитанций» в личном кабинете." } },
+        { "@type": "Question", "name": "Где скачать квитанцию для оплаты?", "acceptedAnswer": { "@type": "Answer", "text": "После утверждения показаний бухгалтерией кнопка «Скачать квитанцию» появляется прямо на QR-портале вашей квартиры." } },
         { "@type": "Question", "name": "Как защищены мои персональные данные?", "acceptedAnswer": { "@type": "Answer", "text": "Передача шифруется TLS, пароли хранятся в виде хэшей bcrypt, у администраторов работает 2FA. Все данные обрабатываются по 152-ФЗ. Серверы в РФ." } }
       ]
     }
@@ -650,7 +650,7 @@
             <a href="#features" class="site-nav__link site-nav__link--menu">Возможности</a>
             <a href="#how-it-works" class="site-nav__link site-nav__link--menu">Как пользоваться</a>
             <a href="#faq" class="site-nav__link site-nav__link--menu">Вопросы</a>
-            <a href="/login.html" class="btn btn--primary" style="padding: 9px 18px; font-size: 14px;">Войти</a>
+            <a href="/login.html" class="btn btn--primary" style="padding: 9px 18px; font-size: 14px;">Для сотрудников</a>
         </nav>
     </div>
 </header>
@@ -660,19 +660,19 @@
     <div class="container">
         <span class="hero__badge fade-up">
             <span class="dot"></span>
-            Личный кабинет жильца общежития
+            Сервис жильцов общежитий
         </span>
         <h1 class="hero__title fade-up fade-up--d1">
             Управляйте своим ЖКХ <span class="accent">за пару секунд</span>
         </h1>
         <p class="hero__subtitle fade-up fade-up--d2">
-            Подавайте показания счётчиков, скачивайте квитанции и заказывайте справки
-            прямо со смартфона. Без очередей и бумажных бланков.
+            Отсканируйте QR-код в вашей квартире — и подавайте показания счётчиков,
+            скачивайте квитанции и пишите администратору. Без логинов и приложений.
         </p>
         <div class="hero__actions fade-up fade-up--d3">
-            <a href="/login.html" class="btn btn--primary btn--lg">
-                <i class="fa-solid fa-arrow-right-to-bracket"></i>
-                Войти в личный кабинет
+            <a href="#how-it-works" class="btn btn--primary btn--lg">
+                <i class="fa-solid fa-qrcode"></i>
+                Как подать показания
             </a>
             <a href="#features" class="btn btn--ghost btn--lg">Узнать подробнее</a>
         </div>
@@ -704,8 +704,8 @@
             <div class="section__eyebrow">Возможности</div>
             <h2 class="section__title">Что умеет «ЖКХ Лидер»</h2>
             <p class="section__lead">
-                Цифровой личный кабинет жильца общежития — от подачи показаний
-                до получения справок, всё онлайн.
+                QR-портал квартиры — от подачи показаний до квитанции,
+                всё онлайн, без регистрации.
             </p>
         </div>
         <div class="features">
@@ -751,28 +751,28 @@
         <div class="section__header">
             <div class="section__eyebrow">Как пользоваться</div>
             <h2 class="section__title">Три простых шага</h2>
-            <p class="section__lead">От первого входа до оплаты — без сложных настроек.</p>
+            <p class="section__lead">От скана QR-кода до оплаты — без сложных настроек.</p>
         </div>
         <ol class="steps">
             <li class="step">
-                <h3 class="step__title">Войдите по логину</h3>
+                <h3 class="step__title">Отсканируйте QR-код</h3>
                 <p class="step__desc">
-                    Логин — номер вашего лицевого счёта, его выдают в общежитии.
-                    Пароль вы получили при заселении.
+                    QR-код наклеен в вашей квартире у счётчика. При первом входе
+                    придумайте пароль квартиры — он защитит подачу от посторонних.
                 </p>
             </li>
             <li class="step">
                 <h3 class="step__title">Введите показания</h3>
                 <p class="step__desc">
-                    В разделе «Показания» введите текущие цифры со счётчиков.
-                    Система автоматически рассчитает потребление и начисление.
+                    Введите текущие цифры со счётчиков — только те, что есть
+                    в квартире. Система сама рассчитает потребление и начисление.
                 </p>
             </li>
             <li class="step">
                 <h3 class="step__title">Скачайте квитанцию</h3>
                 <p class="step__desc">
-                    После утверждения бухгалтерией квитанция в PDF появится
-                    в разделе «История» — можно оплачивать.
+                    После утверждения бухгалтерией кнопка «Скачать квитанцию»
+                    появится на портале — можно оплачивать.
                 </p>
             </li>
         </ol>
@@ -789,17 +789,17 @@
         </div>
         <div class="faq">
             <details class="faq__item">
-                <summary>Где взять логин и пароль для входа?</summary>
+                <summary>Как попасть на портал подачи показаний?</summary>
                 <div class="faq__answer">
-                    Логин — это ваш лицевой счёт (Л/С). Его выдают в общежитии при заселении вместе
-                    с временным паролем. При первом входе система попросит сменить пароль.
-                    Если вы потеряли данные — обратитесь к коменданту или в бухгалтерию.
+                    Отсканируйте камерой телефона QR-код, наклеенный в вашей квартире у счётчика.
+                    При первом входе придумайте пароль квартиры. Если QR-кода нет или пароль
+                    забыт — обратитесь к коменданту или в бухгалтерию.
                 </div>
             </details>
             <details class="faq__item">
                 <summary>Какие счётчики нужно подавать?</summary>
                 <div class="faq__answer">
-                    В личном кабинете вы видите только те счётчики, которые установлены в вашей комнате:
+                    Портал спрашивает только те счётчики, которые установлены в вашей квартире:
                     горячая вода, холодная вода, электричество. Если какого-то счётчика нет —
                     расход рассчитывается по нормативу.
                 </div>
@@ -808,15 +808,15 @@
                 <summary>В какие дни принимаются показания?</summary>
                 <div class="faq__answer">
                     Период приёма показаний устанавливается администрацией (обычно с 15 числа по 3 число
-                    следующего месяца). В личном кабинете вы увидите статус: «приём открыт» или «приём закрыт».
+                    следующего месяца). На портале вы увидите статус: «приём открыт» или «приём закрыт».
                     После закрытия периода бухгалтерия утверждает показания и формирует квитанции.
                 </div>
             </details>
             <details class="faq__item">
                 <summary>Где скачать квитанцию для оплаты?</summary>
                 <div class="faq__answer">
-                    После утверждения показаний бухгалтерией квитанция (форма ЕПД, PDF) появляется
-                    в разделе «История квитанций» в личном кабинете. Скачать можно в любой момент.
+                    После утверждения показаний бухгалтерией кнопка «Скачать квитанцию» (PDF)
+                    появляется прямо на QR-портале вашей квартиры. Скачать можно в любой момент.
                 </div>
             </details>
             <details class="faq__item">
@@ -848,54 +848,24 @@
     </div>
 </section>
 
-<!-- ─── Mobile app + CTA login ─────────────────────────────────── -->
+<!-- ─── CTA: QR-портал ──────────────────────────────────────────── -->
 <section class="section">
     <div class="container">
         <div style="display: grid; gap: 24px; grid-template-columns: 1fr;">
-            <!-- CTA login -->
+            <!-- CTA: QR-портал квартиры -->
             <div class="login-card">
-                <div class="login-card__icon"><i class="fa-solid fa-building-user"></i></div>
+                <div class="login-card__icon"><i class="fa-solid fa-qrcode"></i></div>
                 <h2 class="login-card__title">Готовы начать?</h2>
                 <p class="login-card__sub">
-                    Войдите в личный кабинет по логину (лицевому счёту) и паролю,
-                    которые вы получили в общежитии.
+                    Отсканируйте QR-код в вашей квартире — он наклеен у счётчика.
+                    Это и есть ваш портал: показания, квитанции, связь с администратором.
                 </p>
-                <a href="/login.html" class="login-card__btn">
-                    Войти в личный кабинет
-                    <i class="fa-solid fa-arrow-right"></i>
-                </a>
             </div>
 
-            <!-- Mobile app block. Показывается JS только если на сервере есть APK. -->
-            <div id="portalAppBlock" class="mobile-app" style="display: none;">
-                <div class="mobile-app__info">
-                    <div class="mobile-app__icon"><i class="fa-solid fa-mobile-screen-button"></i></div>
-                    <div class="mobile-app__title">Мобильное приложение «ЖКХ Лидер»</div>
-                    <div class="mobile-app__desc">
-                        Подавайте показания и смотрите квитанции в один тап со смартфона.
-                        Установите APK напрямую — без Google Play.
-                    </div>
-                    <a id="portalAppDownloadLink" href="#" download class="btn btn--primary">
-                        <i class="fa-brands fa-android"></i>
-                        <span id="portalAppVersionLabel">Скачать APK</span>
-                    </a>
-                </div>
-                <div style="text-align: center; flex-shrink: 0;">
-                    <div id="portalAppQR" class="mobile-app__qr">
-                        <span>QR-код</span>
-                    </div>
-                    <p style="margin: 8px 0 0; font-size: 11px; color: var(--text-muted);">
-                        <i class="fa-solid fa-qrcode"></i> Сканируйте с телефона
-                    </p>
-                </div>
-            </div>
         </div>
     </div>
 </section>
 
-<!-- Логика «Скачать APK» вынесена в external js/portal.js —
-     раньше была inline, мешала убрать 'unsafe-inline' из CSP. -->
-<script src="js/portal.js" defer></script>
 <!-- Юр. обвязка: cookie-баннер + ссылки на политику ПД (152-ФЗ). -->
 <script src="js/legal-footer.js" defer></script>
 </body>

@@ -132,14 +132,6 @@ celery.conf.beat_schedule = {
         "task": "cleanup_qr_tickets_task",
         "schedule": crontab(minute=50, hour=3),
     },
-    # Ежедневное напоминание жильцам о подаче показаний — push на за 3, 1
-    # и 0 дней до конца окна `submission_end_day`. В прочие дни задача
-    # сама выходит без рассылки. 10:00 МСК = время когда люди уже
-    # просыпаются, но рабочий день ещё не в разгаре — push заметят.
-    "remind-submit-readings-daily": {
-        "task": "remind_submit_readings_task",
-        "schedule": crontab(minute=0, hour=10),
-    },
     # Bug AO: дневная авто-добивка нормативом. Каждый день в 03:45 проходит
     # по периодам, которые закрыты (или давно неактивны), и добавляет
     # reading'и для жильцов без подачи — по стратегии AUTO_NORM_SANCTION /
@@ -150,20 +142,6 @@ celery.conf.beat_schedule = {
     "auto-fill-missing-readings-daily": {
         "task": "auto_fill_missing_readings_task",
         "schedule": crontab(minute=45, hour=3),
-    },
-    # L5+L8: AI-анализ свежих error_log. Для Freemium-подписки GigaChat
-    # (фикс. пакет токенов в месяц) уменьшили частоту: каждые 6 часов
-    # вместо часа, batch 3 вместо 10 → максимум ~12 анализов в день
-    # = ~30k токенов/мес для Lite (12% от 248k) — оставляем запас на
-    # user-summary и тесты.
-    "llm-analyze-errors-6h": {
-        "task": "llm_analyze_errors_task",
-        "schedule": crontab(minute=15, hour="*/6"),  # 00:15, 06:15, 12:15, 18:15
-    },
-    # L7: Daily admin briefing — каждое утро 06:00 UTC (= 09:00 МСК).
-    "llm-daily-briefing": {
-        "task": "llm_daily_briefing_task",
-        "schedule": crontab(minute=0, hour=6),
     },
     # Монитор проблем жильцов — каждые 6 часов в :30 (не пересекается с
     # другими задачами). Прогоняет детекторы (не подаёт / долг растёт /
@@ -183,8 +161,6 @@ celery.conf.beat_schedule = {
 # ИМПОРТЫ ЗАДАЧ
 celery.conf.imports = [
     "app.modules.utility.tasks",
-    # L5/L7: ИИ-пилот.
-    "app.modules.llm.celery_tasks",
     # Если в будущем появятся фоновые задачи у Арсенала, нужно создать
     # tasks.py и раскомментировать строку ниже:
     # "app.modules.arsenal.tasks",

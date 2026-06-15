@@ -48,4 +48,3 @@ httpx==0.28.1
 # --- Monitoring ---
 sentry-sdk[fastapi,celery,sqlalchemy]==2.53.0
 
-firebase-admin==7.3.0

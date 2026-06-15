@@ -7,7 +7,8 @@ Endpoints:
   - GET    /api/admin/tickets            — админ видит все, с фильтрами
   - PATCH  /api/admin/tickets/{id}       — админ отвечает / меняет статус
 
-Жильцовские эндпоинты — за require_resident (только role=user).
+Жильцовских эндпоинтов больше нет: обращения создаёт анонимный QR-портал
+напрямую (public_portal.contact), ответы жилец читает там же (/api/q/.../messages).
 Админские — за allow_management (admin/accountant/financier).
 """
 from datetime import datetime
@@ -20,16 +21,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.core.database import get_db
-from app.core.dependencies import RoleChecker, require_resident
+from app.core.dependencies import RoleChecker
 from app.core.time_utils import utcnow
 from app.modules.utility.models import SupportTicket, User
 from app.modules.utility.routers.admin_dashboard import write_audit_log
-from app.modules.utility.services.notification_service import send_push_to_user
 
 
 allow_management = RoleChecker(["accountant", "admin", "financier"])
 
-router_client = APIRouter(prefix="/api/me/tickets", tags=["Client — Support tickets"])
 router_admin = APIRouter(prefix="/api/admin/tickets", tags=["Admin — Support tickets"])
 
 
@@ -87,122 +86,6 @@ def _to_out(t: SupportTicket, user_username: Optional[str] = None, responded_by_
 
 # =========================================================================
 # CLIENT — жилец
-# =========================================================================
-@router_client.post("", response_model=TicketOut)
-async def create_ticket(
-    body: TicketCreateBody,
-    current_user: User = Depends(require_resident),
-    db: AsyncSession = Depends(get_db),
-):
-    """Жилец создаёт новое обращение.
-
-    Bug AZ: rate limit — не более 5 открытых (status='open') тикетов на жильца
-    одновременно + не более 10 созданий за последние 60 минут. Защита от
-    спама (типичный pattern: жилец/бот отправляет 1000 тикетов).
-    """
-    from datetime import datetime, timezone, timedelta
-
-    # 1. Не больше 5 НЕ-закрытых одновременно — иначе админ-очередь захлёбывается.
-    open_count = (await db.execute(
-        select(func.count(SupportTicket.id)).where(
-            SupportTicket.user_id == current_user.id,
-            SupportTicket.status.in_(["open", "in_progress"]),
-        )
-    )).scalar_one()
-    if open_count >= 5:
-        raise HTTPException(
-            status_code=429,
-            detail=(
-                "У вас уже 5 открытых обращений. Дождитесь ответа от "
-                "администратора по существующим, прежде чем создавать новые."
-            ),
-        )
-
-    # 2. Не больше 10 созданий за час (защита от brute-spam).
-    hour_ago = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=1)
-    hour_count = (await db.execute(
-        select(func.count(SupportTicket.id)).where(
-            SupportTicket.user_id == current_user.id,
-            SupportTicket.created_at >= hour_ago,
-        )
-    )).scalar_one()
-    if hour_count >= 10:
-        raise HTTPException(
-            status_code=429,
-            detail="Слишком много обращений за последний час. Попробуйте позже.",
-        )
-
-    ticket = SupportTicket(
-        user_id=current_user.id,
-        subject=body.subject.strip(),
-        message=body.message.strip(),
-        status="open",
-    )
-    db.add(ticket)
-    await db.flush()
-    await write_audit_log(
-        db, current_user.id, current_user.username,
-        action="create", entity_type="ticket", entity_id=ticket.id,
-        details={"subject": ticket.subject[:60]},
-    )
-    await db.commit()
-    await db.refresh(ticket)
-    return _to_out(ticket, user_username=current_user.username)
-
-
-@router_client.get("", response_model=TicketListResponse)
-async def list_my_tickets(
-    current_user: User = Depends(require_resident),
-    db: AsyncSession = Depends(get_db),
-    page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
-):
-    """Жилец смотрит ТОЛЬКО свои обращения (свежие сверху)."""
-    base = select(SupportTicket).where(SupportTicket.user_id == current_user.id)
-    total = (await db.execute(
-        select(func.count(SupportTicket.id)).where(SupportTicket.user_id == current_user.id)
-    )).scalar_one()
-
-    rows = (await db.execute(
-        base.options(selectinload(SupportTicket.responded_by))
-        .order_by(desc(SupportTicket.created_at))
-        .offset((page - 1) * limit).limit(limit)
-    )).scalars().all()
-
-    items = [
-        _to_out(
-            t,
-            user_username=current_user.username,
-            responded_by_username=t.responded_by.username if t.responded_by else None,
-        )
-        for t in rows
-    ]
-    return {"total": total, "items": items}
-
-
-@router_client.get("/{ticket_id}", response_model=TicketOut)
-async def get_my_ticket(
-    ticket_id: int,
-    current_user: User = Depends(require_resident),
-    db: AsyncSession = Depends(get_db),
-):
-    """Деталь одного обращения — только если оно принадлежит этому жильцу."""
-    t = (await db.execute(
-        select(SupportTicket)
-        .options(selectinload(SupportTicket.responded_by))
-        .where(SupportTicket.id == ticket_id, SupportTicket.user_id == current_user.id)
-    )).scalars().first()
-    if not t:
-        raise HTTPException(404, "Обращение не найдено")
-    return _to_out(
-        t,
-        user_username=current_user.username,
-        responded_by_username=t.responded_by.username if t.responded_by else None,
-    )
-
-
-# =========================================================================
-# ADMIN
 # =========================================================================
 @router_admin.get("", response_model=TicketListResponse)
 async def list_all_tickets(
@@ -265,7 +148,6 @@ async def respond_to_ticket(
         raise HTTPException(404, "Обращение не найдено")
 
     changed = []
-    pushed_response = False
     if body.admin_response is not None and body.admin_response.strip():
         t.admin_response = body.admin_response.strip()
         t.responded_by_id = current_user.id
@@ -273,7 +155,6 @@ async def respond_to_ticket(
         if not body.status:
             t.status = "answered"
         changed.append("response")
-        pushed_response = True
     if body.status:
         t.status = body.status
         changed.append(f"status={body.status}")
@@ -285,22 +166,6 @@ async def respond_to_ticket(
     )
     await db.commit()
     await db.refresh(t)
-
-    # Bug BA: уведомляем жильца пушем, что админ ответил. Делаем ПОСЛЕ commit
-    # чтобы не блокировать ответ если FCM лежит. Ошибку только логируем.
-    if pushed_response and t.user_id:
-        try:
-            short = t.subject[:50] + ("…" if len(t.subject) > 50 else "")
-            await send_push_to_user(
-                db=db,
-                user_id=t.user_id,
-                title="Ответ на ваше обращение",
-                body=f"«{short}» — администратор ответил, посмотрите в приложении.",
-                data={"type": "ticket_response", "ticket_id": str(t.id)},
-            )
-        except Exception:  # noqa: BLE001
-            # FCM падает — это не повод ломать админу UI. Лог уже в send_push_to_user.
-            pass
 
     return _to_out(
         t,

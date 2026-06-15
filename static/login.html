@@ -4,22 +4,22 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#1a73e8">
-    <title>Вход в личный кабинет жильца | ЖКХ Лидер</title>
+    <title>Вход для сотрудников | ЖКХ Лидер</title>
 
     <!-- SEO -->
-    <meta name="description" content="Вход в личный кабинет жильца. Подавайте показания счётчиков, скачивайте квитанции, заказывайте справки.">
-    <meta name="robots" content="index, follow">
+    <meta name="description" content="Служебный вход для сотрудников ЖКХ Лидер. Жильцы подают показания по QR-коду в квартире.">
+    <meta name="robots" content="noindex, nofollow">
     <link rel="canonical" href="https://asy-tk.ru/login.html">
 
     <!-- Open Graph -->
     <meta property="og:type" content="website">
-    <meta property="og:title" content="Вход в личный кабинет — ЖКХ Лидер">
-    <meta property="og:description" content="Войдите по логину и паролю чтобы подать показания и оплатить ЖКХ.">
+    <meta property="og:title" content="Вход для сотрудников — ЖКХ Лидер">
+    <meta property="og:description" content="Служебный вход. Жильцы подают показания по QR-коду в квартире.">
     <meta property="og:url" content="https://asy-tk.ru/login.html">
     <meta property="og:locale" content="ru_RU">
 
-    <link rel="icon" type="image/svg+xml" href="/app/icons/icon.svg">
-    <link rel="apple-touch-icon" href="/app/icons/icon.svg">
+    <link rel="icon" type="image/svg+xml" href="/icons/icon.svg">
+    <link rel="apple-touch-icon" href="/icons/icon.svg">
 
     <!-- Локальные ассеты (без CDN — cdnjs/Google Fonts тормозят/блочат в РФ).
          Шрифт — системный стек (см. CSS), FontAwesome локально. -->
@@ -33,7 +33,7 @@
 
     <!-- Кнопка Назад на портал -->
     <a href="portal.html" style="position: absolute; top: 24px; left: 24px; color: var(--text-secondary); font-weight: 500; display: flex; align-items: center; gap: 8px; transition: color 0.2s;">
-        <i class="fa-solid fa-arrow-left"></i> Назад к платформам
+        <i class="fa-solid fa-arrow-left"></i> На главную
     </a>
 
     <!-- Контейнер для тостов (уведомлений) -->
@@ -64,88 +64,7 @@
             и <a href="/consent.html" style="text-decoration:underline;">Согласием на обработку ПДн</a>.
         </p>
 
-        <div style="text-align: center; margin-top: 24px;">
-            <a href="#" id="btnForgotPass" style="font-size: 13px; font-weight: 500;">Забыли пароль?</a>
-        </div>
     </form>
-
-    <!-- МОДАЛКА «Забыли пароль?»
-         Жилец заполняет ФИО + комнату + контакт → отправляется заявка
-         администратору (через audit_log). Админ видит её в журнале
-         + в колокольчике уведомлений и сбрасывает пароль вручную.
-         Сами не сбрасываем по форме — это слабый knowledge factor. -->
-    <div id="resetModal" class="modal-overlay">
-        <div class="modal-window" style="width: 480px;">
-            <div class="modal-header">
-                <h3>Восстановление доступа</h3>
-                <button type="button" class="close-icon" id="btnCloseIconReset">&times;</button>
-            </div>
-            <form id="forgotPasswordForm" class="modal-form" style="padding-top: 16px;">
-                <p style="margin: 0 0 16px; font-size: 13px; color: var(--text-secondary); line-height: 1.5;">
-                    Заполните данные — администратор свяжется с вами по указанному контакту
-                    в течение 10 рабочих дней и выдаст временный пароль.
-                </p>
-
-                <div class="form-group">
-                    <label>ФИО полностью <span style="color: var(--danger-color);">*</span></label>
-                    <input type="text" id="fpFullName" required minlength="3" maxlength="300"
-                           placeholder="Иванов Иван Иванович">
-                </div>
-
-                <div class="form-group">
-                    <label>Общежитие <span style="color: var(--danger-color);">*</span></label>
-                    <input type="text" id="fpDormitoryName" required minlength="1" maxlength="100"
-                           placeholder="4дв.стр.8">
-                </div>
-
-                <div class="form-group">
-                    <label>Номер комнаты <span style="color: var(--danger-color);">*</span></label>
-                    <input type="text" id="fpRoomNumber" required minlength="1" maxlength="20"
-                           placeholder="313">
-                </div>
-
-                <div class="form-group">
-                    <label>Контакт для связи (телефон или email) <span style="color: var(--danger-color);">*</span></label>
-                    <input type="text" id="fpContact" required maxlength="200"
-                           placeholder="+7 (___) ___-__-__ или email">
-                </div>
-
-                <div class="form-group">
-                    <label>Дополнительный комментарий (необязательно)</label>
-                    <textarea id="fpNote" rows="2" maxlength="1000"
-                              placeholder="Например: «не помню логин» или особые обстоятельства"></textarea>
-                </div>
-
-                <div style="background: var(--primary-bg); border-left: 4px solid var(--primary-color); padding: 12px 16px; border-radius: var(--radius-sm); margin-bottom: 16px; font-size: 12px; color: var(--text-secondary); line-height: 1.5;">
-                    <i class="fa-solid fa-shield-halved" style="color: var(--primary-color); margin-right: 4px;"></i>
-                    Сам пароль сбрасывает только администратор — это защита от мошенников,
-                    которые могут знать ваши ФИО и адрес.
-                </div>
-
-                <label style="display:flex; align-items:flex-start; gap:8px; margin-bottom:16px; font-size:12px; color:var(--text-secondary); line-height:1.45; cursor:pointer;">
-                    <input type="checkbox" id="fpConsent" required style="margin-top:2px; flex:0 0 auto;">
-                    <span>Я даю
-                        <a href="/consent.html" target="_blank" style="text-decoration:underline;">согласие на обработку персональных данных</a>
-                        и ознакомлен(а) с
-                        <a href="/privacy.html" target="_blank" style="text-decoration:underline;">Политикой</a>.</span>
-                </label>
-
-                <button type="submit" id="btnSendForgot" class="action-btn primary-btn full-width" style="padding: 12px;">
-                    <i class="fa-solid fa-paper-plane"></i> Отправить заявку
-                </button>
-            </form>
-            <!-- Экран после успешной отправки (скрыт по умолчанию) -->
-            <div id="forgotSuccess" class="modal-form hide" style="padding: 24px; text-align: center;">
-                <div style="font-size: 48px; margin-bottom: 12px;">✅</div>
-                <h4 style="margin: 0 0 8px; color: var(--text-main);">Заявка принята</h4>
-                <p style="font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 20px;">
-                    Администратор свяжется с вами по указанному контакту
-                    в течение 10 рабочих дней.
-                </p>
-                <button type="button" id="btnCloseSuccess" class="action-btn primary-btn full-width" style="padding: 12px;">Понятно</button>
-            </div>
-        </div>
-    </div>
 
     <script type="module" src="js/login.js"></script>
     <!-- Юридический футер + cookie-баннер. Стандартная обвязка по 152-ФЗ. -->

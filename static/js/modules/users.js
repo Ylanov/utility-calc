@@ -76,7 +76,6 @@ export const UsersModule = {
             inputs: {
                 id: document.getElementById('editUserId'),
                 username: document.getElementById('editUsername'),  // ФИО (ключ сверки)
-                login: document.getElementById('editLogin'),        // учётка для входа
                 password: document.getElementById('editPassword'),
                 role: document.getElementById('editRole'),
                 tariff: document.getElementById('editTariffId'),
@@ -130,25 +129,6 @@ export const UsersModule = {
                 api.download('/users/export/template', 'Import_Template.xlsx');
             });
         }
-        // Bug BB: запрос актуальных данных у всех + просмотр ответов
-        const btnReqAll = document.getElementById('btnRequestDataRefreshAll');
-        if (btnReqAll) {
-            btnReqAll.addEventListener('click', () => this.requestDataRefreshBulk());
-        }
-        const btnShowSubs = document.getElementById('btnShowDataRefreshSubmissions');
-        if (btnShowSubs) {
-            btnShowSubs.addEventListener('click', () => this.openDataRefreshSubmissions());
-        }
-        document.querySelectorAll('[data-drs-close]').forEach(b =>
-            b.addEventListener('click', () => {
-                document.getElementById('dataRefreshSubmissionsModal')?.classList.remove('open');
-            })
-        );
-        const drsRefresh = document.getElementById('btnDrsRefresh');
-        if (drsRefresh) drsRefresh.addEventListener('click', () => this.loadDataRefreshSubmissions());
-        const drsCheck = document.getElementById('drsOnlyMismatched');
-        if (drsCheck) drsCheck.addEventListener('change', () => this.loadDataRefreshSubmissions());
-
         // Excel-экспорт видимого списка с учётом фильтров
         if (this.dom.btnExport) {
             this.dom.btnExport.addEventListener('click', (e) => {
@@ -165,6 +145,12 @@ export const UsersModule = {
 
         // Формы CRUD
         if (this.dom.addForm) this.dom.addForm.addEventListener('submit', (e) => this.handleAdd(e));
+        // Поле пароля в создании — только для роли «Администратор» (жильцы
+        // не входят в систему: ЛК вычищен, подача — через QR квартиры).
+        document.getElementById('newRole')?.addEventListener('change', (e) => {
+            const g = document.getElementById('newPasswordGroup');
+            if (g) g.style.display = (e.target.value === 'admin') ? '' : 'none';
+        });
         if (this.modal.form) this.modal.form.addEventListener('submit', (e) => this.handleEditSubmit(e));
         if (this.modal.btnClose) this.modal.btnClose.addEventListener('click', () => this.closeModal());
 
@@ -563,10 +549,18 @@ export const UsersModule = {
             ? (this.dom.newHouseSelect?.value || null)
             : (this.dom.newRoomSelect?.value || null);
 
+        const role = document.getElementById('newRole').value;
+        // Пароль нужен только админам (жильцы не входят — QR-портал).
+        const pw = document.getElementById('newPassword').value;
+        if (role === 'admin' && (!pw || pw.length < 8)) {
+            toast('Для администратора задайте пароль (мин. 8 символов)', 'warning');
+            setLoading(button, false);
+            return;
+        }
         const data = {
             username: document.getElementById('newUsername').value.trim(),
-            password: document.getElementById('newPassword').value,
-            role: document.getElementById('newRole').value,
+            ...(role === 'admin' ? { password: pw } : {}),
+            role,
             room_id: roomIdVal ? parseInt(roomIdVal) : null,
             residents_count: parseInt(document.getElementById('residentsCount').value) || 1,
             // Тип жильца (family/single). Режим оплаты и место работы убраны:
@@ -630,6 +624,11 @@ export const UsersModule = {
         const modal = document.getElementById('userActionsModal');
         if (!modal) return;
         this._hubUser = user;
+        // Сброс пароля — только админским учёткам: жильцы в систему не входят
+        // (ЛК вычищен 2026-06-10), пароль для них не существует.
+        modal.querySelectorAll('[data-admin-only]').forEach(b => {
+            b.style.display = (user.role === 'admin') ? '' : 'none';
+        });
 
         // Заполняем шапку и сводку
         document.getElementById('hubUserName').textContent = user.username;
@@ -674,8 +673,6 @@ export const UsersModule = {
                 if (action === 'relocate')       openRelocateModal(u, this.rel, this.dormsCache);
                 if (action === 'contracts')      this.openContractsModal(u);
                 if (action === 'reset-password') this.openPasswordResetModal(u);
-                // Bug BB: индивидуальный запрос актуальных данных.
-                if (action === 'request-refresh') this.requestDataRefreshOne(u.id, u.username);
             });
             this._hubBound = true;
         }
@@ -998,8 +995,10 @@ export const UsersModule = {
 
             if (inputs.id) inputs.id.value = user.id;
             if (inputs.username) inputs.username.value = user.username;
-            if (inputs.login) inputs.login.value = user.login || '';
             if (inputs.password) inputs.password.value = '';
+            // Поле пароля — только админским учёткам (жильцы не входят).
+            const pwGroup = document.getElementById('editPasswordGroup');
+            if (pwGroup) pwGroup.style.display = (user.role === 'admin') ? '' : 'none';
             if (inputs.role) inputs.role.value = user.role;
             if (inputs.tariff) inputs.tariff.value = user.tariff_id || '';
             if (inputs.residents) inputs.residents.value = user.residents_count;
@@ -1091,10 +1090,6 @@ export const UsersModule = {
             // жилец наследует (meters_002, room_static_architecture).
         };
 
-        // Логин (учётка) — шлём только если задан (пустой не пройдёт min_length=3).
-        const loginVal = this.modal.inputs.login?.value.trim();
-        if (loginVal) data.login = loginVal;
-
         if (this.modal.inputs.password.value) {
             data.password = this.modal.inputs.password.value;
         }
@@ -1110,79 +1105,6 @@ export const UsersModule = {
             toast(error.message, 'error');
         } finally {
             setLoading(button, false);
-        }
-    },
-
-    // =====================================================================
-    // Bug BB: запрос актуальных данных у жильцов
-    // =====================================================================
-    /** Массово выставить флаг — все активные жильцы увидят popup в моб-приложении. */
-    async requestDataRefreshBulk() {
-        if (!await showConfirm('Запросить актуальные данные (общежитие/комната/число жильцов) у ВСЕХ активных жильцов?\n\nКаждый из них увидит однократный popup в мобильном приложении при следующем входе.', { confirmText: 'Запросить' })) {
-            return;
-        }
-        try {
-            const res = await api.post('/users/admin/request-data-refresh-bulk', { user_ids: null });
-            toast(`Запрос отправлен. Затронуто жильцов: ${res.affected}`, 'success');
-        } catch (e) {
-            toast('Ошибка: ' + e.message, 'error');
-        }
-    },
-
-    /** Запросить у одного конкретного жильца (вызывается из hub-модалки). */
-    async requestDataRefreshOne(userId, username) {
-        if (!await showConfirm(`Запросить актуальные данные у жильца «${username}»?\n\nОн увидит popup при следующем входе в приложение.`, { confirmText: 'Запросить' })) {
-            return;
-        }
-        try {
-            await api.post(`/users/admin/${userId}/request-data-refresh`, {});
-            toast('Запрос отправлен', 'success');
-        } catch (e) {
-            toast('Ошибка: ' + e.message, 'error');
-        }
-    },
-
-    /** Открыть модалку списка ответов жильцов. */
-    openDataRefreshSubmissions() {
-        const modal = document.getElementById('dataRefreshSubmissionsModal');
-        if (!modal) return;
-        modal.classList.add('open');
-        this.loadDataRefreshSubmissions();
-    },
-
-    async loadDataRefreshSubmissions() {
-        const tbody = document.getElementById('drsTableBody');
-        if (!tbody) return;
-        const onlyMismatched = document.getElementById('drsOnlyMismatched')?.checked ? '?only_mismatched=true&limit=200' : '?limit=200';
-        tbody.innerHTML = '<tr><td colspan="6" class="text-center" style="padding:30px;"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка…</td></tr>';
-        try {
-            const res = await api.get('/users/admin/data-refresh-submissions' + onlyMismatched);
-            const items = res.items || [];
-            if (!items.length) {
-                tbody.innerHTML = '<tr><td colspan="6" class="text-center" style="padding:30px; color:var(--text-secondary);">Ответов нет</td></tr>';
-                return;
-            }
-            tbody.innerHTML = items.map(s => {
-                const dt = s.submitted_at ? new Date(s.submitted_at).toLocaleString('ru-RU', {dateStyle: 'short', timeStyle: 'short'}) : '—';
-                const mismatchBg = s.mismatched ? 'background:#fef3c7;' : '';
-                // XSS: submitted_dorm/room — свободный текст от жильца (data-refresh),
-                // экранируем перед вставкой в innerHTML (аудит безопасности).
-                const sysDormRoom = this._escape(s.system_dorm || '—') + ' / ' + this._escape(s.system_room || '—');
-                const subDormRoom = this._escape(s.submitted_dorm || '—') + ' / ' + this._escape(s.submitted_room || '—');
-                const sysR = s.system_residents == null ? '—' : s.system_residents;
-                return `
-                    <tr style="${mismatchBg}">
-                        <td style="white-space:nowrap;">${dt}</td>
-                        <td><b>${this._escape(s.username || ('#' + s.user_id))}</b></td>
-                        <td>${subDormRoom}</td>
-                        <td style="color: var(--text-secondary);">${sysDormRoom}</td>
-                        <td class="text-center"><b>${s.submitted_residents}</b></td>
-                        <td class="text-center" style="color: var(--text-secondary);">${sysR}</td>
-                    </tr>
-                `;
-            }).join('');
-        } catch (e) {
-            tbody.innerHTML = `<tr><td colspan="6" class="text-center" style="padding:30px; color:var(--danger-color);">Ошибка: ${e.message}</td></tr>`;
         }
     },
 };

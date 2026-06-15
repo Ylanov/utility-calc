@@ -2,19 +2,17 @@
 #
 # Принципы:
 #   - публичные страницы (лендинг, политика ПД) — открыты для индексации
-#   - всё что требует авторизации (личный кабинет жильца, админка, API,
-#     PWA) — закрыто (Disallow), там нет смысла индексировать
+#   - всё что требует авторизации (админка, API) — закрыто (Disallow);
+#     ЛК жильцов и PWA вычищены (2026-06-10) — пути оставлены в Disallow
 #   - служебные пути (генерируемые файлы, компоненты, верификации) — закрыты
 
 User-agent: *
 
 # Публичная часть
 Allow: /portal.html
-Allow: /login.html
 Allow: /privacy.html
 Allow: /consent.html
 Allow: /style.css
-Allow: /js/portal.js
 Allow: /js/legal-footer.js
 
 # Закрытая часть (доступ только по логину)
@@ -42,7 +40,6 @@ Host: https://asy-tk.ru
 User-agent: Yandex
 Crawl-delay: 1
 Allow: /portal.html
-Allow: /login.html
 Allow: /privacy.html
 Allow: /consent.html
 Disallow: /admin.html
@@ -54,7 +51,6 @@ Disallow: /index.html
 # Google — англоязычный обход, используем по умолчанию.
 User-agent: Googlebot
 Allow: /portal.html
-Allow: /login.html
 Allow: /privacy.html
 Allow: /consent.html
 Disallow: /admin.html

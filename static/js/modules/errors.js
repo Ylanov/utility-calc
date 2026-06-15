@@ -85,9 +85,6 @@ export const ErrorsModule = {
             modalExc:        document.getElementById('errorDetailExc'),
             modalTraceback:  document.getElementById('errorDetailTraceback'),
             modalInvestigation: document.getElementById('errorDetailInvestigation'),
-            modalAiSection:  document.getElementById('errorDetailAiSection'),
-            modalAi:         document.getElementById('errorDetailAi'),
-            modalAiMeta:     document.getElementById('errorDetailAiMeta'),
             modalRequestBody:document.getElementById('errorDetailRequestBody'),
             modalExtra:      document.getElementById('errorDetailExtra'),
             btnCopy:         document.getElementById('errorCopyClaude'),
@@ -335,31 +332,6 @@ export const ErrorsModule = {
             ? JSON.stringify(r.investigation, null, 2)
             : '(auto-investigation не выполнено)';
 
-        // L5: показываем AI-анализ если есть
-        if (r.ai_analysis) {
-            this.dom.modalAiSection.style.display = '';
-            const ai = r.ai_analysis;
-            const sev = ai.severity || '?';
-            const sevColor = {
-                critical: '#dc2626', high: '#ea580c',
-                medium: '#f59e0b', low: '#10b981',
-                unknown: '#6b7280',
-            }[sev] || '#6b7280';
-            this.dom.modalAi.innerHTML = `
-                <div style="display:flex; gap:10px; align-items:flex-start; margin-bottom:8px;">
-                    <span style="background:${sevColor}22; color:${sevColor}; padding:2px 10px; border-radius:12px; font-size:11px; font-weight:600;">
-                        ${escapeHtml(sev.toUpperCase())}
-                    </span>
-                    ${ai.confidence != null ? `<span style="color:var(--text-tertiary); font-size:11px;">уверенность ${Math.round(ai.confidence*100)}%</span>` : ''}
-                </div>
-                <div style="margin-bottom:8px;"><b>Причина:</b> ${escapeHtml(ai.root_cause || '—')}</div>
-                ${ai.suggested_action ? `<div><b>Что делать:</b> ${escapeHtml(ai.suggested_action)}</div>` : ''}
-                ${ai._parse_error ? `<div style="color:#dc2626; font-size:11px; margin-top:4px;">⚠ ${escapeHtml(ai._parse_error)}</div>` : ''}`;
-            this.dom.modalAiMeta.textContent =
-                `Модель: ${r.ai_model || '—'} · проанализировано ${fmtDateTime(r.ai_analyzed_at)}`;
-        } else {
-            this.dom.modalAiSection.style.display = 'none';
-        }
         this.dom.modalRequestBody.textContent = r.request_body
             ? JSON.stringify(r.request_body, null, 2)
             : '(тело запроса пустое)';

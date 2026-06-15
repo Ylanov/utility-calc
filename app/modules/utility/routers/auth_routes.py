@@ -21,8 +21,6 @@ from app.core.auth import verify_password, create_access_token, get_current_user
     decrypt_totp_secret, get_password_hash
 from app.core.config import settings
 from app.modules.utility.schemas import TotpSetupResponse, TotpVerify
-from pydantic import BaseModel, Field
-from typing import Optional
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -133,21 +131,17 @@ async def login(
     user.failed_login_count = 0
     user.locked_until = None
 
-    # Личные кабинеты жильцов могут быть отключены админом (переход на QR-портал).
-    # Сотрудники (admin/accountant/financier) входят как обычно. role='user' — нет.
-    # Дефолт (нет настройки) = включено. Только явное "0" блокирует.
+    # ЛК жильцов ВЫЧИЩЕН (2026-06-10): жильцы в систему не входят вообще —
+    # только анонимный QR-портал квартиры. Вход остаётся сотрудникам.
     if user.role == "user":
-        from app.modules.utility.models import SystemSetting
-        _ra = await db.get(SystemSetting, "resident_login_enabled")
-        if _ra is not None and str(_ra.value) == "0":
-            await db.commit()  # сохранить сброс счётчика выше
-            raise HTTPException(
-                status_code=403,
-                detail=(
-                    "Личные кабинеты жильцов отключены. Подавайте показания и "
-                    "скачивайте квитанции через QR-код в вашей квартире."
-                ),
-            )
+        await db.commit()  # сохранить сброс счётчика выше
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Вход для жильцов отключён. Подавайте показания и "
+                "скачивайте квитанции через QR-код в вашей квартире."
+            ),
+        )
 
     # Миграция старых паролей на argon2 (один раз за сессию).
     if not user.hashed_password.startswith("$argon2"):
@@ -349,62 +343,3 @@ async def logout(
 # POST /api/admin/users/{user_id}/reset-password.
 
 
-# =====================================================================
-# 5. ЗАБЫЛИ ПАРОЛЬ — заявка администратору (без сброса пароля автоматом).
-# =====================================================================
-# Жилец вводит ФИО + общежитие/комнату + контакт → создаётся запись в
-# audit_log с action='password_reset_request'. Админ видит её в журнале
-# действий и в колокольчике уведомлений → находит жильца в админке и
-# сбрасывает пароль через существующий endpoint
-# POST /api/admin/users/{user_id}/reset-password.
-#
-# Не делаем самосброс по ФИО+комнате — это слабый knowledge factor
-# (соседи знают). Только администратор имеет право обнулить пароль.
-# Rate-limited 3 в минуту чтобы не флудили заявками.
-# =====================================================================
-class ForgotPasswordBody(BaseModel):
-    full_name: str = Field(..., min_length=3, max_length=300)
-    dormitory_name: str = Field(..., min_length=1, max_length=100)
-    room_number: str = Field(..., min_length=1, max_length=20)
-    contact: Optional[str] = Field(None, max_length=200)
-    note: Optional[str] = Field(None, max_length=1000)
-
-
-@router.post(
-    "/api/auth/forgot-password",
-    dependencies=[Depends(RateLimiter(times=3, seconds=60))],
-)
-async def forgot_password(
-    body: ForgotPasswordBody,
-    db: AsyncSession = Depends(get_db),
-):
-    """Жилец просит сбросить пароль.
-
-    Создаётся запись в audit_log — админ её увидит в журнале + в колокольчике
-    уведомлений. Сам пароль НЕ сбрасывается — только админ через CRM имеет
-    право. Это предотвращает социальную инженерию: атакующий не может
-    зайти в кабинет, зная только ФИО + комнату (которые слабо защищены).
-    """
-    # Используем системный user_id=1 (admin) для FK audit_log,
-    # реальные данные жильца хранятся в details.
-    # Никаких username/admin не пишем — это анонимная заявка от не-залогиненного.
-    await write_audit_log(
-        db, user_id=None, username="forgot-password-form",
-        action="password_reset_request", entity_type="user",
-        entity_id=None,
-        details={
-            "full_name": body.full_name.strip(),
-            "dormitory_name": body.dormitory_name.strip(),
-            "room_number": body.room_number.strip(),
-            "contact": (body.contact or "").strip(),
-            "note": (body.note or "").strip(),
-        },
-    )
-    await db.commit()
-    return {
-        "status": "received",
-        "message": (
-            "Заявка принята. Администратор свяжется с вами в течение "
-            "10 рабочих дней по указанному контакту."
-        ),
-    }

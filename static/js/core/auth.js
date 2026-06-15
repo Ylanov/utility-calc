@@ -42,7 +42,7 @@ export const Auth = {
     setSession(role, username, token) {
         // Изоляция учёток (clear-before-set): перед записью новой сессии
         // вычищаем токен из ОБОИХ хранилищ, включая localStorage — туда его
-        // кладёт PWA-клиент (static/app/js/api.js). Иначе при входе под другой
+        // клал старый PWA-клиент (вычищен 2026-06-10). Иначе при входе под другой
         // учёткой старый токен «выживал» в localStorage и подхватывался
         // (баг «зашёл в A, попал в B» — реинкарнация cookie-mixing на localStorage).
         try { localStorage.removeItem('access_token'); } catch (e) { /* ignore */ }
