@@ -296,16 +296,37 @@ def _consumption_volumes(
     return d_hot, d_cold, share_el
 
 
+class _RoomMeterProxy:
+    """Прокси комнаты с принудительными has_*_meter. Для поданных строк
+    импорта: начисляем СТРОГО по показаниям из Excel (has_*=True → берётся
+    переданный объём; ресурс не в Excel → объём 0 → стоимость 0), не давая
+    calculate_utilities подменить норматив при has_*_meter=False у комнаты."""
+    __slots__ = ("_room",)
+
+    def __init__(self, room):
+        object.__setattr__(self, "_room", room)
+
+    def __getattr__(self, name):
+        if name in ("has_hw_meter", "has_cw_meter", "has_el_meter"):
+            return True
+        return getattr(self._room, name)
+
+
 def _compute_costs(
     user: User, room: Room, tariff: Tariff,
     vol_hot: Decimal, vol_cold: Decimal, share_el: Decimal,
-    seasonal, adj: dict[str, Decimal],
+    seasonal, adj: dict[str, Decimal], force_meters: bool = False,
 ) -> dict:
     """calculate_utilities + total_209/205 (с корректировками). Чистый —
-    сезонные/корректировки переданы (загружены батчем выше)."""
+    сезонные/корректировки переданы (загружены батчем выше).
+
+    force_meters=True (поданные строки): начисляем строго по переданным
+    объёмам — электричество/вода из Excel считаются, даже если у комнаты
+    флаг счётчика снят; ресурс без данных → объём 0 → 0₽ (без норматива)."""
     heating, hw = _seasonal_for_tariff(seasonal, tariff)
+    calc_room = _RoomMeterProxy(room) if force_meters else room
     costs = calculate_utilities(
-        user=user, room=room, tariff=tariff,
+        user=user, room=calc_room, tariff=tariff,
         volume_hot=vol_hot, volume_cold=vol_cold,
         volume_sewage=vol_hot + vol_cold, volume_electricity_share=share_el,
         heating_season_active=heating, hot_water_heating_active=hw,
@@ -486,7 +507,8 @@ async def build_preview(
                     verdict = "warning"
                 counts["norm"] += 1
             costs = _compute_costs(user, room, tariff, vol_hot, vol_cold, share_el,
-                                   seasonal, adj_by_user.get(user.id, {}))
+                                   seasonal, adj_by_user.get(user.id, {}),
+                                   force_meters=submitted)
             row["preview_total"] = float(costs["grand_total"])
             row["preview_209"] = float(costs["total_209"])
             row["preview_205"] = float(costs["total_205"])
@@ -662,7 +684,8 @@ async def commit_import(
                 read_el = cur["elect"] if cur["elect"] is not None else (prev["elect"] if prev["elect"] is not None else D(room.last_electricity or 0))
 
             costs = _compute_costs(user, room, tariff, vol_hot, vol_cold, share_el,
-                                   seasonal, adj_by_user.get(uid, {}))
+                                   seasonal, adj_by_user.get(uid, {}),
+                                   force_meters=(status != "norm"))
 
             reading = MeterReading(
                 room_id=room.id, user_id=user.id, period_id=period_id,

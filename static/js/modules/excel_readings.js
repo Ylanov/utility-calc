@@ -370,20 +370,24 @@ export const ExcelReadingsModule = {
       ? '<h3>Убраны из импорта (' + removed.length + ')</h3><ul>' + removed.map((r) => '<li>' + esc(r.fio) + '</li>').join('') + '</ul>'
       : '';
     const c = p.counts || {};
-    const win = window.open('', '_blank', 'width=1000,height=700');
+    const win = window.open('', '_blank', 'width=1100,height=760');
     if (!win) { toast('Разрешите всплывающие окна для печати', 'warning'); return; }
+    // Без inline-обработчиков (их блокирует CSP script-src 'self'). Печать
+    // запускаем из РОДИТЕЛЬСКОГО контекста — это не inline-скрипт дочернего окна.
     win.document.write(
       '<html><head><meta charset="utf-8"><title>Импорт показаний — ' + esc(periodName) + '</title>' +
       '<style>body{font-family:sans-serif;padding:24px;color:#1e293b;}h2{margin:0 0 4px;}table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px;}' +
-      'th,td{border:1px solid #cbd5e1;padding:5px 7px;text-align:left;}th{background:#f1f5f9;}@media print{button{display:none;}}</style></head><body>' +
+      'th,td{border:1px solid #cbd5e1;padding:5px 7px;text-align:left;}th{background:#f1f5f9;}</style></head><body>' +
       '<h2>Импорт показаний за «' + esc(periodName) + '»</h2>' +
       '<div style="font-size:13px;color:#475569;">Всего: ' + (p.total_people || p.items.length) + ' · ОК: ' + (c.ok || 0) +
       ' · Проверить: ' + (c.warning || 0) + ' · Ошибка: ' + (c.error || 0) + ' · Не найдены: ' + (c.unmatched || 0) +
       ' · По нормативу: ' + (c.norm || 0) + '</div>' +
-      '<button onclick="window.print()" style="margin-top:12px;padding:8px 16px;">🖨️ Печать / Сохранить PDF</button>' +
+      '<div style="font-size:12px;color:#94a3b8;margin-top:6px;">Если окно печати не открылось автоматически — нажмите Ctrl+P.</div>' +
       '<table><thead><tr>' + head + '</tr></thead><tbody>' + rowsHtml + '</tbody></table>' + removedHtml +
       '</body></html>');
     win.document.close();
+    win.focus();
+    setTimeout(() => { try { win.print(); } catch (e) { /* пользователь нажмёт Ctrl+P */ } }, 400);
   },
 
   // Ручное назначение жильца для не найденных / конфликтов (поиск по ФИО).
@@ -584,9 +588,10 @@ export const ExcelReadingsModule = {
     const ov = document.createElement('div');
     ov.id = 'excelReadingsModal';
     ov.className = 'modal-overlay open';
-    ov.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,.5); display:flex; align-items:center; justify-content:center; z-index:9999; padding:20px;';
+    ov.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,.5); display:flex; align-items:center; justify-content:center; z-index:9999; padding:28px;';
     ov.innerHTML =
-      '<div class="modal-window" style="max-width:1500px; width:97vw; max-height:94vh; display:flex; flex-direction:column;">' +
+      // width:100% от padded-оверлея → ровные отступы 28px по бокам (не упирается в края).
+      '<div class="modal-window" style="max-width:1500px; width:100%; max-height:94vh; display:flex; flex-direction:column;">' +
       '  <div class="modal-header"><h3><i class="fa-solid fa-file-excel" style="color:#16a34a;"></i> Импорт показаний из Excel</h3>' +
       '    <button class="close-btn close-icon" data-xl-close>&times;</button></div>' +
       '  <div class="modal-body" style="overflow:auto; flex:1;">' +

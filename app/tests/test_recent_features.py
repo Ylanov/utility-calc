@@ -252,3 +252,31 @@ def test_gsheets_window_unparseable():
     from app.modules.utility.services.excel_readings_import import _gsheets_window
     assert _gsheets_window("мусор") is None
     assert _gsheets_window(None) is None
+
+
+# ──────────────────────────────────────────────────────────────
+# _RoomMeterProxy — импорт начисляет строго по показаниям из Excel
+# ──────────────────────────────────────────────────────────────
+def test_room_meter_proxy_forces_meters():
+    from app.modules.utility.services.excel_readings_import import _RoomMeterProxy
+
+    class _Room:
+        has_hw_meter = False
+        has_cw_meter = False
+        has_el_meter = False
+        apartment_area = 30
+        total_room_residents = 2
+        is_singles_apartment = False
+        place_type = "dormitory"
+
+    proxy = _RoomMeterProxy(_Room())
+    # Счётчики принудительно True — электричество/вода из Excel считаются,
+    # даже если у комнаты флаг снят.
+    assert proxy.has_hw_meter is True
+    assert proxy.has_cw_meter is True
+    assert proxy.has_el_meter is True
+    # Остальные поля проксируются как есть.
+    assert proxy.apartment_area == 30
+    assert proxy.total_room_residents == 2
+    assert proxy.is_singles_apartment is False
+    assert proxy.place_type == "dormitory"
