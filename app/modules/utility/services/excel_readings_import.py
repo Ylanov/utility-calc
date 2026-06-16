@@ -217,13 +217,17 @@ async def _load_gsheets_lookup(
 
 
 def _gsheets_for_row(row: dict, by_fio: dict, by_uid: dict) -> dict:
-    """Сводка GSheets для строки Excel + пометка расхождений с Excel-текущим."""
+    """Сводка GSheets для строки Excel + пометка расхождений с Excel-текущим.
+    Связь по ФИО — нормализуем сам ФИО строки (не ключ — он может быть
+    синтетическим при пересчёте)."""
+    from app.modules.utility.services.gsheets_sync import normalize_fio
     m = row.get("matched") or {}
+    fio_key = normalize_fio(row.get("fio") or "")
     gs = None
     if m.get("user_id") and by_uid.get(m["user_id"]):
         gs = by_uid[m["user_id"]]
-    elif by_fio.get(row["key"]):
-        gs = by_fio[row["key"]]
+    elif fio_key and by_fio.get(fio_key):
+        gs = by_fio[fio_key]
     if not gs:
         return {"present": False}
     # Расхождение с Excel-текущим (целые м³ — сравниваем точно).
@@ -333,13 +337,20 @@ def _build_match_indexes_sync() -> tuple[dict, list, dict, dict]:
     return umap, ukeys, ubyid, amap
 
 
-async def build_preview(db: AsyncSession, parsed: dict, period_id: Optional[int]) -> dict:
+async def build_preview(
+    db: AsyncSession, parsed: dict, period_id: Optional[int],
+    forced_match: Optional[dict] = None,
+) -> dict:
     """На каждого человека из Excel: матч ФИО→жилец, прогон анализаторов,
-    предварительная сумма, агрегированный вердикт. Ничего не пишет."""
+    предварительная сумма, агрегированный вердикт. Ничего не пишет.
+
+    forced_match: {key → user_id} — для строк, где админ уже назначил жильца
+    (переназначение/создание/правка ФИО при пересчёте) — fuzzy пропускаем."""
     from app.modules.utility.services.gsheets_sync import match_user, _fuzzy_threshold
     from app.modules.utility.services.reading_validators import validate_meter_reading
     from app.modules.utility.services.tariff_cache import tariff_cache
 
+    forced_match = forced_match or {}
     # Матчер синхронный (sync Session) — строим индексы в потоке. match_user
     # чистый (без БД), зовём прямо в async-цикле.
     users_map, users_keys, users_by_id, aliases_map = await asyncio.to_thread(
@@ -355,9 +366,14 @@ async def build_preview(db: AsyncSession, parsed: dict, period_id: Optional[int]
 
     for key, rec in parsed["people"].items():
         fio = rec["fio"]
-        info, score, conflict = match_user(
-            fio, None, users_map, users_keys, users_by_id, aliases_map, fuzzy=True,
-        )
+        forced_uid = forced_match.get(key)
+        if forced_uid:
+            info = users_by_id.get(forced_uid) or {"id": forced_uid, "username": fio}
+            score, conflict = 100, None
+        else:
+            info, score, conflict = match_user(
+                fio, None, users_map, users_keys, users_by_id, aliases_map, fuzzy=True,
+            )
         row: dict = {
             "key": key, "fio": fio, "score": score,
             "hot": rec.get("hot") or {}, "cold": rec.get("cold") or {},
@@ -527,6 +543,39 @@ async def build_preview(db: AsyncSession, parsed: dict, period_id: Optional[int]
 
 def _res_label(r: str) -> str:
     return {"hot": "ГВС", "cold": "ХВС", "elect": "Электр."}.get(r, r)
+
+
+async def recompute_preview(
+    db: AsyncSession, period_id: Optional[int], rows: list[dict]
+) -> dict:
+    """Пересчёт превью по отредактированным строкам (правка показаний/ФИО,
+    переназначение) — без файла. rows: [{fio, user_id?, hot:{prev,cur}, ...}].
+    user_id (если задан) фиксирует жильца — fuzzy пропускается."""
+    people: dict[str, dict] = {}
+    forced: dict[str, int] = {}
+    meters: list[str] = []
+    for i, r in enumerate(rows):
+        key = f"row{i}"
+        rec = {"fio": (r.get("fio") or "").strip(), "hot": {}, "cold": {}, "elect": {}}
+        for res in _RES_KEYS:
+            d = r.get(res) or {}
+            p, c = _num(d.get("prev")), _num(d.get("cur"))
+            if p is not None or c is not None:
+                rec[res] = {"prev": p, "cur": c}
+                if res not in meters:
+                    meters.append(res)
+        people[key] = rec
+        if r.get("user_id"):
+            try:
+                forced[key] = int(r["user_id"])
+            except (TypeError, ValueError):
+                pass
+    parsed = {
+        "people": people,
+        "meters_present": [m for m in _RES_KEYS if m in meters] or ["hot", "cold"],
+        "skipped_rows": 0,
+    }
+    return await build_preview(db, parsed, period_id, forced_match=forced)
 
 
 # =====================================================================

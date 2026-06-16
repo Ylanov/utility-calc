@@ -60,6 +60,7 @@ export const ExcelReadingsModule = {
 
   async open() {
     this.state.file = null; this.state.preview = null; this.state.filter = 'all';
+    this._removed = [];
     this.renderModal();
     await this.loadPeriods();
   },
@@ -169,7 +170,7 @@ export const ExcelReadingsModule = {
     // Динамические заголовки колонок показаний под реальные листы (вкл. электричество).
     const headRow = document.getElementById('xlHeadRow');
     if (headRow) headRow.innerHTML = this.headRowHtml(meters);
-    const colspan = 7 + meters.length;   // +1 за колонку Google Sheets
+    const colspan = 8 + meters.length;   // чекбокс+ФИО+объект+тариф+счётчики+GSheets+вердикт+сумма+действия
     const rows = this.filteredItems().map((it) => this.rowHtml(it, p.items.indexOf(it), meters)).join('');
     body.innerHTML = rows ||
       '<tr><td colspan="' + colspan + '" style="padding:24px; text-align:center; color:var(--text-secondary);">Нет строк по фильтру.</td></tr>';
@@ -182,42 +183,75 @@ export const ExcelReadingsModule = {
       b.addEventListener('click', () => this.reassign(Number(b.dataset.xlReassign))));
     body.querySelectorAll('[data-xl-add]').forEach((b) =>
       b.addEventListener('click', () => this.createOrBind(Number(b.dataset.xlAdd), b.dataset.mode)));
+    body.querySelectorAll('[data-xl-del]').forEach((b) =>
+      b.addEventListener('click', () => this.deleteRow(Number(b.dataset.xlDel))));
+    body.querySelectorAll('[data-xl-editfio]').forEach((b) =>
+      b.addEventListener('click', () => this.editFio(Number(b.dataset.xlEditfio))));
+    // Живой ввод показаний — обновляем модель и расход БЕЗ перерисовки (фокус
+    // не теряется); сумма пересчитается по кнопке «Пересчитать» / при утверждении.
+    body.querySelectorAll('[data-xl-val]').forEach((inp) =>
+      inp.addEventListener('input', () => {
+        const i = Number(inp.dataset.xlVal), res = inp.dataset.res, field = inp.dataset.field;
+        const raw = inp.value.trim().replace(',', '.');
+        const it = p.items[i];
+        if (!it[res]) it[res] = {};
+        it[res][field] = raw === '' ? null : (isNaN(Number(raw)) ? raw : Number(raw));
+        it._dirty = true;
+        const d = it[res];
+        const consEl = body.querySelector('[data-xl-cons="' + i + '-' + res + '"]');
+        if (consEl && d.cur != null && d.prev != null && !isNaN(Number(d.cur)) && !isNaN(Number(d.prev))) {
+          const dec = Number(d.cur) < Number(d.prev);
+          consEl.style.color = dec ? '#dc2626' : '#15803d';
+          consEl.textContent = dec ? '↓ счётчик упал' : '+' + fmtNum(Math.max(0, Number(d.cur) - Number(d.prev)));
+        } else if (consEl) { consEl.textContent = ''; }
+      }));
 
     const commitBtn = document.getElementById('xlCommitBtn');
     if (commitBtn) commitBtn.disabled = approveCnt === 0;
+    const recalcBtn = document.getElementById('xlRecalcBtn');
+    if (recalcBtn) recalcBtn.disabled = !p.items.length;
+    const printBtn = document.getElementById('xlPrintBtn');
+    if (printBtn) printBtn.disabled = !p.items.length;
   },
 
   rowHtml(it, idx, meters) {
     const m = it.matched;
     const place = m ? ((m.dormitory ? esc(m.dormitory) + ' / ' : '') + esc(m.room || '—')) : '—';
-    let who = '<b>' + esc(it.fio) + '</b>';
+    // ФИО редактируемое (карандаш). Под ним — найденный жилец.
+    let who = '<div style="display:flex; align-items:flex-start; gap:6px;">' +
+      '<b style="word-break:break-word;">' + esc(it.fio) + '</b>' +
+      '<button class="action-btn secondary-btn" style="padding:1px 6px; font-size:10px; flex-shrink:0;" data-xl-editfio="' + idx + '" title="Исправить ФИО"><i class="fa-solid fa-pen"></i></button></div>';
     if (m) {
-      who += '<br><span style="font-size:11px; color:var(--primary-color);">→ ' + esc(m.username) +
+      who += '<span style="font-size:11px; color:var(--primary-color);">→ ' + esc(m.username) +
         ' · ' + (m.score || 0) + '%' + (m.conflict ? ' ⚠️' : '') + '</span>';
     }
-    // Колонки показаний по присутствующим листам.
+    // Редактируемые показания: прев → тек, два инпута. Расход считается живо.
     const meterCells = meters.map((r) => {
       const d = it[r] || {};
-      const prev = d.prev, cur = d.cur;
-      const dec = (cur != null && prev != null && Number(cur) < Number(prev));
-      const cons = (cur != null && prev != null) ? Math.max(0, Number(cur) - Number(prev)) : null;
-      return '<td style="text-align:right; font-family:monospace; font-size:12px;' + (dec ? ' color:#dc2626;' : '') + '">' +
-        fmtNum(prev) + ' → ' + fmtNum(cur) +
-        (cons != null ? '<br><span style="color:#15803d;">+' + fmtNum(cons) + '</span>' : '') + '</td>';
+      const prev = (d.prev != null ? d.prev : '');
+      const cur = (d.cur != null ? d.cur : '');
+      const cons = (d.cur != null && d.prev != null) ? Math.max(0, Number(d.cur) - Number(d.prev)) : null;
+      const decd = (d.cur != null && d.prev != null && Number(d.cur) < Number(d.prev));
+      const inp = (field, val) => '<input data-xl-val="' + idx + '" data-res="' + r + '" data-field="' + field + '" value="' + esc(val) +
+        '" inputmode="decimal" style="width:62px; text-align:right; font-family:monospace; font-size:12px; padding:2px 4px; border:1px solid #cbd5e1; border-radius:5px;">';
+      return '<td style="text-align:right; white-space:nowrap;">' +
+        inp('prev', prev) + ' <span style="color:#94a3b8;">→</span> ' + inp('cur', cur) +
+        '<br><span data-xl-cons="' + idx + '-' + r + '" style="font-size:11px; color:' + (decd ? '#dc2626' : '#15803d') + ';">' +
+        (cons != null ? (decd ? '↓ счётчик упал' : '+' + fmtNum(cons)) : '') + '</span></td>';
     }).join('');
 
-    // Ячейка сверки с Google Sheets (буфер за окно вокруг месяца).
+    // Ячейка сверки с Google Sheets — с понятными подписями и датой подачи.
     const g = it.gsheets || {};
     let gsCell;
     if (!g.present) {
-      gsCell = '<span style="font-size:11px; color:var(--text-secondary);">в гугл таблицах нет</span>';
+      gsCell = '<span style="font-size:12px; color:var(--text-secondary);">в гугл таблицах нет</span>';
     } else {
-      const hot = g.mismatch_hot ? '<b style="color:#dc2626;">' + fmtNum(g.hot) + '</b>' : fmtNum(g.hot);
-      const cold = g.mismatch_cold ? '<b style="color:#dc2626;">' + fmtNum(g.cold) + '</b>' : fmtNum(g.cold);
-      gsCell = '<span style="font-family:monospace; font-size:12px;">' +
-        (g.mismatch ? '⚠️ ' : '') + hot + ' / ' + cold + '</span>' +
-        (g.date ? '<br><span style="font-size:10px; color:var(--text-secondary);">' + esc(g.date) +
-          (g.count > 1 ? ' · ' + g.count + ' подач' : '') + '</span>' : '');
+      const line = (label, val, mis) => '<div style="font-size:12px;">' + label + ': ' +
+        (mis ? '<b style="color:#dc2626;">' + fmtNum(val) + '</b>' : '<span style="font-family:monospace;">' + fmtNum(val) + '</span>') + '</div>';
+      gsCell = (g.mismatch ? '<div style="color:#dc2626; font-size:11px; font-weight:600;">⚠️ расходится с Excel</div>' : '') +
+        line('ГВС', g.hot, g.mismatch_hot) + line('ХВС', g.cold, g.mismatch_cold) +
+        '<div style="font-size:11px; color:var(--text-secondary); margin-top:2px;">подано ' + esc(g.date || '—') +
+        (g.count > 1 ? ' · ' + g.count + ' подач' : '') + '</div>';
     }
 
     const reasons = (it.reasons || []).length
@@ -238,6 +272,8 @@ export const ExcelReadingsModule = {
       ? '<button class="action-btn primary-btn" style="padding:3px 8px; font-size:11px;" data-xl-add="' + idx + '" data-mode="' + needRoom + '" title="' +
         (needRoom === 'bind' ? 'Привязать жильца к квартире' : 'Создать жильца и привязать к квартире') + '"><i class="fa-solid fa-house-user"></i></button>'
       : '';
+    // Удалить строку (лишний / неправильный человек) — не попадёт в утверждение.
+    const delBtn = '<button class="action-btn" style="padding:3px 8px; font-size:11px; background:#fee2e2; color:#991b1b; border:1px solid #fecaca;" data-xl-del="' + idx + '" title="Убрать из импорта"><i class="fa-solid fa-trash"></i></button>';
 
     return '<tr style="' + (it.verdict === 'error' || it.verdict === 'unmatched' ? 'background:rgba(239,68,68,0.04);' : (it.verdict === 'warning' ? 'background:rgba(245,158,11,0.05);' : '')) + '">' +
       '<td style="text-align:center;">' + checkbox + '</td>' +
@@ -247,9 +283,107 @@ export const ExcelReadingsModule = {
       meterCells +
       '<td style="text-align:right;">' + gsCell + '</td>' +
       '<td>' + badge(VERDICT[it.verdict] || VERDICT.error) + (it.status === 'norm' ? '<br><span style="font-size:10px; color:#6b21a8;">норматив</span>' : '') + '</td>' +
-      '<td style="text-align:right; font-weight:600; color:#15803d; white-space:nowrap;">' + fmtMoney(it.preview_total) + '</td>' +
-      '<td style="text-align:center; white-space:nowrap;">' + addBtn + reassign + '</td>' +
+      '<td style="text-align:right; font-weight:600; color:#15803d; white-space:nowrap;">' + fmtMoney(it.preview_total) +
+        (it._dirty ? '<br><span style="font-size:10px; color:#92400e;">изменено — пересчитайте</span>' : '') + '</td>' +
+      '<td style="text-align:center; white-space:nowrap;"><div style="display:flex; gap:3px; justify-content:center; flex-wrap:wrap;">' + addBtn + reassign + delBtn + '</div></td>' +
       '</tr>';
+  },
+
+  // Удалить строку из импорта (лишний/неправильный человек).
+  async deleteRow(idx) {
+    const it = this.state.preview?.items[idx];
+    if (!it) return;
+    if (!await showConfirm('Убрать «' + esc(it.fio) + '» из импорта? Эта строка не попадёт в утверждение.', { title: 'Удалить строку', confirmText: 'Убрать' })) return;
+    this._removed = this._removed || [];
+    this._removed.push({ fio: it.fio, reason: 'удалён вручную' });
+    this.state.preview.items.splice(idx, 1);
+    this.renderPreview();
+  },
+
+  // Исправить ФИО (опечатки/неправильное написание) → авто-пересчёт (пере-матч).
+  async editFio(idx) {
+    const it = this.state.preview?.items[idx];
+    if (!it) return;
+    const v = await showPrompt('Исправить ФИО', 'Правильное ФИО (Фамилия Имя Отчество):', it.fio, 'Фамилия Имя Отчество');
+    if (v === null) return;
+    const fio = v.trim();
+    if (!fio || fio === it.fio) return;
+    it.fio = fio;
+    it._dirty = true;
+    // Сбрасываем ручную привязку — пусть пере-матчит по новому ФИО.
+    it.matched = null;
+    await this.recompute();
+  },
+
+  // Пересчёт по текущему (отредактированному) состоянию таблицы — без файла.
+  async recompute() {
+    const p = this.state.preview;
+    if (!p || !p.items.length) return;
+    const rows = p.items.map((it) => ({
+      fio: it.fio,
+      user_id: (it.matched && it.matched.user_id) || null,
+      hot: it.hot || null, cold: it.cold || null, elect: it.elect || null,
+    }));
+    const approveByIdx = p.items.map((it) => !!it._approve);
+    const btn = document.getElementById('xlRecalcBtn');
+    setLoading(btn, true, 'Считаю…');
+    try {
+      const res = await api.post('/admin/readings/excel/recompute', { period_id: this.state.periodId, rows });
+      // Сохраняем выбор «утверждать» по позиции (порядок строк стабилен).
+      res.items.forEach((it, i) => { it._approve = (approveByIdx[i] !== undefined ? approveByIdx[i] : (it.verdict === 'ok' || it.verdict === 'warning')); it._dirty = false; });
+      this.state.preview = res;
+      this.renderPreview();
+      toast('Пересчитано', 'success');
+    } catch (e) {
+      toast('Не удалось пересчитать: ' + (e.message || e), 'error');
+    } finally { setLoading(btn, false, 'Пересчитать'); }
+  },
+
+  // Печать / сохранение в PDF: чистый отчёт в новом окне → window.print().
+  printReport() {
+    const p = this.state.preview;
+    if (!p) return;
+    const meters = (p.meters_present && p.meters_present.length) ? p.meters_present : ['hot', 'cold'];
+    const periodName = (this.state.periods.find((x) => x.id === this.state.periodId) || {}).name || '';
+    const head = '<th>ФИО / жилец</th><th>Объект</th><th>Тариф</th>' +
+      meters.map((r) => '<th>' + RES_LABEL[r] + ' (пред→тек)</th>').join('') +
+      '<th>Google Sheets</th><th>Вердикт</th><th>Сумма</th>';
+    const rowsHtml = p.items.map((it) => {
+      const m = it.matched || {};
+      const mc = meters.map((r) => {
+        const d = it[r] || {};
+        return '<td style="text-align:right;">' + fmtNum(d.prev) + ' → ' + fmtNum(d.cur) + '</td>';
+      }).join('');
+      const g = it.gsheets || {};
+      const gsTxt = !g.present ? 'нет' :
+        ('ГВС ' + fmtNum(g.hot) + ' / ХВС ' + fmtNum(g.cold) + (g.date ? ' (' + g.date + ')' : '') + (g.mismatch ? ' ⚠' : ''));
+      const v = (VERDICT[it.verdict] || VERDICT.error).t;
+      return '<tr' + (it._approve ? '' : ' style="color:#999;"') + '><td><b>' + esc(it.fio) + '</b>' +
+        (m.username ? '<br><small>→ ' + esc(m.username) + '</small>' : '') + '</td>' +
+        '<td>' + esc((m.dormitory ? m.dormitory + ' / ' : '') + (m.room || '—')) + '</td>' +
+        '<td>' + esc(m.tariff || '—') + '</td>' + mc +
+        '<td>' + esc(gsTxt) + '</td><td>' + esc(v) + (it.status === 'norm' ? ' (норматив)' : '') + '</td>' +
+        '<td style="text-align:right;">' + (it.preview_total != null ? fmtMoney(it.preview_total) : '—') + '</td></tr>';
+    }).join('');
+    const removed = (this._removed || []);
+    const removedHtml = removed.length
+      ? '<h3>Убраны из импорта (' + removed.length + ')</h3><ul>' + removed.map((r) => '<li>' + esc(r.fio) + '</li>').join('') + '</ul>'
+      : '';
+    const c = p.counts || {};
+    const win = window.open('', '_blank', 'width=1000,height=700');
+    if (!win) { toast('Разрешите всплывающие окна для печати', 'warning'); return; }
+    win.document.write(
+      '<html><head><meta charset="utf-8"><title>Импорт показаний — ' + esc(periodName) + '</title>' +
+      '<style>body{font-family:sans-serif;padding:24px;color:#1e293b;}h2{margin:0 0 4px;}table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px;}' +
+      'th,td{border:1px solid #cbd5e1;padding:5px 7px;text-align:left;}th{background:#f1f5f9;}@media print{button{display:none;}}</style></head><body>' +
+      '<h2>Импорт показаний за «' + esc(periodName) + '»</h2>' +
+      '<div style="font-size:13px;color:#475569;">Всего: ' + (p.total_people || p.items.length) + ' · ОК: ' + (c.ok || 0) +
+      ' · Проверить: ' + (c.warning || 0) + ' · Ошибка: ' + (c.error || 0) + ' · Не найдены: ' + (c.unmatched || 0) +
+      ' · По нормативу: ' + (c.norm || 0) + '</div>' +
+      '<button onclick="window.print()" style="margin-top:12px;padding:8px 16px;">🖨️ Печать / Сохранить PDF</button>' +
+      '<table><thead><tr>' + head + '</tr></thead><tbody>' + rowsHtml + '</tbody></table>' + removedHtml +
+      '</body></html>');
+    win.document.close();
   },
 
   // Ручное назначение жильца для не найденных / конфликтов (поиск по ФИО).
@@ -279,11 +413,11 @@ export const ExcelReadingsModule = {
       tariff: it.matched?.tariff || null, score: 100, conflict: false,
       residents: chosen.residents_count || 1,
     };
-    // Пересчёт суммы под нового жильца — на бэке при commit; в превью просто помечаем.
+    // Пересчёт суммы под нового жильца — на бэке при commit; в превью помечаем.
     it.verdict = (it.status === 'norm') ? 'warning' : 'ok';
     it.reasons = (it.reasons || []).filter((r) => !/не найден|несколько похожих/i.test(r));
     it.reasons.push('Назначен вручную: ' + chosen.username);
-    it._approve = true;
+    it._approve = true; it._dirty = true;
     this.renderPreview();
   },
 
@@ -398,7 +532,7 @@ export const ExcelReadingsModule = {
         it.verdict = (it.status === 'norm') ? 'warning' : 'ok';
         it.reasons = (it.reasons || []).filter((r) => !/не найден|без помещения|несколько похожих/i.test(r));
         it.reasons.push(isBind ? ('Привязан к квартире: ' + roomLabel) : ('Создан жилец: ' + username));
-        it._approve = true;
+        it._approve = true; it._dirty = true;
         closeCb();
         toast(isBind ? 'Жилец привязан к квартире' : 'Жилец создан и привязан', 'success');
         this.renderPreview();
@@ -452,7 +586,7 @@ export const ExcelReadingsModule = {
     ov.className = 'modal-overlay open';
     ov.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,.5); display:flex; align-items:center; justify-content:center; z-index:9999; padding:20px;';
     ov.innerHTML =
-      '<div class="modal-window" style="max-width:1080px; width:100%; max-height:92vh; display:flex; flex-direction:column;">' +
+      '<div class="modal-window" style="max-width:1500px; width:97vw; max-height:94vh; display:flex; flex-direction:column;">' +
       '  <div class="modal-header"><h3><i class="fa-solid fa-file-excel" style="color:#16a34a;"></i> Импорт показаний из Excel</h3>' +
       '    <button class="close-btn close-icon" data-xl-close>&times;</button></div>' +
       '  <div class="modal-body" style="overflow:auto; flex:1;">' +
@@ -466,16 +600,20 @@ export const ExcelReadingsModule = {
       '    </div>' +
       '    <div style="font-size:12px; color:var(--text-secondary); margin-bottom:12px;">Формат: листы «горячая» / «холодная» / «электричество», колонки <b>ФИО | Предыдущий месяц | Текущий месяц</b>. Предыдущий — база (апрель), текущий — расчётный (май). Не подавшим начислится норматив.</div>' +
       '    <div id="xlSummary"></div>' +
-      '    <div class="table-responsive" style="max-height:48vh;">' +
-      '      <table class="sticky-header-table" style="min-width:1120px;">' +
+      '    <div class="table-responsive" style="max-height:56vh;">' +
+      '      <table class="sticky-header-table" style="min-width:1240px;">' +
       '        <thead><tr id="xlHeadRow">' + this.headRowHtml(['hot', 'cold']) + '</tr></thead>' +
-      '        <tbody id="xlBody"><tr><td colspan="9" style="padding:30px; text-align:center; color:var(--text-secondary);">Выберите месяц и файл, затем «Разобрать».</td></tr></tbody>' +
+      '        <tbody id="xlBody"><tr><td colspan="10" style="padding:30px; text-align:center; color:var(--text-secondary);">Выберите месяц и файл, затем «Разобрать».</td></tr></tbody>' +
       '      </table>' +
       '    </div>' +
       '  </div>' +
-      '  <div class="modal-footer" style="display:flex; justify-content:space-between; gap:10px;">' +
+      '  <div class="modal-footer" style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">' +
       '    <button class="action-btn secondary-btn" data-xl-close>Закрыть</button>' +
-      '    <button class="action-btn success-btn" id="xlCommitBtn" disabled><i class="fa-solid fa-check-double"></i> Утвердить отмеченные</button>' +
+      '    <div style="display:flex; gap:8px; flex-wrap:wrap;">' +
+      '      <button class="action-btn secondary-btn" id="xlPrintBtn" disabled><i class="fa-solid fa-print"></i> Печать / PDF</button>' +
+      '      <button class="action-btn secondary-btn" id="xlRecalcBtn" disabled><i class="fa-solid fa-rotate"></i> Пересчитать</button>' +
+      '      <button class="action-btn success-btn" id="xlCommitBtn" disabled><i class="fa-solid fa-check-double"></i> Утвердить отмеченные</button>' +
+      '    </div>' +
       '  </div>' +
       '</div>';
     document.body.appendChild(ov);
@@ -483,6 +621,8 @@ export const ExcelReadingsModule = {
     document.getElementById('xlNewPeriod').addEventListener('click', () => this.createPeriod());
     document.getElementById('xlPreviewBtn').addEventListener('click', () => this.runPreview());
     document.getElementById('xlCommitBtn').addEventListener('click', () => this.commit());
+    document.getElementById('xlRecalcBtn').addEventListener('click', () => this.recompute());
+    document.getElementById('xlPrintBtn').addEventListener('click', () => this.printReport());
   },
 
   gsheetsLine(gs) {

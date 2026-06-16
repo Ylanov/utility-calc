@@ -91,6 +91,31 @@ async def excel_commit(
     return await svc.commit_import(db, body.period_id, decisions, current_user)
 
 
+class RecomputeRow(BaseModel):
+    fio: str = ""
+    user_id: Optional[int] = None
+    hot: Optional[ExcelResource] = None
+    cold: Optional[ExcelResource] = None
+    elect: Optional[ExcelResource] = None
+
+
+class RecomputeBody(BaseModel):
+    period_id: Optional[int] = None
+    rows: list[RecomputeRow] = Field(..., max_length=5000)
+
+
+@router.post("/recompute")
+async def excel_recompute(
+    body: RecomputeBody,
+    current_user: User = Depends(allow_billing),
+    db: AsyncSession = Depends(get_db),
+):
+    """Пересчёт разбора по отредактированным строкам (правка показаний/ФИО,
+    переназначение жильца) — без повторной загрузки файла."""
+    rows = [r.model_dump() for r in body.rows]
+    return await svc.recompute_preview(db, body.period_id, rows)
+
+
 class EnsurePeriodBody(BaseModel):
     name: str = Field(..., min_length=3, max_length=50)
 
