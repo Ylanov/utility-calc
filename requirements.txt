@@ -22,7 +22,7 @@ python-multipart==0.0.31   # чинит CVE-2026-53540 (+ ранее -40347/-425
 passlib[bcrypt]==1.7.4
 bcrypt==4.1.2             # 4.x совместима с Python 3.14 (есть cp314-колёса)
 python-jose[cryptography]==3.5.0
-cryptography==48.0.1    # чинит GHSA-537c-gmf6-5ccf (+ ранее PYSEC-2026-35/-36)
+cryptography==49.0.0    # чинит GHSA-537c-gmf6-5ccf (+ ранее PYSEC-2026-35/-36)
 pyotp==2.9.0
 argon2-cffi==25.1.0
 
