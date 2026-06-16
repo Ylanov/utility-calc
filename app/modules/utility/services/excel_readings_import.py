@@ -492,6 +492,11 @@ async def build_preview(
                     continue
                 if "не задан" in e:
                     continue  # частичная подача (только вода/только свет) — норм
+                # Электричество — счётчик КУМУЛЯТИВНЫЙ (десятки тысяч кВт),
+                # абсолютный потолок (рассчитан на воду в м³) для него ложный.
+                # Реальная защита — дельта (расход), она проверяется отдельно.
+                if e.startswith("electricity=") and "превышает максимум" in e:
+                    continue
                 row["reasons"].append(e)
                 verdict = "error"
 
@@ -565,6 +570,53 @@ async def build_preview(
 
 def _res_label(r: str) -> str:
     return {"hot": "ГВС", "cold": "ХВС", "elect": "Электр."}.get(r, r)
+
+
+# =====================================================================
+# Черновик импорта — сохранить/продолжить (один на админку, в SystemSetting)
+# =====================================================================
+DRAFT_KEY = "excel_readings_draft"
+
+
+async def save_draft(db: AsyncSession, payload: dict, actor: Optional[User]) -> dict:
+    """Сохранить черновик (period_id + строки) — чтобы продолжить позже
+    (например, после создания недостающей квартиры в Жилфонде)."""
+    import json
+    from app.modules.utility.models import SystemSetting
+    from app.core.time_utils import utcnow
+    payload = dict(payload)
+    payload["saved_at"] = utcnow().isoformat()
+    payload["saved_by"] = actor.username if actor else None
+    blob = json.dumps(payload, ensure_ascii=False, default=str)
+    row = await db.get(SystemSetting, DRAFT_KEY)
+    if row:
+        row.value = blob
+    else:
+        db.add(SystemSetting(key=DRAFT_KEY, value=blob,
+                             description="Черновик импорта показаний из Excel"))
+    await db.commit()
+    return {"status": "ok", "rows": len(payload.get("rows", [])), "saved_at": payload["saved_at"]}
+
+
+async def load_draft(db: AsyncSession) -> Optional[dict]:
+    import json
+    from app.modules.utility.models import SystemSetting
+    row = await db.get(SystemSetting, DRAFT_KEY)
+    if not row or not row.value:
+        return None
+    try:
+        return json.loads(row.value)
+    except Exception:
+        return None
+
+
+async def clear_draft(db: AsyncSession) -> dict:
+    from app.modules.utility.models import SystemSetting
+    row = await db.get(SystemSetting, DRAFT_KEY)
+    if row:
+        await db.delete(row)
+        await db.commit()
+    return {"status": "ok"}
 
 
 async def recompute_preview(

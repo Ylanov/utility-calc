@@ -116,6 +116,51 @@ async def excel_recompute(
     return await svc.recompute_preview(db, body.period_id, rows)
 
 
+# ── Черновик: сохранить / продолжить / очистить ──────────────────────
+class DraftRow(BaseModel):
+    fio: str = ""
+    user_id: Optional[int] = None
+    status: str = "submitted"
+    approve: bool = True
+    hot: Optional[ExcelResource] = None
+    cold: Optional[ExcelResource] = None
+    elect: Optional[ExcelResource] = None
+
+
+class DraftBody(BaseModel):
+    period_id: Optional[int] = None
+    rows: list[DraftRow] = Field(default_factory=list, max_length=5000)
+
+
+@router.post("/draft")
+async def excel_save_draft(
+    body: DraftBody,
+    current_user: User = Depends(allow_billing),
+    db: AsyncSession = Depends(get_db),
+):
+    """Сохранить черновик импорта (можно закрыть, создать недостающие квартиры
+    в Жилфонде и продолжить с того же места)."""
+    return await svc.save_draft(db, body.model_dump(), current_user)
+
+
+@router.get("/draft")
+async def excel_load_draft(
+    current_user: User = Depends(allow_billing),
+    db: AsyncSession = Depends(get_db),
+):
+    """Загрузить сохранённый черновик (или null)."""
+    return await svc.load_draft(db) or {"empty": True}
+
+
+@router.delete("/draft")
+async def excel_clear_draft(
+    current_user: User = Depends(allow_billing),
+    db: AsyncSession = Depends(get_db),
+):
+    """Удалить черновик (после утверждения или по кнопке)."""
+    return await svc.clear_draft(db)
+
+
 class EnsurePeriodBody(BaseModel):
     name: str = Field(..., min_length=3, max_length=50)
 

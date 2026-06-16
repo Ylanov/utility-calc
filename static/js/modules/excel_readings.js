@@ -63,6 +63,16 @@ export const ExcelReadingsModule = {
     this._removed = [];
     this.renderModal();
     await this.loadPeriods();
+    // Есть сохранённый черновик? Предложить продолжить.
+    try {
+      const d = await api.get('/admin/readings/excel/draft');
+      if (d && !d.empty && (d.rows || []).length) {
+        const when = d.saved_at ? new Date(d.saved_at).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }) : '';
+        if (await showConfirm('Найден сохранённый черновик' + (when ? ' от ' + when : '') + ' (' + d.rows.length + ' строк). Продолжить с того места?', { title: 'Черновик импорта', confirmText: 'Продолжить', cancelText: 'Начать заново' })) {
+          await this.resumeDraft(d);
+        }
+      }
+    } catch (e) { /* нет черновика — обычный старт */ }
   },
 
   close() { document.getElementById('excelReadingsModal')?.remove(); },
@@ -170,7 +180,7 @@ export const ExcelReadingsModule = {
     // Динамические заголовки колонок показаний под реальные листы (вкл. электричество).
     const headRow = document.getElementById('xlHeadRow');
     if (headRow) headRow.innerHTML = this.headRowHtml(meters);
-    const colspan = 8 + meters.length;   // чекбокс+ФИО+объект+тариф+счётчики+GSheets+вердикт+сумма+действия
+    const colspan = 7 + meters.length;   // чекбокс+ФИО+объект+тариф+счётчики+GSheets+вердикт+действия
     const rows = this.filteredItems().map((it) => this.rowHtml(it, p.items.indexOf(it), meters)).join('');
     body.innerHTML = rows ||
       '<tr><td colspan="' + colspan + '" style="padding:24px; text-align:center; color:var(--text-secondary);">Нет строк по фильтру.</td></tr>';
@@ -212,6 +222,60 @@ export const ExcelReadingsModule = {
     if (recalcBtn) recalcBtn.disabled = !p.items.length;
     const printBtn = document.getElementById('xlPrintBtn');
     if (printBtn) printBtn.disabled = !p.items.length;
+    const saveBtn = document.getElementById('xlSaveBtn');
+    if (saveBtn) saveBtn.disabled = !p.items.length;
+  },
+
+  // ── Черновик: сохранить / продолжить ───────────────────────
+  draftRows() {
+    const p = this.state.preview;
+    if (!p) return [];
+    return p.items.map((it) => ({
+      fio: it.fio,
+      user_id: (it.matched && it.matched.user_id) || null,
+      status: it.status === 'norm' ? 'norm' : 'submitted',
+      approve: !!it._approve,
+      hot: it.hot || null, cold: it.cold || null, elect: it.elect || null,
+    }));
+  },
+
+  async saveDraft() {
+    const p = this.state.preview;
+    if (!p || !p.items.length) { toast('Нечего сохранять', 'info'); return; }
+    const btn = document.getElementById('xlSaveBtn');
+    setLoading(btn, true, 'Сохраняю…');
+    try {
+      await api.post('/admin/readings/excel/draft', {
+        period_id: this.state.periodId, rows: this.draftRows(),
+      });
+      toast('Черновик сохранён — можно закрыть и продолжить позже', 'success');
+    } catch (e) {
+      toast('Не удалось сохранить: ' + (e.message || e), 'error');
+    } finally { setLoading(btn, false, 'Сохранить черновик'); }
+  },
+
+  // Продолжить из черновика: пере-матч + пересчёт (подхватит созданные
+  // за это время квартиры/жильцов), восстановить отметки «утверждать».
+  async resumeDraft(draft) {
+    this.state.periodId = draft.period_id || this.state.periodId;
+    this.renderPeriodSelect();
+    const approveByIdx = (draft.rows || []).map((r) => r.approve !== false);
+    const rows = (draft.rows || []).map((r) => ({
+      fio: r.fio, user_id: r.user_id || null,
+      hot: r.hot || null, cold: r.cold || null, elect: r.elect || null,
+    }));
+    if (!rows.length) return;
+    const body = document.getElementById('xlBody');
+    if (body) body.innerHTML = '<tr><td colspan="9" style="padding:24px; text-align:center;"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка черновика…</td></tr>';
+    try {
+      const res = await api.post('/admin/readings/excel/recompute', { period_id: this.state.periodId, rows });
+      res.items.forEach((it, i) => { it._approve = approveByIdx[i] !== undefined ? approveByIdx[i] : (it.verdict === 'ok' || it.verdict === 'warning'); });
+      this.state.preview = res;
+      this.renderPreview();
+      toast('Черновик загружен' + (draft.saved_at ? ' (от ' + new Date(draft.saved_at).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }) + ')' : ''), 'success');
+    } catch (e) {
+      toast('Не удалось загрузить черновик: ' + (e.message || e), 'error');
+    }
   },
 
   rowHtml(it, idx, meters) {
@@ -282,9 +346,9 @@ export const ExcelReadingsModule = {
       '<td style="font-size:11px; color:var(--text-secondary);">' + (m ? esc(m.tariff || '—') : '—') + '</td>' +
       meterCells +
       '<td style="text-align:right;">' + gsCell + '</td>' +
-      '<td>' + badge(VERDICT[it.verdict] || VERDICT.error) + (it.status === 'norm' ? '<br><span style="font-size:10px; color:#6b21a8;">норматив</span>' : '') + '</td>' +
-      '<td style="text-align:right; font-weight:600; color:#15803d; white-space:nowrap;">' + fmtMoney(it.preview_total) +
-        (it._dirty ? '<br><span style="font-size:10px; color:#92400e;">изменено — пересчитайте</span>' : '') + '</td>' +
+      '<td>' + badge(VERDICT[it.verdict] || VERDICT.error) +
+        (it.status === 'norm' ? '<br><span style="font-size:10px; color:#6b21a8;">норматив</span>' : '') +
+        (it._dirty ? '<br><span style="font-size:10px; color:#92400e;">изменено</span>' : '') + '</td>' +
       '<td style="text-align:center; white-space:nowrap;"><div style="display:flex; gap:3px; justify-content:center; flex-wrap:wrap;">' + addBtn + reassign + delBtn + '</div></td>' +
       '</tr>';
   },
@@ -347,7 +411,7 @@ export const ExcelReadingsModule = {
     const periodName = (this.state.periods.find((x) => x.id === this.state.periodId) || {}).name || '';
     const head = '<th>ФИО / жилец</th><th>Объект</th><th>Тариф</th>' +
       meters.map((r) => '<th>' + RES_LABEL[r] + ' (пред→тек)</th>').join('') +
-      '<th>Google Sheets</th><th>Вердикт</th><th>Сумма</th>';
+      '<th>Google Sheets</th><th>Вердикт</th>';
     const rowsHtml = p.items.map((it) => {
       const m = it.matched || {};
       const mc = meters.map((r) => {
@@ -362,8 +426,7 @@ export const ExcelReadingsModule = {
         (m.username ? '<br><small>→ ' + esc(m.username) + '</small>' : '') + '</td>' +
         '<td>' + esc((m.dormitory ? m.dormitory + ' / ' : '') + (m.room || '—')) + '</td>' +
         '<td>' + esc(m.tariff || '—') + '</td>' + mc +
-        '<td>' + esc(gsTxt) + '</td><td>' + esc(v) + (it.status === 'norm' ? ' (норматив)' : '') + '</td>' +
-        '<td style="text-align:right;">' + (it.preview_total != null ? fmtMoney(it.preview_total) : '—') + '</td></tr>';
+        '<td>' + esc(gsTxt) + '</td><td>' + esc(v) + (it.status === 'norm' ? ' (норматив)' : '') + '</td></tr>';
     }).join('');
     const removed = (this._removed || []);
     const removedHtml = removed.length
@@ -571,6 +634,8 @@ export const ExcelReadingsModule = {
       if (res.skipped_existing) msg += ' · пропущено (уже были): ' + res.skipped_existing;
       if (res.failed) msg += ' · ошибок: ' + res.failed;
       toast(msg, res.failed ? 'warning' : 'success');
+      // Утвердили — черновик больше не нужен, чистим.
+      try { await api.delete('/admin/readings/excel/draft'); } catch (e) { /* не критично */ }
       this.close();
       // Обновить реестр, если открыт.
       try {
@@ -608,7 +673,7 @@ export const ExcelReadingsModule = {
       '    <div class="table-responsive" style="max-height:56vh;">' +
       '      <table class="sticky-header-table" style="min-width:1240px;">' +
       '        <thead><tr id="xlHeadRow">' + this.headRowHtml(['hot', 'cold']) + '</tr></thead>' +
-      '        <tbody id="xlBody"><tr><td colspan="10" style="padding:30px; text-align:center; color:var(--text-secondary);">Выберите месяц и файл, затем «Разобрать».</td></tr></tbody>' +
+      '        <tbody id="xlBody"><tr><td colspan="9" style="padding:30px; text-align:center; color:var(--text-secondary);">Выберите месяц и файл, затем «Разобрать».</td></tr></tbody>' +
       '      </table>' +
       '    </div>' +
       '  </div>' +
@@ -616,6 +681,7 @@ export const ExcelReadingsModule = {
       '    <button class="action-btn secondary-btn" data-xl-close>Закрыть</button>' +
       '    <div style="display:flex; gap:8px; flex-wrap:wrap;">' +
       '      <button class="action-btn secondary-btn" id="xlPrintBtn" disabled><i class="fa-solid fa-print"></i> Печать / PDF</button>' +
+      '      <button class="action-btn secondary-btn" id="xlSaveBtn" disabled><i class="fa-solid fa-floppy-disk"></i> Сохранить черновик</button>' +
       '      <button class="action-btn secondary-btn" id="xlRecalcBtn" disabled><i class="fa-solid fa-rotate"></i> Пересчитать</button>' +
       '      <button class="action-btn success-btn" id="xlCommitBtn" disabled><i class="fa-solid fa-check-double"></i> Утвердить отмеченные</button>' +
       '    </div>' +
@@ -628,6 +694,7 @@ export const ExcelReadingsModule = {
     document.getElementById('xlCommitBtn').addEventListener('click', () => this.commit());
     document.getElementById('xlRecalcBtn').addEventListener('click', () => this.recompute());
     document.getElementById('xlPrintBtn').addEventListener('click', () => this.printReport());
+    document.getElementById('xlSaveBtn').addEventListener('click', () => this.saveDraft());
   },
 
   gsheetsLine(gs) {
@@ -645,7 +712,7 @@ export const ExcelReadingsModule = {
   headRowHtml(meters) {
     return '<th style="width:34px;"></th><th>ФИО / жилец</th><th style="width:150px;">Объект</th><th style="width:120px;">Тариф</th>' +
       meters.map((r) => '<th style="text-align:right; width:120px;">' + RES_LABEL[r] + ' (пред→тек)</th>').join('') +
-      '<th style="width:120px; text-align:right;" title="Сверка с буфером Google Sheets за окно вокруг месяца">Google Sheets<br><span style="font-weight:400; font-size:10px;">ГВС / ХВС</span></th>' +
-      '<th style="width:120px;">Вердикт</th><th style="width:100px; text-align:right;">Сумма</th><th style="width:48px;"></th>';
+      '<th style="width:130px; text-align:right;" title="Сверка с буфером Google Sheets за окно вокруг месяца">Google Sheets<br><span style="font-weight:400; font-size:10px;">ГВС / ХВС</span></th>' +
+      '<th style="width:130px;">Вердикт</th><th style="width:56px;"></th>';
   },
 };
