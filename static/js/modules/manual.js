@@ -659,6 +659,10 @@ export const ManualModule = {
             return false;
         }
 
+        // Монотонность НЕ блокируем (fix 2026-06-16): админ авторитетен и
+        // вводит показания за ЛЮБОЙ месяц в ЛЮБУЮ сторону (доввод за апрель/март
+        // поверх мая, правка «его же» цифр). Бэкенд считает расход от
+        // хронологически предыдущего периода. Проверяем только заполненность.
         if (waterOn) {
             const h = parseFloat(this.dom.inHot.value);
             const c = parseFloat(this.dom.inCold.value);
@@ -666,19 +670,11 @@ export const ManualModule = {
                 toast('Заполните оба значения воды (ГВС и ХВС)', 'error');
                 return false;
             }
-            if (h < this.state.prevReadings.hot || c < this.state.prevReadings.cold) {
-                toast('Новые показания воды не могут быть меньше предыдущих', 'error');
-                return false;
-            }
         }
         if (electOn) {
             const e = parseFloat(this.dom.inElect.value);
             if (isNaN(e)) {
                 toast('Заполните показания электричества', 'error');
-                return false;
-            }
-            if (e < this.state.prevReadings.elect) {
-                toast('Показания электричества не могут быть меньше предыдущих', 'error');
                 return false;
             }
         }
