@@ -289,12 +289,17 @@ async def create_user(
         select(User).where(func.lower(User.username) == func.lower(new_user.username))
     )).scalars().first()
     if existing:
-        if not existing.is_deleted:
-            raise HTTPException(status_code=400, detail="Пользователь с таким ФИО уже существует")
-        # РЕАКТИВАЦИЯ: ФИО занято soft-deleted записью (напр. 75 помеченных
-        # удалёнными из 1С-синка). В списке её не видно, но UNIQUE-индекс
-        # username блокирует создание → «существует, а в интерфейсе нет».
-        # Возвращаем человека в строй вместо дубля.
+        # Уже ЗАСЕЛЁН (активный + есть комната) — это настоящий дубль, отказ.
+        if not existing.is_deleted and existing.room_id is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="Пользователь с таким ФИО уже существует и заселён. Найдите его в списке жильцов.")
+        # Иначе запись есть, но «не в строю»: либо soft-deleted (75 из 1С-синка,
+        # в списке невидимы, но UNIQUE username блокирует создание), либо
+        # активный БЕЗ комнаты (есть в базе 1С, но не заселён — кейс «жилец без
+        # помещения»). В обоих случаях НЕ плодим дубль, а возвращаем/заселяем
+        # эту запись с указанными данными и комнатой.
+        _was_deleted = existing.is_deleted
         existing.is_deleted = False
         existing.role = new_user.role or "user"
         existing.residents_count = new_user.residents_count
@@ -319,11 +324,12 @@ async def create_user(
         if new_user.room_id:
             from app.modules.utility.services.room_assignment import move_user_to_room
             await move_user_to_room(db, user=existing, new_room_id=new_user.room_id,
-                                    note="reactivate (был soft-deleted)")
+                                    note="заселение существующего из базы")
         await write_audit_log(
             db, current_user.id, current_user.username,
             action="reactivate", entity_type="user", entity_id=existing.id,
-            details={"username": existing.username, "room_id": new_user.room_id},
+            details={"username": existing.username, "room_id": new_user.room_id,
+                     "was_deleted": _was_deleted},
         )
         await db.commit()
         return (await db.execute(
