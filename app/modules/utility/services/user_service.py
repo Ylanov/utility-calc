@@ -44,8 +44,28 @@ async def delete_user_service(user_id: int, db: AsyncSession):
     user.username = f"{user.username}_deleted_{user.id}"
     user.login = f"{user.login}_deleted_{user.id}"
 
+    # ОТЦЕПЛЯЕМ ОТ КОМНАТЫ (fix 2026-06-16): раньше удаление оставляло
+    # user.room_id и открытую RoomAssignment — жилец продолжал «числиться
+    # проживающим» в любых вью, считающих по RoomAssignment / room_id,
+    # и в комнате визуально оставалось «лишнее» проживание. Чистим room_id
+    # и закрываем активное назначение (как при выселении).
+    user.room_id = None
+
     db.add(user)
     await db.flush()
+
+    if room_id is not None:
+        from sqlalchemy import update as _update
+        from app.modules.utility.models import RoomAssignment
+        from app.core.time_utils import utcnow
+        await db.execute(
+            _update(RoomAssignment)
+            .where(
+                RoomAssignment.user_id == user.id,
+                RoomAssignment.moved_out_at.is_(None),
+            )
+            .values(moved_out_at=utcnow(), note="удалён из системы")
+        )
 
     # Холостяцкая комната: пересчитать делитель счётчиков (жилец выбыл).
     from app.modules.utility.services.room_assignment import recount_singles_residents

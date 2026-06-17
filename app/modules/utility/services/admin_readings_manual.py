@@ -83,7 +83,9 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
     # Если до этого жильца тут были показания (старый жилец, GSHEETS_AUTO
     # и т.п.), их учитывать нельзя — получились бы миллионы.
     history = (await db.execute(
-        select(MeterReading).where(
+        select(MeterReading)
+        .options(selectinload(MeterReading.period))
+        .where(
             MeterReading.user_id == user.id,
             MeterReading.room_id == room.id,
             MeterReading.is_approved,
@@ -92,17 +94,30 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
             # (расход 0), единообразно с approve_single/client/tasks/gsheets.
             MeterReading.period_id.isnot(None),
         )
-        .order_by(MeterReading.created_at.desc()).limit(6)
+        .order_by(MeterReading.created_at.desc()).limit(24)
     )).scalars().all()
 
-    # is_meaningful_prev: пропускаем AUTO_GENERATED / DATA_OVERFLOW_RESET /
-    # MANUAL_RECEIPT / AUTO_NO_HISTORY — их значения = 0, использовать как
-    # baseline для дельты → фантастические суммы при следующей реальной подаче
-    # (инцидент may 2026: жилец Капранов получил счёт ~825 000 ₽ потому что
-    # prev был AUTO_GENERATED с 0 ГВС → delta = 1 468 м³ × 311 ₽/м³).
+    # ВЫБОР prev ПО ХРОНОЛОГИИ ПЕРИОДА, а не по дате создания (fix 2026-06-16).
+    # Раньше prev = последний СОЗДАННЫЙ reading — и при вводе ЗА ПРОШЛЫЙ месяц
+    # (напр. апрель, когда май уже введён) prev оказывался майским → апрель <
+    # мая ловилось как «счётчик упал», а дельта считалась от мая. Теперь
+    # prev = ближайшее ПРЕДЫДУЩЕЕ по биллинговому месяцу показание (для апреля
+    # это март, май игнорируется). Админ может вводить за любой месяц в любую
+    # сторону без ложных ошибок.
+    from app.modules.utility.services.period_helpers import period_chron_key
     from app.modules.utility.services.reading_calculator import is_meaningful_prev
-    prev_latest = next((r for r in history if is_meaningful_prev(r)), None)
-    prev_any = history[0] if history else None  # для prev_is_synth-detection
+    _target_key = period_chron_key(active_period.name)
+
+    def _rkey(r):
+        return period_chron_key(r.period.name) if r.period else (0, 0)
+
+    # Кандидаты строго ДО целевого месяца, по убыванию хронологии.
+    _earlier = sorted(
+        [r for r in history if r.period_id != active_period.id and _rkey(r) < _target_key],
+        key=_rkey, reverse=True,
+    )
+    prev_latest = next((r for r in _earlier if is_meaningful_prev(r)), None)
+    prev_any = _earlier[0] if _earlier else None  # для prev_is_synth-detection
 
     p_hot, p_cold, p_elect = prev_latest.hot_water if prev_latest else ZERO, prev_latest.cold_water if prev_latest else ZERO, prev_latest.electricity if prev_latest else ZERO
 
@@ -130,18 +145,14 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
     else:
         _val_prev_hot = _val_prev_cold = _val_prev_elect = None
 
-    # Единая sanity-валидация (см. reading_validators.py): абсолютные пороги,
-    # неотрицательность, монотонность, разумные дельты. Защита от случая
-    # когда админ вводил гигантские значения (тестирование, пропущенная точка).
-    from app.modules.utility.services.reading_validators import validate_meter_reading
-    _vresult = validate_meter_reading(
-        hot=hot_to_save, cold=cold_to_save, elect=elect_to_save,
-        prev_hot=_val_prev_hot, prev_cold=_val_prev_cold, prev_elect=_val_prev_elect,
-        is_baseline=(prev_latest is None and not _prev_is_synth),
-        prev_is_synth=_prev_is_synth,
-    )
-    if not _vresult.ok:
-        raise HTTPException(400, "; ".join(_vresult.errors))
+    # Ручной ввод админом НЕ блокируем монотонностью/дельтой/потолком
+    # (fix 2026-06-16): админ авторитетен — вписывает показания за ЛЮБОЙ месяц
+    # в ЛЮБУЮ сторону (доввод за апрель/март поверх мая, правка «его же» цифр)
+    # без ложных ошибок «счётчик не может уменьшаться». Единственный
+    # предохранитель от катастрофы (пропущенная точка → счёт в сотни тысяч) —
+    # финальная validate_total_cost ниже. Флаги аномалий считаются
+    # check_reading_for_anomalies_v2 и видны в реестре, но НЕ блокируют.
+    _ = (_val_prev_hot, _val_prev_cold, _val_prev_elect, _prev_is_synth)
 
     d_hot = (hot_to_save - p_hot) if hot_provided else ZERO
     d_cold = (cold_to_save - p_cold) if cold_provided else ZERO
@@ -338,18 +349,14 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
     else:
         _val_prev_hot = _val_prev_cold = _val_prev_elect = None
 
-    # Единая sanity-валидация (см. reading_validators.py): абсолютные пороги,
-    # неотрицательность, монотонность, разумные дельты. Защита от случая
-    # когда админ вводил гигантские значения (тестирование, пропущенная точка).
-    from app.modules.utility.services.reading_validators import validate_meter_reading
-    _vresult = validate_meter_reading(
-        hot=hot_to_save, cold=cold_to_save, elect=elect_to_save,
-        prev_hot=_val_prev_hot, prev_cold=_val_prev_cold, prev_elect=_val_prev_elect,
-        is_baseline=(prev_latest is None and not _prev_is_synth),
-        prev_is_synth=_prev_is_synth,
-    )
-    if not _vresult.ok:
-        raise HTTPException(400, "; ".join(_vresult.errors))
+    # Ручной ввод админом НЕ блокируем монотонностью/дельтой/потолком
+    # (fix 2026-06-16): админ авторитетен — вписывает показания за ЛЮБОЙ месяц
+    # в ЛЮБУЮ сторону (доввод за апрель/март поверх мая, правка «его же» цифр)
+    # без ложных ошибок «счётчик не может уменьшаться». Единственный
+    # предохранитель от катастрофы (пропущенная точка → счёт в сотни тысяч) —
+    # финальная validate_total_cost ниже. Флаги аномалий считаются
+    # check_reading_for_anomalies_v2 и видны в реестре, но НЕ блокируют.
+    _ = (_val_prev_hot, _val_prev_cold, _val_prev_elect, _prev_is_synth)
 
     d_hot = (hot_to_save - p_hot) if hot_provided else ZERO
     d_cold = (cold_to_save - p_cold) if cold_provided else ZERO

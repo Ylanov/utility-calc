@@ -275,32 +275,70 @@ async def create_user(
     # login (учётка) по умолчанию = ФИО (вход жильцам отключён, поле историческое).
     login_val = (new_user.login or new_user.username).strip()
 
-    # ФИО (username) уникально — это ключ сопоставления 1С/ГИС.
-    existing = await db.execute(
-        select(User).where(func.lower(User.username) == func.lower(new_user.username))
-    )
-    if existing.scalars().first():
-        raise HTTPException(status_code=400, detail="Пользователь с таким ФИО уже существует")
-    # login тоже уникален (case-insensitive).
-    existing_login = await db.execute(
-        select(User).where(func.lower(User.login) == login_val.lower())
-    )
-    if existing_login.scalars().first():
-        raise HTTPException(status_code=400, detail="Этот логин уже занят")
+    # resident_type/billing_mode (нужны и для реактивации, и для создания).
+    rt = getattr(new_user, "resident_type", "family") or "family"
+    bm = getattr(new_user, "billing_mode", None) or "by_meter"
 
     if new_user.room_id:
         room_check = await db.get(Room, new_user.room_id)
         if not room_check:
             raise HTTPException(status_code=400, detail="Комната не найдена в Жилфонде")
 
-    # Тариф жильцу НЕ задаём — он подтягивается от дома/комнаты (Room.tariff_id),
-    # настраивается через «Настройки дома». Персональный тариф упразднён.
+    # ФИО (username) уникально — это ключ сопоставления 1С/ГИС.
+    existing = (await db.execute(
+        select(User).where(func.lower(User.username) == func.lower(new_user.username))
+    )).scalars().first()
+    if existing:
+        if not existing.is_deleted:
+            raise HTTPException(status_code=400, detail="Пользователь с таким ФИО уже существует")
+        # РЕАКТИВАЦИЯ: ФИО занято soft-deleted записью (напр. 75 помеченных
+        # удалёнными из 1С-синка). В списке её не видно, но UNIQUE-индекс
+        # username блокирует создание → «существует, а в интерфейсе нет».
+        # Возвращаем человека в строй вместо дубля.
+        existing.is_deleted = False
+        existing.role = new_user.role or "user"
+        existing.residents_count = new_user.residents_count
+        existing.resident_type = rt
+        existing.billing_mode = bm
+        existing.has_hw_meter = getattr(new_user, "has_hw_meter", True)
+        existing.has_cw_meter = getattr(new_user, "has_cw_meter", True)
+        existing.has_el_meter = getattr(new_user, "has_el_meter", True)
+        existing.is_initial_setup_done = False
+        login_taken = (await db.execute(
+            select(User.id).where(
+                func.lower(User.login) == login_val.lower(),
+                User.id != existing.id, User.is_deleted.is_(False),
+            ).limit(1)
+        )).scalars().first()
+        if not login_taken:
+            existing.login = login_val
+        if new_user.password:
+            existing.hashed_password = get_password_hash(new_user.password)
+        db.add(existing)
+        await db.flush()
+        if new_user.room_id:
+            from app.modules.utility.services.room_assignment import move_user_to_room
+            await move_user_to_room(db, user=existing, new_room_id=new_user.room_id,
+                                    note="reactivate (был soft-deleted)")
+        await write_audit_log(
+            db, current_user.id, current_user.username,
+            action="reactivate", entity_type="user", entity_id=existing.id,
+            details={"username": existing.username, "room_id": new_user.room_id},
+        )
+        await db.commit()
+        return (await db.execute(
+            select(User).options(selectinload(User.room)).where(User.id == existing.id)
+        )).scalars().first()
 
-    # resident_type/billing_mode: если жилец сразу селится в комнату,
-    # фактический resident_type пересчитает move_user_to_room по флагу комнаты.
-    # До переезда — оставляем то что пришло (или дефолты).
-    rt = getattr(new_user, "resident_type", "family") or "family"
-    bm = getattr(new_user, "billing_mode", None) or "by_meter"
+    # login уникален (case-insensitive) — среди активных.
+    existing_login = (await db.execute(
+        select(User).where(
+            func.lower(User.login) == login_val.lower(),
+            User.is_deleted.is_(False),
+        )
+    )).scalars().first()
+    if existing_login:
+        raise HTTPException(status_code=400, detail="Этот логин уже занят")
 
     db_user = User(
         username=new_user.username,
