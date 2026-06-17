@@ -152,7 +152,7 @@ async def analyze_cohorts(
             "dormitory": room.dormitory_name or "—",
             "room_number": room.room_number or "—",
             "area": float(room.apartment_area or 0),
-            "residents_count": int(user.residents_count or 1),
+            "residents_count": int(room.total_room_residents or 1),
             "value": value,
         })
 

@@ -11,7 +11,7 @@ import logging
 from collections import defaultdict
 
 from app.modules.utility.models import User, MeterReading, BillingPeriod, Tariff, Room
-from app.modules.utility.services.calculations import calculate_utilities, D
+from app.modules.utility.services.calculations import calculate_utilities, D, paying_residents
 from app.modules.utility.services.period_helpers import period_chron_key
 
 logger = logging.getLogger("billing_service")
@@ -294,7 +294,7 @@ async def close_current_period(db: AsyncSession, admin_user_id: int, generate_no
             # Сейчас одна формула: норматив × residents × коэф (×1 первые
             # NORM_SANCTION_THRESHOLD пропусков, ×sanction_coefficient после).
             # См. _growing_norm_volumes для деталей.
-            residents = D(user.residents_count or 1)
+            residents = D(paying_residents(user, user.room))
             last_hot = D(history[0].hot_water) if history else zero
             last_cold = D(history[0].cold_water) if history else zero
             last_elect = D(history[0].electricity) if history else zero
@@ -518,7 +518,7 @@ async def auto_fill_period_readings(
         # норматив × residents × (1 если miss<3, иначе sanction_coefficient).
         # Подробности и история эволюции — в close_current_period выше и
         # docstring _growing_norm_volumes.
-        residents = D(user.residents_count or 1)
+        residents = D(paying_residents(user, user.room))
         last_hot = D(history[0].hot_water) if history else zero
         last_cold = D(history[0].cold_water) if history else zero
         last_elect = D(history[0].electricity) if history else zero

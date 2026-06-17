@@ -25,6 +25,28 @@ MODEL_COST_FIELDS = (
 )
 
 
+def paying_residents(user, room) -> int:
+    """Число людей жильца для расчёта (норматив бессчётчиковых + доля
+    электричества).
+
+    - ХОЛОСТЯЦКАЯ квартира: каждый жилец = 1 человек. Счётчики делятся на
+      room.total_room_residents отдельно (calculate_utilities), поэтому здесь
+      именно 1, иначе доля электричества схлопнулась бы в 1/1.
+    - СЕМЬЯ: число людей семьи = User.residents_count лицевого счёта. Это поле
+      БОЛЬШЕ НЕ редактируется в форме жильца (2026-06-17) — оно
+      синхронизируется из Жилфонда (Room.total_room_residents) при создании
+      жильца и правке комнаты. Биллинг семьи при этом НЕ меняется (читаем то же
+      значение, что и раньше) — важно: НЕ переключать на total_room_residents,
+      иначе доля электричества семьи скачком станет 100% (см. ревью 2026-06-17).
+
+    Без комнаты/жильца → 1, чтобы расчёт не падал.
+    """
+    if room is not None and bool(getattr(room, "is_singles_apartment", False)):
+        return 1
+    rc = getattr(user, "residents_count", None) if user is not None else None
+    return int(rc) if rc and int(rc) > 0 else 1
+
+
 def costs_for_model_fields(costs: dict) -> dict:
     """Возвращает подсловарь, безопасный для setattr/**kwargs на MeterReading.
 
@@ -181,7 +203,9 @@ def calculate_utilities(
     # только заряжаемых водных объёмов (Аудит #4). Переданный volume_sewage
     # (= hot+cold) — производное, здесь не используем.
 
-    residents = D(user.residents_count if user.residents_count else 1)
+    # Число людей для норматива бессчётчиковых — из КОМНАТЫ (paying_residents),
+    # не из упразднённого User.residents_count.
+    residents = D(paying_residents(user, room))
     # Наличие счётчиков — приоритет КОМНАТЫ (статично, meters_002), fallback
     # на User для совместимости со старыми данными до переноса.
     def _has_meter(attr: str) -> bool:

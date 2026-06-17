@@ -214,7 +214,8 @@ async def recalc_skip_chain(
     #    на прошлых auto-месяцах. Долг/переплата в балансе считается
     #    автоматически: virtual_accrued − real_accrued ушёл в сторно.
 
-    residents = D(user.residents_count or 1)
+    from app.modules.utility.services.calculations import paying_residents
+    residents = D(paying_residents(user, room))
     total_room = D(room.total_room_residents or 1)
     if total_room <= 0:
         total_room = D(1)

@@ -312,7 +312,7 @@ async def generate_billing_report_xlsx(db: AsyncSession, period_id: int) -> Tupl
 
         room_display = room.format_address if room else "-"
         area = room.apartment_area if room else "-"
-        residents = f"{user.residents_count}/{room.total_room_residents}" if room else "-"
+        residents = f"{room.total_room_residents or 1}" if room else "-"
 
         worksheet.append([room_display, user.username, area, residents, reading.cost_hot_water, reading.cost_cold_water,
                           reading.cost_sewage, reading.cost_electricity, reading.cost_maintenance,

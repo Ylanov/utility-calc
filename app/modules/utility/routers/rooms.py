@@ -76,7 +76,11 @@ async def analyze_housing(db: AsyncSession = Depends(get_db)):
             continue
 
         acc_count = len(occupants)
-        paying_res = sum((u.residents_count or 1) for u in occupants)
+        # Число людей и вместимость берём из КОМНАТЫ (per-user residents_count
+        # упразднён 2026-06-17): people = total_room_residents (для холостяцкой
+        # = число Л/С, авто; для семьи = размер семьи), places = max_capacity.
+        people = room.total_room_residents or 0
+        places = room.max_capacity if (room.max_capacity and room.max_capacity > 0) else None
         usernames = ", ".join([u.username for u in occupants])
 
         # Аномалия 1: Холостяки / Раздельные счета (2 и более Л/С в одной комнате)
@@ -86,18 +90,18 @@ async def analyze_housing(db: AsyncSession = Depends(get_db)):
                 "desc": f"Раздельные счета ({acc_count} Л/С) в одном помещении: {usernames}. Убедитесь, что это не дубликаты."
             })
 
-        # Аномалия 2: Перенаселение
-        if paying_res > room.total_room_residents:
+        # Аномалия 2: Перенаселение (людей больше, чем мест по проекту)
+        if places and people > places:
             issues["overcrowded"].append({
                 "id": r_id, "title": r_name,
-                "desc": f"Платят суммарно за {paying_res} чел., хотя максимальная вместимость комнаты {room.total_room_residents} чел. ({usernames})"
+                "desc": f"Проживает {people} чел., хотя максимальная вместимость квартиры {places}. ({usernames})"
             })
 
-        # Аномалия 3: Недобор
-        elif paying_res < room.total_room_residents:
+        # Аномалия 3: Недобор (есть свободные места)
+        elif places and people < places:
             issues["underpopulated"].append({
                 "id": r_id, "title": r_name,
-                "desc": f"Платят за {paying_res} чел., а макс. мест {room.total_room_residents}. Либо кто-то не платит, либо в комнате есть свободные места."
+                "desc": f"Проживает {people} чел., а мест {places}. Возможно, есть свободные места. ({usernames})"
             })
 
     # Аномалия 4: Жильцы-призраки
@@ -632,7 +636,6 @@ async def room_residents(
             {
                 "id": u.id, "username": u.username,
                 "resident_type": u.resident_type, "billing_mode": u.billing_mode,
-                "residents_count": u.residents_count,
                 "tariff_id": u.tariff_id,
                 "tariff_name": u.tariff.name if u.tariff else None,
                 "workplace": u.workplace,
@@ -804,17 +807,32 @@ async def update_room(room_id: int, data: RoomUpdate, db: AsyncSession = Depends
         from app.modules.utility.services.room_assignment import recount_singles_residents
         await recount_singles_residents(db, room_id)
     elif singles_changed and "total_room_residents" not in update_data:
-        # Аудит #20: singles→family. Делитель счётчиков был авто-холостяцким;
-        # для семьи это «число людей» — иначе доли электричества не сходятся к
-        # 100% (переначисление). Если админ НЕ задал total_room_residents явно
-        # в этом апдейте — ставим сумму residents_count аккаунтов (≥1).
+        # Аудит #20: singles→family. Делитель счётчиков был авто-холостяцким
+        # (= число Л/С). Для семьи total_room_residents = «число людей», его
+        # ведёт админ вручную. Если он НЕ задал значение в этом апдейте —
+        # оставляем число активных Л/С как разумную отправную точку (≥1);
+        # per-user residents_count упразднён 2026-06-17.
         await db.flush()
-        _ppl = (await db.execute(
-            select(func.coalesce(func.sum(func.coalesce(User.residents_count, 1)), 0))
+        _cnt = (await db.execute(
+            select(func.count(User.id))
             .where(User.room_id == room_id, User.is_deleted.is_(False),
                    User.role == "user")
         )).scalar_one()
-        room.total_room_residents = int(_ppl) if _ppl and _ppl > 0 else 1
+        room.total_room_residents = int(_cnt) if _cnt and _cnt > 0 else 1
+
+    # Жилфонд — единый источник числа людей семьи (2026-06-17). Если админ
+    # задал total_room_residents у СЕМЕЙНОЙ комнаты — синхронизируем
+    # residents_count активных Л/С (поле в форме жильца убрано). Для холостяцкой
+    # комнаты этого не делаем: там residents_count=1, делёж по total.
+    if not new_is_singles and "total_room_residents" in update_data:
+        _trr = update_data.get("total_room_residents")
+        _trr = int(_trr) if _trr and int(_trr) > 0 else 1
+        await db.execute(
+            update(User)
+            .where(User.room_id == room_id, User.is_deleted.is_(False),
+                   User.role == "user")
+            .values(residents_count=_trr)
+        )
 
     await db.commit()
     await db.refresh(room)
@@ -1307,7 +1325,8 @@ async def replace_meter(room_id: int, data: ReplaceMeterSchema, db: AsyncSession
         from app.modules.utility.services.tariff_cache import tariff_cache
         t = tariff_cache.get_effective_tariff(user=user, room=room)
 
-        residents = Decimal(user.residents_count)
+        from app.modules.utility.services.calculations import paying_residents
+        residents = Decimal(paying_residents(user, room))
         total_res = Decimal(room.total_room_residents) if room.total_room_residents > 0 else Decimal(1)
         elect_share = (residents / total_res) * d_elect
 

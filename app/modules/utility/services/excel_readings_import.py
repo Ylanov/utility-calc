@@ -266,7 +266,8 @@ def _norm_volumes(tariff: Tariff, user: User, room: Room) -> tuple[Decimal, Deci
     """Объёмы по нормативу для не подавших — через ПРОВЕРЕННУЮ функцию
     авто-добивки (_growing_norm_volumes, miss_count=0 → без санкции ×1)."""
     from app.modules.utility.services.billing import _growing_norm_volumes
-    residents = D(user.residents_count or 1)
+    from app.modules.utility.services.calculations import paying_residents
+    residents = D(paying_residents(user, room))
     vol_hot, vol_cold, vol_el, _coef = _growing_norm_volumes(
         tariff, residents, miss_count=0, room=room,
     )
@@ -290,7 +291,8 @@ def _consumption_volumes(
     d_hot = _delta("hot")
     d_cold = _delta("cold")
     d_el_raw = _delta("elect")
-    residents = D(user.residents_count or 1)
+    from app.modules.utility.services.calculations import paying_residents
+    residents = D(paying_residents(user, room))
     total = D(room.total_room_residents if room and room.total_room_residents else 1)
     share_el = max(ZERO, (residents / total) * d_el_raw) if total > ZERO else ZERO
     return d_hot, d_cold, share_el
@@ -453,7 +455,7 @@ async def build_preview(
             "dormitory": room.dormitory_name,
             "tariff": tariff.name if tariff else None,
             "score": score, "conflict": bool(conflict),
-            "residents": user.residents_count or 1,
+            "residents": room.total_room_residents or 1,
         }
 
         # Какие ресурсы реально считаем (есть счётчик у комнаты).
@@ -680,6 +682,11 @@ async def commit_import(
 
     created = skipped_existing = failed = 0
     errors: list[dict] = []
+    # Холостяцкие квартиры: коммуналка делится поровну. Запоминаем по одной
+    # посчитанной (делёной) квитанции на квартиру и после цикла тиражируем её
+    # на жильцов квартиры, которых НЕ было в импорте (см. propagate ниже).
+    decided_uids = {d.get("user_id") for d in decisions if d.get("user_id")}
+    singles_sources: dict = {}
 
     for dec in decisions:
         uid = dec.get("user_id")
@@ -756,21 +763,53 @@ async def commit_import(
             room.last_electricity = read_el
             db.add(room)
             created += 1
+
+            # Запоминаем источник для тиражирования по холостяцкой квартире.
+            if bool(getattr(room, "is_singles_apartment", False)):
+                singles_sources[room.id] = {
+                    "room": room, "user_id": user.id,
+                    "hot": read_hot, "cold": read_cold, "elect": read_el,
+                    "costs": costs, "total_209": costs["total_209"],
+                    "total_205": costs["total_205"], "flags": flags,
+                }
         except Exception as ex:  # noqa: BLE001
             failed += 1
             errors.append({"user_id": uid, "reason": str(ex)[:160]})
             logger.warning("[EXCEL-IMPORT] commit failed user=%s: %s", uid, ex)
+
+    # Тиражирование по холостяцким квартирам: жильцам, которых не было в
+    # импорте, копируем равную долю (утверждённую). Без этого они остались бы
+    # на baseline, а введённому начислилась бы только его доля.
+    singles_shared = 0
+    if singles_sources:
+        from app.modules.utility.services.singles_billing import propagate_singles_reading
+        for src in singles_sources.values():
+            try:
+                affected = await propagate_singles_reading(
+                    db, room=src["room"], period_id=period_id,
+                    source_user_id=src["user_id"],
+                    hot=src["hot"], cold=src["cold"], elect=src["elect"],
+                    costs=src["costs"], total_209=src["total_209"],
+                    total_205=src["total_205"], flags=src["flags"],
+                    is_approved=True, exclude_user_ids=decided_uids,
+                )
+                singles_shared += len(affected)
+            except Exception as ex:  # noqa: BLE001
+                logger.warning("[EXCEL-IMPORT] singles propagate room=%s: %s",
+                               src["room"].id, ex)
 
     if actor is not None:
         await write_audit_log(
             db, actor.id, actor.username,
             action="excel_readings_import", entity_type="period", entity_id=period_id,
             details={"created": created, "skipped_existing": skipped_existing,
-                     "failed": failed, "period": period.name},
+                     "failed": failed, "singles_shared": singles_shared,
+                     "period": period.name},
         )
     await db.commit()
     return {
         "status": "ok", "period": period.name,
         "created": created, "skipped_existing": skipped_existing,
-        "failed": failed, "errors": errors[:50],
+        "failed": failed, "singles_shared": singles_shared,
+        "errors": errors[:50],
     }

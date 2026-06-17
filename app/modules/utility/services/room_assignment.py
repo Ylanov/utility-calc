@@ -145,6 +145,16 @@ async def move_user_to_room(
             expected_rt = "single" if bool(getattr(target_room, "is_singles_apartment", False)) else "family"
             if user.resident_type != expected_rt:
                 user.resident_type = expected_rt
+            # 2026-06-17: число людей семьи берём из Жилфонда — единый источник.
+            # Поле «платит за N» в форме жильца убрано; residents_count семейного
+            # Л/С синхронизируется с Room.total_room_residents при заселении.
+            # Для холостяка resident_type='single' → валидатор держит =1, делёж
+            # счёта идёт по total_room_residents. Биллинг семьи использует именно
+            # residents_count (calculations.paying_residents), поэтому держим его
+            # в соответствии с комнатой.
+            if expected_rt == "family":
+                _trr = getattr(target_room, "total_room_residents", None)
+                user.residents_count = int(_trr) if _trr and int(_trr) > 0 else 1
 
     # Шаг 7: пересчёт делителя счётчиков для холостяцких комнат (старая и новая).
     # Делаем ПОСЛЕ смены room_id и flush — COUNT должен видеть актуальное

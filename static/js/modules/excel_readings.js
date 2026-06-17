@@ -478,7 +478,7 @@ export const ExcelReadingsModule = {
       user_id: chosen.id, username: chosen.username,
       room: chosen.room, dormitory: null,
       tariff: it.matched?.tariff || null, score: 100, conflict: false,
-      residents: chosen.residents_count || 1,
+      residents: (chosen.room && chosen.room.total_room_residents) || 1,
     };
     // Пересчёт суммы под нового жильца — на бэке при commit; в превью помечаем.
     it.verdict = (it.status === 'norm') ? 'warning' : 'ok';
@@ -521,12 +521,9 @@ export const ExcelReadingsModule = {
       '    <div><label style="font-size:12px; color:var(--text-secondary);">Квартира / комната</label>' +
       '      <select id="cbRoom" style="width:100%;" disabled><option value="">— сначала выберите общежитие —</option></select></div>' +
       (isBind ? '' :
-        '    <div style="display:flex; gap:10px;">' +
-        '      <div style="flex:1;"><label style="font-size:12px; color:var(--text-secondary);">Жильцов (платит за)</label>' +
-        '        <input type="number" id="cbResidents" value="1" min="1" max="20" style="width:100%; box-sizing:border-box;"></div>' +
-        '      <div style="flex:1;"><label style="font-size:12px; color:var(--text-secondary);">Тип жильца</label>' +
-        '        <select id="cbType" style="width:100%;"><option value="family">Семья</option><option value="single">Холостяк</option></select></div>' +
-        '    </div>') +
+        '    <div><label style="font-size:12px; color:var(--text-secondary);">Тип жильца</label>' +
+        '      <select id="cbType" style="width:100%;"><option value="family">Семья</option><option value="single">Холостяк</option></select>' +
+        '      <p style="font-size:11px; color:var(--text-secondary); margin:4px 0 0;">Число проживающих задаётся на квартире (Жилфонд).</p></div>') +
       '    <div id="cbMsg"></div>' +
       '  </div>' +
       '  <div class="modal-footer" style="display:flex; justify-content:flex-end; gap:8px;">' +
@@ -585,7 +582,6 @@ export const ExcelReadingsModule = {
           if (fio.length < 3) { msg.innerHTML = banner('b-err', 'Введите ФИО.'); setLoading(saveBtn, false, 'Создать и привязать'); return; }
           const res = await api.post('/users', {
             username: fio, role: 'user', room_id: roomId,
-            residents_count: Number(ov.querySelector('#cbResidents').value) || 1,
             resident_type: ov.querySelector('#cbType').value || 'family',
           });
           userId = res.id; username = res.username || fio;
@@ -594,7 +590,7 @@ export const ExcelReadingsModule = {
           user_id: userId, username,
           room: roomLabel, dormitory: dorm,
           tariff: it.matched?.tariff || null, score: 100, conflict: false,
-          residents: isBind ? (it.matched?.residents || 1) : (Number(ov.querySelector('#cbResidents').value) || 1),
+          residents: it.matched?.residents || 1,
         };
         it.verdict = (it.status === 'norm') ? 'warning' : 'ok';
         it.reasons = (it.reasons || []).filter((r) => !/не найден|без помещения|несколько похожих/i.test(r));

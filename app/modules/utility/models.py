@@ -258,6 +258,12 @@ class User(Base):
     role = Column(String, nullable=False)
 
     workplace = Column(String, nullable=True)
+    # Число людей лицевого счёта. С 2026-06-17 НЕ редактируется в форме жильца —
+    # синхронизируется из Жилфонда (Room.total_room_residents) при создании
+    # жильца и правке комнаты (единый источник — квартира). Для СЕМЬИ участвует
+    # в биллинге через calculations.paying_residents (норматив бессчётчиковых +
+    # доля электричества). Для ХОЛОСТЯКА всегда =1 (валидатор), делёж счёта идёт
+    # по room.total_room_residents.
     residents_count = Column(Integer, default=1)
 
     # Тип жильца — определяет, как считаются коммуналка.

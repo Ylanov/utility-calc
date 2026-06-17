@@ -87,7 +87,8 @@ class ReadingService:
         d_elect = elect - p_elect
         sewage = d_hot + d_cold
 
-        residents = Decimal(user.residents_count or 1)
+        from app.modules.utility.services.calculations import paying_residents
+        residents = Decimal(paying_residents(user, room))
         total = Decimal(room.total_room_residents or 1)
         if total == 0:
             total = Decimal("1")

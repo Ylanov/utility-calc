@@ -13,6 +13,8 @@ from app.modules.utility.schemas import AdminManualReadingSchema, OneTimeChargeS
 from app.modules.utility.services.calculations import (
     calculate_utilities,
     costs_for_model_fields,
+    paying_residents,
+    MODEL_COST_FIELDS,
 )
 from app.modules.utility.services.anomaly_detector import check_reading_for_anomalies_v2
 
@@ -235,7 +237,7 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
     d_cold = (cold_to_save - p_cold) if cold_provided else ZERO
     d_elect = (elect_to_save - p_elect) if elect_provided else ZERO
 
-    residents_count = user.residents_count if user.residents_count is not None else 1
+    residents_count = paying_residents(user, room)
     total_room = room.total_room_residents if room.total_room_residents > 0 else 1
 
     user_share_elect = (Decimal(residents_count) / Decimal(total_room)) * d_elect
@@ -341,19 +343,25 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
         target.total_209, target.total_205, target.total_cost = total_209, total_205, total_209 + total_205
         if is_past_closed and not target.is_approved:
             target.is_approved = True
+        src_reading = target
     else:
-        db.add(MeterReading(
+        src_reading = MeterReading(
             user_id=user.id, room_id=room.id, period_id=active_period.id,
             hot_water=hot_to_save, cold_water=cold_to_save, electricity=elect_to_save,
             debt_209=ZERO, overpayment_209=ZERO, debt_205=ZERO, overpayment_205=ZERO,
             total_209=total_209, total_205=total_205, total_cost=total_209 + total_205,
             is_approved=is_past_closed, anomaly_flags=flags, anomaly_score=score,
             **costs_for_model_fields(costs)
-        ))
+        )
+        db.add(src_reading)
 
-    # Доввод за прошлый месяц → пересчитываем всю цепочку реальных показаний
-    # жильца: следующий месяц (май) подхватит свежее prev (апрель) и его суммы
-    # пересчитаются «сразу». Для активного периода (обычная подача) не трогаем.
+    # Доввод за прошлый месяц → пересчитываем цепочку реальных показаний ЭТОГО
+    # жильца (источника): следующий месяц (май) подхватит свежее prev (апрель) и
+    # его суммы пересчитаются «сразу». Для активного периода не трогаем.
+    # ВАЖНО (ревью 2026-06-17): пересчёт делаем ДО тиражирования и ТОЛЬКО для
+    # источника — клоны холостяков НЕ пересчитываем по цепочке (их значения =
+    # авторитетная делёная доля источника; повторный пересчёт по их собственному
+    # prev исказил бы дельту).
     recalced = 0
     if is_past_closed:
         await db.flush()  # чтобы только что созданный reading попал в цепочку
@@ -362,12 +370,31 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
         except Exception as ex:
             logging.getLogger(__name__).warning("[manual] recompute chain failed: %s", ex)
 
+    # Холостяцкая квартира: коммуналка делится ПОРОВНУ. Берём ИТОГОВЫЕ (после
+    # возможного пересчёта) суммы источника — уже доля одного человека
+    # (calculate_utilities поделил на total_room_residents) — и копируем на всех
+    # остальных активных жильцов квартиры (иначе им шёл бы только baseline).
+    # Делалось только в подаче жильцом — для ручного ввода добавлено 2026-06-17.
+    singles_affected = []
+    if bool(getattr(room, "is_singles_apartment", False)):
+        await db.flush()
+        from app.modules.utility.services.singles_billing import propagate_singles_reading
+        _final_costs = {f: getattr(src_reading, f) for f in MODEL_COST_FIELDS}
+        singles_affected = await propagate_singles_reading(
+            db, room=room, period_id=active_period.id, source_user_id=user.id,
+            hot=src_reading.hot_water, cold=src_reading.cold_water,
+            elect=src_reading.electricity, costs=_final_costs,
+            total_209=src_reading.total_209, total_205=src_reading.total_205,
+            flags=src_reading.anomaly_flags, is_approved=bool(src_reading.is_approved),
+        )
+
     await db.commit()
     return {
         "status": "success",
         "updated_kind": "draft" if draft else ("approved" if approved_current else "new_draft"),
         "auto_approved": is_past_closed,
         "chain_recalced": recalced,
+        "singles_shared": len(singles_affected),
     }
 
 
@@ -459,7 +486,7 @@ async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
     d_cold = (cold_to_save - p_cold) if cold_provided else ZERO
     d_elect = (elect_to_save - p_elect) if elect_provided else ZERO
 
-    residents_count = user.residents_count if user.residents_count is not None else 1
+    residents_count = paying_residents(user, room)
     total_room = room.total_room_residents if room.total_room_residents > 0 else 1
 
     user_share_elect = (Decimal(residents_count) / Decimal(total_room)) * d_elect

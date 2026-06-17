@@ -76,24 +76,19 @@
                     Счетчики: ГВС (<span id="infoHw" style="color: var(--danger-color); font-family: monospace;">-</span>), ХВС (<span id="infoCw" style="color: var(--primary-color); font-family: monospace;">-</span>), Электр. (<span id="infoEl" style="color: #d97706; font-family: monospace;">-</span>)
                 </div>
 
-                <!-- Кол-во проживающих + тип жильца. Режим оплаты (койко-место)
-                     убран: все платят по счётчикам, у холостяков счёт делится
+                <!-- Тип жильца. Число проживающих НЕ задаётся на жильце
+                     (упразднено 2026-06-17) — берётся из КОМНАТЫ (Жилфонд,
+                     «Кол-во проживающих»). У холостяков счёт делится поровну
                      автоматически (см. формулу singles в billing). -->
-                <div class="form-grid-2" style="margin-bottom: 24px;">
-                    <div class="form-group">
-                        <label>Сколько человек платит с этого Л/С</label>
-                        <input type="number" id="residentsCount" value="1" min="1">
-                    </div>
-                    <div class="form-group">
-                        <label>Тип жильца</label>
-                        <select id="newResidentType">
-                            <option value="family">Семейный</option>
-                            <option value="single">Холостяк</option>
-                        </select>
-                        <p class="hint-text" style="font-size:11px; margin:4px 0 0;">
-                            Для холостяцких квартир тип проставляется автоматически при заселении.
-                        </p>
-                    </div>
+                <div class="form-group" style="margin-bottom: 24px;">
+                    <label>Тип жильца</label>
+                    <select id="newResidentType">
+                        <option value="family">Семейный</option>
+                        <option value="single">Холостяк</option>
+                    </select>
+                    <p class="hint-text" style="font-size:11px; margin:4px 0 0;">
+                        Число проживающих и деление счёта задаются на КОМНАТЕ (раздел «Жилфонд»). Для холостяцких квартир тип проставляется автоматически при заселении.
+                    </p>
                 </div>
 
                 <!-- Счётчики настраиваются на КОМНАТЕ (Жилфонд), жилец наследует.
@@ -344,21 +339,15 @@
                         Счетчики: ГВС (<span id="editInfoHw" style="color: var(--danger-color); font-family: monospace;">-</span>), ХВС (<span id="editInfoCw" style="color: var(--primary-color); font-family: monospace;">-</span>), Электр. (<span id="editInfoEl" style="color: #d97706; font-family: monospace;">-</span>)
                     </div>
 
-                    <div class="form-grid-2">
-                        <div class="form-group">
-                            <label>Жильцов (платит за)</label>
-                            <input type="number" id="editResidentsCount" min="1">
-                        </div>
-                        <div class="form-group">
-                            <label>Тип жильца</label>
-                            <select id="editResidentType">
-                                <option value="family">Семейный</option>
-                                <option value="single">Холостяк</option>
-                            </select>
-                            <p class="hint-text" style="margin:4px 0 0;font-size:11px;">
-                                Для холостяцких квартир тип проставляется автоматически при заселении.
-                            </p>
-                        </div>
+                    <div class="form-group">
+                        <label>Тип жильца</label>
+                        <select id="editResidentType">
+                            <option value="family">Семейный</option>
+                            <option value="single">Холостяк</option>
+                        </select>
+                        <p class="hint-text" style="margin:4px 0 0;font-size:11px;">
+                            Число проживающих задаётся на КОМНАТЕ (раздел «Жилфонд»). Для холостяцких квартир тип проставляется автоматически при заселении.
+                        </p>
                     </div>
 
                     <!-- Счётчики настраиваются на КОМНАТЕ (Жилфонд), жилец наследует.

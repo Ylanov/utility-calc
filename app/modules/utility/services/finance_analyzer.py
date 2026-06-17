@@ -141,12 +141,14 @@ def analyze_finance(
             score += 20
 
     # ---------- WRONG_BILLING_MODE ----------
-    # Несоответствие типа жильца и режима оплаты — показатель неконсистентных
-    # данных. Например, single (холостяк) всегда должен быть на per_capita,
-    # а family с counters — на by_meter. Если не так — кто-то ввёл руками.
+    # Современная модель холостяков (2026): резидент 'single' живёт на ОБЩИХ
+    # счётчиках квартиры и платит by_meter — делёж счёта делает billing по
+    # флагу КОМНАТЫ room.is_singles_apartment, а НЕ billing_mode='per_capita'
+    # (per_capita — legacy). Поэтому single+by_meter — это КОРРЕКТНО, флаг не
+    # ставим (раньше ошибочно флажили всех холостяков «Несоответствие типа
+    # жильца»). Подозрителен только per_capita (legacy-режим, ручной ввод).
     if config.is_rule_enabled("finance.wrong_billing_mode"):
-        expected = "per_capita" if resident_type == "single" else "by_meter"
-        if billing_mode != expected:
+        if billing_mode == "per_capita":
             flags.append("WRONG_BILLING_MODE")
             score += 15
 

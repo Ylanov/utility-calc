@@ -322,10 +322,9 @@ export const HousingModule = {
     },
 
     renderRoomRow(room) {
-        // Заполненность рассчитывается на клиенте из total_room_residents + total_residents.
-        // По домену: total_room_residents = вместимость комнаты (мест),
-        // residents_count каждого жильца = сколько он платит; резиденты мы тут
-        // не получаем (их видно через expand), поэтому в таблице даём подсказку
+        // total_room_residents = число проживающих в комнате (ЕДИНЫЙ источник
+        // числа людей; per-user residents_count упразднён 2026-06-17). Резидентов
+        // тут не получаем (видно через expand), поэтому в таблице даём подсказку
         // через tint фона и чип с кол-вом мест.
         const cap = Number(room.total_room_residents || 0);
         const isHouse = room.place_type === 'house';
@@ -640,7 +639,6 @@ export const HousingModule = {
                 <li style="padding:6px 0; border-bottom:1px solid #e5e7eb; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
                     <b style="color:#1f2937;">${escapeHtml(r.username)}</b>
                     <span style="font-size:11px; background:#e0e7ff; color:#3730a3; padding:2px 7px; border-radius:10px;">${type}</span>
-                    <span style="font-size:12px; color:var(--text-secondary);">платят за: <b>${r.residents_count}</b> чел.</span>
                     ${tariff}
                     ${r.workplace ? `<span style="font-size:12px; color:var(--text-secondary);">• ${escapeHtml(r.workplace)}</span>` : ''}
                 </li>

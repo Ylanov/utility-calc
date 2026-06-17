@@ -237,7 +237,8 @@ class UserCreate(BaseModel):
     # создаются без пароля — бэкенд ставит случайный неизвестный hash.
     password: Optional[str] = Field(None, min_length=8, max_length=128)
     role: AllowedRole = "user"
-    residents_count: int = Field(1, ge=1, le=20)
+    # residents_count (per-user) упразднён 2026-06-17 — число людей берётся из
+    # комнаты (Room.total_room_residents). См. calculations.paying_residents.
     tariff_id: Optional[int] = None
     room_id: Optional[int] = None
     # 'family' (по счётчикам) | 'single' (койко-место)
@@ -260,8 +261,6 @@ class UserResponse(BaseModel):
     login: Optional[str] = None  # учётка для входа (отдельно от ФИО)
     role: str
 
-    residents_count: int
-
     tariff_id: Optional[int] = None
     resident_type: ResidentType = "family"
     billing_mode: BillingMode = "by_meter"
@@ -283,7 +282,7 @@ class UserUpdate(BaseModel):
     login: Optional[str] = Field(None, min_length=3, max_length=100)     # учётка (админ может сбросить)
     password: Optional[str] = Field(None, min_length=8, max_length=128)
     role: Optional[AllowedRole] = None
-    residents_count: Optional[int] = Field(None, ge=1, le=20)
+    # residents_count упразднён (2026-06-17) — см. UserCreate.
     tariff_id: Optional[int] = None
     room_id: Optional[int] = None
     resident_type: Optional[ResidentType] = None

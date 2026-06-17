@@ -9,7 +9,7 @@ from sqlalchemy.orm import selectinload
 
 from app.modules.utility.models import User, MeterReading, Tariff, BillingPeriod, Adjustment, Room
 from app.modules.utility.schemas import ApproveRequest
-from app.modules.utility.services.calculations import calculate_utilities, D
+from app.modules.utility.services.calculations import calculate_utilities, D, paying_residents
 
 # ИМПОРТ ДЛЯ ЖУРНАЛА ДЕЙСТВИЙ
 from app.modules.utility.routers.admin_dashboard import write_audit_log
@@ -224,7 +224,7 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
         # Использует in-memory кеш (TTL 600s), не делает SELECT на каждом reading.
         from app.modules.utility.services.tariff_cache import tariff_cache
         user_tariff = tariff_cache.get_effective_tariff(user=user, room=room) or default_tariff
-        residents_count = user.residents_count if user.residents_count is not None else 1
+        residents_count = paying_residents(user, room)
         total_room = room.total_room_residents if room.total_room_residents > 0 else 1
 
         vol_hot = max(ZERO, cur_hot - p_hot)
@@ -440,7 +440,7 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
         d_hot_final = max(ZERO, (D(reading.hot_water) - p_hot) - correction_data.hot_correction)
         d_cold_final = max(ZERO, (D(reading.cold_water) - p_cold) - correction_data.cold_correction)
 
-        residents_count = user.residents_count if user.residents_count is not None else 1
+        residents_count = paying_residents(user, room)
         total_room = room.total_room_residents if room.total_room_residents > 0 else 1
 
         d_elect_final = max(ZERO, ((Decimal(residents_count) / Decimal(total_room)) * (

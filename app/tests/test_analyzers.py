@@ -309,8 +309,11 @@ def test_finance_debt_growing_three_periods():
     assert "DEBT_GROWING" in flags
 
 
-def test_finance_wrong_billing_mode_single_by_meter():
-    """Холостяк (single) на by_meter — конфликт."""
+def test_finance_single_by_meter_is_ok():
+    """Холостяк (single) на by_meter — это КОРРЕКТНО (2026-06-17): современная
+    модель — общие счётчики квартиры + делёж по room.is_singles_apartment,
+    per_capita — legacy. Раньше ошибочно флажили всех холостяков
+    «Несоответствие типа жильца» — теперь НЕ флажим."""
     flags, score = analyze_finance(
         user_id=1, residents_count=1,
         current_total_cost=Decimal("3000"),
@@ -320,7 +323,23 @@ def test_finance_wrong_billing_mode_single_by_meter():
         prev_debts=[Decimal("0")],
         has_reading=True,
         resident_type="single",
-        billing_mode="by_meter",  # должно быть per_capita
+        billing_mode="by_meter",
+    )
+    assert "WRONG_BILLING_MODE" not in flags
+
+
+def test_finance_wrong_billing_mode_per_capita_flagged():
+    """per_capita — legacy-режим, ручной ввод → флажим как подозрительный."""
+    flags, score = analyze_finance(
+        user_id=1, residents_count=1,
+        current_total_cost=Decimal("3000"),
+        current_debt=Decimal("0"),
+        current_overpayment=Decimal("0"),
+        prev_costs=[Decimal("3000")],
+        prev_debts=[Decimal("0")],
+        has_reading=True,
+        resident_type="single",
+        billing_mode="per_capita",
     )
     assert "WRONG_BILLING_MODE" in flags
 

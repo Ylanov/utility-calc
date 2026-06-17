@@ -79,7 +79,6 @@ export const UsersModule = {
                 password: document.getElementById('editPassword'),
                 role: document.getElementById('editRole'),
                 tariff: document.getElementById('editTariffId'),
-                residents: document.getElementById('editResidentsCount'),
 
                 dormSelect: document.getElementById('editDormSelect'),
                 roomSelect: document.getElementById('editRoomSelect'),
@@ -562,7 +561,7 @@ export const UsersModule = {
             ...(role === 'admin' ? { password: pw } : {}),
             role,
             room_id: roomIdVal ? parseInt(roomIdVal) : null,
-            residents_count: parseInt(document.getElementById('residentsCount').value) || 1,
+            // residents_count не шлём — число проживающих берётся из КОМНАТЫ.
             // Тип жильца (family/single). Режим оплаты и место работы убраны:
             // все платят по счётчикам, у холостяков счёт делится в billing,
             // resident_type синхронизируется с холостяцкой квартирой на бэке.
@@ -636,8 +635,8 @@ export const UsersModule = {
         const rt = user.resident_type === 'single' ? 'Холостяк' : 'Семья';
         const area = user.room?.apartment_area
             ? `${Number(user.room.apartment_area).toFixed(1)} м²` : '—';
-        // Bug BB: «доля» убрана — показываем просто число жильцов в комнате.
-        const residents = String(user.room?.total_room_residents || user.residents_count || 1);
+        // Число жильцов — из КОМНАТЫ (per-user residents_count упразднён).
+        const residents = String(user.room?.total_room_residents || 1);
         document.getElementById('hubSummary').innerHTML = `
             <div style="display:flex; justify-content:space-between; gap:14px; flex-wrap:wrap;">
                 <div>
@@ -1001,7 +1000,6 @@ export const UsersModule = {
             if (pwGroup) pwGroup.style.display = (user.role === 'admin') ? '' : 'none';
             if (inputs.role) inputs.role.value = user.role;
             if (inputs.tariff) inputs.tariff.value = user.tariff_id || '';
-            if (inputs.residents) inputs.residents.value = user.residents_count;
             if (inputs.residentType) inputs.residentType.value = user.resident_type || 'family';
 
             // Счётчики жильца больше не редактируются в форме — настраиваются
@@ -1084,7 +1082,7 @@ export const UsersModule = {
             username: this.modal.inputs.username.value.trim(),
             role: this.modal.inputs.role.value,
             room_id: roomIdVal ? parseInt(roomIdVal) : null,
-            residents_count: parseInt(this.modal.inputs.residents.value),
+            // residents_count не шлём — число проживающих берётся из КОМНАТЫ.
             resident_type: this.modal.inputs.residentType?.value || 'family',
             // Счётчики (has_*_meter) НЕ шлём — настраиваются на КОМНАТЕ (Жилфонд),
             // жилец наследует (meters_002, room_static_architecture).

@@ -933,7 +933,8 @@ def _recalc_compute_one(db_session, reading, user, room, prev_reading, tariffs_b
     d_hot = max(ZERO, (D(reading.hot_water) - p_hot) - hot_corr)
     d_cold = max(ZERO, (D(reading.cold_water) - p_cold) - cold_corr)
 
-    residents = Decimal(user.residents_count or 1)
+    from app.modules.utility.services.calculations import paying_residents
+    residents = Decimal(paying_residents(user, room))
     total_room = Decimal(room.total_room_residents if room.total_room_residents and room.total_room_residents > 0 else 1)
     d_elect = max(ZERO, ((residents / total_room) * (D(reading.electricity) - p_elect)) - elect_corr)
 

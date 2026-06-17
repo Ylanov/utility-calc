@@ -302,7 +302,6 @@ async def create_user(
         _was_deleted = existing.is_deleted
         existing.is_deleted = False
         existing.role = new_user.role or "user"
-        existing.residents_count = new_user.residents_count
         existing.resident_type = rt
         existing.billing_mode = bm
         existing.has_hw_meter = getattr(new_user, "has_hw_meter", True)
@@ -351,7 +350,6 @@ async def create_user(
         login=login_val,
         hashed_password=get_password_hash(_password),
         role=new_user.role,
-        residents_count=new_user.residents_count,
         tariff_id=None,  # тариф от дома/комнаты, не персональный
         # room_id выставится через move_user_to_room ниже — вместе с RoomAssignment.
         room_id=None,
@@ -753,7 +751,7 @@ async def export_users_list(
             ws.cell(row=i, column=6, value=u.room.dormitory_name if u.room else "")
             ws.cell(row=i, column=7, value=u.room.room_number if u.room else "")
         ws.cell(row=i, column=8, value=float(u.room.apartment_area) if (u.room and u.room.apartment_area) else 0)
-        ws.cell(row=i, column=9, value=u.residents_count or 1)
+        ws.cell(row=i, column=9, value=(u.room.total_room_residents if u.room and u.room.total_room_residents else 1))
         ws.cell(row=i, column=10, value=u.tariff.name if u.tariff else "")
     # 10 колонок: A..J (убраны «Режим оплаты» и «Место работы»).
     for col, width in [("A", 6), ("B", 32), ("C", 10), ("D", 14),

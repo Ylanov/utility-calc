@@ -135,7 +135,8 @@ def generate_receipt_pdf(
     vol_hot = raw_delta_hot - corr_hot
     vol_cold = raw_delta_cold - corr_cold
 
-    residents = D(user.residents_count)
+    from app.modules.utility.services.calculations import paying_residents
+    residents = D(paying_residents(user, room))
     total_residents = D(room.total_room_residents) if room and room.total_room_residents > 0 else D(1)
 
     share_elect = (residents / total_residents) * raw_delta_elect if total_residents > 0 else D(0)

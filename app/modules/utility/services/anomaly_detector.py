@@ -353,8 +353,13 @@ def check_reading_for_anomalies_v2(
         total_score += s
 
     # --- 3. КОНТЕКСТНЫЙ АНАЛИЗ ---
-    if user and getattr(user, "residents_count", 1) > 0:
-        rc = Decimal(str(user.residents_count))
+    # Число людей для порогов «на человека» — из КОМНАТЫ (per-user
+    # residents_count упразднён 2026-06-17). Для холостяцкой квартиры это
+    # фактическое число жильцов (счётчик общий), для семьи — размер семьи.
+    _rc_int = getattr(_room, "total_room_residents", None) if _room is not None else None
+    _rc_int = int(_rc_int) if _rc_int and int(_rc_int) > 0 else 1
+    if _rc_int > 0:
+        rc = Decimal(str(_rc_int))
         # COLD per person (исторически было только это) —
         # пропускаем для жильцов без счётчика ХВС.
         if meter_present_map["COLD"]:

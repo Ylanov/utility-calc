@@ -496,7 +496,7 @@ export const SummaryModule = {
                 </div>`;
         }
 
-        const rows = d.residents.map(r => this._renderResidentRow(r)).join('');
+        const rows = this._renderResidentRowsGrouped(d.residents);
         return `
             <div style="border-top:1px solid var(--border-color); overflow-x:auto;">
                 <table style="width:100%; border-collapse:collapse; min-width:1100px; font-size:13px;">
@@ -557,7 +557,7 @@ export const SummaryModule = {
                 <td style="padding:8px 10px;">
                     <div style="font-weight:600;">
                         <i class="fa-solid fa-chevron-${isExpanded ? 'down' : 'right'}" style="color:var(--text-tertiary); font-size:10px; margin-right:4px;"></i>
-                        ${esc(r.address || ('комн. ' + (r.room_number || '—')))}${missingBadge}
+                        ${esc(r.address || ('комн. ' + (r.room_number || '—')))}${r.is_singles_apartment ? ' <span style="font-size:10px; background:#e0e7ff; color:#3730a3; padding:1px 6px; border-radius:8px; font-weight:600;">хол. · поровну</span>' : ''}${missingBadge}
                     </div>
                     <div style="color:var(--text-secondary); font-size:11px;">${esc(r.area || 0)}м²${r.place_type === 'house' ? ' · дом' : ''}</div>
                 </td>
@@ -626,6 +626,37 @@ export const SummaryModule = {
             </tr>`;
     },
 
+    // Режим «Жильцы»: холостяков одной квартиры группируем под общим
+    // под-заголовком (квартира → её жильцы, делёж поровну). Бэкенд уже
+    // сортирует жильцов по (room_number, username) → холостяки квартиры идут
+    // подряд. Остальные жильцы — обычными строками.
+    _renderResidentRowsGrouped(residents) {
+        let html = '';
+        let curRoom = null;
+        for (const r of residents) {
+            if (r.is_singles_apartment) {
+                if (curRoom !== r.room_id) {
+                    curRoom = r.room_id;
+                    const grp = residents.filter(x => x.room_id === r.room_id);
+                    const sum209 = grp.reduce((s, x) => s + Number(x.total_209 || 0), 0);
+                    const sum205 = grp.reduce((s, x) => s + Number(x.total_205 || 0), 0);
+                    const capTxt = r.max_capacity ? ` · ${grp.length}/${r.max_capacity} мест` : '';
+                    html += `
+                        <tr style="background:#eef2ff; border-bottom:1px solid #c7d2fe;">
+                            <td colspan="11" style="padding:7px 10px; font-size:12px; font-weight:700; color:#3730a3;">
+                                <i class="fa-solid fa-people-roof"></i> Холостяцкая квартира — комн. ${esc(r.room_number || '—')} · ${grp.length} чел.${capTxt} · делёж поровну
+                                <span style="font-weight:500; color:#4f46e5; margin-left:8px;">итого по квартире: 209 ${fmtMoney(sum209)} · 205 ${fmtMoney(sum205)}</span>
+                            </td>
+                        </tr>`;
+                }
+            } else {
+                curRoom = null;
+            }
+            html += this._renderResidentRow(r);
+        }
+        return html;
+    },
+
     _renderResidentRow(r) {
         const isMissing = !r.reading_id;
         const isExpanded = r.user_id && this.state.expandedResidents.has(r.user_id);
@@ -672,8 +703,8 @@ export const SummaryModule = {
         // Основная строка + (если раскрыта) панель деталей под ней
         const mainRow = `
             <tr ${clickAttrs} style="border-bottom:1px solid var(--border-color); ${rowBg}">
-                <td style="padding:8px 10px;">
-                    <div style="font-weight:600;">${expandIcon}${esc(r.username)}</div>
+                <td style="padding:8px 10px; ${r.is_singles_apartment ? 'border-left:3px solid #6366f1;' : ''}">
+                    <div style="font-weight:600;">${expandIcon}${esc(r.username)}${r.is_singles_apartment ? ' <span style="font-size:10px; background:#e0e7ff; color:#3730a3; padding:1px 6px; border-radius:8px; font-weight:600;">хол.</span>' : ''}</div>
                     <div style="color:var(--text-secondary); font-size:11px;">${esc(r.area || 0)}м² · ${r.residents_count} чел.</div>
                 </td>
                 <td style="padding:8px 10px; font-family:monospace; font-size:12px;">${esc(r.room_number || '—')}</td>
@@ -1385,7 +1416,7 @@ export const SummaryModule = {
                 <div style="font-size:12px; color:var(--text-secondary); margin-top:2px;">
                     ${esc(room.dormitory_name || '—')}, ком. ${esc(room.room_number || '—')} ·
                     ${esc(String(room.apartment_area))} м² ·
-                    ${esc(String(u.residents_count))} из ${esc(String(room.total_room_residents))} жильцов в комнате
+                    ${esc(String(room.total_room_residents))} чел. в комнате${u.resident_type === 'single' ? ' (холостяцкая, делёж поровну)' : ''}
                 </div>
                 ${r.is_baseline
                     ? '<div style="margin-top:8px; padding:6px 10px; background:#fef3c7; color:#92400e; border-radius:4px; font-size:12px;"><i class="fa-solid fa-info-circle"></i> Это BASELINE (первая подача): потребление (вода/свет) НЕ начисляется — счётчик может быть «накручен» за годы. Но содержание, наём, ТКО и отопление начисляются по площади ВСЕГДА.</div>'

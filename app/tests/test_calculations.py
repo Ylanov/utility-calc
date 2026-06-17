@@ -581,8 +581,10 @@ def test_missing_hot_meter_uses_norm():
     """Жилец без ГВС-счётчика (has_hw_meter=False) — расход = норматив × жильцов.
     Передаём volume_hot=0, но в результате должен быть посчитан расход по нормативу.
     """
-    user = FakeUser(residents=3, has_hw_meter=False)  # 3 жильца, нет ГВС
-    room = FakeRoom(area=30.0)
+    # 3 жильца семьи без ГВС-счётчика: норматив × residents_count (для семьи
+    # paying_residents = User.residents_count, см. calculations.paying_residents).
+    user = FakeUser(residents=3, has_hw_meter=False)
+    room = FakeRoom(area=30.0, total_residents=3)
     tariff = FakeTariff(hw_norm_per_capita="2.500")  # 2.5 м³/чел/мес
 
     result = calculate_utilities(

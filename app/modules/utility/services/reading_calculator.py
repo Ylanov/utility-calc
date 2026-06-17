@@ -160,7 +160,8 @@ def compute_reading_breakdown(
     d_elect = max(ZERO, cur_elect - p_elect)
 
     # Доля жильца в комнатном расходе электричества (как в client_readings).
-    residents = Decimal(user.residents_count or 1)
+    from app.modules.utility.services.calculations import paying_residents
+    residents = Decimal(paying_residents(user, room))
     total_room = Decimal(room.total_room_residents or 1)
     if total_room <= 0:
         total_room = Decimal("1")

@@ -11,6 +11,7 @@ from starlette.background import BackgroundTask
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse, FileResponse
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -274,7 +275,7 @@ async def export_report(
             room.format_address,
             user.username.split("_deleted_")[0] if user.is_deleted else user.username,
             room.apartment_area,
-            f"{user.residents_count}/{room.total_room_residents}",
+            str(room.total_room_residents or 1),
             reading.cost_hot_water, reading.cost_cold_water, reading.cost_sewage, reading.cost_electricity,
             reading.cost_maintenance, reading.cost_social_rent, reading.cost_waste, reading.cost_fixed_part,
             t_209, t_205, total_cost
@@ -476,7 +477,7 @@ async def get_accountant_summary(
         if dorm not in summary: summary[dorm] = []
         summary[dorm].append({
             "reading_id": reading.id, "user_id": user.id, "username": user.username, "area": room.apartment_area,
-            "residents": user.residents_count, "hot": reading.cost_hot_water or 0, "cold": reading.cost_cold_water or 0,
+            "residents": room.total_room_residents or 1, "hot": reading.cost_hot_water or 0, "cold": reading.cost_cold_water or 0,
             "sewage": reading.cost_sewage or 0, "electric": reading.cost_electricity or 0,
             "maintenance": reading.cost_maintenance or 0, "rent": reading.cost_social_rent or 0,
             "waste": reading.cost_waste or 0, "fixed": reading.cost_fixed_part or 0,
@@ -500,6 +501,190 @@ async def get_accountant_summary(
 #   * Поддержка фильтров: only_debtors, only_anomaly, only_overpaid, search
 #
 # Используется новой версткой «Финансовая отчётность» в админке.
+@router.get("/api/admin/diag/singles-dupes",
+            summary="Диагностика: дубли ФИО/показаний + конфиг холостяцких квартир")
+async def diag_singles_dupes(
+    period_id: Optional[int] = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """READ-ONLY. Помогает понять почему холостяки не делятся и откуда дубли ФИО.
+
+    Возвращает:
+      - duplicate_users: одинаковое ФИО у 2+ активных Л/С в ОДНОЙ комнате
+        (это и есть «дубли ФИО» — две учётки одного человека/квартиры);
+      - duplicate_readings: у жильца 2+ утверждённых показания за период
+        (мусорные строки в отчёте);
+      - singles_rooms: комнаты is_singles_apartment=True с total_room_residents
+        vs факт. число активных Л/С (mismatch → делитель счёта неверный);
+      - singles_candidates: комнаты НЕ помеченные холостяцкими, но с 2+ Л/С или
+        жильцами resident_type='single' — кандидаты на отметку «холостяцкая».
+    """
+    if current_user.role not in ("accountant", "admin"):
+        raise HTTPException(403, "Доступ запрещён")
+
+    if period_id:
+        period = await db.get(BillingPeriod, period_id)
+    else:
+        period = (await db.execute(
+            select(BillingPeriod).order_by(BillingPeriod.id.desc()).limit(1)
+        )).scalars().first()
+
+    # Все активные жильцы (одним запросом) — группируем в Python (DB-agnostic).
+    urows = (await db.execute(
+        select(User.id, User.username, User.room_id,
+               User.resident_type, User.billing_mode)
+        .where(User.is_deleted.is_(False), User.role == "user")
+    )).all()
+
+    by_room: dict = {}
+    for uid, uname, rid, rtype, bmode in urows:
+        if rid is None:
+            continue
+        by_room.setdefault(rid, []).append(
+            {"id": uid, "username": uname, "resident_type": rtype, "billing_mode": bmode})
+
+    # Комнаты — конфиг.
+    rrows = (await db.execute(
+        select(Room.id, Room.room_number, Room.dormitory_name,
+               Room.is_singles_apartment, Room.total_room_residents, Room.max_capacity)
+    )).all()
+    room_cfg = {r[0]: {"room_number": r[1], "dormitory": r[2],
+                       "is_singles_apartment": bool(r[3]),
+                       "total_room_residents": r[4], "max_capacity": r[5]}
+                for r in rrows}
+
+    duplicate_users = []
+    singles_rooms = []
+    singles_candidates = []
+    for rid, residents in by_room.items():
+        cfg = room_cfg.get(rid, {})
+        # дубли ФИО в комнате
+        seen: dict = {}
+        for u in residents:
+            seen.setdefault((u["username"] or "").strip().lower(), []).append(u)
+        for key, grp in seen.items():
+            if len(grp) > 1:
+                duplicate_users.append({
+                    "room_id": rid, "room_number": cfg.get("room_number"),
+                    "dormitory": cfg.get("dormitory"),
+                    "username": grp[0]["username"],
+                    "user_ids": [g["id"] for g in grp], "count": len(grp),
+                })
+        cnt = len(residents)
+        has_single = any(u["resident_type"] == "single" for u in residents)
+        if cfg.get("is_singles_apartment"):
+            singles_rooms.append({
+                "room_id": rid, "room_number": cfg.get("room_number"),
+                "dormitory": cfg.get("dormitory"),
+                "total_room_residents": cfg.get("total_room_residents"),
+                "active_residents": cnt,
+                "max_capacity": cfg.get("max_capacity"),
+                "headcount_mismatch": (cfg.get("total_room_residents") or 0) != cnt,
+            })
+        elif cnt > 1 or has_single:
+            singles_candidates.append({
+                "room_id": rid, "room_number": cfg.get("room_number"),
+                "dormitory": cfg.get("dormitory"),
+                "active_residents": cnt,
+                "has_single_type": has_single,
+                "usernames": [u["username"] for u in residents],
+            })
+
+    duplicate_readings = []
+    if period:
+        dr = (await db.execute(
+            select(MeterReading.user_id, func.count(MeterReading.id),
+                   func.min(MeterReading.id), func.max(MeterReading.id))
+            .where(MeterReading.is_approved.is_(True),
+                   MeterReading.period_id == period.id)
+            .group_by(MeterReading.user_id)
+            .having(func.count(MeterReading.id) > 1)
+        )).all()
+        uname_by_id = {u[0]: u[1] for u in urows}
+        for uid, c, mn, mx in dr:
+            duplicate_readings.append({
+                "user_id": uid, "username": uname_by_id.get(uid),
+                "approved_count": int(c), "min_reading_id": mn, "max_reading_id": mx,
+            })
+
+    return {
+        "period": ({"id": period.id, "name": period.name} if period else None),
+        "summary": {
+            "duplicate_user_groups": len(duplicate_users),
+            "duplicate_reading_users": len(duplicate_readings),
+            "singles_rooms": len(singles_rooms),
+            "singles_rooms_mismatched": sum(1 for s in singles_rooms if s["headcount_mismatch"]),
+            "singles_candidates": len(singles_candidates),
+        },
+        "duplicate_users": sorted(duplicate_users, key=lambda x: (x["dormitory"] or "", x["room_number"] or "")),
+        "duplicate_readings": duplicate_readings,
+        "singles_rooms": sorted(singles_rooms, key=lambda x: (x["dormitory"] or "", x["room_number"] or "")),
+        "singles_candidates": sorted(singles_candidates, key=lambda x: (x["dormitory"] or "", x["room_number"] or "")),
+    }
+
+
+@router.post("/api/admin/diag/fix-singles",
+             summary="Холостяки: пересчитать делитель счётчиков + выровнять доли поровну за период")
+async def fix_singles(
+    period_id: Optional[int] = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """РЕПЕЙР (мутирует биллинг, только админ). Для КАЖДОЙ холостяцкой квартиры:
+    1) пересчитывает total_room_residents = число активных Л/С (делитель счёта);
+    2) за указанный/активный период выравнивает квитанции жильцов: берёт общий
+       счётчик квартиры (показание с макс. суммой), считает долю одного человека
+       и раскидывает её РАВНО на всех жильцов. Сальдо 1С не трогает.
+
+    Нужно после включения холостяцкого режима / правок, когда у жильцов остались
+    НЕзависимые показания (один с расходом, другой baseline) — приводит к
+    «начислять всем поровну»."""
+    if current_user.role != "admin":
+        raise HTTPException(403, "Только админ")
+
+    if period_id:
+        period = await db.get(BillingPeriod, period_id)
+    else:
+        period = (await db.execute(
+            select(BillingPeriod).where(BillingPeriod.is_active)
+        )).scalars().first()
+    if not period:
+        raise HTTPException(400, "Период не найден")
+
+    from app.modules.utility.services.room_assignment import recount_singles_residents
+    from app.modules.utility.services.singles_billing import equalize_singles_room
+
+    rooms = (await db.execute(
+        select(Room).where(Room.is_singles_apartment.is_(True))
+    )).scalars().all()
+
+    recounted = 0
+    results = []
+    for room in rooms:
+        old_trr = room.total_room_residents
+        await recount_singles_residents(db, room.id)
+        await db.flush()
+        if room.total_room_residents != old_trr:
+            recounted += 1
+        try:
+            res = await equalize_singles_room(db, room=room, period_id=period.id)
+        except Exception as ex:  # noqa: BLE001
+            res = {"room_id": room.id, "status": "error", "reason": str(ex)[:200]}
+        res["old_trr"] = old_trr
+        res["new_trr"] = room.total_room_residents
+        results.append(res)
+
+    await db.commit()
+    return {
+        "period": {"id": period.id, "name": period.name},
+        "singles_rooms": len(rooms),
+        "recounted_divider": recounted,
+        "equalized": sum(1 for r in results if r.get("status") == "equalized"),
+        "results": results,
+    }
+
+
 @router.get("/api/admin/summary/v2")
 async def get_accountant_summary_v2(
     period_id: Optional[int] = Query(None),
@@ -570,6 +755,21 @@ async def get_accountant_summary_v2(
         stmt = stmt.where(Room.place_type == place_type)
     if street:
         stmt = stmt.where(Room.street == street)
+    # Анти-дубль строк (2026-06-17): если у жильца за период оказалось НЕСКОЛЬКО
+    # утверждённых reading'ов (исторический мусор/двойной импорт) — берём только
+    # ПОСЛЕДНИЙ (max id), иначе ФИО дублируется в отчёте. Дубли РАЗНЫХ user_id с
+    # одинаковым ФИО (две учётки в комнате) при этом остаются видны — это
+    # реальная проблема данных, её надо чистить отдельно (см. diag-эндпоинт).
+    latest_reading_ids = (
+        select(func.max(MeterReading.id))
+        .where(
+            MeterReading.is_approved.is_(True),
+            MeterReading.period_id == period.id,
+        )
+        .group_by(MeterReading.user_id)
+        .scalar_subquery()
+    )
+    stmt = stmt.where(MeterReading.id.in_(latest_reading_ids))
     rows = (await db.execute(stmt)).all()
 
     # 3) История за N предыдущих периодов — для sparkline и Δ.
@@ -666,6 +866,8 @@ async def get_accountant_summary_v2(
                     "place_type": getattr(room, "place_type", None),
                     "area": float(room.apartment_area or 0),
                     "residents_count": 0,
+                    "is_singles_apartment": bool(getattr(room, "is_singles_apartment", False)),
+                    "max_capacity": int(room.max_capacity) if getattr(room, "max_capacity", None) else None,
                     "total_cost": Decimal("0"),
                     "total_209": Decimal("0"),
                     "total_205": Decimal("0"),
@@ -711,7 +913,7 @@ async def get_accountant_summary_v2(
             ra["residents"].append({
                 "user_id": user.id,
                 "username": user.username,
-                "residents_count": user.residents_count or 1,
+                "residents_count": room.total_room_residents or 1,
                 "reading_id": reading.id,
                 "total_cost": float(cur_cost),
                 "debt": float(debt),
@@ -725,7 +927,7 @@ async def get_accountant_summary_v2(
             ra["residents"].append({
                 "user_id": user.id,
                 "username": user.username,
-                "residents_count": user.residents_count or 1,
+                "residents_count": room.total_room_residents or 1,
                 "reading_id": None,
                 "total_cost": 0.0,
                 "debt": 0.0,
@@ -916,7 +1118,7 @@ async def get_accountant_summary_v2(
 
         flags, fin_score = analyze_finance(
             user_id=user.id,
-            residents_count=user.residents_count or 1,
+            residents_count=room.total_room_residents or 1,
             current_total_cost=cur_cost,
             current_debt=debt,
             current_overpayment=overpay,
@@ -957,7 +1159,12 @@ async def get_accountant_summary_v2(
             "room_number": room.room_number,
             "room_id": room.id,
             "area": float(room.apartment_area or 0),
-            "residents_count": user.residents_count or 1,
+            "residents_count": room.total_room_residents or 1,
+            # Признаки холостяцкой квартиры — для группировки в отчёте по
+            # квартирам (равные доли). resident_type — бейдж «(хол.)».
+            "is_singles_apartment": bool(getattr(room, "is_singles_apartment", False)),
+            "resident_type": getattr(user, "resident_type", "family"),
+            "max_capacity": int(room.max_capacity) if getattr(room, "max_capacity", None) else None,
             "reading_id": reading.id,
             "total_cost": float(cur_cost),
             "total_209": float(reading.total_209 or 0),
@@ -993,7 +1200,10 @@ async def get_accountant_summary_v2(
                 "room_number": room.room_number,
                 "room_id": room.id,
                 "area": float(room.apartment_area or 0),
-                "residents_count": user.residents_count or 1,
+                "residents_count": room.total_room_residents or 1,
+                "is_singles_apartment": bool(getattr(room, "is_singles_apartment", False)),
+                "resident_type": getattr(user, "resident_type", "family"),
+                "max_capacity": int(room.max_capacity) if getattr(room, "max_capacity", None) else None,
                 "reading_id": None,
                 "total_cost": 0.0,
                 "total_209": 0.0,
@@ -1424,7 +1634,7 @@ async def get_resident_finance_detail(
             "username": user.username,
             "full_name": user.full_name,
             "role": user.role,
-            "residents_count": user.residents_count or 1,
+            "residents_count": (user.room.total_room_residents if user.room and user.room.total_room_residents else 1),
             "resident_type": getattr(user, "resident_type", "family"),
             "billing_mode": getattr(user, "billing_mode", "by_meter"),
             "room": (
@@ -1641,7 +1851,8 @@ async def _build_explain_response(reading_id: int, db: AsyncSession) -> dict:
     d_elect = cur_elect - p_elect
     d_sewage = d_hot + d_cold
 
-    residents = Decimal(user.residents_count or 1)
+    from app.modules.utility.services.calculations import paying_residents
+    residents = Decimal(paying_residents(user, room))
     total_room = Decimal(room.total_room_residents or 1)
     if total_room <= 0:
         total_room = Decimal("1")
@@ -1871,7 +2082,7 @@ async def _build_explain_response(reading_id: int, db: AsyncSession) -> dict:
         "user": {
             "id": user.id,
             "username": user.username,
-            "residents_count": user.residents_count or 1,
+            "residents_count": room.total_room_residents or 1,
             "billing_mode": getattr(user, "billing_mode", "by_meter"),
         },
         "room": {
