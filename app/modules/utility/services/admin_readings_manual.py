@@ -18,6 +18,83 @@ from app.modules.utility.services.anomaly_detector import check_reading_for_anom
 
 ZERO = Decimal("0.00")
 
+
+async def _recompute_real_chain(db: AsyncSession, user, room, tariff) -> int:
+    """Пересчитать всю цепочку РЕАЛЬНЫХ (не AUTO) approved-показаний жильца в
+    этой комнате по биллинговой хронологии: каждое — дельта от предыдущего
+    осмысленного. Нужно после доввода показаний за ПРОШЛЫЙ месяц задним числом
+    — тогда следующий месяц (напр. май) подхватывает новое prev (апрель) и его
+    суммы сразу пересчитываются. Возвращает число пересчитанных показаний.
+
+    Использует канонический compute_reading_breakdown (тот же калькулятор, что и
+    gsheets-promote). AUTO-показания (норматив/авто) НЕ трогаем и в prev не берём
+    (is_meaningful_prev=False) — они оценочные."""
+    from app.modules.utility.services.reading_calculator import (
+        compute_reading_breakdown, is_meaningful_prev,
+    )
+    from app.modules.utility.services.period_helpers import period_chron_key
+    from app.modules.utility.routers.settings import _load_seasonal
+
+    rows = (await db.execute(
+        select(MeterReading, BillingPeriod)
+        .join(BillingPeriod, MeterReading.period_id == BillingPeriod.id)
+        .where(
+            MeterReading.user_id == user.id,
+            MeterReading.room_id == room.id,
+            MeterReading.is_approved.is_(True),
+        )
+    )).all()
+    if not rows:
+        return 0
+    chain = [r for r, _p in sorted(rows, key=lambda rp: period_chron_key(rp[1].name))]
+
+    # Корректировки 209/205 по периодам — одним запросом (сохраняем в суммах).
+    adj_rows = (await db.execute(
+        select(Adjustment.period_id, Adjustment.account_type, func.sum(Adjustment.amount))
+        .where(Adjustment.user_id == user.id)
+        .group_by(Adjustment.period_id, Adjustment.account_type)
+    )).all()
+    adj_by_period: dict = {}
+    for pid, acc, amount in adj_rows:
+        adj_by_period.setdefault(pid, {})[acc] = amount or ZERO
+
+    seasonal = await _load_seasonal(db)
+    heating = seasonal.heating_season_active and tariff.is_heating_active_now()
+    hw = seasonal.hot_water_heating_active and tariff.is_hw_heating_active_now()
+
+    prev_meaningful = None
+    changed = 0
+    for r in chain:
+        # AUTO/synth-показания не пересчитываем и в prev не берём.
+        if not is_meaningful_prev(r):
+            continue
+        try:
+            bd = compute_reading_breakdown(
+                user=user, room=room, tariff=tariff,
+                current_hot=r.hot_water, current_cold=r.cold_water,
+                current_elect=r.electricity, prev_reading=prev_meaningful,
+                heating_season_active=heating, hot_water_heating_active=hw,
+            )
+        except Exception:
+            prev_meaningful = r
+            continue
+        adj = adj_by_period.get(r.period_id, {})
+        t209 = bd["total_209"] + (adj.get("209") or ZERO)
+        t205 = bd["total_205"] + (adj.get("205") or ZERO)
+        for k, v in costs_for_model_fields(bd).items():
+            setattr(r, k, v)
+        r.total_209, r.total_205, r.total_cost = t209, t205, t209 + t205
+        if bd.get("is_baseline"):
+            r.anomaly_flags, r.anomaly_score = "BASELINE", 0
+        elif (r.anomaly_flags or "") == "BASELINE":
+            # Больше не первый: появилось prev (доввод за прошлый месяц) —
+            # снимаем BASELINE, теперь это нормальная подача с расходом.
+            r.anomaly_flags, r.anomaly_score = "", 0
+        db.add(r)
+        prev_meaningful = r
+        changed += 1
+    return changed
+
 async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
     """Сохранение черновика бухгалтером вручную.
 
@@ -248,6 +325,11 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
     total_209 = (costs['total_cost'] - costs['cost_social_rent']) + adj_map.get('209', ZERO)
     total_205 = costs['cost_social_rent'] + adj_map.get('205', ZERO)
 
+    # За ЗАКРЫТЫЙ (прошлый) период ручной ввод сразу УТВЕРЖДАЕМ (fix 2026-06-17):
+    # черновик в закрытом периоде никогда не утвердится (закрытие уже было) —
+    # «висел» бы неприменённым. Админ вводит задним числом → применяем сразу.
+    is_past_closed = not bool(active_period.is_active)
+
     if target:
         # Обновляем существующий reading (draft или approved).
         # Bug AL: при перезаписи approved оставляем is_approved=True —
@@ -257,20 +339,35 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
         for k, v in costs_for_model_fields(costs).items():
             setattr(target, k, v)
         target.total_209, target.total_205, target.total_cost = total_209, total_205, total_209 + total_205
+        if is_past_closed and not target.is_approved:
+            target.is_approved = True
     else:
         db.add(MeterReading(
             user_id=user.id, room_id=room.id, period_id=active_period.id,
             hot_water=hot_to_save, cold_water=cold_to_save, electricity=elect_to_save,
             debt_209=ZERO, overpayment_209=ZERO, debt_205=ZERO, overpayment_205=ZERO,
             total_209=total_209, total_205=total_205, total_cost=total_209 + total_205,
-            is_approved=False, anomaly_flags=flags, anomaly_score=score,
+            is_approved=is_past_closed, anomaly_flags=flags, anomaly_score=score,
             **costs_for_model_fields(costs)
         ))
+
+    # Доввод за прошлый месяц → пересчитываем всю цепочку реальных показаний
+    # жильца: следующий месяц (май) подхватит свежее prev (апрель) и его суммы
+    # пересчитаются «сразу». Для активного периода (обычная подача) не трогаем.
+    recalced = 0
+    if is_past_closed:
+        await db.flush()  # чтобы только что созданный reading попал в цепочку
+        try:
+            recalced = await _recompute_real_chain(db, user, room, t)
+        except Exception as ex:
+            logging.getLogger(__name__).warning("[manual] recompute chain failed: %s", ex)
 
     await db.commit()
     return {
         "status": "success",
         "updated_kind": "draft" if draft else ("approved" if approved_current else "new_draft"),
+        "auto_approved": is_past_closed,
+        "chain_recalced": recalced,
     }
 
 
