@@ -338,6 +338,19 @@ export const DebtsModule = {
         } catch (e) { toast('Ошибка: ' + (e?.message || e), 'error'); }
     },
 
+    // Актуализация ЗА ВСЕХ: в очередь попадают ВСЕ несквитированные начисления
+    // всех людей (не только ГИС>1С). Демон идёт по одному счёту с паузой — «по
+    // чуть-чуть». Эквивалент «нажать актуализацию за каждого» сразу для всех.
+    async actualizeAllGisgmp() {
+        if (!await showConfirm('Актуализировать ВСЕХ? В очередь попадут ВСЕ несквитированные начисления всех людей из ГИС ГМП (не только расхождения). Демон в фоне дёрнет «Актуализировать из ГИС ГМП» по каждому счёту — по одному с паузой, чтобы не перегружать реестр. Это ДОЛГО — можно закрыть страницу, прогресс в «Статусе», итог «до/после» — в «Истории актуализаций».')) return;
+        try {
+            const r = await api.post('/financier/gisgmp/actualize-all', {});
+            if (!r.queued) { toast(r.reason || 'Нечего актуализировать (пустой кэш ГИС ГМП).', 'info'); return; }
+            toast(`В очередь: ${r.queued} счетов по ${r.residents} людям (ВСЕ). Демон обработает по одному с паузой. Прогресс — в «Статусе».`, 'info');
+            this.loadGisgmpStatus();
+        } catch (e) { toast('Ошибка: ' + (e?.message || e), 'error'); }
+    },
+
     // Выпадающие меню в карточке ГИС ГМП (компактнее, чем 8 кнопок в ряд).
     _initGisDropdowns() {
         const hideAll = () => document.querySelectorAll('.gis-dd-menu').forEach(m => { m.style.display = 'none'; });
@@ -1135,6 +1148,7 @@ ${(d.orphans || []).length ? `<h2>Не найдены в базе (1С/ГИС е
             gisgmpReconcileFioBody: document.getElementById('gisgmpReconcileFioBody'),
             btnGisgmpRecheck: document.getElementById('btnGisgmpRecheck'),
             btnGisgmpActualize: document.getElementById('btnGisgmpActualize'),
+            btnGisgmpActualizeAll: document.getElementById('btnGisgmpActualizeAll'),
             btnGisgmpActualizeLog: document.getElementById('btnGisgmpActualizeLog'),
             gisgmpActualizeLogBody: document.getElementById('gisgmpActualizeLogBody'),
             btnRelayUpdate: document.getElementById('btnRelayUpdate'),
@@ -1192,6 +1206,7 @@ ${(d.orphans || []).length ? `<h2>Не найдены в базе (1С/ГИС е
         this._initGisDropdowns();
         this.dom.btnGisgmpRecheck?.addEventListener('click', () => this.recheckGisgmp());
         this.dom.btnGisgmpActualize?.addEventListener('click', () => this.actualizeGisgmp());
+        this.dom.btnGisgmpActualizeAll?.addEventListener('click', () => this.actualizeAllGisgmp());
         this.dom.btnGisgmpActualizeLog?.addEventListener('click', () => this.openActualizeLog());
         this.dom.btnRelayUpdate?.addEventListener('click', () => this.relayUpdate());
         this.dom.btnRelayRestart?.addEventListener('click', () => this.relayRestart());

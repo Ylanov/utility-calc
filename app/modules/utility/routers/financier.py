@@ -2808,6 +2808,140 @@ async def gisgmp_actualize_build(
     return {"queued": len(uuids), "residents": len(residents_snap), "targeting": "gis_more+only_gis"}
 
 
+@router.post("/gisgmp/actualize-all", summary="Очередь массовой актуализации: ВСЕ (не только ГИС>1С)")
+async def gisgmp_actualize_all(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ставит в очередь актуализации ВСЕ несквитированные (не аннулированные)
+    начисления ВСЕХ людей из кэша ГИС ГМП — а не только проблемных (ГИС>1С).
+    Эквивалент «нажать кнопку актуализации за каждого» сразу для всех. Релей
+    проходит очередь по одному uuid с паузой (do_actualize → ACTUALIZE_SLEEP),
+    т.е. «по чуть-чуть», не загружая систему. Результат снимется авто-циклом
+    доведения (_drive_actualize_runs) — как у остальных актуализаций.
+
+    Окно — months_back из настроек релея (как у actualize-build). Не стартуем
+    поверх идущей актуализации."""
+    _require_finance(current_user)
+
+    # Не запускаем, если уже идёт другая актуализация.
+    act_row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_ACTUALIZE_KEY)
+    )).scalars().first()
+    if act_row and act_row.value:
+        try:
+            cur = json.loads(act_row.value)
+            if cur.get("running") or cur.get("uuids"):
+                return {"queued": 0, "reason": "идёт другая актуализация — дождитесь завершения"}
+        except Exception:
+            pass
+
+    # ФИО(реестр)→user_id из находок (для группировки аудита по жильцам).
+    findings = await _load_findings(db)
+    fio_to_uid: dict[str, int] = {}
+    if findings:
+        for frow in findings.get("summary", []):
+            uid = frow.get("matched_user_id")
+            fio = (frow.get("fio") or "").strip()
+            if uid is not None and fio:
+                fio_to_uid[fio] = int(uid)
+
+    from app.modules.utility.services.gisgmp_import import (
+        is_unpaid, is_annulled, classify_account, parse_reg_dt, GISGMP_CACHE_KEY,
+    )
+    rcfg = await _load_relay_cfg(db)
+    months_back = int(rcfg.get("months_back") or 999)
+    cutoff = None if months_back >= 600 else (utcnow() - timedelta(days=months_back * 31))
+    cache_row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_CACHE_KEY)
+    )).scalars().first()
+
+    per_fio: dict[str, dict] = {}
+    uuids, seen = [], set()
+    if cache_row and cache_row.value:
+        try:
+            for ch in json.loads(cache_row.value).values():
+                # ВСЕ неоплаченные не-аннулированные — без фильтра по флагам.
+                if is_annulled(ch.get("change_status")) or not is_unpaid(ch.get("ack_status")):
+                    continue
+                if cutoff is not None:
+                    dt = parse_reg_dt(ch.get("bill_date"))
+                    if dt is not None and dt < cutoff:
+                        continue
+                u = ch.get("charge_uuid")
+                if not u or u in seen:
+                    continue
+                seen.add(u)
+                uuids.append(u)
+                fio = (ch.get("payer_name") or "").strip()
+                slot = per_fio.setdefault(fio, {"fio": fio, "user_id": fio_to_uid.get(fio),
+                                                "charges": [], "gis": 0.0})
+                try:
+                    amt = float(str(ch.get("amount") or "0").replace(",", "."))
+                except Exception:
+                    amt = 0.0
+                slot["gis"] += amt
+                slot["charges"].append({
+                    "uin": ch.get("uin"), "account": classify_account(ch.get("purpose")),
+                    "charge_uuid": u, "amount": amt, "bill_date": ch.get("bill_date"),
+                })
+        except Exception:
+            pass
+
+    if not uuids:
+        return {"queued": 0, "reason": "нет несквитированных начислений в кэше ГИС ГМП"}
+
+    residents_snap = [{
+        "user_id": s["user_id"], "fio": s["fio"], "username": None, "flag": None,
+        "before": {"gis": round(s["gis"], 2), "c1": None, "delta": None},
+        "after": None, "result": None, "charges": s["charges"],
+    } for s in per_fio.values()]
+    residents_snap.sort(key=lambda x: -((x.get("before") or {}).get("gis") or 0))
+
+    run_id = utcnow().isoformat()
+    payload = {
+        "uuids": uuids, "total": len(uuids), "done": 0, "ok": 0, "fail": 0,
+        "running": False, "finished": False,
+        "queued_at": run_id, "by": current_user.username, "message": "",
+        "targeting": "all", "run_id": run_id,
+    }
+    if act_row is None:
+        act_row = SystemSetting(key=GISGMP_ACTUALIZE_KEY, value="{}",
+                                description="Очередь массовой актуализации ГИС ГМП")
+        db.add(act_row)
+    act_row.value = json.dumps(payload, ensure_ascii=False)
+
+    run = {
+        "id": run_id, "queued_at": run_id, "by": current_user.username,
+        "targeting": "ВСЕ начисления (актуализация за всех)",
+        "total_charges": len(uuids), "residents_count": len(residents_snap),
+        "status": "running", "done": 0, "ok": 0, "fail": 0,
+        "started_at": None, "finished_at": None,
+        "after_pending": False, "after_at": None,
+        "attempt": 1, "last_actualize_at": run_id,
+        "residents": residents_snap,
+    }
+    log_row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GISGMP_ACTUALIZE_LOG_KEY)
+    )).scalars().first()
+    if log_row is None:
+        log_row = SystemSetting(key=GISGMP_ACTUALIZE_LOG_KEY, value='{"runs": []}',
+                                description="Аудит массовых актуализаций ГИС ГМП (до/после)")
+        db.add(log_row)
+    try:
+        logj = json.loads(log_row.value) if log_row.value else {"runs": []}
+    except Exception:
+        logj = {"runs": []}
+    runs = logj.get("runs", [])
+    runs.insert(0, run)
+    del runs[_ACTUALIZE_LOG_MAX_RUNS:]
+    logj["runs"] = runs
+    log_row.value = json.dumps(logj, ensure_ascii=False)
+
+    await db.commit()
+    return {"queued": len(uuids), "residents": len(residents_snap), "targeting": "all"}
+
+
 class GisgmpActualizeProgressIn(BaseModel):
     done: int = 0
     ok: int = 0
