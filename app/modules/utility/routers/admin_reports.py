@@ -20,7 +20,7 @@ from decimal import Decimal
 from urllib.parse import quote
 
 from app.core.database import get_db
-from app.modules.utility.models import User, MeterReading, Tariff, BillingPeriod, Adjustment, Room
+from app.modules.utility.models import User, MeterReading, Tariff, BillingPeriod, Adjustment, Room, RentalContract
 from app.core.dependencies import get_current_user
 from app.modules.utility.services.pdf_generator import generate_receipt_pdf
 from app.modules.utility.services.s3_client import s3_service
@@ -292,6 +292,108 @@ async def export_report(
         output,
         headers={'Content-Disposition': f"attachment; filename*=utf-8''{encoded_filename}"},
         media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+
+
+def _fmt_contract_1c(rc) -> str:
+    """Строка договора для 1С: «Договор от ДД.ММ.ГГГГ № N». Пусто — если нет."""
+    if not rc:
+        return ""
+    num = (rc.number or "").strip()
+    dt = rc.signed_date.strftime("%d.%m.%Y") if rc.signed_date else ""
+    if num and dt:
+        return f"Договор от {dt} № {num}"
+    if num:
+        return f"Договор № {num}"
+    if dt:
+        return f"Договор от {dt}"
+    return ""
+
+
+@router.get("/api/admin/export-1c", summary="Выгрузка в 1С (XLSX: Контрагент/Договор/Сумма 209+205)")
+async def export_1c(
+        period_id: Optional[int] = Query(None, description="ID периода"),
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+):
+    """Выгрузка начислений за месяц в формате загрузки 1С. На каждого жильца с
+    утверждённым показанием: ФИО (Контрагент), договор найма, Количество=1,
+    Сумма = коммуналка за месяц (счёт 209 + счёт 205). Колонки документа-
+    основания/статуса оставляем пустыми — заполняет 1С. Формат «один в один»
+    с шаблоном загрузки."""
+    if current_user.role not in ("accountant", "admin"):
+        raise HTTPException(status_code=403)
+
+    target_period_id = period_id
+    if not target_period_id:
+        active_period = (await db.execute(
+            select(BillingPeriod).where(BillingPeriod.is_active.is_(True)))).scalars().first()
+        if active_period:
+            target_period_id = active_period.id
+        else:
+            last_closed = (await db.execute(
+                select(BillingPeriod).order_by(BillingPeriod.id.desc()).limit(1))).scalars().first()
+            if not last_closed:
+                raise HTTPException(404, "Нет периодов для выгрузки")
+            target_period_id = last_closed.id
+
+    period = await db.get(BillingPeriod, target_period_id)
+    if not period:
+        raise HTTPException(404, "Выбранный период не найден")
+
+    rows = (await db.execute(
+        select(User, MeterReading)
+        .join(MeterReading, User.id == MeterReading.user_id)
+        .where(
+            MeterReading.period_id == target_period_id,
+            MeterReading.is_approved.is_(True),
+            User.is_deleted.is_(False),
+        )
+        .order_by(User.username)
+    )).all()
+
+    # Активные договоры найма одним запросом (последний по дате подписания).
+    uids = [u.id for u, _ in rows]
+    contracts: dict[int, RentalContract] = {}
+    if uids:
+        for rc in (await db.execute(
+            select(RentalContract)
+            .where(RentalContract.user_id.in_(set(uids)), RentalContract.is_active.is_(True))
+            .order_by(RentalContract.id.asc())
+        )).scalars().all():
+            contracts[rc.user_id] = rc  # asc по id → последний перезапишет = самый свежий
+
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Лист_1"
+    worksheet.append([
+        "N", "Контрагент", "Договор", "Количество", "Сумма",
+        "Вид документа-основания", "Номер (108)", "Дата (109)",
+        "Отразить в графике исполнения договора", "Статус платежа",
+    ])
+
+    n = 0
+    for user, reading in rows:
+        n += 1
+        total = Decimal(reading.total_209 or 0) + Decimal(reading.total_205 or 0)
+        worksheet.append([
+            n,
+            user.username,
+            _fmt_contract_1c(contracts.get(user.id)),
+            1,
+            float(total.quantize(Decimal("0.01"))),
+            "", "", "", "", "",
+        ])
+
+    filename = f"Vygruzka_1C_{period.name.replace(' ', '_')}.xlsx"
+    encoded_filename = quote(filename)
+    output = io.BytesIO()
+    workbook.save(output)
+    output.seek(0)
+    return StreamingResponse(
+        output,
+        headers={'Content-Disposition': f"attachment; filename*=utf-8''{encoded_filename}"},
+        media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
 
 

@@ -105,6 +105,7 @@ export const SummaryModule = {
             historyPeriods: document.getElementById('summaryHistoryPeriods'),
             btnRefresh:     document.getElementById('btnRefreshSummary'),
             btnExcel:       document.getElementById('btnDownloadExcel'),
+            btn1C:          document.getElementById('btnExport1C'),
             btnZip:         document.getElementById('btnDownloadZip'),
             btnBulkManualReceipt: document.getElementById('btnBulkManualReceipt'),
             explainModal:   document.getElementById('explainModal'),
@@ -116,6 +117,7 @@ export const SummaryModule = {
     bindEvents() {
         this.dom.btnRefresh?.addEventListener('click', () => this.loadData());
         this.dom.btnExcel?.addEventListener('click', () => this.downloadExcel());
+        this.dom.btn1C?.addEventListener('click', () => this.download1C());
         this.dom.btnZip?.addEventListener('click', () => this.downloadZip());
         this.dom.btnBulkManualReceipt?.addEventListener('click', () => this.bulkCreateManualReceipts());
 
@@ -1248,6 +1250,19 @@ export const SummaryModule = {
             toast('Ошибка Excel: ' + e.message, 'error');
         } finally {
             setLoading(this.dom.btnExcel, false);
+        }
+    },
+
+    async download1C() {
+        if (!this.state.selectedPeriodId) return toast('Сначала выберите период', 'warning');
+        setLoading(this.dom.btn1C, true, 'Формирование…');
+        try {
+            const url = `/admin/export-1c?period_id=${this.state.selectedPeriodId}`;
+            await api.download(url, `Vygruzka_1C_${this.state.selectedPeriodId}.xlsx`);
+        } catch (e) {
+            toast('Ошибка выгрузки в 1С: ' + e.message, 'error');
+        } finally {
+            setLoading(this.dom.btn1C, false);
         }
     },
 
