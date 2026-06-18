@@ -3877,6 +3877,54 @@ async def auto_rebuild_apply(
             })
             await db.rollback()
 
+    # 4.5 ХОЛОСТЯКИ: пересборка считает каждого жильца по ЕГО prev и НЕ тиражирует
+    # долю общего счётчика — сосед без истории падает в baseline (был баг:
+    # Миронов 389 вместо 1333). После полной пересборки выравниваем доли по
+    # затронутым холостяцким комнатам (equalize_singles_room сам берёт источник =
+    # макс. счётчик и раскидывает равную долю). 2026-06-18.
+    singles_equalized = 0
+    try:
+        from app.modules.utility.services.singles_billing import equalize_singles_room
+        ok_uids = [e["user_id"] for e in plan if e.get("is_ok", True)]
+        if ok_uids:
+            uid_room = {u: r for u, r in (await db.execute(
+                select(User.id, User.room_id).where(User.id.in_(ok_uids))
+            )).all()}
+            room_ids = {rid for rid in uid_room.values() if rid}
+            singles_by_id = {}
+            if room_ids:
+                singles_by_id = {r.id: r for r in (await db.execute(
+                    select(Room).where(Room.id.in_(room_ids), Room.is_singles_apartment.is_(True))
+                )).scalars().all()}
+            pname_id: dict = {}
+            done: set = set()
+            for e in plan:
+                if not e.get("is_ok", True):
+                    continue
+                sroom = singles_by_id.get(uid_room.get(e["user_id"]))
+                if sroom is None:
+                    continue
+                for nm in affected_periods_by_user.get(e["user_id"], []):
+                    if nm not in pname_id:
+                        pname_id[nm] = (await db.execute(
+                            select(BillingPeriod.id).where(BillingPeriod.name == nm)
+                        )).scalar_one_or_none()
+                    pid = pname_id[nm]
+                    if pid and (sroom.id, pid) not in done:
+                        done.add((sroom.id, pid))
+                        try:
+                            res = await equalize_singles_room(db, room=sroom, period_id=pid)
+                            if res.get("status") == "equalized":
+                                singles_equalized += 1
+                        except Exception as _ex:  # noqa: BLE001
+                            errors.append({"room_id": sroom.id, "period_id": pid,
+                                           "error": f"singles_equalize: {str(_ex)[:160]}"})
+            if done:
+                await db.commit()
+    except Exception as _ex:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning("[auto-rebuild] singles equalize failed: %s", _ex)
+
     # 5. Audit log.
     try:
         await write_audit_log(
@@ -3907,6 +3955,7 @@ async def auto_rebuild_apply(
         "skipped_users": skipped_users,
         "protected_users": protected_users,
         "swapped_rows": swapped_rows_total,
+        "singles_equalized": singles_equalized,
         "errors_count": len(errors),
         "errors": errors[:50],  # обрезаем чтобы не разнести payload
     }

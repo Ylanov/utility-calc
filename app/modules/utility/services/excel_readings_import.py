@@ -702,11 +702,14 @@ async def commit_import(
                 continue
             room = user.room
 
-            # Анти-дубль: уже есть утверждённый reading за этот период.
+            # Анти-дубль: уже есть утверждённый reading за этот период у ЖИЛЬЦА.
+            # БЕЗ фильтра по room_id (2026-06-18): на readings нет UNIQUE(user_id,
+            # period_id), и фильтр по room_id давал обход — если прежний reading
+            # был в другой/NULL комнате, импорт плодил ВТОРОЙ approved за период
+            # (баг дубля Петрова за май). Один жилец = одно показание за период.
             exists = (await db.execute(
                 select(MeterReading.id).where(
                     MeterReading.user_id == uid,
-                    MeterReading.room_id == room.id,
                     MeterReading.period_id == period_id,
                     MeterReading.is_approved.is_(True),
                 ).limit(1)

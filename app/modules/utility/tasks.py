@@ -1134,6 +1134,15 @@ def _recalc_run(job_id: int, apply: bool):
                         # ломаные данные — пропускаем
                         continue
 
+                    # ХОЛОСТЯЦКИЕ комнаты НЕ пересчитываем поштучно: их счёт
+                    # делится ПОРОВНУ отдельным singles-выравниванием
+                    # (equalize_singles_room / эндпоинт fix-singles). Поштучный
+                    # пересчёт по ЛИЧНОМУ prev откатил бы соседа без истории в
+                    # baseline (Миронов 389 вместо 1333). 2026-06-18.
+                    if bool(getattr(room, "is_singles_apartment", False)):
+                        unchanged += 1
+                        continue
+
                     # prev ищется ПО ПАРЕ (user_id, room_id), по period_id (а не
                     # created_at — иначе recalc недетерминирован). Пропускаем
                     # synth-reading'и (AUTO_GENERATED/DATA_OVERFLOW_RESET/MANUAL_RECEIPT)
