@@ -720,8 +720,12 @@ async def charge_static_rent_for_houses(
             "cost_fixed_part": costs.get("cost_fixed_part", zero_money),
             "total_209": cost_209, "total_205": cost_205,
             "total_cost": costs.get("total_cost", zero_money),
-            # ЧЕРНОВИК — админ проверяет, на закрытии периода утвердится штатно.
-            "is_approved": False,
+            # УТВЕРЖДЕНО СРАЗУ (2026-06-18): у дома нет счётчиков и нет шага
+            # «подачи/проверки» — начисление детерминированное (площадь × наём).
+            # Черновик не показывался в финотчёте (там только approved) → дома
+            # висели «Нет квитанции / 0₽». Делаем approved, чтобы дом отображался
+            # как общага (с суммой). На закрытии периода повторно не страшно.
+            "is_approved": True,
             "anomaly_flags": "STATIC_RENT", "anomaly_score": 0,
             "created_at": datetime.now(timezone.utc).replace(tzinfo=None),
         })
