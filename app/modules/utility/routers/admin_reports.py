@@ -34,6 +34,29 @@ router = APIRouter(tags=["Admin Reports"])
 ZERO = Decimal("0.00")
 
 
+def _report_group(room) -> str:
+    """Имя блока в финотчёте. Общага → dormitory_name. ДОМ (place_type='house')
+    → здание «ул. X, д. Y»: все квартиры одного дома собираются в ОТДЕЛЬНЫЙ блок,
+    как комнаты общежития (2026-06-18). Раньше все дома сваливались в общий
+    «Без общежития»."""
+    if getattr(room, "place_type", None) == "house":
+        parts = []
+        if getattr(room, "street", None):
+            parts.append(f"ул. {room.street}")
+        if getattr(room, "house_number", None):
+            parts.append(f"д. {room.house_number}")
+        return ", ".join(parts) if parts else "Дома"
+    return room.dormitory_name or "Без общежития"
+
+
+def _unit_label(room) -> str:
+    """Подпись комнаты/квартиры в строке отчёта: общага → room_number,
+    дом → «кв. N» (у дома room_number=NULL, номер живёт в apartment_number)."""
+    if getattr(room, "place_type", None) == "house":
+        return f"кв. {room.apartment_number}" if getattr(room, "apartment_number", None) else "—"
+    return room.room_number or "—"
+
+
 @router.get("/api/admin/receipts/{reading_id}")
 async def get_receipt_pdf(
         reading_id: int,
@@ -473,7 +496,7 @@ async def get_accountant_summary(
     result = await db.stream(stmt)
     async for row in result:
         user, reading, room = row
-        dorm = room.dormitory_name or "Без общежития"
+        dorm = _report_group(room)
         if dorm not in summary: summary[dorm] = []
         summary[dorm].append({
             "reading_id": reading.id, "user_id": user.id, "username": user.username, "area": room.apartment_area,
@@ -860,8 +883,8 @@ async def get_accountant_summary_v2(
             if room.id not in room_acc:
                 room_acc[room.id] = {
                     "room_id": room.id,
-                    "dorm_name": room.dormitory_name or "Без общежития",
-                    "room_number": room.room_number,
+                    "dorm_name": _report_group(room),
+                    "room_number": _unit_label(room),
                     "address": room.format_address or (room.room_number or "—"),
                     "place_type": getattr(room, "place_type", None),
                     "area": float(room.apartment_area or 0),
@@ -1152,11 +1175,11 @@ async def get_accountant_summary_v2(
         # Sparkline: 6 точек (включая текущий — последняя)
         sparkline = [float(c) for c in prev_costs] + [float(cur_cost)]
 
-        d = _ensure_dorm(room.dormitory_name or "Без общежития")
+        d = _ensure_dorm(_report_group(room))
         d["residents"].append({
             "user_id": user.id,
             "username": user.username,
-            "room_number": room.room_number,
+            "room_number": _unit_label(room),
             "room_id": room.id,
             "area": float(room.apartment_area or 0),
             "residents_count": room.total_room_residents or 1,
@@ -1193,11 +1216,11 @@ async def get_accountant_summary_v2(
     # MISSING_RECEIPT добавляем как «жильцов без подачи»
     if missing_users and not only_anomaly and not only_debtors and not only_overpaid:
         for user, room in missing_users:
-            d = _ensure_dorm(room.dormitory_name or "Без общежития")
+            d = _ensure_dorm(_report_group(room))
             d["residents"].append({
                 "user_id": user.id,
                 "username": user.username,
-                "room_number": room.room_number,
+                "room_number": _unit_label(room),
                 "room_id": room.id,
                 "area": float(room.apartment_area or 0),
                 "residents_count": room.total_room_residents or 1,
