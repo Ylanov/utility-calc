@@ -658,12 +658,51 @@ async def recompute_preview(
 # COMMIT — создание утверждённых MeterReading прямо в финотчётность
 # =====================================================================
 
+async def _ensure_prev_baseline(db, user, room, dec, prev_period_id, tariff, seasonal) -> bool:
+    """Создаёт baseline-показание за ПРЕДЫДУЩИЙ период из колонки «Предыдущий»
+    Excel (2026-06-18). Зачем: текущий месяц считается как дельта от предыдущего,
+    и без СОХРАНЁННОГО предыдущего показания (а) предыдущий месяц не виден в
+    финотчёте, (б) любой пересчёт текущего теряет базу и уходит в baseline.
+
+    Это baseline (только площадь/наём, без расхода) — расход предыдущего месяца
+    нельзя посчитать без ЕГО предыдущего (позапрошлого). Идемпотентно: если за
+    prev-период у жильца уже есть approved-показание — НЕ трогаем (импорт по
+    порядку месяцев сам построит цепочку с расходом)."""
+    ex = (await db.execute(select(MeterReading.id).where(
+        MeterReading.user_id == user.id,
+        MeterReading.period_id == prev_period_id,
+        MeterReading.is_approved.is_(True),
+    ).limit(1))).scalars().first()
+    if ex:
+        return False
+    prev = {r: _num((dec.get(r) or {}).get("prev")) for r in _RES_KEYS}
+    if all(prev[r] is None for r in _RES_KEYS):
+        return False  # за предыдущий месяц в файле нет данных
+    read_hot = prev["hot"] if prev["hot"] is not None else D(room.last_hot_water or 0)
+    read_cold = prev["cold"] if prev["cold"] is not None else D(room.last_cold_water or 0)
+    read_el = prev["elect"] if prev["elect"] is not None else D(room.last_electricity or 0)
+    costs = _compute_costs(user, room, tariff, ZERO, ZERO, ZERO, seasonal, {}, force_meters=False)
+    db.add(MeterReading(
+        room_id=room.id, user_id=user.id, period_id=prev_period_id,
+        hot_water=read_hot, cold_water=read_cold, electricity=read_el,
+        total_209=costs["total_209"], total_205=costs["total_205"],
+        total_cost=costs["grand_total"], is_approved=True,
+        anomaly_flags=f"{EXCEL_FLAG},BASELINE", anomaly_score=0,
+        **costs_for_model_fields(costs),
+    ))
+    return True
+
+
 async def commit_import(
-    db: AsyncSession, period_id: int, decisions: list[dict], actor: Optional[User]
+    db: AsyncSession, period_id: int, decisions: list[dict], actor: Optional[User],
+    prev_period_id: Optional[int] = None,
 ) -> dict:
     """decisions: [{user_id, hot:{prev,cur}, cold:{...}, elect:{...},
     status: submitted|norm}]. Создаёт is_approved=True MeterReading на период.
-    Уже утверждённых за период пропускает (анти-дубль). Один commit на всё."""
+    Уже утверждённых за период пропускает (анти-дубль). Один commit на всё.
+
+    prev_period_id (опц.): период для колонки «Предыдущий» — туда дописывается
+    baseline-показание (база для расчёта текущего + видимость в финотчёте)."""
     from app.modules.utility.services.tariff_cache import tariff_cache
     from app.modules.utility.routers.admin_dashboard import write_audit_log
 
@@ -680,7 +719,7 @@ async def commit_import(
         select(Tariff).where(Tariff.is_active)
     )).scalars().first()
 
-    created = skipped_existing = failed = 0
+    created = skipped_existing = failed = prev_created = 0
     errors: list[dict] = []
     # Холостяцкие квартиры: коммуналка делится поровну. Запоминаем по одной
     # посчитанной (делёной) квитанции на квартиру и после цикла тиражируем её
@@ -723,6 +762,15 @@ async def commit_import(
                 failed += 1
                 errors.append({"user_id": uid, "reason": "нет тарифа"})
                 continue
+
+            # Предыдущий месяц: дописываем baseline из колонки «Предыдущий»
+            # (база для расчёта текущего + видимость в финотчёте).
+            if prev_period_id:
+                try:
+                    if await _ensure_prev_baseline(db, user, room, dec, prev_period_id, tariff, seasonal):
+                        prev_created += 1
+                except Exception as ex:  # noqa: BLE001
+                    logger.warning("[EXCEL-IMPORT] prev baseline user=%s: %s", uid, ex)
 
             status = dec.get("status", "submitted")
             cur = {r: _num((dec.get(r) or {}).get("cur")) for r in _RES_KEYS}
@@ -807,12 +855,13 @@ async def commit_import(
             action="excel_readings_import", entity_type="period", entity_id=period_id,
             details={"created": created, "skipped_existing": skipped_existing,
                      "failed": failed, "singles_shared": singles_shared,
-                     "period": period.name},
+                     "prev_created": prev_created, "period": period.name},
         )
     await db.commit()
     return {
         "status": "ok", "period": period.name,
         "created": created, "skipped_existing": skipped_existing,
         "failed": failed, "singles_shared": singles_shared,
+        "prev_created": prev_created,
         "errors": errors[:50],
     }

@@ -45,7 +45,7 @@ function fmtMoney(v) {
 
 export const ExcelReadingsModule = {
   isInitialized: false,
-  state: { periods: [], periodId: null, file: null, preview: null, filter: 'all' },
+  state: { periods: [], periodId: null, prevPeriodId: null, file: null, preview: null, filter: 'all' },
 
   init() {
     if (this.isInitialized) return;
@@ -88,6 +88,20 @@ export const ExcelReadingsModule = {
     this.renderPeriodSelect();
   },
 
+  // Месяцы РУ — для вычисления предыдущего месяца по имени периода.
+  _MONTHS: ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+            'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'],
+
+  _prevPeriodName(name) {
+    // «Май 2026» → «Апрель 2026». null если не распознан.
+    const m = String(name || '').trim().match(/^(\S+)\s+(\d{4})$/);
+    if (!m) return null;
+    const idx = this._MONTHS.indexOf(m[1]);
+    if (idx < 0) return null;
+    const y = Number(m[2]);
+    return idx === 0 ? `${this._MONTHS[11]} ${y - 1}` : `${this._MONTHS[idx - 1]} ${y}`;
+  },
+
   renderPeriodSelect() {
     const sel = document.getElementById('xlPeriod');
     if (!sel) return;
@@ -95,6 +109,22 @@ export const ExcelReadingsModule = {
       '<option value="' + p.id + '"' + (p.id === this.state.periodId ? ' selected' : '') + '>' +
       esc(p.name) + (p.is_active ? ' (активный)' : '') + '</option>').join('') ||
       '<option value="">— нет периодов —</option>';
+    this.renderPrevPeriodSelect();
+  },
+
+  renderPrevPeriodSelect() {
+    const sel = document.getElementById('xlPrevPeriod');
+    if (!sel) return;
+    // Авто-выбор: период с именем «предыдущий месяц» относительно текущего.
+    const cur = this.state.periods.find((p) => p.id === this.state.periodId);
+    const wantName = cur ? this._prevPeriodName(cur.name) : null;
+    const want = wantName ? this.state.periods.find((p) => p.name === wantName) : null;
+    const chosen = this.state.prevPeriodId || (want ? want.id : null);
+    sel.innerHTML = '<option value="">— не грузить предыдущий —</option>' +
+      this.state.periods.map((p) =>
+        '<option value="' + p.id + '"' + (p.id === chosen ? ' selected' : '') + '>' +
+        esc(p.name) + '</option>').join('');
+    this.state.prevPeriodId = chosen || null;
   },
 
   async createPeriod() {
@@ -625,8 +655,13 @@ export const ExcelReadingsModule = {
     const btn = document.getElementById('xlCommitBtn');
     setLoading(btn, true, 'Утверждаю…');
     try {
-      const res = await api.post('/admin/readings/excel/commit', { period_id: this.state.periodId, decisions });
+      const res = await api.post('/admin/readings/excel/commit', {
+        period_id: this.state.periodId,
+        prev_period_id: this.state.prevPeriodId || null,
+        decisions,
+      });
       let msg = 'Создано квитанций: ' + res.created;
+      if (res.prev_created) msg += ' · добавлено за предыдущий месяц: ' + res.prev_created;
       if (res.skipped_existing) msg += ' · пропущено (уже были): ' + res.skipped_existing;
       if (res.failed) msg += ' · ошибок: ' + res.failed;
       toast(msg, res.failed ? 'warning' : 'success');
@@ -660,6 +695,9 @@ export const ExcelReadingsModule = {
       '      <div><label style="font-size:12px; color:var(--text-secondary); display:block; margin-bottom:4px;">Месяц квитанций (текущий)</label>' +
       '        <div style="display:flex; gap:6px;"><select id="xlPeriod" style="min-width:170px;"></select>' +
       '        <button class="action-btn secondary-btn" id="xlNewPeriod" style="white-space:nowrap;"><i class="fa-solid fa-plus"></i> Создать</button></div></div>' +
+      '      <div><label style="font-size:12px; color:var(--text-secondary); display:block; margin-bottom:4px;">Предыдущий месяц (колонка «Предыдущий»)</label>' +
+      '        <select id="xlPrevPeriod" style="min-width:170px;"></select>' +
+      '        <div style="font-size:10px; color:var(--text-secondary); margin-top:2px;">Туда запишется база для расчёта текущего</div></div>' +
       '      <div><label style="font-size:12px; color:var(--text-secondary); display:block; margin-bottom:4px;">Файл Excel (.xlsx)</label>' +
       '        <input type="file" id="xlFile" accept=".xlsx,.xls"></div>' +
       '      <button class="action-btn primary-btn" id="xlPreviewBtn"><i class="fa-solid fa-magnifying-glass-chart"></i> Разобрать</button>' +
@@ -686,6 +724,14 @@ export const ExcelReadingsModule = {
     document.body.appendChild(ov);
     ov.addEventListener('click', (e) => { if (e.target === ov || e.target.closest('[data-xl-close]')) this.close(); });
     document.getElementById('xlNewPeriod').addEventListener('click', () => this.createPeriod());
+    document.getElementById('xlPeriod').addEventListener('change', (e) => {
+      this.state.periodId = e.target.value ? Number(e.target.value) : null;
+      this.state.prevPeriodId = null;  // сбросить — пере-авто-выбор по новому текущему
+      this.renderPrevPeriodSelect();
+    });
+    document.getElementById('xlPrevPeriod').addEventListener('change', (e) => {
+      this.state.prevPeriodId = e.target.value ? Number(e.target.value) : null;
+    });
     document.getElementById('xlPreviewBtn').addEventListener('click', () => this.runPreview());
     document.getElementById('xlCommitBtn').addEventListener('click', () => this.commit());
     document.getElementById('xlRecalcBtn').addEventListener('click', () => this.recompute());

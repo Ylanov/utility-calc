@@ -74,6 +74,9 @@ class ExcelDecision(BaseModel):
 
 class ExcelCommitBody(BaseModel):
     period_id: int
+    # Период для колонки «Предыдущий» — туда дописывается baseline (база расчёта
+    # текущего месяца + видимость предыдущего в финотчёте). Опционален.
+    prev_period_id: Optional[int] = None
     decisions: list[ExcelDecision] = Field(..., max_length=5000)
 
 
@@ -88,7 +91,10 @@ async def excel_commit(
     if not body.decisions:
         raise HTTPException(400, "Нет записей для утверждения")
     decisions = [d.model_dump() for d in body.decisions]
-    return await svc.commit_import(db, body.period_id, decisions, current_user)
+    return await svc.commit_import(
+        db, body.period_id, decisions, current_user,
+        prev_period_id=body.prev_period_id,
+    )
 
 
 class RecomputeRow(BaseModel):
