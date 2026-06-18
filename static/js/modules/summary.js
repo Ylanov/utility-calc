@@ -1662,7 +1662,9 @@ export const SummaryModule = {
         const pName = period?.name || `id=${pid}`;
         let preview;
         try {
-            preview = await api.post(`/admin/billing/charge-rent-now/${pid}?dry_run=true`);
+            // recompute=true: и начислить новым домам, и ПЕРЕСЧИТАТЬ уже начисленных
+            // по текущему тарифу (смена ставки наёма применяется сразу).
+            preview = await api.post(`/admin/billing/charge-rent-now/${pid}?dry_run=true&recompute=true`);
         } catch (e) {
             toast('Не удалось получить preview: ' + (e.message || e), 'error');
             return;
@@ -1670,8 +1672,7 @@ export const SummaryModule = {
         const willCreate = preview.would_create || 0;
         const skipped = preview.skipped_has_reading || 0;
         if (willCreate === 0) {
-            toast(`В периоде «${pName}» нет домов для начисления наёма. ` +
-                  (skipped ? `${skipped} уже начислены.` : 'Все уже начислены или домов нет.'), 'info');
+            toast(`В периоде «${pName}» нет домов для начисления наёма.`, 'info');
             return;
         }
         // Превью: список домов с суммой наёма (205). Ограничиваем вывод, чтобы
@@ -1681,18 +1682,18 @@ export const SummaryModule = {
             .map(p => `  • ${p.room || p.username}: ${fmtMoney(p.total_205)}`).join('\n');
         const more = previewRows.length > 20 ? `\n  …и ещё ${previewRows.length - 20}` : '';
         const ok = await showConfirm(
-            `Начислить наём (205) домам в периоде «${pName}»?\n\n` +
-            `Будет начислено ${willCreate} домам:\n${lines}${more}\n` +
-            (skipped ? `\nПропущено (уже начислено): ${skipped}.\n` : '') +
-            `\nДома платят только наём (205), статично. Начисляется сразу, ` +
-            `не дожидаясь закрытия периода. На закрытии утвердится как обычно. ` +
-            `Повтор не дублирует.`,
-            { title: 'Начислить наём домам', confirmText: 'Начислить' }
+            `Начислить/пересчитать наём (205) домам в периоде «${pName}»?\n\n` +
+            `Домов к начислению/пересчёту: ${willCreate}\n${lines}${more}\n` +
+            `\nДома платят только наём (205) = площадь × ставка тарифа. Пересчёт ` +
+            `применяет ТЕКУЩИЙ тариф ко всем домам (смена ставки наёма отразится ` +
+            `сразу). Сальдо 1С не трогается.`,
+            { title: 'Начислить/пересчитать наём домам', confirmText: 'Применить' }
         );
         if (!ok) return;
         try {
-            const res = await api.post(`/admin/billing/charge-rent-now/${pid}`);
-            toast(`Начислен наём ${res.created} домам в периоде «${res.period_name}»`, 'success');
+            const res = await api.post(`/admin/billing/charge-rent-now/${pid}?recompute=true`);
+            const c = res.created || 0; const u = res.updated || 0;
+            toast(`Дома (${pName}): начислено ${c}, пересчитано ${u}`, 'success');
             await this.loadData();
         } catch (e) {
             toast('Ошибка начисления наёма: ' + (e.message || e), 'error');

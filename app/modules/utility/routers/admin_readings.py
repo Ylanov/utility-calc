@@ -265,6 +265,7 @@ async def auto_fill_period_endpoint(
 async def charge_houses_rent_endpoint(
         period_id: int,
         dry_run: bool = False,
+        recompute: bool = False,
         current_user: User = Depends(allow_readings_manage),
         db: AsyncSession = Depends(get_db),
 ):
@@ -277,7 +278,7 @@ async def charge_houses_rent_endpoint(
 
     if dry_run:
         try:
-            return await charge_static_rent_for_houses(db, period_id, dry_run=True)
+            return await charge_static_rent_for_houses(db, period_id, dry_run=True, recompute=recompute)
         except ValueError as e:
             raise HTTPException(400, str(e))
 
@@ -298,7 +299,7 @@ async def charge_houses_rent_endpoint(
         raise HTTPException(
             409, "Начисление наёма домам по этому периоду уже выполняется — дождитесь завершения")
     try:
-        result = await charge_static_rent_for_houses(db, period_id, dry_run=False)
+        result = await charge_static_rent_for_houses(db, period_id, dry_run=False, recompute=recompute)
         try:
             from app.modules.utility.routers.admin_dashboard import write_audit_log
             await write_audit_log(

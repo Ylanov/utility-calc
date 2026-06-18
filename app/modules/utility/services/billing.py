@@ -602,6 +602,7 @@ async def charge_static_rent_for_houses(
     db: AsyncSession,
     period_id: int,
     dry_run: bool = False,
+    recompute: bool = False,
 ) -> dict:
     """СТАТИЧНОЕ начисление (наём 205) для жильцов ДОМОВ (place_type='house')
     в указанном периоде — ЧЕРНОВИКОМ (is_approved=False).
@@ -636,14 +637,7 @@ async def charge_static_rent_for_houses(
         raise ValueError("Нет активных тарифов")
     default_tariff = next((t for t in active_tariffs if t.id == 1), active_tariffs[0])
 
-    existing_user_ids = set((await db.execute(
-        select(MeterReading.user_id).where(
-            MeterReading.period_id == target_period.id,
-            MeterReading.user_id.is_not(None),
-        )
-    )).scalars().all())
-
-    # Жильцы ДОМОВ; в Python отсекаем уже начисленных и вакантные (как auto_fill).
+    # Все жильцы ДОМОВ.
     users_all = (await db.execute(
         select(User)
         .options(selectinload(User.room))
@@ -655,37 +649,50 @@ async def charge_static_rent_for_houses(
             Room.place_type == "house",
         )
     )).scalars().all()
-    users_to_process = [
-        u for u in users_all
-        if u.id not in existing_user_ids and not (u.room and u.room.is_vacant)
-    ]
+    house_uids = [u.id for u in users_all]
 
-    if not users_to_process:
-        return {
-            "status": "ok", "period_id": target_period.id,
-            "period_name": target_period.name,
-            "processed": 0, "created": 0,
-            "skipped_has_reading": len(existing_user_ids),
-            "by_room": {}, "dry_run": dry_run,
-        }
+    # Существующие показания этих жильцов за период (для upsert при recompute).
+    existing_by_user: dict[int, MeterReading] = {}
+    if house_uids:
+        for r in (await db.execute(
+            select(MeterReading).where(
+                MeterReading.period_id == target_period.id,
+                MeterReading.user_id.in_(house_uids),
+            )
+        )).scalars().all():
+            cur = existing_by_user.get(r.user_id)
+            if cur is None or (r.id or 0) > (cur.id or 0):
+                existing_by_user[r.user_id] = r
 
     from app.modules.utility.routers.settings import _load_seasonal
     from app.modules.utility.services.tariff_cache import tariff_cache
+    from app.modules.utility.services.calculations import costs_for_model_fields
     _seasonal = await _load_seasonal(db)
     zero = Decimal("0.000")
     zero_money = Decimal("0.00")
-    insert_values = []
     preview = []
     by_room: dict[str, int] = {}
+    created = updated = skipped = 0
 
-    for user in users_to_process:
-        tariff = (tariff_cache.get_effective_tariff(user=user, room=user.room)
+    for user in users_all:
+        room = user.room
+        if room and room.is_vacant:
+            continue
+        existing = existing_by_user.get(user.id)
+        # recompute=False (открытие периода): идемпотентно — уже начисленных
+        # пропускаем. recompute=True (кнопка «пересчитать наём домам»): обновляем
+        # существующее по ТЕКУЩЕМУ тарифу (смена ставки наёма применяется сразу).
+        if existing is not None and not recompute:
+            skipped += 1
+            continue
+
+        tariff = (tariff_cache.get_effective_tariff(user=user, room=room)
                   or default_tariff)
         # Статика: объёмы=0 → вода/свет=0, area-based (наём и т.п.) начислятся.
         _heating = _seasonal.heating_season_active and tariff.is_heating_active_now()
         _hw = _seasonal.hot_water_heating_active and tariff.is_hw_heating_active_now()
         costs = calculate_utilities(
-            user=user, room=user.room, tariff=tariff,
+            user=user, room=room, tariff=tariff,
             volume_hot=zero, volume_cold=zero,
             volume_sewage=zero, volume_electricity_share=zero,
             heating_season_active=_heating,
@@ -693,7 +700,7 @@ async def charge_static_rent_for_houses(
         )
         cost_205 = costs.get("cost_social_rent", zero_money)
         cost_209 = costs.get("total_cost", zero_money) - cost_205
-        addr = user.room.format_address if user.room else "—"
+        addr = room.format_address if room else "—"
         by_room[addr] = by_room.get(addr, 0) + 1
 
         if dry_run:
@@ -701,55 +708,56 @@ async def charge_static_rent_for_houses(
                 "user_id": user.id, "username": user.username,
                 "room": addr, "total_205": float(cost_205),
                 "total_cost": float(costs.get("total_cost", zero_money)),
+                "mode": "update" if existing is not None else "create",
             })
             continue
 
-        insert_values.append({
-            "user_id": user.id, "room_id": user.room_id, "period_id": target_period.id,
-            # Дом счётчиков не подаёт — показания нулевые.
-            "hot_water": zero, "cold_water": zero, "electricity": zero,
-            "debt_209": zero_money, "overpayment_209": zero_money,
-            "debt_205": zero_money, "overpayment_205": zero_money,
-            "cost_hot_water": costs.get("cost_hot_water", zero_money),
-            "cost_cold_water": costs.get("cost_cold_water", zero_money),
-            "cost_sewage": costs.get("cost_sewage", zero_money),
-            "cost_electricity": costs.get("cost_electricity", zero_money),
-            "cost_maintenance": costs.get("cost_maintenance", zero_money),
-            "cost_social_rent": cost_205,
-            "cost_waste": costs.get("cost_waste", zero_money),
-            "cost_fixed_part": costs.get("cost_fixed_part", zero_money),
-            "total_209": cost_209, "total_205": cost_205,
-            "total_cost": costs.get("total_cost", zero_money),
-            # УТВЕРЖДЕНО СРАЗУ (2026-06-18): у дома нет счётчиков и нет шага
-            # «подачи/проверки» — начисление детерминированное (площадь × наём).
-            # Черновик не показывался в финотчёте (там только approved) → дома
-            # висели «Нет квитанции / 0₽». Делаем approved, чтобы дом отображался
-            # как общага (с суммой). На закрытии периода повторно не страшно.
-            "is_approved": True,
-            "anomaly_flags": "STATIC_RENT", "anomaly_score": 0,
-            "created_at": datetime.now(timezone.utc).replace(tzinfo=None),
-        })
+        if existing is not None:
+            # Обновляем существующее (наём по текущему тарифу). Сальдо 1С
+            # (debt_*/overpayment_*) НЕ трогаем — только начисление.
+            for k, v in costs_for_model_fields(costs).items():
+                setattr(existing, k, v)
+            existing.total_209 = cost_209
+            existing.total_205 = cost_205
+            existing.total_cost = costs.get("total_cost", zero_money)
+            existing.is_approved = True
+            existing.anomaly_flags = "STATIC_RENT"
+            existing.anomaly_score = 0
+            db.add(existing)
+            updated += 1
+        else:
+            db.add(MeterReading(
+                user_id=user.id, room_id=user.room_id, period_id=target_period.id,
+                hot_water=zero, cold_water=zero, electricity=zero,
+                debt_209=zero_money, overpayment_209=zero_money,
+                debt_205=zero_money, overpayment_205=zero_money,
+                total_209=cost_209, total_205=cost_205,
+                total_cost=costs.get("total_cost", zero_money),
+                # У дома нет счётчиков/шага проверки — начисление детерминированное,
+                # сразу approved (иначе не видно в финотчёте). См. 2026-06-18.
+                is_approved=True, anomaly_flags="STATIC_RENT", anomaly_score=0,
+                **costs_for_model_fields(costs),
+            ))
+            created += 1
 
-    created = 0
-    if insert_values and not dry_run:
-        await db.execute(insert(MeterReading), insert_values)
-        created = len(insert_values)
+    if not dry_run and (created or updated):
         await db.commit()
         logger.info(
-            "[STATIC-RENT] period=%s created=%d houses",
-            target_period.name, created,
+            "[STATIC-RENT] period=%s created=%d updated=%d houses (recompute=%s)",
+            target_period.name, created, updated, recompute,
         )
 
     return {
         "status": "ok", "period_id": target_period.id,
         "period_name": target_period.name,
-        "processed": len(users_to_process),
+        "processed": created + updated + skipped,
         "created": created if not dry_run else 0,
+        "updated": updated if not dry_run else 0,
         "would_create": len(preview) if dry_run else None,
-        "skipped_has_reading": len(existing_user_ids),
+        "skipped_has_reading": skipped,
         "by_room": by_room,
         "preview": preview[:50] if dry_run else None,
-        "dry_run": dry_run,
+        "dry_run": dry_run, "recompute": recompute,
     }
 
 
