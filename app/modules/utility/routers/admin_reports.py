@@ -334,9 +334,42 @@ def _fmt_contract_1c(rc) -> str:
     return ""
 
 
+@router.get("/api/admin/export-1c/groups", summary="Список домов/общаг для выгрузки в 1С")
+async def export_1c_groups(
+        period_id: Optional[int] = Query(None),
+        current_user: User = Depends(get_current_user),
+        db: AsyncSession = Depends(get_db),
+):
+    """Список зданий (общага/дом) с числом жильцов за период — для модалки
+    выбора «за какой дом/общагу выгрузить в 1С»."""
+    if current_user.role not in ("accountant", "admin"):
+        raise HTTPException(status_code=403)
+    target_period_id = period_id
+    if not target_period_id:
+        ap = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active.is_(True)))).scalars().first()
+        target_period_id = ap.id if ap else None
+    if not target_period_id:
+        return {"groups": []}
+    rows = (await db.execute(
+        select(Room, func.count(MeterReading.id))
+        .join(MeterReading, MeterReading.room_id == Room.id)
+        .join(User, User.id == MeterReading.user_id)
+        .where(MeterReading.period_id == target_period_id,
+               MeterReading.is_approved.is_(True), User.is_deleted.is_(False))
+        .group_by(Room.id)
+    )).all()
+    agg: dict = {}
+    for room, cnt in rows:
+        g = _report_group(room)
+        agg[g] = agg.get(g, 0) + int(cnt)
+    groups = sorted(({"name": k, "count": v} for k, v in agg.items()), key=lambda x: x["name"])
+    return {"period_id": target_period_id, "groups": groups}
+
+
 @router.get("/api/admin/export-1c", summary="Выгрузка в 1С (XLSX: Контрагент/Договор/Сумма 209+205)")
 async def export_1c(
         period_id: Optional[int] = Query(None, description="ID периода"),
+        group: Optional[str] = Query(None, description="Дом/общага (имя блока) — выгрузить только по нему"),
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db),
 ):
@@ -366,8 +399,9 @@ async def export_1c(
         raise HTTPException(404, "Выбранный период не найден")
 
     rows = (await db.execute(
-        select(User, MeterReading)
+        select(User, MeterReading, Room)
         .join(MeterReading, User.id == MeterReading.user_id)
+        .join(Room, User.room_id == Room.id)
         .where(
             MeterReading.period_id == target_period_id,
             MeterReading.is_approved.is_(True),
@@ -376,8 +410,12 @@ async def export_1c(
         .order_by(User.username)
     )).all()
 
+    # Фильтр по дому/общаге (если выбран в модалке).
+    if group:
+        rows = [(u, mr, room) for (u, mr, room) in rows if _report_group(room) == group]
+
     # Активные договоры найма одним запросом (последний по дате подписания).
-    uids = [u.id for u, _ in rows]
+    uids = [u.id for u, _, _ in rows]
     contracts: dict[int, RentalContract] = {}
     if uids:
         for rc in (await db.execute(
@@ -390,26 +428,28 @@ async def export_1c(
     workbook = Workbook()
     worksheet = workbook.active
     worksheet.title = "Лист_1"
+    # Колонка «N» убрана (2026-06-18) — не нужна для загрузки 1С.
     worksheet.append([
-        "N", "Контрагент", "Договор", "Количество", "Сумма",
+        "Контрагент", "Договор", "Количество", "Сумма",
         "Вид документа-основания", "Номер (108)", "Дата (109)",
         "Отразить в графике исполнения договора", "Статус платежа",
     ])
 
-    n = 0
-    for user, reading in rows:
-        n += 1
+    for user, reading, _room in rows:
         total = Decimal(reading.total_209 or 0) + Decimal(reading.total_205 or 0)
+        # Сумма — СТРОКОЙ с ТОЧКОЙ-разделителем (1С требует точку, не запятую).
+        # Decimal-str всегда даёт точку независимо от локали Excel.
+        sum_str = str(total.quantize(Decimal("0.01")))
         worksheet.append([
-            n,
             user.username,
             _fmt_contract_1c(contracts.get(user.id)),
             1,
-            float(total.quantize(Decimal("0.01"))),
+            sum_str,
             "", "", "", "", "",
         ])
 
-    filename = f"Vygruzka_1C_{period.name.replace(' ', '_')}.xlsx"
+    _suffix = f"_{group}" if group else ""
+    filename = f"Vygruzka_1C_{period.name.replace(' ', '_')}{_suffix}.xlsx"
     encoded_filename = quote(filename)
     output = io.BytesIO()
     workbook.save(output)

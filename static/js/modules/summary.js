@@ -1286,15 +1286,46 @@ export const SummaryModule = {
 
     async download1C() {
         if (!this.state.selectedPeriodId) return toast('Сначала выберите период', 'warning');
-        setLoading(this.dom.btn1C, true, 'Формирование…');
+        const pid = this.state.selectedPeriodId;
+        // Модалка выбора дома/общаги — выгружаем не за всех сразу.
+        let groups = [];
         try {
-            const url = `/admin/export-1c?period_id=${this.state.selectedPeriodId}`;
-            await api.download(url, `Vygruzka_1C_${this.state.selectedPeriodId}.xlsx`);
-        } catch (e) {
-            toast('Ошибка выгрузки в 1С: ' + e.message, 'error');
-        } finally {
-            setLoading(this.dom.btn1C, false);
-        }
+            const r = await api.get(`/admin/export-1c/groups?period_id=${pid}`);
+            groups = r.groups || [];
+        } catch (e) { toast('Не удалось получить список домов: ' + (e.message || e), 'error'); return; }
+
+        const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+        const ov = document.createElement('div');
+        ov.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:center; justify-content:center; z-index:10002; padding:20px;';
+        const totalCnt = groups.reduce((s, g) => s + (g.count || 0), 0);
+        ov.innerHTML =
+            '<div class="modal-window" style="max-width:460px; width:100%;">' +
+            '  <div class="modal-header"><h3><i class="fa-solid fa-file-excel"></i> Выгрузка в 1С</h3>' +
+            '    <button class="close-btn close-icon" data-x1c-close>&times;</button></div>' +
+            '  <div class="modal-body" style="max-height:60vh; overflow:auto;">' +
+            '    <div style="font-size:12px; color:var(--text-secondary); margin-bottom:10px;">Выберите дом или общежитие (или всё):</div>' +
+            '    <button class="action-btn success-btn" data-x1c-group="" style="width:100%; justify-content:space-between; margin-bottom:8px;"><span>📦 Все</span><span>' + totalCnt + ' чел.</span></button>' +
+            groups.map((g) => '<button class="action-btn secondary-btn" data-x1c-group="' + esc(g.name) + '" style="width:100%; justify-content:space-between; margin-bottom:6px;"><span>' + esc(g.name) + '</span><span>' + (g.count || 0) + ' чел.</span></button>').join('') +
+            (groups.length ? '' : '<div style="color:var(--text-secondary);">Нет данных за период.</div>') +
+            '  </div></div>';
+        document.body.appendChild(ov);
+        const close = () => ov.remove();
+        ov.addEventListener('click', async (e) => {
+            if (e.target === ov || e.target.closest('[data-x1c-close]')) { close(); return; }
+            const btn = e.target.closest('[data-x1c-group]');
+            if (!btn) return;
+            const grp = btn.getAttribute('data-x1c-group');
+            close();
+            setLoading(this.dom.btn1C, true, 'Формирование…');
+            try {
+                const url = `/admin/export-1c?period_id=${pid}` + (grp ? `&group=${encodeURIComponent(grp)}` : '');
+                await api.download(url, `Vygruzka_1C_${pid}${grp ? '_' + grp : ''}.xlsx`);
+            } catch (e2) {
+                toast('Ошибка выгрузки в 1С: ' + (e2.message || e2), 'error');
+            } finally {
+                setLoading(this.dom.btn1C, false);
+            }
+        });
     },
 
     async downloadZip() {
