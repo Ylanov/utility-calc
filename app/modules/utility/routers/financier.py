@@ -6083,10 +6083,10 @@ async def debts_create_and_match(
             "не найдена в Жилфонде. Создайте её сначала.",
         )
 
-    # 3. Создание User
-    rt = data.resident_type if data.resident_type in ("family", "single") else "family"
-    bm = "per_capita" if rt == "single" else "by_meter"
-
+    # 3. Создание User. resident_type/billing_mode НЕ берём из payload и НЕ
+    # ставим per_capita (2026-06-19): тип выводится из комнаты при заселении
+    # (move_user_to_room), все на by_meter; per_capita-шорткат убран (обнулял
+    # счёт холостяка). Дефолт family/by_meter — move_user_to_room поправит.
     from app.core.auth import get_password_hash
     db_user = User(
         username=data.username.strip(),
@@ -6096,8 +6096,8 @@ async def debts_create_and_match(
         workplace=(data.workplace or "").strip() or None,
         residents_count=max(1, int(data.residents_count)),
         room_id=None,  # выставит move_user_to_room
-        resident_type=rt,
-        billing_mode=bm,
+        resident_type="family",
+        billing_mode="by_meter",
         is_deleted=False,
         is_initial_setup_done=False,
     )

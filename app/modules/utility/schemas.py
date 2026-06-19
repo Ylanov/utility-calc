@@ -241,10 +241,10 @@ class UserCreate(BaseModel):
     # комнаты (Room.total_room_residents). См. calculations.paying_residents.
     tariff_id: Optional[int] = None
     room_id: Optional[int] = None
-    # 'family' (по счётчикам) | 'single' (койко-место)
-    resident_type: ResidentType = "family"
-    # 'by_meter' (как раньше) | 'per_capita' (фикс. сумма из тарифа)
-    billing_mode: Optional[BillingMode] = None  # None → выводится из resident_type
+    # resident_type/billing_mode УПРАЗДНЕНЫ из API (2026-06-19): тип жильца
+    # ВЫВОДИТСЯ из комнаты (Room.is_singles_apartment) и синхронизируется при
+    # заселении (move_user_to_room). per_capita-режим убран. См.
+    # calculations.resident_type_of.
     # Серийники счётчиков живут на Room (общие для квартиры), не на User —
     # см. ReadingStateResponse. На жильце их нет.
     # Флаги наличия счётчиков. По умолчанию все True (как было).
@@ -282,11 +282,10 @@ class UserUpdate(BaseModel):
     login: Optional[str] = Field(None, min_length=3, max_length=100)     # учётка (админ может сбросить)
     password: Optional[str] = Field(None, min_length=8, max_length=128)
     role: Optional[AllowedRole] = None
-    # residents_count упразднён (2026-06-17) — см. UserCreate.
+    # residents_count/resident_type/billing_mode упразднены из API
+    # (2026-06-17/19) — тип выводится из комнаты. См. UserCreate.
     tariff_id: Optional[int] = None
     room_id: Optional[int] = None
-    resident_type: Optional[ResidentType] = None
-    billing_mode: Optional[BillingMode] = None
     # Серийники счётчиков — на Room, не на User (см. UserCreate).
     has_hw_meter: Optional[bool] = None
     has_cw_meter: Optional[bool] = None

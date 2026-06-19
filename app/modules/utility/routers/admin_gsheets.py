@@ -2014,11 +2014,8 @@ async def create_user_and_match(
             "затем повторите.",
         )
 
-    # Валидация resident_type — иначе через query попадёт мусор в БД.
-    rt = data.resident_type if data.resident_type in ("family", "single") else "family"
-    bm = "per_capita" if rt == "single" else "by_meter"
-
-    # Создаём User
+    # resident_type/billing_mode НЕ из payload и НЕ per_capita (2026-06-19):
+    # тип выводится из комнаты при заселении; per_capita обнулял счёт холостяка.
     from app.core.auth import get_password_hash
     db_user = User(
         username=data.username.strip(),
@@ -2028,8 +2025,8 @@ async def create_user_and_match(
         workplace=(data.workplace or "").strip() or None,
         residents_count=max(1, int(data.residents_count)),
         room_id=None,  # выставится move_user_to_room
-        resident_type=rt,
-        billing_mode=bm,
+        resident_type="family",
+        billing_mode="by_meter",
         is_deleted=False,
         is_initial_setup_done=False,
     )

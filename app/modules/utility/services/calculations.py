@@ -47,6 +47,15 @@ def paying_residents(user, room) -> int:
     return int(rc) if rc and int(rc) > 0 else 1
 
 
+def resident_type_of(user, room) -> str:
+    """Тип жильца ВЫВОДИТСЯ из КОМНАТЫ (единый источник, 2026-06-19): если
+    комната холостяцкая (room.is_singles_apartment) → 'single', иначе 'family'.
+    Раньше тип дублировался на User.resident_type и расходился с комнатой —
+    отсюда сбои/лаги. User-поле оставлено дремлющим зеркалом (синхронизируется
+    из комнаты при заселении), но ИСТИНА — комната."""
+    return "single" if (room is not None and bool(getattr(room, "is_singles_apartment", False))) else "family"
+
+
 def costs_for_model_fields(costs: dict) -> dict:
     """Возвращает подсловарь, безопасный для setattr/**kwargs на MeterReading.
 
@@ -177,14 +186,12 @@ def calculate_utilities(
     """
 
     # ─────────────────────────────────────────────────
-    # Если жилец на per_capita (холостяк, платит за койко-место) — счётчиков нет.
-    # Делегируем calculate_per_capita и возвращаемся. Это защитная сетка:
-    # вызывающий код может забыть проверить billing_mode и передать объёмы —
-    # мы их игнорируем, потому что для одиночек это нерелевантно.
-    # ─────────────────────────────────────────────────
-    if getattr(user, "billing_mode", "by_meter") == "per_capita":
-        return calculate_per_capita(user, tariff, fraction=fraction)
-
+    # LEGACY per_capita УБРАН 2026-06-19. Раньше billing_mode='per_capita'
+    # шортил в calculate_per_capita(tariff.per_capita_amount), а по политике
+    # per_capita_amount=0 → счёт холостяка ОБНУЛЯЛСЯ, минуя корректную ветку
+    # is_singles_apartment (делёж счётчиков). Финансовый импорт/gsheets ошибочно
+    # ставили single→per_capita — отсюда «лаги/сбои расчёта». Теперь ВСЕ идут
+    # по счётчиковому пути; холостяки делятся по room.is_singles_apartment.
     # ─────────────────────────────────────────────────
     # Объёмы: приводим к Decimal, защищаем от отрицательных значений.
     # Отрицательный объём физически невозможен и должен давать 0, а не

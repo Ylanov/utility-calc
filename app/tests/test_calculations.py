@@ -502,9 +502,10 @@ def test_per_capita_has_same_keys():
     )
 
 
-def test_per_capita_routed_via_billing_mode():
-    """user.billing_mode='per_capita' → calculate_utilities делегирует
-    в calculate_per_capita и возвращает фиксированную сумму."""
+def test_per_capita_no_longer_routed():
+    """2026-06-19: legacy per_capita-шорткат УБРАН. billing_mode='per_capita'
+    больше НЕ обнуляет/не фиксирует счёт — calculate_utilities считает по
+    счётчикам как обычно (расход × тариф + area-based), а НЕ per_capita_amount."""
     user = FakeUser()
     user.billing_mode = "per_capita"
     room = FakeRoom(area=30.0)
@@ -513,13 +514,12 @@ def test_per_capita_routed_via_billing_mode():
 
     result = calculate_utilities(
         user=user, room=room, tariff=tariff,
-        volume_hot=Decimal("100"),  # игнорируется для per_capita
-        volume_cold=Decimal("200"),
-        volume_sewage=Decimal("300"),
-        volume_electricity_share=Decimal("400"),
+        volume_hot=Decimal("10"), volume_cold=Decimal("10"),
+        volume_sewage=Decimal("20"), volume_electricity_share=Decimal("50"),
     )
-    assert result["total_cost"] == Decimal("3500.00")
-    assert result["cost_fixed_part"] == Decimal("3500.00")
+    # НЕ фиксированные 3500 — считается по счётчикам/площади.
+    assert result["total_cost"] != Decimal("3500.00")
+    assert result["cost_hot_water"] > Decimal("0")  # расход начислен, не обнулён
 
 
 # ──────────────────────────────────────────────────────────────
@@ -1067,7 +1067,7 @@ if __name__ == "__main__":
     test_sanity_warning_for_huge_total()
     test_no_sanity_warning_for_normal_total()
     test_per_capita_has_same_keys()
-    test_per_capita_routed_via_billing_mode()
+    test_per_capita_no_longer_routed()
     test_costs_for_model_fields_filters_meta()
     test_typical_resident_in_normal_range()
     test_missing_hot_meter_uses_norm()
