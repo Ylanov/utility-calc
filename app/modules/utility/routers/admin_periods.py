@@ -141,10 +141,12 @@ async def close_period_preview(
     dorm_submitted = {row[0]: row[1] for row in dorm_submitted_res.all()}
 
     dormitories = []
-    for dorm_name, total in sorted(dorm_totals.items()):
+    # Дома (place_type='house') имеют dormitory_name=None — None нельзя
+    # сравнивать со str в sorted(). Кладём None в конец, имя — «Дома».
+    for dorm_name, total in sorted(dorm_totals.items(), key=lambda kv: (kv[0] is None, kv[0] or "")):
         submitted = dorm_submitted.get(dorm_name, 0)
         dormitories.append({
-            "name": dorm_name, "total_rooms": total, "submitted": submitted,
+            "name": dorm_name or "Дома / без общежития", "total_rooms": total, "submitted": submitted,
             "missing": total - submitted,
             "percent": round(submitted / total * 100) if total > 0 else 0
         })
