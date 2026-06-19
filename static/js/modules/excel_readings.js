@@ -42,10 +42,15 @@ function fmtMoney(v) {
   if (v === null || v === undefined) return '—';
   return Number(v).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽';
 }
+// Ключ строки для чёрного списка (по жильцу/ФИО) — чтобы не дублировать.
+function blacklistKey(it) {
+  return (it.matched && it.matched.user_id) ? ('u' + it.matched.user_id) : ('f' + (it.fio || '').trim().toLowerCase());
+}
 
 export const ExcelReadingsModule = {
   isInitialized: false,
-  state: { periods: [], periodId: null, prevPeriodId: null, file: null, preview: null, filter: 'all' },
+  state: { periods: [], periodId: null, prevPeriodId: null, file: null, preview: null, filter: 'all',
+           blacklist: [], view: 'main', draftId: null },
 
   init() {
     if (this.isInitialized) return;
@@ -60,19 +65,20 @@ export const ExcelReadingsModule = {
 
   async open() {
     this.state.file = null; this.state.preview = null; this.state.filter = 'all';
+    this.state.blacklist = []; this.state.view = 'main'; this.state.draftId = null;
     this._removed = [];
     this.renderModal();
     await this.loadPeriods();
-    // Есть сохранённый черновик? Предложить продолжить.
+    // Есть сохранённые черновики? Предложить открыть список.
     try {
-      const d = await api.get('/admin/readings/excel/draft');
-      if (d && !d.empty && (d.rows || []).length) {
-        const when = d.saved_at ? new Date(d.saved_at).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }) : '';
-        if (await showConfirm('Найден сохранённый черновик' + (when ? ' от ' + when : '') + ' (' + d.rows.length + ' строк). Продолжить с того места?', { title: 'Черновик импорта', confirmText: 'Продолжить', cancelText: 'Начать заново' })) {
-          await this.resumeDraft(d);
+      const r = await api.get('/admin/readings/excel/draft');
+      const drafts = (r && r.drafts) || [];
+      if (drafts.length) {
+        if (await showConfirm('Есть сохранённые черновики (' + drafts.length + '). Открыть список?', { title: 'Черновики импорта', confirmText: 'Открыть список', cancelText: 'Новый импорт' })) {
+          await this.openDraftsList();
         }
       }
-    } catch (e) { /* нет черновика — обычный старт */ }
+    } catch (e) { /* нет черновиков — обычный старт */ }
   },
 
   close() { document.getElementById('excelReadingsModal')?.remove(); },
@@ -185,8 +191,17 @@ export const ExcelReadingsModule = {
     if (summary) {
       const chip = (label, n, col) => '<span style="display:inline-block; padding:4px 10px; border-radius:8px; background:' + col +
         '; font-size:12px; font-weight:600; margin-right:6px;">' + label + ': ' + (n || 0) + '</span>';
+      const viewTab = (v, t) => '<button class="action-btn ' + (this.state.view === v ? 'primary-btn' : 'secondary-btn') +
+        '" style="padding:5px 14px; font-size:13px;" data-xl-view="' + v + '">' + t + '</button>';
       summary.innerHTML =
-        '<div style="margin-bottom:10px;">' +
+        '<div style="display:flex; gap:8px; margin-bottom:10px;">' +
+        viewTab('main', '📋 Список (' + p.total_people + ')') +
+        viewTab('blacklist', '🚫 Чёрный список (' + this.state.blacklist.length + ')') +
+        '</div>' +
+        (this.state.view === 'blacklist'
+          ? '<div style="font-size:12px; color:var(--text-secondary); margin-bottom:8px;">Проблемные квартиры — только для админа, в системе не отображается и ни на что не влияет. Можно распечатать.</div>'
+          : '') +
+        '<div style="margin-bottom:10px; ' + (this.state.view === 'blacklist' ? 'display:none;' : '') + '">' +
         chip('Всего', p.total_people, '#eef2ff') +
         chip('✅ ОК', c.ok, '#dcfce7') +
         chip('⚠️ Проверить', c.warning, '#fef3c7') +
@@ -194,14 +209,17 @@ export const ExcelReadingsModule = {
         chip('🔍 Не найдены', c.unmatched, '#fee2e2') +
         chip('📊 По нормативу', c.norm, '#f3e8ff') +
         '</div>' +
-        this.gsheetsLine(p.gsheets) +
-        '<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">' +
-        '<span style="font-size:12px; color:var(--text-secondary);">Фильтр:</span>' +
-        ['all|Все', 'approve|К утверждению', 'warning|Проверить', 'error|Ошибки', 'unmatched|Не найдены', 'ok|ОК']
-          .map((x) => { const [v, t] = x.split('|'); return '<button class="action-btn ' + (this.state.filter === v ? 'primary-btn' : 'secondary-btn') +
-            '" style="padding:4px 10px; font-size:12px;" data-xl-filter="' + v + '">' + t + '</button>'; }).join('') +
-        '<span style="margin-left:auto; font-size:13px; font-weight:600;">К утверждению: ' + approveCnt + '</span>' +
-        '</div>';
+        (this.state.view === 'main' ? (
+          this.gsheetsLine(p.gsheets) +
+          '<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px;">' +
+          '<span style="font-size:12px; color:var(--text-secondary);">Фильтр:</span>' +
+          ['all|Все', 'approve|К утверждению', 'warning|Проверить', 'error|Ошибки', 'unmatched|Не найдены', 'ok|ОК']
+            .map((x) => { const [v, t] = x.split('|'); return '<button class="action-btn ' + (this.state.filter === v ? 'primary-btn' : 'secondary-btn') +
+              '" style="padding:4px 10px; font-size:12px;" data-xl-filter="' + v + '">' + t + '</button>'; }).join('') +
+          '<span style="margin-left:auto; font-size:13px; font-weight:600;">К утверждению: ' + approveCnt + '</span>' +
+          '</div>') : '');
+      summary.querySelectorAll('[data-xl-view]').forEach((b) =>
+        b.addEventListener('click', () => { this.state.view = b.dataset.xlView; this.renderPreview(); }));
       summary.querySelectorAll('[data-xl-filter]').forEach((b) =>
         b.addEventListener('click', () => { this.state.filter = b.dataset.xlFilter; this.renderPreview(); }));
     }
@@ -211,10 +229,27 @@ export const ExcelReadingsModule = {
     const headRow = document.getElementById('xlHeadRow');
     if (headRow) headRow.innerHTML = this.headRowHtml(meters);
     const colspan = 7 + meters.length;   // чекбокс+ФИО+объект+тариф+счётчики+GSheets+вердикт+действия
+
+    if (this.state.view === 'blacklist') {
+      const blRows = this.state.blacklist.map((b, i) => this.blacklistRowHtml(b, i, meters)).join('');
+      body.innerHTML = blRows ||
+        '<tr><td colspan="' + colspan + '" style="padding:24px; text-align:center; color:var(--text-secondary);">Чёрный список пуст. Добавляйте проблемные квартиры кнопкой 🚫 в основном списке.</td></tr>';
+      body.querySelectorAll('[data-xl-blrm]').forEach((b) =>
+        b.addEventListener('click', () => this.removeFromBlacklist(Number(b.dataset.xlBlrm))));
+      // В режиме чёрного списка утверждать/пересчитывать нечего; печать/сохранение доступны.
+      const cBtn = document.getElementById('xlCommitBtn'); if (cBtn) cBtn.disabled = true;
+      const rBtn = document.getElementById('xlRecalcBtn'); if (rBtn) rBtn.disabled = true;
+      const pBtn = document.getElementById('xlPrintBtn'); if (pBtn) pBtn.disabled = this.state.blacklist.length === 0;
+      const sBtn = document.getElementById('xlSaveBtn'); if (sBtn) sBtn.disabled = false;
+      return;
+    }
+
     const rows = this.filteredItems().map((it) => this.rowHtml(it, p.items.indexOf(it), meters)).join('');
     body.innerHTML = rows ||
       '<tr><td colspan="' + colspan + '" style="padding:24px; text-align:center; color:var(--text-secondary);">Нет строк по фильтру.</td></tr>';
 
+    body.querySelectorAll('[data-xl-bl]').forEach((b) =>
+      b.addEventListener('click', () => this.addToBlacklist(Number(b.dataset.xlBl))));
     body.querySelectorAll('[data-xl-toggle]').forEach((cb) =>
       cb.addEventListener('change', () => {
         const i = Number(cb.dataset.xlToggle); p.items[i]._approve = cb.checked; this.renderPreview();
@@ -271,14 +306,21 @@ export const ExcelReadingsModule = {
 
   async saveDraft() {
     const p = this.state.preview;
-    if (!p || !p.items.length) { toast('Нечего сохранять', 'info'); return; }
+    if ((!p || !p.items.length) && !this.state.blacklist.length) { toast('Нечего сохранять', 'info'); return; }
     const btn = document.getElementById('xlSaveBtn');
     setLoading(btn, true, 'Сохраняю…');
     try {
-      await api.post('/admin/readings/excel/draft', {
-        period_id: this.state.periodId, rows: this.draftRows(),
+      const pname = (this.state.periods.find((x) => x.id === this.state.periodId) || {}).name || null;
+      const res = await api.post('/admin/readings/excel/draft', {
+        id: this.state.draftId || null,
+        period_id: this.state.periodId,
+        prev_period_id: this.state.prevPeriodId || null,
+        period_name: pname,
+        rows: this.draftRows(),
+        blacklist: this.state.blacklist,
       });
-      toast('Черновик сохранён — можно закрыть и продолжить позже', 'success');
+      this.state.draftId = res.id || this.state.draftId;
+      toast('Черновик сохранён (#' + (res.id || '') + ') — открыть можно в любой момент', 'success');
     } catch (e) {
       toast('Не удалось сохранить: ' + (e.message || e), 'error');
     } finally { setLoading(btn, false, 'Сохранить черновик'); }
@@ -288,13 +330,23 @@ export const ExcelReadingsModule = {
   // за это время квартиры/жильцов), восстановить отметки «утверждать».
   async resumeDraft(draft) {
     this.state.periodId = draft.period_id || this.state.periodId;
+    this.state.prevPeriodId = draft.prev_period_id || null;
+    this.state.draftId = draft.id || null;
+    this.state.blacklist = Array.isArray(draft.blacklist) ? draft.blacklist : [];
+    this.state.view = 'main';
     this.renderPeriodSelect();
     const approveByIdx = (draft.rows || []).map((r) => r.approve !== false);
     const rows = (draft.rows || []).map((r) => ({
       fio: r.fio, user_id: r.user_id || null,
       hot: r.hot || null, cold: r.cold || null, elect: r.elect || null,
     }));
-    if (!rows.length) return;
+    if (!rows.length) {
+      // Только чёрный список (без строк импорта) — показываем его.
+      this.state.preview = { items: [], counts: {}, total_people: 0, meters_present: ['hot', 'cold'], gsheets: {} };
+      if (this.state.blacklist.length) this.state.view = 'blacklist';
+      this.renderPreview();
+      return;
+    }
     const body = document.getElementById('xlBody');
     if (body) body.innerHTML = '<tr><td colspan="9" style="padding:24px; text-align:center;"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка черновика…</td></tr>';
     try {
@@ -306,6 +358,48 @@ export const ExcelReadingsModule = {
     } catch (e) {
       toast('Не удалось загрузить черновик: ' + (e.message || e), 'error');
     }
+  },
+
+  // Список сохранённых черновиков — открыть/удалить любой (в т.ч. после утверждения).
+  async openDraftsList() {
+    let drafts = [];
+    try { const r = await api.get('/admin/readings/excel/draft'); drafts = r.drafts || []; }
+    catch (e) { toast('Не удалось загрузить черновики: ' + (e.message || e), 'error'); return; }
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:center; justify-content:center; z-index:10002; padding:20px;';
+    const when = (s) => s ? new Date(s).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }) : '';
+    const rows = drafts.map((d) =>
+      '<div data-dr-id="' + d.id + '" style="display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--border-color); border-radius:8px; margin-bottom:6px;">' +
+      '<div style="flex:1; min-width:0;"><div style="font-weight:600;">' + esc(d.period_name || ('Период ' + (d.period_id || '—'))) + '</div>' +
+      '<div style="font-size:11px; color:var(--text-secondary);">' + when(d.saved_at) + ' · ' + (d.saved_by ? esc(d.saved_by) + ' · ' : '') + (d.rows || 0) + ' строк' + (d.blacklist ? ' · 🚫 ' + d.blacklist : '') + '</div></div>' +
+      '<button class="action-btn primary-btn" style="padding:4px 10px; font-size:12px;" data-dr-open="' + d.id + '">Открыть</button>' +
+      '<button class="action-btn" style="padding:4px 8px; font-size:12px; background:#fee2e2; color:#991b1b;" data-dr-del="' + d.id + '"><i class="fa-solid fa-trash"></i></button>' +
+      '</div>').join('') || '<div style="color:var(--text-secondary); padding:14px;">Нет сохранённых черновиков.</div>';
+    ov.innerHTML =
+      '<div class="modal-window" style="max-width:560px; width:100%;">' +
+      '  <div class="modal-header"><h3><i class="fa-solid fa-folder-open"></i> Черновики импорта</h3><button class="close-btn close-icon" data-dr-close>&times;</button></div>' +
+      '  <div class="modal-body" style="max-height:60vh; overflow:auto;">' + rows + '</div></div>';
+    document.body.appendChild(ov);
+    const close = () => ov.remove();
+    ov.addEventListener('click', async (e) => {
+      if (e.target === ov || e.target.closest('[data-dr-close]')) { close(); return; }
+      const openBtn = e.target.closest('[data-dr-open]');
+      const delBtn = e.target.closest('[data-dr-del]');
+      if (openBtn) {
+        const id = Number(openBtn.dataset.drOpen);
+        close();
+        try {
+          const full = await api.get('/admin/readings/excel/draft/' + id);
+          if (full && !full.empty) await this.resumeDraft(full);
+          else toast('Черновик не найден', 'warning');
+        } catch (e2) { toast('Не удалось открыть: ' + (e2.message || e2), 'error'); }
+      } else if (delBtn) {
+        const id = Number(delBtn.dataset.drDel);
+        if (!await showConfirm('Удалить этот черновик?', { title: 'Удалить черновик', confirmText: 'Удалить' })) return;
+        try { await api.delete('/admin/readings/excel/draft/' + id); close(); this.openDraftsList(); }
+        catch (e2) { toast('Не удалось удалить: ' + (e2.message || e2), 'error'); }
+      }
+    });
   },
 
   rowHtml(it, idx, meters) {
@@ -368,6 +462,10 @@ export const ExcelReadingsModule = {
       : '';
     // Удалить строку (лишний / неправильный человек) — не попадёт в утверждение.
     const delBtn = '<button class="action-btn" style="padding:3px 8px; font-size:11px; background:#fee2e2; color:#991b1b; border:1px solid #fecaca;" data-xl-del="' + idx + '" title="Убрать из импорта"><i class="fa-solid fa-trash"></i></button>';
+    // В чёрный список — отдельный список проблемных квартир (для админа,
+    // печать; ничего в системе не меняет).
+    const inBl = this.state.blacklist.some((b) => b._blkey === blacklistKey(it));
+    const blBtn = '<button class="action-btn" style="padding:3px 8px; font-size:11px; background:' + (inBl ? '#111827' : '#374151') + '; color:#fff;" data-xl-bl="' + idx + '" title="' + (inBl ? 'Уже в чёрном списке' : 'В чёрный список (проблемная квартира)') + '"><i class="fa-solid fa-ban"></i></button>';
 
     return '<tr style="' + (it.verdict === 'error' || it.verdict === 'unmatched' ? 'background:rgba(239,68,68,0.04);' : (it.verdict === 'warning' ? 'background:rgba(245,158,11,0.05);' : '')) + '">' +
       '<td style="text-align:center;">' + checkbox + '</td>' +
@@ -379,7 +477,7 @@ export const ExcelReadingsModule = {
       '<td>' + badge(VERDICT[it.verdict] || VERDICT.error) +
         (it.status === 'norm' ? '<br><span style="font-size:10px; color:#6b21a8;">норматив</span>' : '') +
         (it._dirty ? '<br><span style="font-size:10px; color:#92400e;">изменено</span>' : '') + '</td>' +
-      '<td style="text-align:center; white-space:nowrap;"><div style="display:flex; gap:3px; justify-content:center; flex-wrap:wrap;">' + addBtn + reassign + delBtn + '</div></td>' +
+      '<td style="text-align:center; white-space:nowrap;"><div style="display:flex; gap:3px; justify-content:center; flex-wrap:wrap;">' + addBtn + reassign + blBtn + delBtn + '</div></td>' +
       '</tr>';
   },
 
@@ -392,6 +490,57 @@ export const ExcelReadingsModule = {
     this._removed.push({ fio: it.fio, reason: 'удалён вручную' });
     this.state.preview.items.splice(idx, 1);
     this.renderPreview();
+  },
+
+  // ── Чёрный список (проблемные квартиры) ─────────────────────
+  // Снимок строки в чёрный список (вручную). Ничего в системе не меняет —
+  // отдельный список для админа, печатается отдельно.
+  addToBlacklist(idx) {
+    const it = this.state.preview?.items[idx];
+    if (!it) return;
+    const key = blacklistKey(it);
+    if (this.state.blacklist.some((b) => b._blkey === key)) {
+      toast('Уже в чёрном списке', 'info');
+      return;
+    }
+    this.state.blacklist.push({
+      _blkey: key,
+      fio: it.fio,
+      matched: it.matched ? { username: it.matched.username, room: it.matched.room, dormitory: it.matched.dormitory } : null,
+      hot: it.hot || null, cold: it.cold || null, elect: it.elect || null,
+      verdict: it.verdict, reasons: it.reasons || [],
+      note: '',
+    });
+    toast('Добавлено в чёрный список (' + this.state.blacklist.length + ')', 'success');
+    this.renderPreview();
+  },
+
+  removeFromBlacklist(i) {
+    this.state.blacklist.splice(i, 1);
+    this.renderPreview();
+  },
+
+  blacklistRowHtml(b, i, meters) {
+    const place = b.matched ? ((b.matched.dormitory ? esc(b.matched.dormitory) + ' / ' : '') + esc(b.matched.room || '—')) : '—';
+    const who = '<b>' + esc(b.fio) + '</b>' + (b.matched ? '<br><span style="font-size:11px; color:var(--primary-color);">→ ' + esc(b.matched.username) + '</span>' : '');
+    const meterCells = meters.map((r) => {
+      const d = b[r] || {};
+      const cons = (d.cur != null && d.prev != null) ? Math.max(0, Number(d.cur) - Number(d.prev)) : null;
+      return '<td style="text-align:right; white-space:nowrap; font-family:monospace; font-size:12px;">' +
+        (d.prev != null ? fmtNum(d.prev) : '—') + ' → ' + (d.cur != null ? fmtNum(d.cur) : '—') +
+        (cons != null ? '<br><span style="font-size:11px; color:#15803d;">+' + fmtNum(cons) + '</span>' : '') + '</td>';
+    }).join('');
+    const reasons = (b.reasons || []).length ? '<div style="font-size:11px; color:var(--text-secondary); margin-top:3px;">' + b.reasons.map(esc).join('<br>') + '</div>' : '';
+    return '<tr>' +
+      '<td style="text-align:center; color:#94a3b8;">' + (i + 1) + '</td>' +
+      '<td>' + who + reasons + '</td>' +
+      '<td style="font-size:12px;">' + place + '</td>' +
+      '<td style="font-size:11px; color:var(--text-secondary);">—</td>' +
+      meterCells +
+      '<td style="text-align:right; font-size:12px; color:var(--text-secondary);">—</td>' +
+      '<td>' + badge(VERDICT[b.verdict] || VERDICT.error) + '</td>' +
+      '<td style="text-align:center;"><button class="action-btn secondary-btn" style="padding:3px 8px; font-size:11px;" data-xl-blrm="' + i + '" title="Убрать из чёрного списка"><i class="fa-solid fa-xmark"></i></button></td>' +
+      '</tr>';
   },
 
   // Исправить ФИО (опечатки/неправильное написание) → авто-пересчёт (пере-матч).
@@ -439,9 +588,33 @@ export const ExcelReadingsModule = {
     if (!p) return;
     const meters = (p.meters_present && p.meters_present.length) ? p.meters_present : ['hot', 'cold'];
     const periodName = (this.state.periods.find((x) => x.id === this.state.periodId) || {}).name || '';
-    const head = '<th>ФИО / жилец</th><th>Объект</th><th>Тариф</th>' +
+    const isBl = this.state.view === 'blacklist';
+    const title = isBl ? 'Чёрный список (проблемные квартиры)' : 'Импорт показаний';
+    const head = '<th>ФИО / жилец</th><th>Объект</th>' + (isBl ? '' : '<th>Тариф</th>') +
       meters.map((r) => '<th>' + RES_LABEL[r] + ' (пред→тек)</th>').join('') +
-      '<th>Google Sheets</th><th>Вердикт</th>';
+      (isBl ? '<th>Причина</th>' : '<th>Google Sheets</th>') + '<th>Вердикт</th>';
+    if (isBl) {
+      const blRowsHtml = this.state.blacklist.map((b) => {
+        const m = b.matched || {};
+        const mc = meters.map((r) => { const d = b[r] || {}; return '<td style="text-align:right;">' + fmtNum(d.prev) + ' → ' + fmtNum(d.cur) + '</td>'; }).join('');
+        const v = (VERDICT[b.verdict] || VERDICT.error).t;
+        return '<tr><td><b>' + esc(b.fio) + '</b>' + (m.username ? '<br><small>→ ' + esc(m.username) + '</small>' : '') + '</td>' +
+          '<td>' + esc((m.dormitory ? m.dormitory + ' / ' : '') + (m.room || '—')) + '</td>' + mc +
+          '<td>' + esc((b.reasons || []).join('; ')) + '</td><td>' + esc(v) + '</td></tr>';
+      }).join('');
+      const win0 = window.open('', '_blank', 'width=1100,height=760');
+      if (!win0) { toast('Разрешите всплывающие окна для печати', 'warning'); return; }
+      win0.document.write(
+        '<html><head><meta charset="utf-8"><title>' + esc(title) + ' — ' + esc(periodName) + '</title>' +
+        '<style>body{font-family:sans-serif;padding:24px;color:#1e293b;}h2{margin:0 0 4px;}table{width:100%;border-collapse:collapse;font-size:12px;margin-top:12px;}' +
+        'th,td{border:1px solid #cbd5e1;padding:5px 7px;text-align:left;}th{background:#f1f5f9;}</style></head><body>' +
+        '<h2>' + esc(title) + ' — «' + esc(periodName) + '»</h2>' +
+        '<div style="font-size:13px;color:#475569;">Проблемных квартир: ' + this.state.blacklist.length + '</div>' +
+        '<table><thead><tr>' + head + '</tr></thead><tbody>' + blRowsHtml + '</tbody></table></body></html>');
+      win0.document.close(); win0.focus();
+      setTimeout(() => { try { win0.print(); } catch (e) { /* Ctrl+P */ } }, 400);
+      return;
+    }
     const rowsHtml = p.items.map((it) => {
       const m = it.matched || {};
       const mc = meters.map((r) => {
@@ -665,8 +838,16 @@ export const ExcelReadingsModule = {
       if (res.skipped_existing) msg += ' · пропущено (уже были): ' + res.skipped_existing;
       if (res.failed) msg += ' · ошибок: ' + res.failed;
       toast(msg, res.failed ? 'warning' : 'success');
-      // Утвердили — черновик больше не нужен, чистим.
-      try { await api.delete('/admin/readings/excel/draft'); } catch (e) { /* не критично */ }
+      // Утверждение НЕ удаляет черновик — наоборот, сохраняем его (чтобы можно
+      // было открыть позже, перепроверить и при необходимости переутвердить).
+      try {
+        const pname = (this.state.periods.find((x) => x.id === this.state.periodId) || {}).name || null;
+        await api.post('/admin/readings/excel/draft', {
+          id: this.state.draftId || null, period_id: this.state.periodId,
+          prev_period_id: this.state.prevPeriodId || null, period_name: pname,
+          rows: this.draftRows(), blacklist: this.state.blacklist,
+        });
+      } catch (e) { /* не критично */ }
       this.close();
       // Обновить реестр, если открыт.
       try {
@@ -712,7 +893,8 @@ export const ExcelReadingsModule = {
       '    </div>' +
       '  </div>' +
       '  <div class="modal-footer" style="display:flex; justify-content:space-between; gap:10px; flex-wrap:wrap;">' +
-      '    <button class="action-btn secondary-btn" data-xl-close>Закрыть</button>' +
+      '    <div style="display:flex; gap:8px;"><button class="action-btn secondary-btn" data-xl-close>Закрыть</button>' +
+      '      <button class="action-btn secondary-btn" id="xlDraftsBtn"><i class="fa-solid fa-folder-open"></i> Черновики</button></div>' +
       '    <div style="display:flex; gap:8px; flex-wrap:wrap;">' +
       '      <button class="action-btn secondary-btn" id="xlPrintBtn" disabled><i class="fa-solid fa-print"></i> Печать / PDF</button>' +
       '      <button class="action-btn secondary-btn" id="xlSaveBtn" disabled><i class="fa-solid fa-floppy-disk"></i> Сохранить черновик</button>' +
@@ -737,6 +919,7 @@ export const ExcelReadingsModule = {
     document.getElementById('xlRecalcBtn').addEventListener('click', () => this.recompute());
     document.getElementById('xlPrintBtn').addEventListener('click', () => this.printReport());
     document.getElementById('xlSaveBtn').addEventListener('click', () => this.saveDraft());
+    document.getElementById('xlDraftsBtn').addEventListener('click', () => this.openDraftsList());
   },
 
   gsheetsLine(gs) {

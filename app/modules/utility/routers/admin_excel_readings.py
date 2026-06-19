@@ -134,8 +134,14 @@ class DraftRow(BaseModel):
 
 
 class DraftBody(BaseModel):
+    id: Optional[int] = None
     period_id: Optional[int] = None
+    prev_period_id: Optional[int] = None
+    period_name: Optional[str] = None
     rows: list[DraftRow] = Field(default_factory=list, max_length=5000)
+    # Чёрный список — снимки строк проблемных квартир (для админа, печать).
+    # Свободная форма (тот же вид что строки) — не валидируем строго.
+    blacklist: list[dict] = Field(default_factory=list, max_length=5000)
 
 
 @router.post("/draft")
@@ -144,27 +150,38 @@ async def excel_save_draft(
     current_user: User = Depends(allow_billing),
     db: AsyncSession = Depends(get_db),
 ):
-    """Сохранить черновик импорта (можно закрыть, создать недостающие квартиры
-    в Жилфонде и продолжить с того же места)."""
+    """Сохранить/обновить черновик импорта (несколько черновиков, не удаляются
+    после утверждения — можно открыть и перепроверить в любой момент)."""
     return await svc.save_draft(db, body.model_dump(), current_user)
 
 
 @router.get("/draft")
-async def excel_load_draft(
+async def excel_list_drafts(
     current_user: User = Depends(allow_billing),
     db: AsyncSession = Depends(get_db),
 ):
-    """Загрузить сохранённый черновик (или null)."""
-    return await svc.load_draft(db) or {"empty": True}
+    """Список сохранённых черновиков (сводка)."""
+    return await svc.list_drafts(db)
 
 
-@router.delete("/draft")
-async def excel_clear_draft(
+@router.get("/draft/{draft_id}")
+async def excel_get_draft(
+    draft_id: int,
     current_user: User = Depends(allow_billing),
     db: AsyncSession = Depends(get_db),
 ):
-    """Удалить черновик (после утверждения или по кнопке)."""
-    return await svc.clear_draft(db)
+    """Загрузить конкретный черновик целиком (для открытия)."""
+    return await svc.get_draft(db, draft_id) or {"empty": True}
+
+
+@router.delete("/draft/{draft_id}")
+async def excel_delete_draft(
+    draft_id: int,
+    current_user: User = Depends(allow_billing),
+    db: AsyncSession = Depends(get_db),
+):
+    """Удалить конкретный черновик."""
+    return await svc.delete_draft(db, draft_id)
 
 
 class EnsurePeriodBody(BaseModel):

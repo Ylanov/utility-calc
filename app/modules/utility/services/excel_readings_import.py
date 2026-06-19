@@ -580,44 +580,100 @@ def _res_label(r: str) -> str:
 DRAFT_KEY = "excel_readings_draft"
 
 
-async def save_draft(db: AsyncSession, payload: dict, actor: Optional[User]) -> dict:
-    """Сохранить черновик (period_id + строки) — чтобы продолжить позже
-    (например, после создания недостающей квартиры в Жилфонде)."""
+# НЕСКОЛЬКО черновиков (список в одном SystemSetting). 2026-06-18: раньше был
+# один черновик (DRAFT_KEY), удалявшийся после утверждения. Теперь черновики
+# сохраняются, не удаляются после утверждения и открываются в любой момент.
+DRAFTS_KEY = "excel_readings_drafts"
+_DRAFTS_CAP = 40
+
+
+async def _load_drafts_raw(db: AsyncSession) -> list:
     import json
     from app.modules.utility.models import SystemSetting
-    from app.core.time_utils import utcnow
-    payload = dict(payload)
-    payload["saved_at"] = utcnow().isoformat()
-    payload["saved_by"] = actor.username if actor else None
-    blob = json.dumps(payload, ensure_ascii=False, default=str)
-    row = await db.get(SystemSetting, DRAFT_KEY)
+    row = await db.get(SystemSetting, DRAFTS_KEY)
+    drafts = []
+    if row and row.value:
+        try:
+            drafts = json.loads(row.value) or []
+        except Exception:
+            drafts = []
+    # Миграция старого одиночного черновика.
+    if not drafts:
+        old = await db.get(SystemSetting, DRAFT_KEY)
+        if old and old.value:
+            try:
+                d = json.loads(old.value)
+                d["id"] = 1
+                drafts = [d]
+            except Exception:
+                pass
+    return drafts if isinstance(drafts, list) else []
+
+
+async def _save_drafts_raw(db: AsyncSession, drafts: list) -> None:
+    import json
+    from app.modules.utility.models import SystemSetting
+    blob = json.dumps(drafts, ensure_ascii=False, default=str)
+    row = await db.get(SystemSetting, DRAFTS_KEY)
     if row:
         row.value = blob
     else:
-        db.add(SystemSetting(key=DRAFT_KEY, value=blob,
-                             description="Черновик импорта показаний из Excel"))
+        db.add(SystemSetting(key=DRAFTS_KEY, value=blob,
+                             description="Черновики импорта показаний из Excel (список)"))
     await db.commit()
-    return {"status": "ok", "rows": len(payload.get("rows", [])), "saved_at": payload["saved_at"]}
 
 
-async def load_draft(db: AsyncSession) -> Optional[dict]:
-    import json
-    from app.modules.utility.models import SystemSetting
-    row = await db.get(SystemSetting, DRAFT_KEY)
-    if not row or not row.value:
-        return None
-    try:
-        return json.loads(row.value)
-    except Exception:
-        return None
+async def save_draft(db: AsyncSession, payload: dict, actor: Optional[User]) -> dict:
+    """Сохранить/обновить черновик. payload может содержать id (обновить
+    существующий) либо без id (новый). Хранит period/строки/чёрный список."""
+    from app.core.time_utils import utcnow
+    drafts = await _load_drafts_raw(db)
+    payload = dict(payload)
+    did = payload.get("id")
+    payload["saved_at"] = utcnow().isoformat()
+    payload["saved_by"] = actor.username if actor else None
+    updated = False
+    if did:
+        for i, d in enumerate(drafts):
+            if d.get("id") == did:
+                payload["id"] = did
+                drafts[i] = payload
+                updated = True
+                break
+    if not updated:
+        new_id = max((int(d.get("id", 0) or 0) for d in drafts), default=0) + 1
+        payload["id"] = new_id
+        drafts.append(payload)
+    drafts = drafts[-_DRAFTS_CAP:]
+    await _save_drafts_raw(db, drafts)
+    return {"status": "ok", "id": payload["id"],
+            "rows": len(payload.get("rows", [])), "saved_at": payload["saved_at"]}
 
 
-async def clear_draft(db: AsyncSession) -> dict:
-    from app.modules.utility.models import SystemSetting
-    row = await db.get(SystemSetting, DRAFT_KEY)
-    if row:
-        await db.delete(row)
-        await db.commit()
+async def list_drafts(db: AsyncSession) -> dict:
+    drafts = await _load_drafts_raw(db)
+    out = [{
+        "id": d.get("id"), "period_id": d.get("period_id"),
+        "prev_period_id": d.get("prev_period_id"),
+        "period_name": d.get("period_name"),
+        "saved_at": d.get("saved_at"), "saved_by": d.get("saved_by"),
+        "rows": len(d.get("rows", [])), "blacklist": len(d.get("blacklist", [])),
+    } for d in drafts]
+    out.sort(key=lambda x: x.get("saved_at") or "", reverse=True)
+    return {"drafts": out}
+
+
+async def get_draft(db: AsyncSession, draft_id: int) -> Optional[dict]:
+    for d in await _load_drafts_raw(db):
+        if d.get("id") == draft_id:
+            return d
+    return None
+
+
+async def delete_draft(db: AsyncSession, draft_id: int) -> dict:
+    drafts = await _load_drafts_raw(db)
+    drafts = [d for d in drafts if d.get("id") != draft_id]
+    await _save_drafts_raw(db, drafts)
     return {"status": "ok"}
 
 
