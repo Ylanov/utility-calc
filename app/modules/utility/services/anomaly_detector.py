@@ -48,16 +48,11 @@ def _flag_score(flag: str) -> int:
     if flag.startswith("SPIKE_"):              return 40
     if flag.startswith("FLAT_"):               return 35
     if flag.startswith("FROZEN_"):             return 30
-    if flag.startswith("TREND_UP_"):           return 30
     if flag.startswith("ZERO_"):               return 25
-    if flag.startswith("HIGH_VS_PEERS_"):      return 20
     if flag.startswith("HIGH_PER_PERSON_"):    return 25
     if flag.startswith("HIGH_"):               return 20
     if flag.startswith("ROUND_NUMBER_"):       return 10
     if flag == "HOT_GT_COLD":                  return 30
-    if flag == "COPY_NEIGHBOR":                return 35
-    if flag == "COPY_NEIGHBOR_PARTIAL":        return 15
-    if flag == "GAP_RECOVERY":                 return 25
     if flag == "COMBO_SUSPICIOUS":             return 25
     return 20  # fallback для будущих флагов
 
@@ -68,7 +63,7 @@ def _flag_score(flag: str) -> int:
 _SUSPICIOUS_PREFIXES = (
     "FLAT_", "ROUND_NUMBER_", "DROP_AFTER_SPIKE_", "ZERO_", "FROZEN_",
 )
-_SUSPICIOUS_EXACT = ("COPY_NEIGHBOR", "COPY_NEIGHBOR_PARTIAL", "HOT_GT_COLD")
+_SUSPICIOUS_EXACT = ("HOT_GT_COLD",)
 
 
 def mad(data: List[Decimal]) -> Decimal:
@@ -86,7 +81,6 @@ def analyze_resource(
     current_delta: Decimal,
     hist_deltas: List[Decimal],
     name: str,
-    avg_peer: Optional[Decimal] = None,
     meter_present: bool = True,
 ) -> Tuple[List[str], int]:
     flags: list[str] = []
@@ -107,7 +101,6 @@ def analyze_resource(
 
     mad_mult = Decimal(str(config.get_int("anomaly.mad_multiplier", 4)))
     soft_factor = Decimal(str(config.get_float("anomaly.soft_spike_factor", 2.0)))
-    peer_factor = Decimal(str(config.get_float("anomaly.peer_factor", 3.0)))
 
     # 1. SPIKE: Аномальный скачок > Median + N×MAD
     if current_delta > med + m * mad_mult and current_delta > Decimal("1.0"):
@@ -141,13 +134,7 @@ def analyze_resource(
         flags.append(f"FLAT_{name}")
         score += 35
 
-    # 6. TREND_UP — скрытая утечка
-    if len(hist_deltas) >= 3:
-        if hist_deltas[-3] < hist_deltas[-2] < hist_deltas[-1] < current_delta:
-            flags.append(f"TREND_UP_{name}")
-            score += 30
-
-    # 7. DROP_AFTER_SPIKE — анти-чит сброс после высокой подачи
+    # 6. DROP_AFTER_SPIKE — анти-чит сброс после высокой подачи
     if len(hist_deltas) >= 2:
         # Раньше захардкожено 3.0 / 0.3 — теперь через config, чтобы админ
         # мог тюнить чувствительность для конкретного общежития.
@@ -159,12 +146,6 @@ def analyze_resource(
         ):
             flags.append(f"DROP_AFTER_SPIKE_{name}")
             score += 40
-
-    # 8. HIGH_VS_PEERS
-    if avg_peer and avg_peer > 0:
-        if current_delta > avg_peer * peer_factor:
-            flags.append(f"HIGH_VS_PEERS_{name}")
-            score += 20
 
     return flags, score
 
@@ -201,65 +182,12 @@ def _check_hot_gt_cold(current_deltas: Dict[str, Decimal]) -> Tuple[List[str], i
     return [], 0
 
 
-def _check_gap_recovery(
-    current_reading: MeterReading,
-    history: List[MeterReading],
-    current_deltas: Dict[str, Decimal],
-) -> Tuple[List[str], int]:
-    """Если жилец не подавал N+ месяцев, а затем сразу пришёл с большой подачей —
-    подозрительно. Может быть честным накопленным расходом (был в отъезде, потом
-    включил), а может — попыткой перекинуть высокий расход на «спокойный» период."""
-    if not config.is_rule_enabled("rule.gap_recovery"):
-        return [], 0
-    if not history:
-        return [], 0
-    last = history[0]
-    if not last.created_at or not current_reading.created_at:
-        return [], 0
-    gap_days = (current_reading.created_at - last.created_at).days
-    min_days = config.get_int("anomaly.gap_recovery.min_days", 90)
-    if gap_days < min_days:
-        return [], 0
-    # Порог «накопленного» расхода — любой ресурс с дельтой больше этого
-    # значения считается «большой подачей» в gap-recovery.
-    min_volume = Decimal(str(config.get_float("anomaly.gap_recovery.min_volume", 8.0)))
-    big_resources = [k for k, v in current_deltas.items() if v >= min_volume]
-    if big_resources:
-        return ["GAP_RECOVERY"], 25
-    return [], 0
-
-
-def _check_copy_neighbor(
-    current_reading: MeterReading,
-    current_deltas: Dict[str, Decimal],
-    neighbor_deltas: Optional[List[Dict[str, Decimal]]],
-) -> Tuple[List[str], int]:
-    """Подозрение что списали показания у соседа: дельты совпадают с одним
-    из соседей по комнате с точностью до epsilon. Даже один совпавший
-    ресурс — подозрительно (счётчики у разных людей расходятся почти всегда)."""
-    if not config.is_rule_enabled("rule.copy_neighbor"):
-        return [], 0
-    if not neighbor_deltas:
-        return [], 0
-    eps = Decimal(str(config.get_float("rule.copy_neighbor.epsilon", 0.001)))
-    flags: list[str] = []
-    for nb in neighbor_deltas:
-        matches = 0
-        for k, v in current_deltas.items():
-            nv = nb.get(k)
-            if nv is None or v == 0:
-                continue
-            if abs(v - nv) <= eps:
-                matches += 1
-        if matches >= 2:
-            # Совпало по 2+ ресурсам — почти точно списано.
-            flags.append("COPY_NEIGHBOR")
-            return flags, 35
-        elif matches == 1 and len(current_deltas) >= 2:
-            # Один в один по одному ресурсу — может быть совпадением, флагуем мягко.
-            flags.append("COPY_NEIGHBOR_PARTIAL")
-            return flags, 15
-    return flags, 0
+# Удалены 2026-06-19 как мёртвые/шумные (см. аудит анализаторов):
+#   _check_gap_recovery (GAP_RECOVERY) — высокий false-positive, авто-добивка
+#     неподавших (AUTO_NORM) почти исключает реальные 90-дневные паузы;
+#   _check_copy_neighbor (COPY_NEIGHBOR/_PARTIAL) — neighbor_deltas НИКОГДА не
+#     передавался вызывающим кодом → флаг не срабатывал (мёртвый код);
+#   TREND_UP_*/HIGH_VS_PEERS_* (в analyze_resource) — шум / мёртвый peer-параметр.
 
 
 # ---------------------------------------------------------------------------
@@ -269,8 +197,6 @@ def check_reading_for_anomalies_v2(
     current_reading: MeterReading,
     history: List[MeterReading],
     user: Optional[User] = None,
-    avg_peer_consumption: Optional[Dict[str, Decimal]] = None,
-    neighbor_deltas: Optional[List[Dict[str, Decimal]]] = None,
     room=None,
 ) -> Tuple[Optional[str], int]:
     """Возвращает: (строка_флагов | None, risk_score 0..100).
@@ -278,10 +204,7 @@ def check_reading_for_anomalies_v2(
     Параметры:
         current_reading — текущая подача (ещё не сохранённая).
         history — список MeterReading этого жильца, отсортирован DESC (0=новейший).
-        user — для контекстного анализа (residents_count).
-        avg_peer_consumption — словарь avg_hot/avg_cold/avg_elect среднего по группе.
-        neighbor_deltas — НОВОЕ в v3: список deltas соседей по комнате за тот же период,
-            используется для COPY_NEIGHBOR. Передавать необязательно.
+        user/room — для контекстного анализа (число людей из комнаты).
     """
     if not history or len(history) < 2:
         return None, 0
@@ -338,15 +261,10 @@ def check_reading_for_anomalies_v2(
 
     # --- 2. СТАТИСТИЧЕСКИЙ И ПОВЕДЕНЧЕСКИЙ АНАЛИЗ ---
     for key in ["HOT", "COLD", "ELECT"]:
-        peer_avg = (
-            avg_peer_consumption.get(f"avg_{key.lower()}")
-            if avg_peer_consumption else None
-        )
         f, s = analyze_resource(
             current_deltas[key],
             hist_deltas[key],
             key,
-            peer_avg,
             meter_present=meter_present_map[key],
         )
         flags.extend(f)
@@ -382,12 +300,10 @@ def check_reading_for_anomalies_v2(
                 flags.append("HIGH_PER_PERSON_ELECT")
                 total_score += 25
 
-    # --- 4. НОВЫЕ ПРАВИЛА v3 ---
+    # --- 4. ДОП. ПРАВИЛА ---
     for rule_fn, args in (
         (_check_round_number, (current_deltas,)),
         (_check_hot_gt_cold, (current_deltas,)),
-        (_check_gap_recovery, (current_reading, history, current_deltas)),
-        (_check_copy_neighbor, (current_reading, current_deltas, neighbor_deltas)),
     ):
         f, s = rule_fn(*args)
         flags.extend(f)

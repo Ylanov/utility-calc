@@ -189,8 +189,6 @@ def _detect_for_user(
         prev_costs=prev_costs,
         prev_debts=prev_debts,
         has_reading=cur_reading is not None,
-        resident_type=getattr(user, "resident_type", "family") or "family",
-        billing_mode=getattr(user, "billing_mode", "by_meter") or "by_meter",
     )
     for f in fin_flags:
         ptype = _FINANCE_FLAG_MAP.get(f)

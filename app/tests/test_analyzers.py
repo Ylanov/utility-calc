@@ -45,11 +45,9 @@ def test_flag_score_spike_family():
 
 
 def test_flag_score_v3_rules():
-    """Правила v3 — каждое со своим score."""
+    """Активные правила — каждое со своим score (2026-06-19: COPY_NEIGHBOR/
+    GAP_RECOVERY/TREND_UP/HIGH_VS_PEERS удалены как мёртвые/шумные)."""
     assert _flag_score("HOT_GT_COLD") == 30
-    assert _flag_score("COPY_NEIGHBOR") == 35
-    assert _flag_score("COPY_NEIGHBOR_PARTIAL") == 15
-    assert _flag_score("GAP_RECOVERY") == 25
     assert _flag_score("COMBO_SUSPICIOUS") == 25
 
 
@@ -60,10 +58,8 @@ def test_flag_score_unknown_fallback():
 
 
 def test_flag_score_high_disambiguation():
-    """HIGH_VS_PEERS_X должен возвращать 20, а HIGH_X (просто) тоже 20,
-    HIGH_PER_PERSON_X — 25 (особый случай)."""
+    """HIGH_X (soft spike) = 20, HIGH_PER_PERSON_X — 25 (особый случай)."""
     assert _flag_score("HIGH_HOT") == 20  # soft spike
-    assert _flag_score("HIGH_VS_PEERS_HOT") == 20
     assert _flag_score("HIGH_PER_PERSON_COLD") == 25
     assert _flag_score("HIGH_PER_PERSON_ELECT") == 25
 
@@ -218,7 +214,7 @@ def test_finance_flag_scores_complete():
     """Все 8 финансовых флагов имеют score в _FLAG_SCORES."""
     expected = {
         "MISSING_RECEIPT", "ZERO_BILL", "DEBT_GROWING", "BILL_SPIKE",
-        "BILL_DROP", "HIGH_BILL_PER_PERSON", "WRONG_BILLING_MODE", "OVERPAY_SUSPECT",
+        "BILL_DROP", "HIGH_BILL_PER_PERSON", "OVERPAY_SUSPECT",
     }
     assert expected.issubset(set(_FLAG_SCORES.keys()))
 
@@ -309,39 +305,7 @@ def test_finance_debt_growing_three_periods():
     assert "DEBT_GROWING" in flags
 
 
-def test_finance_single_by_meter_is_ok():
-    """Холостяк (single) на by_meter — это КОРРЕКТНО (2026-06-17): современная
-    модель — общие счётчики квартиры + делёж по room.is_singles_apartment,
-    per_capita — legacy. Раньше ошибочно флажили всех холостяков
-    «Несоответствие типа жильца» — теперь НЕ флажим."""
-    flags, score = analyze_finance(
-        user_id=1, residents_count=1,
-        current_total_cost=Decimal("3000"),
-        current_debt=Decimal("0"),
-        current_overpayment=Decimal("0"),
-        prev_costs=[Decimal("3000")],
-        prev_debts=[Decimal("0")],
-        has_reading=True,
-        resident_type="single",
-        billing_mode="by_meter",
-    )
-    assert "WRONG_BILLING_MODE" not in flags
-
-
-def test_finance_wrong_billing_mode_per_capita_flagged():
-    """per_capita — legacy-режим, ручной ввод → флажим как подозрительный."""
-    flags, score = analyze_finance(
-        user_id=1, residents_count=1,
-        current_total_cost=Decimal("3000"),
-        current_debt=Decimal("0"),
-        current_overpayment=Decimal("0"),
-        prev_costs=[Decimal("3000")],
-        prev_debts=[Decimal("0")],
-        has_reading=True,
-        resident_type="single",
-        billing_mode="per_capita",
-    )
-    assert "WRONG_BILLING_MODE" in flags
+# WRONG_BILLING_MODE удалён 2026-06-19 (legacy per_capita выведен) — тесты сняты.
 
 
 def test_finance_high_bill_per_person():

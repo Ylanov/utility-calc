@@ -27,7 +27,6 @@ FLAG_SEVERITY = {
     "OVERPAY_SUSPECT": "low",
     "HIGH_BILL_PER_PERSON": "medium",
     "MISSING_RECEIPT": "high",
-    "WRONG_BILLING_MODE": "medium",
 }
 
 
@@ -40,7 +39,6 @@ _FLAG_SCORES = {
     "BILL_SPIKE": 25,
     "BILL_DROP": 20,
     "HIGH_BILL_PER_PERSON": 20,
-    "WRONG_BILLING_MODE": 15,
     "OVERPAY_SUSPECT": 10,
 }
 
@@ -61,8 +59,6 @@ def analyze_finance(
     prev_costs: list[Decimal],          # суммы прошлых N периодов (старые → новые)
     prev_debts: list[Decimal],          # долги прошлых N периодов
     has_reading: bool,                  # есть ли MeterReading в текущем периоде вообще
-    resident_type: str = "family",      # 'family' | 'single'
-    billing_mode: str = "by_meter",     # 'by_meter' | 'per_capita'
 ) -> tuple[list[str], int]:
     """Возвращает (список финансовых флагов, suggested risk-level 0..100).
 
@@ -140,17 +136,9 @@ def analyze_finance(
             flags.append("HIGH_BILL_PER_PERSON")
             score += 20
 
-    # ---------- WRONG_BILLING_MODE ----------
-    # Современная модель холостяков (2026): резидент 'single' живёт на ОБЩИХ
-    # счётчиках квартиры и платит by_meter — делёж счёта делает billing по
-    # флагу КОМНАТЫ room.is_singles_apartment, а НЕ billing_mode='per_capita'
-    # (per_capita — legacy). Поэтому single+by_meter — это КОРРЕКТНО, флаг не
-    # ставим (раньше ошибочно флажили всех холостяков «Несоответствие типа
-    # жильца»). Подозрителен только per_capita (legacy-режим, ручной ввод).
-    if config.is_rule_enabled("finance.wrong_billing_mode"):
-        if billing_mode == "per_capita":
-            flags.append("WRONG_BILLING_MODE")
-            score += 15
+    # WRONG_BILLING_MODE УДАЛЁН 2026-06-19: legacy per_capita-режим выведен из
+    # эксплуатации (billing_mode всегда by_meter, тип жильца — из комнаты),
+    # флаг больше не имел смысла и противоречил текущей модели.
 
     return _filter_dismissed(flags, min(score, 100), user_id)
 
@@ -203,7 +191,4 @@ FLAG_CATALOG = [
     {"code": "MISSING_RECEIPT", "severity": "high",
      "title": "Нет квитанции за период",
      "desc": "У жильца не утверждено ни одного показания за этот период."},
-    {"code": "WRONG_BILLING_MODE", "severity": "medium",
-     "title": "Несоответствие типа жильца и режима оплаты",
-     "desc": "Холостяк (single) должен быть на per_capita, семья (family) — by_meter."},
 ]
