@@ -1298,28 +1298,57 @@ export const SummaryModule = {
         const ov = document.createElement('div');
         ov.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,.45); display:flex; align-items:center; justify-content:center; z-index:10002; padding:20px;';
         const totalCnt = groups.reduce((s, g) => s + (g.count || 0), 0);
+        const rowCss = 'display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--border-color,#e2e8f0); border-radius:8px; margin-bottom:6px; cursor:pointer;';
         ov.innerHTML =
-            '<div class="modal-window" style="max-width:460px; width:100%;">' +
+            '<div class="modal-window" style="max-width:480px; width:100%;">' +
             '  <div class="modal-header"><h3><i class="fa-solid fa-file-excel"></i> Выгрузка в 1С</h3>' +
             '    <button class="close-btn close-icon" data-x1c-close>&times;</button></div>' +
-            '  <div class="modal-body" style="max-height:60vh; overflow:auto;">' +
-            '    <div style="font-size:12px; color:var(--text-secondary); margin-bottom:10px;">Выберите дом или общежитие (или всё):</div>' +
-            '    <button class="action-btn success-btn" data-x1c-group="" style="width:100%; justify-content:space-between; margin-bottom:8px;"><span>📦 Все</span><span>' + totalCnt + ' чел.</span></button>' +
-            groups.map((g) => '<button class="action-btn secondary-btn" data-x1c-group="' + esc(g.name) + '" style="width:100%; justify-content:space-between; margin-bottom:6px;"><span>' + esc(g.name) + '</span><span>' + (g.count || 0) + ' чел.</span></button>').join('') +
+            '  <div class="modal-body" style="max-height:55vh; overflow:auto;">' +
+            '    <div style="font-size:12px; color:var(--text-secondary); margin-bottom:10px;">Отметьте дома/общежития — выгрузятся в один файл:</div>' +
+            '    <label style="' + rowCss + ' font-weight:600; background:var(--bg-secondary,#f8fafc);">' +
+            '      <input type="checkbox" data-x1c-all style="width:16px; height:16px;"><span style="flex:1;">📦 Все</span><span style="color:var(--text-secondary);">' + totalCnt + ' чел.</span></label>' +
+            (groups.length ? '<div style="height:1px; background:var(--border-color,#e2e8f0); margin:4px 0 8px;"></div>' : '') +
+            groups.map((g) => '<label style="' + rowCss + '">' +
+                '<input type="checkbox" data-x1c-cb value="' + esc(g.name) + '" data-cnt="' + (g.count || 0) + '" style="width:16px; height:16px;">' +
+                '<span style="flex:1;">' + esc(g.name) + '</span><span style="color:var(--text-secondary);">' + (g.count || 0) + ' чел.</span></label>').join('') +
             (groups.length ? '' : '<div style="color:var(--text-secondary);">Нет данных за период.</div>') +
+            '  </div>' +
+            '  <div class="modal-footer" style="display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 16px; border-top:1px solid var(--border-color,#e2e8f0);">' +
+            '    <span data-x1c-summary style="font-size:13px; color:var(--text-secondary);">Выбрано: 0 · 0 чел.</span>' +
+            '    <button class="action-btn success-btn" data-x1c-go disabled style="opacity:.5;"><i class="fa-solid fa-download"></i> Выгрузить</button>' +
             '  </div></div>';
         document.body.appendChild(ov);
         const close = () => ov.remove();
+        const cbs = () => Array.from(ov.querySelectorAll('[data-x1c-cb]'));
+        const allCb = ov.querySelector('[data-x1c-all]');
+        const goBtn = ov.querySelector('[data-x1c-go]');
+        const summary = ov.querySelector('[data-x1c-summary]');
+        const refresh = () => {
+            const checked = cbs().filter((c) => c.checked);
+            const people = checked.reduce((s, c) => s + (parseInt(c.getAttribute('data-cnt'), 10) || 0), 0);
+            summary.textContent = `Выбрано: ${checked.length} · ${people} чел.`;
+            goBtn.disabled = checked.length === 0;
+            goBtn.style.opacity = checked.length === 0 ? '.5' : '1';
+            const total = cbs().length;
+            allCb.checked = total > 0 && checked.length === total;
+            allCb.indeterminate = checked.length > 0 && checked.length < total;
+        };
+        ov.addEventListener('change', (e) => {
+            if (e.target === allCb) { cbs().forEach((c) => { c.checked = allCb.checked; }); }
+            refresh();
+        });
         ov.addEventListener('click', async (e) => {
             if (e.target === ov || e.target.closest('[data-x1c-close]')) { close(); return; }
-            const btn = e.target.closest('[data-x1c-group]');
-            if (!btn) return;
-            const grp = btn.getAttribute('data-x1c-group');
+            if (!e.target.closest('[data-x1c-go]')) return;
+            const picked = cbs().filter((c) => c.checked).map((c) => c.value);
+            if (!picked.length) return;
+            const all = picked.length === cbs().length;  // все выбраны → без фильтра (быстрее)
             close();
             setLoading(this.dom.btn1C, true, 'Формирование…');
             try {
-                const url = `/admin/export-1c?period_id=${pid}` + (grp ? `&group=${encodeURIComponent(grp)}` : '');
-                await api.download(url, `Vygruzka_1C_${pid}${grp ? '_' + grp : ''}.xlsx`);
+                const qs = all ? '' : picked.map((g) => `&group=${encodeURIComponent(g)}`).join('');
+                const fnameSuffix = all ? '' : (picked.length === 1 ? '_' + picked[0] : `_vyborka_${picked.length}`);
+                await api.download(`/admin/export-1c?period_id=${pid}${qs}`, `Vygruzka_1C_${pid}${fnameSuffix}.xlsx`);
             } catch (e2) {
                 toast('Ошибка выгрузки в 1С: ' + (e2.message || e2), 'error');
             } finally {

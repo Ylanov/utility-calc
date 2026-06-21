@@ -8,7 +8,7 @@ import uuid
 import asyncio
 import logging
 from starlette.background import BackgroundTask
-from typing import Optional
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse, FileResponse
 from sqlalchemy import func
@@ -369,7 +369,7 @@ async def export_1c_groups(
 @router.get("/api/admin/export-1c", summary="Выгрузка в 1С (XLSX: Контрагент/Договор/Сумма 209+205)")
 async def export_1c(
         period_id: Optional[int] = Query(None, description="ID периода"),
-        group: Optional[str] = Query(None, description="Дом/общага (имя блока) — выгрузить только по нему"),
+        group: Optional[List[str]] = Query(None, description="Дом/общага (имя блока) — можно несколько, выгрузить только по ним"),
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db),
 ):
@@ -410,9 +410,11 @@ async def export_1c(
         .order_by(User.username)
     )).all()
 
-    # Фильтр по дому/общаге (если выбран в модалке).
+    # Фильтр по дому/общаге (можно несколько — галочки в модалке).
     if group:
-        rows = [(u, mr, room) for (u, mr, room) in rows if _report_group(room) == group]
+        wanted = {g for g in group if g}
+        if wanted:
+            rows = [(u, mr, room) for (u, mr, room) in rows if _report_group(room) in wanted]
 
     # Активные договоры найма одним запросом (последний по дате подписания).
     uids = [u.id for u, _, _ in rows]
@@ -448,7 +450,13 @@ async def export_1c(
             "", "", "", "", "",
         ])
 
-    _suffix = f"_{group}" if group else ""
+    _picked = [g for g in (group or []) if g]
+    if len(_picked) == 1:
+        _suffix = f"_{_picked[0]}"
+    elif len(_picked) > 1:
+        _suffix = f"_vyborka_{len(_picked)}"
+    else:
+        _suffix = ""
     filename = f"Vygruzka_1C_{period.name.replace(' ', '_')}{_suffix}.xlsx"
     encoded_filename = quote(filename)
     output = io.BytesIO()
