@@ -15,7 +15,7 @@ alembic==1.18.3
 
 # --- Config & Validation ---
 pydantic==2.12.5
-pydantic-settings==2.12.0
+pydantic-settings==2.14.2   # чинит GHSA-4xgf-cpjx-pc3j (pip-audit)
 
 # --- Authentication & Security ---
 python-multipart==0.0.31   # чинит CVE-2026-53540 (+ ранее -40347/-42561)
