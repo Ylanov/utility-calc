@@ -14,23 +14,6 @@
             </div>
             <button id="btnOpenAddRoom" class="action-btn primary-btn full-width mb-3"><i class="fa-solid fa-plus"></i> Добавить помещение</button>
 
-            <!-- НОВОЕ: Блок начальных показаний -->
-            <div style="margin-top: 20px; padding-top: 16px; border-top: 1px dashed var(--border-color);">
-                <h4 style="font-size: 13px; color: var(--text-main); margin-bottom: 12px;"><i class="fa-solid fa-download" style="color: #6366f1; margin-right: 6px;"></i> Начальные показания</h4>
-                <p style="font-size: 11px; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.4;">
-                    Загрузите текущие показания счётчиков из Excel, чтобы первый расчёт жильцов не шёл от нуля.
-                </p>
-                <button id="btnDownloadReadingsTemplate" class="action-btn secondary-btn full-width" style="margin-bottom: 8px; font-size: 12px;">
-                    <i class="fa-solid fa-file-excel"></i> Скачать шаблон
-                </button>
-                <div class="compact-upload" style="width: 100%;">
-                    <input type="file" id="importInitialReadingsFile" accept=".xlsx, .xls">
-                    <button id="btnImportInitialReadings" class="action-btn primary-btn" style="font-size: 12px; white-space: nowrap;">
-                        <i class="fa-solid fa-upload"></i> Загрузить
-                    </button>
-                </div>
-            </div>
-
             <!-- Анализ жилфонда переехал в единый «Центр анализа» на вкладке «Операции»:
                  Операции → Центр анализа → таб «Анализ жилфонда». Там же собраны
                  аномалии показаний, сравнение периодов и обслуживание буфера gsheets.

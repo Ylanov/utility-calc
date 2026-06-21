@@ -45,7 +45,6 @@ export const UsersModule = {
             btnDownloadTemplate: document.getElementById('btnDownloadTemplate'),
             btnExport: document.getElementById('btnExportUsers'),
             newTariffSelect: document.getElementById('newTariffId'),
-            newResidentType: document.getElementById('newResidentType'),
             // Тип помещения (общага/дом) + раздельные пикеры
             newPlaceTypeRadios: document.querySelectorAll('input[name="newPlaceType"]'),
             newDormPicker: document.getElementById('newDormPicker'),
@@ -61,7 +60,6 @@ export const UsersModule = {
             infoCw: document.getElementById('infoCw'),
             infoEl: document.getElementById('infoEl'),
             // Фильтры в toolbar
-            filterResidentType: document.getElementById('filterResidentType'),
             filterDormitory: document.getElementById('filterDormitory'),
             // housing_001/E2-C: фильтр по типу помещения.
             filterPlaceType: document.getElementById('filterPlaceType'),
@@ -80,6 +78,12 @@ export const UsersModule = {
                 role: document.getElementById('editRole'),
                 tariff: document.getElementById('editTariffId'),
 
+                // Тип помещения (общага/дом) + раздельные пикеры (как в форме создания).
+                placeTypeRadios: document.querySelectorAll('input[name="editPlaceType"]'),
+                dormPicker: document.getElementById('editDormPicker'),
+                housePicker: document.getElementById('editHousePicker'),
+                houseSelect: document.getElementById('editHouseSelect'),
+
                 dormSelect: document.getElementById('editDormSelect'),
                 roomSelect: document.getElementById('editRoomSelect'),
                 roomInfo: document.getElementById('editRoomInfo'),
@@ -88,7 +92,6 @@ export const UsersModule = {
                 infoHw: document.getElementById('editInfoHw'),
                 infoCw: document.getElementById('editInfoCw'),
                 infoEl: document.getElementById('editInfoEl'),
-                residentType: document.getElementById('editResidentType'),
                 btnHistory: document.getElementById('btnShowResidenceHistory'),
                 historyContainer: document.getElementById('editResidenceHistory'),
             },
@@ -135,7 +138,6 @@ export const UsersModule = {
                 const qs = new URLSearchParams();
                 const search = document.getElementById('usersSearchInput')?.value.trim();
                 if (search) qs.set('search', search);
-                if (this.dom.filterResidentType?.value) qs.set('resident_type', this.dom.filterResidentType.value);
                 if (this.dom.filterDormitory?.value) qs.set('dormitory', this.dom.filterDormitory.value);
                 if (this.dom.filterPlaceType?.value) qs.set('place_type', this.dom.filterPlaceType.value);
                 api.download('/users/export/list?' + qs.toString(), 'residents_export.xlsx');
@@ -166,8 +168,8 @@ export const UsersModule = {
             );
         }
 
-        // Фильтры таблицы: тип жильца / общежитие / тип помещения
-        [this.dom.filterResidentType, this.dom.filterDormitory, this.dom.filterPlaceType].forEach(el => {
+        // Фильтры таблицы: общежитие / тип помещения
+        [this.dom.filterDormitory, this.dom.filterPlaceType].forEach(el => {
             el?.addEventListener('change', () => this.table?.refresh());
         });
 
@@ -230,6 +232,19 @@ export const UsersModule = {
                 handleRoomChange(e.target.value, this.modal.inputs.dormSelect.value, this.modal.inputs, this.roomsCache);
             });
         }
+
+        // Переключатель типа помещения (общага/дом) в модалке редактирования.
+        if (this.modal.inputs.placeTypeRadios) {
+            this.modal.inputs.placeTypeRadios.forEach(r =>
+                r.addEventListener('change', () => this.applyEditPlaceType())
+            );
+        }
+        // Дом: выбор адреса → показать параметры помещения.
+        if (this.modal.inputs.houseSelect) {
+            this.modal.inputs.houseSelect.addEventListener('change', (e) =>
+                this.showEditHouseInfo(e.target.value)
+            );
+        }
     },
 
     async loadTariffs() {
@@ -267,25 +282,38 @@ export const UsersModule = {
         }
     },
 
-    // Загрузка домов/квартир (place_type=house) для пикера в форме создания.
-    // Лейбл опции — адрес (улица, дом, квартира).
+    // Загрузка домов/квартир (place_type=house) для пикеров заселения и
+    // редактирования. Лейбл опции — адрес (улица, дом, квартира). Кэш один
+    // на оба селекта (форма создания + модалка правки).
     async loadHouses() {
-        if (!this.dom.newHouseSelect) return;
         try {
             const res = await api.get('/rooms?place_type=house&limit=1000');
             this.housesCache = res.items || [];
-            const fmt = (r) => {
-                const p = [];
-                if (r.street) p.push(`ул. ${r.street}`);
-                if (r.house_number) p.push(`д. ${r.house_number}`);
-                if (r.apartment_number) p.push(`кв. ${r.apartment_number}`);
-                return p.join(', ') || `Дом #${r.id}`;
-            };
-            this.dom.newHouseSelect.innerHTML = '<option value="">-- Выберите дом / квартиру --</option>' +
-                this.housesCache.map(r => `<option value="${r.id}">${this._escape(fmt(r))}</option>`).join('');
         } catch (e) {
-            this.dom.newHouseSelect.innerHTML = '<option value="">Нет домов (создайте в Жилфонде)</option>';
+            this.housesCache = [];
         }
+        this._fillHouseSelect(this.dom.newHouseSelect);
+        this._fillHouseSelect(this.modal?.inputs?.houseSelect);
+    },
+
+    // Формат адреса дома для опции селекта.
+    _houseLabel(r) {
+        const p = [];
+        if (r.street) p.push(`ул. ${r.street}`);
+        if (r.house_number) p.push(`д. ${r.house_number}`);
+        if (r.apartment_number) p.push(`кв. ${r.apartment_number}`);
+        return p.join(', ') || `Дом #${r.id}`;
+    },
+
+    // Заполнить переданный <select> списком домов из housesCache.
+    _fillHouseSelect(selectEl) {
+        if (!selectEl) return;
+        if (!this.housesCache.length) {
+            selectEl.innerHTML = '<option value="">Нет домов (создайте в Жилфонде)</option>';
+            return;
+        }
+        selectEl.innerHTML = '<option value="">-- Выберите дом / квартиру --</option>' +
+            this.housesCache.map(r => `<option value="${r.id}">${this._escape(this._houseLabel(r))}</option>`).join('');
     },
 
     // Текущий выбранный тип помещения в форме создания (dormitory|house).
@@ -326,6 +354,46 @@ export const UsersModule = {
         if (this.dom.infoEl) this.dom.infoEl.textContent = room.el_meter_serial || '-';
     },
 
+    // Текущий выбранный тип помещения в модалке редактирования (dormitory|house).
+    _currentEditPlaceType() {
+        const checked = document.querySelector('input[name="editPlaceType"]:checked');
+        return checked ? checked.value : 'dormitory';
+    },
+
+    // Переключение пикеров общага/дом в модалке правки + сброс противоположного,
+    // чтобы случайно не отправить чужой room_id.
+    applyEditPlaceType() {
+        const inp = this.modal.inputs;
+        const isHouse = this._currentEditPlaceType() === 'house';
+        if (inp.dormPicker) inp.dormPicker.style.display = isHouse ? 'none' : '';
+        if (inp.housePicker) inp.housePicker.style.display = isHouse ? '' : 'none';
+        if (inp.roomInfo) inp.roomInfo.style.display = 'none';
+        if (isHouse) {
+            if (inp.dormSelect) inp.dormSelect.value = '';
+            if (inp.roomSelect) {
+                inp.roomSelect.value = '';
+                inp.roomSelect.disabled = true;
+            }
+        } else if (inp.houseSelect) {
+            inp.houseSelect.value = '';
+        }
+    },
+
+    // Показать параметры выбранного дома в info-блоке модалки правки.
+    showEditHouseInfo(roomIdStr) {
+        const inp = this.modal.inputs;
+        const box = inp.roomInfo;
+        if (!box) return;
+        const room = (this.housesCache || []).find(r => String(r.id) === String(roomIdStr));
+        if (!room) { box.style.display = 'none'; return; }
+        box.style.display = 'block';
+        if (inp.infoArea) inp.infoArea.textContent = Number(room.apartment_area || 0).toFixed(1);
+        if (inp.infoCap) inp.infoCap.textContent = room.total_room_residents || 1;
+        if (inp.infoHw) inp.infoHw.textContent = room.hw_meter_serial || '-';
+        if (inp.infoCw) inp.infoCw.textContent = room.cw_meter_serial || '-';
+        if (inp.infoEl) inp.infoEl.textContent = room.el_meter_serial || '-';
+    },
+
     initTable() {
         const self = this;
         this.table = new TableController({
@@ -344,11 +412,9 @@ export const UsersModule = {
             // контроллере этого нет, он будет вызван и проигнорирован.
             getExtraParams: () => {
                 const p = {};
-                const rt = self.dom.filterResidentType?.value;
                 const dn = self.dom.filterDormitory?.value;
                 // housing_001/E2-C: фильтр по типу помещения.
                 const pt = self.dom.filterPlaceType?.value;
-                if (rt) p.resident_type = rt;
                 if (dn) p.dormitory = dn;
                 if (pt) p.place_type = pt;
                 return p;
@@ -371,12 +437,9 @@ export const UsersModule = {
                 const area = user.room && user.room.apartment_area ? Number(user.room.apartment_area).toFixed(1) : '-';
                 const totalResidents = user.room ? user.room.total_room_residents : 1;
 
-                // Бейдж типа жильца (семья/холостяк). Режим оплаты убран —
-                // все платят по счётчикам, у холостяков счёт делится автоматически.
-                const rt = user.resident_type || 'family';
-                const typeChip = rt === 'single'
-                    ? el('span', { title: 'Холостяк', class: 'chip', style: { background: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '600' } }, '👤 Холост.')
-                    : el('span', { title: 'Семейный', class: 'chip', style: { background: '#dbeafe', color: '#1e40af', padding: '2px 8px', borderRadius: '10px', fontSize: '11px', fontWeight: '600' } }, '👨‍👩‍👧 Семья');
+                // Тип жильца (семья/холостяк) в таблице больше НЕ показываем —
+                // он определяется квартирой (Room.is_singles_apartment), а не
+                // человеком, и редактируется в «Жилфонде».
 
                 // Кликабельная ячейка с ФИО — открывает Hub-модалку со всеми
                 // действиями (редактирование / переезд / договоры). Раньше
@@ -406,7 +469,6 @@ export const UsersModule = {
                     el('td', { class: 'text-gray-500 text-sm' }, `#${user.id}`),
                     nameCell,
                     el('td', {}, el('span', { class: `role-badge ${user.role}` }, user.role)),
-                    el('td', { class: 'text-center' }, typeChip),
                     el('td', {}, address),
                     el('td', {}, area),
                     // Bug BB: вместо «N / M» (доля жильца от комнаты) — просто
@@ -562,10 +624,8 @@ export const UsersModule = {
             role,
             room_id: roomIdVal ? parseInt(roomIdVal) : null,
             // residents_count не шлём — число проживающих берётся из КОМНАТЫ.
-            // Тип жильца (family/single). Режим оплаты и место работы убраны:
-            // все платят по счётчикам, у холостяков счёт делится в billing,
-            // resident_type синхронизируется с холостяцкой квартирой на бэке.
-            resident_type: this.dom.newResidentType?.value || 'family',
+            // resident_type НЕ шлём — тип жильца (семья/холостяк) выводится из
+            // КВАРТИРЫ (Room.is_singles_apartment) на бэке при заселении.
             // Счётчики (has_*_meter) НЕ шлём — настраиваются на КОМНАТЕ (Жилфонд),
             // жилец наследует (meters_002, room_static_architecture).
         };
@@ -631,8 +691,15 @@ export const UsersModule = {
 
         // Заполняем шапку и сводку
         document.getElementById('hubUserName').textContent = user.username;
-        const addr = user.room ? `${user.room.dormitory_name}, ком. ${user.room.room_number}` : '—';
-        const rt = user.resident_type === 'single' ? 'Холостяк' : 'Семья';
+        const addr = user.room
+            ? (user.room.place_type === 'house'
+                ? '🏠 ' + ([
+                    user.room.street && `ул. ${user.room.street}`,
+                    user.room.house_number && `д. ${user.room.house_number}`,
+                    user.room.apartment_number && `кв. ${user.room.apartment_number}`,
+                  ].filter(Boolean).join(', ') || '—')
+                : `${user.room.dormitory_name}, ком. ${user.room.room_number}`)
+            : '—';
         const area = user.room?.apartment_area
             ? `${Number(user.room.apartment_area).toFixed(1)} м²` : '—';
         // Число жильцов — из КОМНАТЫ (per-user residents_count упразднён).
@@ -642,7 +709,7 @@ export const UsersModule = {
                 <div>
                     <div style="font-weight:600; font-size:13px;">${this._escape(addr)}</div>
                     <div style="color:var(--text-secondary); font-size:11px; margin-top:2px;">
-                        ${this._escape(rt)} · ${this._escape(area)} · ${this._escape(residents)} чел.
+                        ${this._escape(area)} · ${this._escape(residents)} чел.
                     </div>
                 </div>
                 <div style="text-align:right;">
@@ -1000,7 +1067,6 @@ export const UsersModule = {
             if (pwGroup) pwGroup.style.display = (user.role === 'admin') ? '' : 'none';
             if (inputs.role) inputs.role.value = user.role;
             if (inputs.tariff) inputs.tariff.value = user.tariff_id || '';
-            if (inputs.residentType) inputs.residentType.value = user.resident_type || 'family';
 
             // Счётчики жильца больше не редактируются в форме — настраиваются
             // на КОМНАТЕ (Жилфонд), жилец наследует (meters_002).
@@ -1042,7 +1108,27 @@ export const UsersModule = {
                 };
             }
 
-            if (user.room) {
+            // Тип помещения (дом/общага) + предзаполнение пикера.
+            const setEditPlaceType = (val) => {
+                (inputs.placeTypeRadios || []).forEach(r => { r.checked = (r.value === val); });
+                this.applyEditPlaceType();
+            };
+
+            if (user.room && user.room.place_type === 'house') {
+                setEditPlaceType('house');
+                if (inputs.houseSelect) {
+                    // Если дом создан после загрузки страницы — его нет в кэше,
+                    // и пустой select при сохранении отвязал бы жильца (room_id=null).
+                    // Дозаписываем текущий дом в кэш и перерисовываем список.
+                    if (!this.housesCache.some(r => String(r.id) === String(user.room.id))) {
+                        this.housesCache.push(user.room);
+                        this._fillHouseSelect(inputs.houseSelect);
+                    }
+                    inputs.houseSelect.value = user.room.id;
+                }
+                this.showEditHouseInfo(user.room.id);
+            } else if (user.room) {
+                setEditPlaceType('dormitory');
                 if (inputs.dormSelect) {
                     inputs.dormSelect.value = user.room.dormitory_name;
                     await handleDormChange(user.room.dormitory_name, inputs.roomSelect, inputs.roomInfo, this.roomsCache);
@@ -1053,6 +1139,7 @@ export const UsersModule = {
                     }
                 }
             } else {
+                setEditPlaceType('dormitory');
                 if (inputs.dormSelect) inputs.dormSelect.value = '';
                 if (inputs.roomSelect) {
                     inputs.roomSelect.innerHTML = '<option value="">Сначала выберите общежитие</option>';
@@ -1076,14 +1163,18 @@ export const UsersModule = {
         event.preventDefault();
         const button = this.modal.form.querySelector('.confirm-btn');
         const id = this.modal.inputs.id.value;
-        const roomIdVal = this.modal.inputs.roomSelect ? this.modal.inputs.roomSelect.value : null;
+        // room_id берём из активного пикера: общага → комната, дом → адрес.
+        const placeType = this._currentEditPlaceType();
+        const roomIdVal = placeType === 'house'
+            ? (this.modal.inputs.houseSelect?.value || null)
+            : (this.modal.inputs.roomSelect?.value || null);
 
         const data = {
             username: this.modal.inputs.username.value.trim(),
             role: this.modal.inputs.role.value,
             room_id: roomIdVal ? parseInt(roomIdVal) : null,
-            // residents_count не шлём — число проживающих берётся из КОМНАТЫ.
-            resident_type: this.modal.inputs.residentType?.value || 'family',
+            // residents_count / resident_type НЕ шлём — число проживающих и тип
+            // жильца (семья/холостяк) берутся из КВАРТИРЫ на бэке.
             // Счётчики (has_*_meter) НЕ шлём — настраиваются на КОМНАТЕ (Жилфонд),
             // жилец наследует (meters_002, room_static_architecture).
         };

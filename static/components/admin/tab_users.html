@@ -76,20 +76,9 @@
                     Счетчики: ГВС (<span id="infoHw" style="color: var(--danger-color); font-family: monospace;">-</span>), ХВС (<span id="infoCw" style="color: var(--primary-color); font-family: monospace;">-</span>), Электр. (<span id="infoEl" style="color: #d97706; font-family: monospace;">-</span>)
                 </div>
 
-                <!-- Тип жильца. Число проживающих НЕ задаётся на жильце
-                     (упразднено 2026-06-17) — берётся из КОМНАТЫ (Жилфонд,
-                     «Кол-во проживающих»). У холостяков счёт делится поровну
-                     автоматически (см. формулу singles в billing). -->
-                <div class="form-group" style="margin-bottom: 24px;">
-                    <label>Тип жильца</label>
-                    <select id="newResidentType">
-                        <option value="family">Семейный</option>
-                        <option value="single">Холостяк</option>
-                    </select>
-                    <p class="hint-text" style="font-size:11px; margin:4px 0 0;">
-                        Число проживающих и деление счёта задаются на КОМНАТЕ (раздел «Жилфонд»). Для холостяцких квартир тип проставляется автоматически при заселении.
-                    </p>
-                </div>
+                <!-- Тип жильца (семейный/холостяк) НЕ задаётся на жильце:
+                     он определяется КВАРТИРОЙ (Room.is_singles_apartment) и
+                     наследуется при заселении. Управляется в «Жилфонде». -->
 
                 <!-- Счётчики настраиваются на КОМНАТЕ (Жилфонд), жилец наследует.
                      В форме жильца не дублируем (meters_002, room_static_architecture). -->
@@ -145,11 +134,6 @@
                     <option value="100">100 строк</option>
                 </select>
                 <input type="text" id="usersSearchInput" placeholder="Поиск по ФИО/комнате..." style="flex:1; min-width:200px;">
-                <select id="filterResidentType" style="min-width:140px;" title="Тип жильца">
-                    <option value="">Все типы</option>
-                    <option value="family">Семейные</option>
-                    <option value="single">Холостяки</option>
-                </select>
                 <select id="filterDormitory" style="min-width:160px;" title="Фильтр по общежитию">
                     <option value="">Все общежития</option>
                 </select>
@@ -173,7 +157,6 @@
                         <th data-sort="id" class="sortable">ID</th>
                         <th data-sort="username" class="sortable">ФИО</th>
                         <th data-sort="role" class="sortable">Роль</th>
-                        <th class="text-center" title="Тип жильца: семейный / холостяк">Тип</th>
                         <th data-sort="dormitory" class="sortable">Общ.</th>
                         <th data-sort="apartment_area" class="sortable">Площ.</th>
                         <!-- Bug BB: было «Доля» N/M — заменено на простое
@@ -183,7 +166,7 @@
                     </tr>
                 </thead>
                 <tbody id="usersTableBody">
-                    <tr><td colspan="8" class="text-center" style="padding: 40px; color: var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка данных...</td></tr>
+                    <tr><td colspan="7" class="text-center" style="padding: 40px; color: var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка данных...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -226,7 +209,7 @@
                             <strong style="font-size:14px;">Редактировать</strong>
                         </div>
                         <div style="font-size:11px; color:var(--text-secondary); line-height:1.4;">
-                            ФИО, роль, тип жильца, помещение, счётчики.
+                            ФИО, роль, помещение, счётчики.
                         </div>
                     </button>
 
@@ -323,7 +306,24 @@
                     </div>
 
                     <h4 style="margin-bottom: 12px; font-size: 14px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">Привязка к помещению</h4>
-                    <div class="form-grid-2" style="background: var(--bg-page); padding: 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 16px;">
+
+                    <!-- Тип помещения: общежитие или дом (как в форме создания). -->
+                    <div class="form-group" style="margin-bottom: 12px;">
+                        <label>Тип помещения</label>
+                        <div class="radio-group" style="margin: 0;">
+                            <label class="radio-label">
+                                <input type="radio" name="editPlaceType" value="dormitory" checked>
+                                <span>🏢 Общежитие</span>
+                            </label>
+                            <label class="radio-label">
+                                <input type="radio" name="editPlaceType" value="house">
+                                <span>🏠 Дом / квартира</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Выбор помещения: ОБЩЕЖИТИЕ (каскад общага → комната) -->
+                    <div id="editDormPicker" class="form-grid-2" style="background: var(--bg-page); padding: 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 16px;">
                         <div class="form-group" style="margin: 0;">
                             <label>Общежитие</label>
                             <select id="editDormSelect"><option value="">Не привязан</option></select>
@@ -334,20 +334,15 @@
                         </div>
                     </div>
 
+                    <!-- Выбор помещения: ДОМ / КВАРТИРА (один список по адресу) -->
+                    <div id="editHousePicker" class="form-group" style="display: none; background: var(--bg-page); padding: 16px; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-bottom: 16px;">
+                        <label>Дом / квартира</label>
+                        <select id="editHouseSelect"><option value="">-- Выберите дом / квартиру --</option></select>
+                    </div>
+
                     <div id="editRoomInfo" style="display: none; background: var(--success-bg); padding: 12px 16px; border-radius: var(--radius-sm); border: 1px solid #cce8d6; margin-bottom: 16px; font-size: 13px;">
                         Площадь: <b id="editInfoArea">0</b> м² | Мест: <b id="editInfoCap">0</b><br>
                         Счетчики: ГВС (<span id="editInfoHw" style="color: var(--danger-color); font-family: monospace;">-</span>), ХВС (<span id="editInfoCw" style="color: var(--primary-color); font-family: monospace;">-</span>), Электр. (<span id="editInfoEl" style="color: #d97706; font-family: monospace;">-</span>)
-                    </div>
-
-                    <div class="form-group">
-                        <label>Тип жильца</label>
-                        <select id="editResidentType">
-                            <option value="family">Семейный</option>
-                            <option value="single">Холостяк</option>
-                        </select>
-                        <p class="hint-text" style="margin:4px 0 0;font-size:11px;">
-                            Число проживающих задаётся на КОМНАТЕ (раздел «Жилфонд»). Для холостяцких квартир тип проставляется автоматически при заселении.
-                        </p>
                     </div>
 
                     <!-- Счётчики настраиваются на КОМНАТЕ (Жилфонд), жилец наследует.

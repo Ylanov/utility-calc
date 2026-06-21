@@ -60,11 +60,6 @@ export const HousingModule = {
 
             // Анализатор жилфонда переехал в «Центр анализа» (см. analyzer.js),
             // этот модуль с ним больше не общается. DOM-ссылок здесь нет.
-
-            // НОВОЕ: Начальные показания — импорт
-            btnDownloadReadingsTemplate: document.getElementById('btnDownloadReadingsTemplate'),
-            btnImportInitialReadings: document.getElementById('btnImportInitialReadings'),
-            importInitialReadingsFile: document.getElementById('importInitialReadingsFile'),
         };
 
         this.modal = {
@@ -225,14 +220,6 @@ export const HousingModule = {
             this.initial.form.addEventListener('submit', (e) => this.handleInitialSubmit(e));
             if (this.initial.btnClose) this.initial.btnClose.addEventListener('click', (e) => { e.preventDefault(); this.initial.modal.classList.remove('open'); });
             if (this.initial.btnCancel) this.initial.btnCancel.addEventListener('click', (e) => { e.preventDefault(); this.initial.modal.classList.remove('open'); });
-        }
-
-        // НОВОЕ: Начальные показания — шаблон и импорт
-        if (this.dom.btnDownloadReadingsTemplate) {
-            this.dom.btnDownloadReadingsTemplate.addEventListener('click', () => this.downloadReadingsTemplate());
-        }
-        if (this.dom.btnImportInitialReadings) {
-            this.dom.btnImportInitialReadings.addEventListener('click', () => this.importInitialReadings());
         }
     },
 
@@ -1407,50 +1394,4 @@ export const HousingModule = {
             setLoading(this.initial.btnSubmit, false, 'Сохранить показания');
         }
     },
-
-    // ==========================================
-    // НОВОЕ: НАЧАЛЬНЫЕ ПОКАЗАНИЯ (МАССОВЫЙ ИМПОРТ)
-    // ==========================================
-    async downloadReadingsTemplate() {
-        setLoading(this.dom.btnDownloadReadingsTemplate, true, 'Генерация...');
-        try {
-            await api.download('/rooms/initial-readings/template', 'Initial_Readings_Template.xlsx');
-            toast('Шаблон скачан. Заполните показания и загрузите обратно.', 'success');
-        } catch (e) {
-            toast('Ошибка скачивания шаблона: ' + e.message, 'error');
-        } finally {
-            setLoading(this.dom.btnDownloadReadingsTemplate, false, 'Скачать шаблон');
-        }
-    },
-
-    async importInitialReadings() {
-        const file = this.dom.importInitialReadingsFile?.files[0];
-        if (!file) return toast('Выберите файл Excel', 'info');
-        if (!file.name.match(/\.(xlsx|xls)$/)) return toast('Только файлы Excel (.xlsx)', 'error');
-
-        const formData = new FormData();
-        formData.append('file', file);
-
-        setLoading(this.dom.btnImportInitialReadings, true, 'Загрузка...');
-        try {
-            const result = await api.post('/rooms/import-initial-readings', formData);
-
-            let msg = `Обновлено комнат: ${result.updated}`;
-            if (result.skipped > 0) msg += `, пропущено: ${result.skipped}`;
-
-            if (result.errors && result.errors.length > 0) {
-                toast(msg + '. Есть предупреждения — см. консоль.', 'warning');
-                console.warn('Import errors:', result.errors);
-            } else {
-                toast(msg, 'success');
-            }
-
-            this.dom.importInitialReadingsFile.value = '';
-            this.table.refresh();
-        } catch (e) {
-            toast('Ошибка импорта: ' + e.message, 'error');
-        } finally {
-            setLoading(this.dom.btnImportInitialReadings, false, 'Загрузить');
-        }
-    }
 };
