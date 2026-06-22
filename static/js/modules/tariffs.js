@@ -387,11 +387,12 @@ export const TariffsModule = {
             const opt = document.createElement('option');
             opt.value = t.id;
 
-            // Префикс по типу: singles vs family.
+            // Префикс по типу: «без условий» (норматив) / singles / family.
             const isSingles = (t.tariff_type === 'singles');
+            const isUncond = (t.tariff_type === 'unconditional');
             // Префикс по времени: запланированный (⏳) vs активный.
             const isScheduled = !!(t.effective_from && new Date(t.effective_from) > now);
-            const typeIcon = isSingles ? '👤' : '🏠';
+            const typeIcon = isUncond ? '📐' : (isSingles ? '👤' : '🏠');
             const statusIcon = isScheduled ? ' ⏳' : '';
             const prefix = `${typeIcon}${statusIcon} `;
 
@@ -467,6 +468,9 @@ export const TariffsModule = {
         const radioSng = document.getElementById('t_type_singles');
         if (radioFam) radioFam.checked = (ttype === 'family');
         if (radioSng) radioSng.checked = (ttype === 'singles');
+        // Тариф «БЕЗ УСЛОВИЙ» (норматив на квартиру).
+        const uncondCb = document.getElementById('t_unconditional');
+        if (uncondCb) uncondCb.checked = (ttype === 'unconditional');
 
         // Сезонность per-tariff (heating + hw_heating). См. миграцию
         // tariffs_seasonal_002_per_tariff. heating_active=true + даты=null →
@@ -1059,9 +1063,13 @@ export const TariffsModule = {
         data.charge_heating = cbStrict('t_charge_heating');
         data.charge_waste = cbStrict('t_charge_waste');
 
-        // Тип тарифа (radio: family / singles).
+        // Тип тарифа: «БЕЗ УСЛОВИЙ» (норматив) имеет приоритет; иначе radio
+        // family/singles (скрытый, по умолчанию family).
         const ttypeRadio = document.querySelector('input[name="t_type"]:checked');
-        data.tariff_type = ttypeRadio ? ttypeRadio.value : 'family';
+        const uncondCb = document.getElementById('t_unconditional');
+        data.tariff_type = (uncondCb && uncondCb.checked)
+            ? 'unconditional'
+            : (ttypeRadio ? ttypeRadio.value : 'family');
 
         setLoading(btnSubmit, true, 'Сохранение...');
 

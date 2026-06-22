@@ -24,6 +24,7 @@ from app.modules.utility.models import MeterReading, Room, Tariff, User
 from app.modules.utility.services.calculations import (
     CalculationError,
     calculate_utilities,
+    is_unconditional,
 )
 
 
@@ -73,6 +74,52 @@ def compute_reading_breakdown(
 
     Raises CalculationError — если тариф пустой (см. calculate_utilities).
     """
+    # Тариф «БЕЗ УСЛОВИЙ» (unconditional): расход = НОРМАТИВ НА КВАРТИРУ из
+    # тарифа (фиксированно; счётчики и дельта current-prev игнорируются). Семья
+    # платит норму целиком; у холостяцкой квартиры вода/канализация делятся в
+    # calculate_utilities на total_room_residents, а электричество делим здесь
+    # через долю (как в метровом пути). area-статьи — по площади (charge-флаги).
+    if is_unconditional(tariff):
+        from app.modules.utility.services.calculations import paying_residents
+        residents = Decimal(paying_residents(user, room))
+        total_room = Decimal(room.total_room_residents or 1)
+        if total_room <= 0:
+            total_room = Decimal("1")
+        v_hot = _to_dec(getattr(tariff, "hw_norm_per_capita", 0))
+        v_cold = _to_dec(getattr(tariff, "cw_norm_per_capita", 0))
+        v_el = _to_dec(getattr(tariff, "el_norm_per_capita", 0))
+        # Вариант Б: семья платит el-норматив на квартиру ЦЕЛИКОМ; делят только
+        # холостяки (доля 1/total_room на каждого, residents=1). Для семьи берём
+        # плоский норматив — не зависит от рассинхрона residents_count vs
+        # total_room_residents (вода/канализация для семьи уже плоские).
+        is_singles = bool(getattr(room, "is_singles_apartment", False))
+        elect_share = ((residents / total_room) * v_el) if is_singles else v_el
+        costs = calculate_utilities(
+            user=user, room=room, tariff=tariff,
+            volume_hot=v_hot, volume_cold=v_cold, volume_sewage=v_hot + v_cold,
+            volume_electricity_share=elect_share,
+            heating_season_active=heating_season_active,
+            hot_water_heating_active=hot_water_heating_active,
+        )
+        cost_rent = costs["cost_social_rent"]
+        return {
+            "cost_hot_water":   costs["cost_hot_water"],
+            "cost_cold_water":  costs["cost_cold_water"],
+            "cost_sewage":      costs["cost_sewage"],
+            "cost_electricity": costs["cost_electricity"],
+            "cost_maintenance": costs["cost_maintenance"],
+            "cost_social_rent": costs["cost_social_rent"],
+            "cost_waste":       costs["cost_waste"],
+            "cost_fixed_part":  costs["cost_fixed_part"],
+            "total_cost":       costs["total_cost"],
+            "total_209":        costs["total_cost"] - cost_rent,
+            "total_205":        cost_rent,
+            "sanity_warning":   costs.get("sanity_warning"),
+            "is_baseline":      False,
+            "meter_decreased":  False,
+            "prev_is_auto":     False,
+        }
+
     # Baseline: первая подача жильца → потребление-зависимые статьи = 0
     # (счётчик может быть «накручен» за годы, считать дельту от 0 = деньги
     # в миллионы). НО area-based начисления (содержание, найм, ТКО,

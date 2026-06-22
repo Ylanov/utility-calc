@@ -311,6 +311,20 @@ export const SummaryModule = {
             rentBtn.addEventListener('click', () => this.chargeRentNowSelectedPeriod());
             this.dom.periodSelector.appendChild(rentBtn);
 
+            // Начислить по тарифу «БЕЗ УСЛОВИЙ» (норматив на квартиру) — сразу,
+            // approved, чтобы попало в финотчёт даже без подачи. Семья платит
+            // норму целиком, холостяки делят поровну.
+            const normBtn = document.createElement('button');
+            normBtn.type = 'button';
+            normBtn.style.cssText =
+                'padding:7px 12px; margin-left:10px; font-size:12px; background:#7c3aed; color:#fff; ' +
+                'border:none; border-radius:4px; cursor:pointer; font-weight:500;';
+            normBtn.title = 'Тарифы «БЕЗ УСЛОВИЙ»: расход = норматив на квартиру (без счётчиков). ' +
+                'Начисляется сразу. Семья — норму целиком, холостяки делят поровну.';
+            normBtn.innerHTML = '<i class="fa-solid fa-gauge-high"></i> Начислить по нормативу';
+            normBtn.addEventListener('click', () => this.chargeNormNowSelectedPeriod());
+            this.dom.periodSelector.appendChild(normBtn);
+
             // Default = АКТИВНЫЙ период. Раньше брался periodsCache[0]
             // (самый новый по id), что не всегда совпадает с активным —
             // админ открывал Финотчёт и видел не текущий месяц.
@@ -1757,6 +1771,52 @@ export const SummaryModule = {
             await this.loadData();
         } catch (e) {
             toast('Ошибка начисления наёма: ' + (e.message || e), 'error');
+        }
+    },
+
+    /** «Начислить по нормативу» (тариф БЕЗ УСЛОВИЙ) для выбранного периода.
+     *  Расход = норматив на квартиру (без счётчиков). Семья платит норму
+     *  целиком, холостяки делят поровну. Двухстадийно: dry-run → confirm →
+     *  apply. Идемпотентно; recompute=true пересчитывает уже начисленных. */
+    async chargeNormNowSelectedPeriod() {
+        const pid = Number(this.state.selectedPeriodId);
+        if (!pid) { toast('Сначала выберите период', 'warning'); return; }
+        const period = (this.periodsCache || []).find(p => Number(p.id) === pid);
+        const pName = period?.name || `id=${pid}`;
+        let preview;
+        try {
+            preview = await api.post(`/admin/billing/charge-norm-now/${pid}?dry_run=true&recompute=true`);
+        } catch (e) { toast('Не удалось получить preview: ' + (e.message || e), 'error'); return; }
+        const willCreate = preview.would_create || 0;
+        if (willCreate === 0) {
+            toast(`В периоде «${pName}» нет жильцов на тарифе «БЕЗ УСЛОВИЙ».`, 'info');
+            return;
+        }
+        const previewRows = preview.preview || [];
+        const lines = previewRows.slice(0, 20)
+            .map(p => `  • ${p.room || p.username}: ${fmtMoney(p.total_cost)}`).join('\n');
+        const more = previewRows.length > 20 ? `\n  …и ещё ${previewRows.length - 20}` : '';
+        const ok = await showConfirm(
+            `Начислить/пересчитать по нормативу (тариф «БЕЗ УСЛОВИЙ») в периоде «${pName}»?\n\n` +
+            `Жильцов к начислению/пересчёту: ${willCreate}\n${lines}${more}\n` +
+            `\nРасход = норматив на квартиру (без счётчиков). Семья платит норму ` +
+            `целиком, холостяки делят поровну. Сальдо 1С не трогается.`,
+            { title: 'Начислить по нормативу', confirmText: 'Применить' }
+        );
+        if (!ok) return;
+        try {
+            const res = await api.post(`/admin/billing/charge-norm-now/${pid}?recompute=true`);
+            const c = res.created || 0; const u = res.updated || 0;
+            toast(`По нормативу (${pName}): начислено ${c}, пересчитано ${u}`, 'success');
+            // Часть жильцов могла не начислиться (напр. пустой тариф) — показываем,
+            // чтобы не было «тихого нуля».
+            if (res.skipped_errors > 0) {
+                toast(`⚠ Не начислено у ${res.skipped_errors} (проверьте ставки тарифа): ` +
+                    (res.errors || []).slice(0, 3).map(e => e.username || e.user_id).join(', '), 'warning');
+            }
+            await this.loadData();
+        } catch (e) {
+            toast('Ошибка начисления по нормативу: ' + (e.message || e), 'error');
         }
     },
 

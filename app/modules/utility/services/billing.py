@@ -761,6 +761,163 @@ async def charge_static_rent_for_houses(
     }
 
 
+async def charge_unconditional_norm(
+    db: AsyncSession,
+    period_id: int,
+    dry_run: bool = False,
+    recompute: bool = False,
+) -> dict:
+    """Начисление по тарифу «БЕЗ УСЛОВИЙ» (tariff_type='unconditional'): расход =
+    НОРМАТИВ НА КВАРТИРУ из тарифа (фиксировано, без счётчиков). Создаётся СРАЗУ
+    (approved), чтобы попасть в финотчётность, даже если жилец ничего не подавал.
+    Семья платит норму целиком; у холостяцкой квартиры она делится поровну
+    (compute_reading_breakdown → calculate_utilities singles-делёж).
+
+    Идемпотентно: уже начисленные за период пропускаются (recompute=False).
+    recompute=True — пересчёт существующих по текущему нормативу/тарифу.
+    Returns: {processed, created, updated, skipped_has_reading, by_room, errors, dry_run}.
+
+    ОГРАНИЧЕНИЕ: выбираются комнаты с Room.tariff_id ∈ «без условий». Комнаты с
+    tariff_id=NULL, у которых ДЕФОЛТНЫЙ тариф (id=1) оказался «без условий», сюда
+    НЕ попадут (на практике дефолт — обычный метровый тариф; «без условий»
+    назначается точечно/на здание, так что tariff_id всегда проставлен)."""
+    target_period = await db.get(BillingPeriod, period_id)
+    if not target_period:
+        raise ValueError(f"Период id={period_id} не найден")
+    if period_chron_key(target_period.name) == (0, 0):
+        raise ValueError(
+            f"Период id={period_id} ('{target_period.name}') — baseline, не для начисления.")
+
+    from app.modules.utility.services.calculations import (
+        is_unconditional, costs_for_model_fields,
+    )
+    from app.modules.utility.services.reading_calculator import compute_reading_breakdown
+    from app.modules.utility.routers.settings import _load_seasonal
+    from app.modules.utility.services.tariff_cache import tariff_cache
+
+    uncond_ids = {
+        t.id for t in (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().all()
+        if is_unconditional(t)
+    }
+    empty = {
+        "status": "ok", "period_id": target_period.id, "period_name": target_period.name,
+        "processed": 0, "created": 0, "updated": 0, "skipped_has_reading": 0, "by_room": {},
+        "errors": [], "skipped_errors": 0,
+        "would_create": 0 if dry_run else None, "preview": [] if dry_run else None,
+        "dry_run": dry_run, "recompute": recompute,
+    }
+    if not uncond_ids:
+        return empty
+
+    # Жильцы, чья комната на «без условий» тарифе (Room.tariff_id ∈ uncond_ids).
+    users_all = (await db.execute(
+        select(User).options(selectinload(User.room))
+        .join(Room, User.room_id == Room.id)
+        .where(
+            User.role == "user", User.is_deleted.is_(False),
+            User.room_id.is_not(None), Room.tariff_id.in_(uncond_ids),
+        )
+    )).scalars().all()
+    uids = [u.id for u in users_all]
+    if not uids:
+        return empty
+
+    existing_by_user: dict[int, MeterReading] = {}
+    for r in (await db.execute(select(MeterReading).where(
+            MeterReading.period_id == target_period.id,
+            MeterReading.user_id.in_(uids)))).scalars().all():
+        cur = existing_by_user.get(r.user_id)
+        if cur is None or (r.id or 0) > (cur.id or 0):
+            existing_by_user[r.user_id] = r
+
+    _seasonal = await _load_seasonal(db)
+    zero = Decimal("0.000")
+    zero_money = Decimal("0.00")
+    preview = []
+    by_room: dict[str, int] = {}
+    errors: list[dict] = []
+    created = updated = skipped = 0
+
+    for user in users_all:
+        room = user.room
+        if room and getattr(room, "is_vacant", False):
+            continue
+        existing = existing_by_user.get(user.id)
+        if existing is not None and not recompute:
+            skipped += 1
+            continue
+        tariff = tariff_cache.get_effective_tariff(user=user, room=room)
+        if tariff is None or not is_unconditional(tariff):
+            continue
+        _heating = _seasonal.heating_season_active and tariff.is_heating_active_now()
+        _hw = _seasonal.hot_water_heating_active and tariff.is_hw_heating_active_now()
+        try:
+            bd = compute_reading_breakdown(
+                user=user, room=room, tariff=tariff,
+                current_hot=zero, current_cold=zero, current_elect=zero,
+                prev_reading=None,
+                heating_season_active=_heating, hot_water_heating_active=_hw,
+            )
+        except Exception as ex:
+            # Напр. CalculationError (все ставки тарифа = 0). Не валим всю
+            # пачку из-за одного, но СОБИРАЕМ — чтобы админ увидел, что часть
+            # не начислилась (иначе «тихий ноль» как до fail-loud).
+            logger.warning("[NORM-UNCOND] skip user=%s: %s", user.id, ex)
+            errors.append({"user_id": user.id, "username": user.username, "reason": str(ex)})
+            continue
+        cost_205, cost_209, total_cost = bd["total_205"], bd["total_209"], bd["total_cost"]
+        addr = room.format_address if room else "—"
+        by_room[addr] = by_room.get(addr, 0) + 1
+
+        if dry_run:
+            preview.append({
+                "user_id": user.id, "username": user.username, "room": addr,
+                "total_205": float(cost_205), "total_cost": float(total_cost),
+                "mode": "update" if existing is not None else "create",
+            })
+            continue
+
+        if existing is not None:
+            for k, v in costs_for_model_fields(bd).items():
+                setattr(existing, k, v)
+            existing.total_209, existing.total_205, existing.total_cost = cost_209, cost_205, total_cost
+            existing.is_approved = True
+            existing.anomaly_flags = "NORM_UNCONDITIONAL"
+            existing.anomaly_score = 0
+            db.add(existing)
+            updated += 1
+        else:
+            db.add(MeterReading(
+                user_id=user.id, room_id=user.room_id, period_id=target_period.id,
+                hot_water=zero, cold_water=zero, electricity=zero,
+                debt_209=zero_money, overpayment_209=zero_money,
+                debt_205=zero_money, overpayment_205=zero_money,
+                total_209=cost_209, total_205=cost_205, total_cost=total_cost,
+                is_approved=True, anomaly_flags="NORM_UNCONDITIONAL", anomaly_score=0,
+                **costs_for_model_fields(bd),
+            ))
+            created += 1
+
+    if not dry_run and (created or updated):
+        await db.commit()
+        logger.info(
+            "[NORM-UNCOND] period=%s created=%d updated=%d (recompute=%s)",
+            target_period.name, created, updated, recompute,
+        )
+
+    return {
+        "status": "ok", "period_id": target_period.id, "period_name": target_period.name,
+        "processed": created + updated + skipped,
+        "created": created if not dry_run else 0,
+        "updated": updated if not dry_run else 0,
+        "would_create": len(preview) if dry_run else None,
+        "skipped_has_reading": skipped, "by_room": by_room,
+        "errors": errors[:20], "skipped_errors": len(errors),
+        "preview": preview[:50] if dry_run else None,
+        "dry_run": dry_run, "recompute": recompute,
+    }
+
+
 async def open_new_period(db: AsyncSession, new_name: str):
     active_result = await db.execute(
         select(BillingPeriod).where(BillingPeriod.is_active.is_(True)).with_for_update()

@@ -328,6 +328,70 @@ async def charge_houses_rent_endpoint(
             pass
 
 
+@router.post("/api/admin/billing/charge-norm-now/{period_id}")
+async def charge_unconditional_norm_endpoint(
+        period_id: int,
+        dry_run: bool = False,
+        recompute: bool = False,
+        current_user: User = Depends(allow_readings_manage),
+        db: AsyncSession = Depends(get_db),
+):
+    """Начислить по тарифу «БЕЗ УСЛОВИЙ» (норматив на квартиру) жильцам на таких
+    тарифах в периоде — сразу, approved. Семья платит норму целиком, холостяки
+    делят поровну. dry_run=true → preview. recompute=true → пересчёт существующих."""
+    from app.modules.utility.services.billing import charge_unconditional_norm
+
+    if dry_run:
+        try:
+            return await charge_unconditional_norm(db, period_id, dry_run=True, recompute=recompute)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    import uuid
+    from redis import asyncio as aioredis
+    from app.core.config import settings
+    redis_client = aioredis.from_url(settings.REDIS_URL)
+    lock_key = f"lock:charge-norm:{period_id}"
+    lock_value = f"u{getattr(current_user, 'id', 0)}-{uuid.uuid4().hex}"
+    acquired = await redis_client.set(lock_key, lock_value, nx=True, ex=1800)
+    if not acquired:
+        try:
+            await (getattr(redis_client, "aclose", None) or redis_client.close)()
+        except Exception:
+            pass
+        raise HTTPException(
+            409, "Начисление по нормативу для этого периода уже выполняется — дождитесь завершения")
+    try:
+        result = await charge_unconditional_norm(db, period_id, dry_run=False, recompute=recompute)
+        try:
+            from app.modules.utility.routers.admin_dashboard import write_audit_log
+            await write_audit_log(
+                db, current_user.id, current_user.username,
+                action="charge_unconditional_norm", entity_type="period",
+                entity_id=period_id,
+                details={"created": result.get("created"), "updated": result.get("updated")},
+            )
+            await db.commit()
+        except Exception:
+            pass
+        return result
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    finally:
+        try:
+            release_script = (
+                "if redis.call('GET', KEYS[1]) == ARGV[1] "
+                "then return redis.call('DEL', KEYS[1]) else return 0 end"
+            )
+            await redis_client.eval(release_script, 1, lock_key, lock_value)
+        except Exception:
+            pass
+        try:
+            await (getattr(redis_client, "aclose", None) or redis_client.close)()
+        except Exception:
+            pass
+
+
 @router.get("/api/admin/readings/manual-state/{user_id}")
 async def get_manual_reading_state(
         user_id: int,

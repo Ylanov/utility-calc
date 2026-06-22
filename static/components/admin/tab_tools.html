@@ -395,6 +395,14 @@
                                 комнаты → чекбокс «Холостяцкая квартира»</b>.
                             </div>
 
+                            <!-- Тариф «БЕЗ УСЛОВИЙ»: начисление по НОРМАТИВУ
+                                 (tariff_type='unconditional'). Расход = норматив
+                                 на квартиру (вкладка «Нормативы»), без счётчиков. -->
+                            <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; font-size:12.5px; background:#faf5ff; border-left:3px solid #7c3aed; padding:10px 14px; border-radius:6px; margin: 4px 0 18px 0; color:#5b21b6;">
+                                <input type="checkbox" id="t_unconditional" style="margin-top:2px;">
+                                <span><b>Тариф «БЕЗ УСЛОВИЙ»</b> — начисление по <b>нормативу</b> (вкладка «Нормативы» ниже): расход = норматив на квартиру, без счётчиков. Семья платит норму целиком, у холостяков делится поровну. Наём/ТКО/отопление/содержание — по площади, как обычно.</span>
+                            </label>
+
                             <!-- Bug 29.05.2026 (Коммит 21): 3 вкладки внутри формы
                                  тарифа для уменьшения прокрутки. JS-обработчик в
                                  tariffs.js:_setupTariffFormTabs. -->

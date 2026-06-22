@@ -1052,10 +1052,67 @@ def test_meter_replacement_prev_flags():
 
 
 # ──────────────────────────────────────────────────────────────
+# ТАРИФ «БЕЗ УСЛОВИЙ» (unconditional) — норматив НА КВАРТИРУ (Вариант Б)
+# ──────────────────────────────────────────────────────────────
+
+def _uncond_tariff():
+    """Тариф «без условий» с нормативами и нулевыми area-статьями (изолируем
+    расход): ГВС=3, ХВС=5, эл=100; ставки нагрев=200/подача=60/канализ=50/эл=8."""
+    t = FakeTariff(
+        water_heating="200.00", water_supply="60.00", sewage="50.00",
+        electricity_rate="8.00", maintenance_repair="0.00", social_rent="0.00",
+        waste_disposal="0.00", heating="0.00",
+        hw_norm_per_capita="3.000", cw_norm_per_capita="5.000",
+        el_norm_per_capita="100.000", charge_social_rent=False,
+    )
+    t.tariff_type = "unconditional"
+    return t
+
+
+def test_unconditional_family_flat_norm():
+    """Семья платит норматив НА КВАРТИРУ ЦЕЛИКОМ (не ×жильцов):
+    3×200 + 5×60 + 8×… → 600+300+400+800 = 2100, независимо от числа людей."""
+    from app.modules.utility.services.reading_calculator import compute_reading_breakdown
+    from app.modules.utility.services.calculations import is_unconditional
+    t = _uncond_tariff()
+    assert is_unconditional(t)
+    room = FakeRoom(area=40.0, total_residents=2, is_singles_apartment=False)
+    bd = compute_reading_breakdown(
+        user=FakeUser(residents=2), room=room, tariff=t,
+        current_hot=Decimal("0"), current_cold=Decimal("0"), current_elect=Decimal("0"),
+        prev_reading=None, heating_season_active=True, hot_water_heating_active=True,
+    )
+    assert bd["total_cost"] == Decimal("2100.00")
+    # Та же квартира с другим числом людей → ТА ЖЕ сумма (норматив на квартиру).
+    bd5 = compute_reading_breakdown(
+        user=FakeUser(residents=5), room=FakeRoom(area=40.0, total_residents=5),
+        tariff=t, current_hot=Decimal("0"), current_cold=Decimal("0"),
+        current_elect=Decimal("0"), prev_reading=None,
+        heating_season_active=True, hot_water_heating_active=True,
+    )
+    assert bd5["total_cost"] == Decimal("2100.00")
+
+
+def test_unconditional_singles_split_equally():
+    """Холостяки делят норматив на квартиру поровну: каждый = 2100/3 = 700."""
+    from app.modules.utility.services.reading_calculator import compute_reading_breakdown
+    t = _uncond_tariff()
+    room = FakeRoom(area=40.0, total_residents=3, is_singles_apartment=True, max_capacity=4)
+    bd = compute_reading_breakdown(
+        user=FakeUser(residents=1), room=room, tariff=t,
+        current_hot=Decimal("0"), current_cold=Decimal("0"), current_elect=Decimal("0"),
+        prev_reading=None, heating_season_active=True, hot_water_heating_active=True,
+    )
+    assert bd["total_cost"] == Decimal("700.00")
+
+
+# ──────────────────────────────────────────────────────────────
 # ЗАПУСК ВСЕХ ТЕСТОВ
 # ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    test_unconditional_family_flat_norm()
+    test_unconditional_singles_split_equally()
     test_helper_functions()
     test_calculation_precision()
     test_negative_volumes_give_zero()

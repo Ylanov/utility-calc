@@ -56,6 +56,15 @@ def resident_type_of(user, room) -> str:
     return "single" if (room is not None and bool(getattr(room, "is_singles_apartment", False))) else "family"
 
 
+def is_unconditional(tariff) -> bool:
+    """Тариф «БЕЗ УСЛОВИЙ» (tariff_type='unconditional'): расход начисляется по
+    НОРМАТИВУ НА КВАРТИРУ (фиксировано, не зависит от числа людей и счётчиков).
+    Семья платит норму целиком; у холостяков она делится поровну (штатный
+    singles-делёж в calculate_utilities). area-статьи (наём/ТКО/отопл/содерж)
+    считаются по площади как обычно (по charge-флагам тарифа)."""
+    return str(getattr(tariff, "tariff_type", "") or "").lower() == "unconditional"
+
+
 def costs_for_model_fields(costs: dict) -> dict:
     """Возвращает подсловарь, безопасный для setattr/**kwargs на MeterReading.
 
@@ -222,13 +231,18 @@ def calculate_utilities(
     has_cw = _has_meter("has_cw_meter")
     has_el = _has_meter("has_el_meter")
 
-    if not has_hw:
-        # Счётчика ГВС нет — норматив × жильцов. Если norm=0 → 0.
-        v_hot = safe_positive(D(getattr(tariff, "hw_norm_per_capita", 0)) * residents)
-    if not has_cw:
-        v_cold = safe_positive(D(getattr(tariff, "cw_norm_per_capita", 0)) * residents)
-    if not has_el:
-        v_el = safe_positive(D(getattr(tariff, "el_norm_per_capita", 0)) * residents)
+    # Тариф «БЕЗ УСЛОВИЙ» (unconditional): объёмы УЖЕ переданы caller'ом как
+    # норматив НА КВАРТИРУ (compute_reading_breakdown), счётчики игнорируем —
+    # не подменяем их нормативом×жильцов (это был бы вариант «на человека»).
+    # Делёж между холостяками выполнит singles-блок ниже.
+    if not is_unconditional(tariff):
+        if not has_hw:
+            # Счётчика ГВС нет — норматив × жильцов. Если norm=0 → 0.
+            v_hot = safe_positive(D(getattr(tariff, "hw_norm_per_capita", 0)) * residents)
+        if not has_cw:
+            v_cold = safe_positive(D(getattr(tariff, "cw_norm_per_capita", 0)) * residents)
+        if not has_el:
+            v_el = safe_positive(D(getattr(tariff, "el_norm_per_capita", 0)) * residents)
 
     # Площадь комнаты
     area = D(room.apartment_area or 0)
