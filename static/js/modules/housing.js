@@ -1123,6 +1123,7 @@ export const HousingModule = {
     },
 
     _renderDormSettings(data) {
+        this._dormOverview = data;  // для окна «Исключения по квартирам»
         const s = data.stats || {};
         const tile = (label, val, color) => `<div style="flex:1; min-width:88px; background:var(--bg-page); border-radius:8px; padding:8px 10px; text-align:center;"><div style="font-size:18px; font-weight:700; color:${color};">${val}</div><div style="font-size:10px; color:var(--text-secondary);">${label}</div></div>`;
         this.dom.dormSettingsStats.innerHTML = `
@@ -1143,6 +1144,9 @@ export const HousingModule = {
         const opts = ['<option value="">— Не менять —</option>']
             .concat(tariffs.map(t => `<option value="${t.id}" ${data.current_tariff_id === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`)).join('');
         const curMixed = data.current_tariff_id === null && (data.by_tariff || []).length > 1;
+        const totalRooms = (data.rooms || []).length;
+        const major = (data.by_tariff && data.by_tariff[0]) ? data.by_tariff[0].rooms : totalRooms;
+        const exCount = Math.max(0, totalRooms - major);
         this.dom.dormSettingsTariff.innerHTML = `
             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
                 <select id="dormTariffSelect" style="flex:1; min-width:220px; padding:6px 8px;">${opts}</select>
@@ -1150,6 +1154,14 @@ export const HousingModule = {
             </div>
             ${curMixed ? '<div style="font-size:11px; color:#b45309; margin-top:4px;">⚠ Сейчас у комнат РАЗНЫЕ тарифы.</div>' : ''}
             <div id="dormTariffCharges" style="margin-top:8px;"></div>
+            <div style="display:flex; align-items:center; gap:10px; margin-top:10px; padding-top:8px; border-top:1px dashed var(--border-color); flex-wrap:wrap;">
+                <span style="font-size:12px; color:${exCount ? '#b45309' : 'var(--text-secondary)'};">
+                    ${exCount ? `⚠ Исключений: ${exCount} кв.` : 'Исключений нет — все квартиры на тарифе дома'}
+                </span>
+                <button id="btnTariffExceptions" class="action-btn secondary-btn" style="margin-left:auto; padding:5px 10px; font-size:12px;">
+                    <i class="fa-solid fa-list-check"></i> Исключения по квартирам
+                </button>
+            </div>
         `;
         const sel = document.getElementById('dormTariffSelect');
         const chargesBox = document.getElementById('dormTariffCharges');
@@ -1164,6 +1176,7 @@ export const HousingModule = {
         sel.addEventListener('change', renderCharges);
         renderCharges();
         document.getElementById('btnApplyDormTariff').addEventListener('click', () => this.applyDormTariff(sel.value));
+        document.getElementById('btnTariffExceptions').addEventListener('click', () => this.openTariffExceptions());
         // Счётчики
         const m = data.current_meters || { has_hw_meter: true, has_cw_meter: true, has_el_meter: true };
         const mixedMeters = !data.current_meters;
@@ -1233,6 +1246,88 @@ export const HousingModule = {
             this._loadDormOverview(b);
             this.table.load();
         } catch (e) { toast('Ошибка: ' + (e.message || ''), 'error'); }
+    },
+
+    // ===== Исключения по квартирам (точечный тариф отдельным помещениям) =====
+    openTariffExceptions() {
+        const ov = this._dormOverview;
+        const b = this._dormSettingsBuilding;
+        if (!ov || !b) return;
+        const modal = document.getElementById('tariffExceptionsModal');
+        if (!modal) return;
+        const esc = escapeHtml;
+        document.getElementById('tariffExBuilding').textContent = b.label;
+
+        const tariffs = ov.available_tariffs || [];
+        // «Тариф дома» = единый тариф здания (если есть) либо самый частый.
+        const buildingTid = ov.current_tariff_id != null
+            ? ov.current_tariff_id
+            : (ov.by_tariff && ov.by_tariff[0] ? ov.by_tariff[0].tariff_id : null);
+        const buildingName = (tariffs.find(t => t.id === buildingTid)?.name) || 'по умолчанию';
+        this._tariffExBuildingTid = buildingTid;
+
+        const rooms = ov.rooms || [];
+        const optsFor = (room) => {
+            const isException = room.tariff_id != null && room.tariff_id !== buildingTid;
+            let html = `<option value="" ${!isException ? 'selected' : ''}>🏠 Как у дома (${esc(buildingName)})</option>`;
+            html += tariffs.map(t =>
+                `<option value="${t.id}" ${isException && room.tariff_id === t.id ? 'selected' : ''}>${esc(t.name)}</option>`
+            ).join('');
+            return html;
+        };
+        const rowHtml = (r) => {
+            const label = r.room_number || r.apartment_number || ('#' + r.id);
+            const sb = r.is_singles_apartment ? ' <span style="background:#fef3c7;color:#92400e;padding:0 6px;border-radius:8px;font-size:10px;">хол.</span>' : '';
+            return `<tr data-room-id="${r.id}" data-orig="${r.tariff_id == null ? '' : r.tariff_id}" style="border-bottom:1px solid var(--border-color);">
+                <td style="padding:6px 8px; white-space:nowrap;">кв. ${esc(String(label))}${sb} <span style="color:var(--text-secondary); font-size:11px;">· ${r.residents} чел.</span></td>
+                <td style="padding:6px 8px;"><select data-room-tariff style="width:100%; padding:5px 6px; font-size:12px;">${optsFor(r)}</select></td>
+            </tr>`;
+        };
+        document.getElementById('tariffExList').innerHTML = rooms.length ? `
+            <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                <thead><tr style="color:var(--text-secondary); font-size:11px; text-align:left;">
+                    <th style="padding:4px 8px;">Квартира</th><th style="padding:4px 8px;">Тариф</th>
+                </tr></thead>
+                <tbody>${rooms.map(rowHtml).join('')}</tbody>
+            </table>` : '<div style="color:var(--text-secondary); padding:14px;">Нет помещений.</div>';
+
+        if (!modal.dataset.bound) {
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal || e.target.closest('[data-tariffex-close]')) modal.classList.remove('open');
+            });
+            document.getElementById('btnSaveTariffExceptions').addEventListener('click', () => this.saveTariffExceptions());
+            modal.dataset.bound = '1';
+        }
+        modal.classList.add('open');
+    },
+
+    async saveTariffExceptions() {
+        const modal = document.getElementById('tariffExceptionsModal');
+        const buildingTid = this._tariffExBuildingTid ?? null;
+        const items = [];
+        modal.querySelectorAll('tr[data-room-id]').forEach(tr => {
+            const roomId = Number(tr.dataset.roomId);
+            const orig = tr.dataset.orig === '' ? null : Number(tr.dataset.orig);
+            const selVal = tr.querySelector('[data-room-tariff]').value;
+            const chosen = selVal === '' ? buildingTid : Number(selVal);
+            const a = orig == null ? null : Number(orig);
+            const c = chosen == null ? null : Number(chosen);
+            if (a !== c) items.push({ room_id: roomId, tariff_id: c });
+        });
+        if (!items.length) { toast('Изменений нет', 'info'); modal.classList.remove('open'); return; }
+        const btn = document.getElementById('btnSaveTariffExceptions');
+        setLoading(btn, true, 'Сохранение…');
+        try {
+            const res = await api.post('/tariffs/assign-room-overrides', { items });
+            toast(`Сохранено. Квартир изменено: ${res.rooms_affected ?? items.length}`, 'success');
+            modal.classList.remove('open');
+            this._loadDormOverview(this._dormSettingsBuilding);
+            this.table.load();
+        } catch (e) {
+            toast('Ошибка: ' + (e.message || e), 'error');
+        } finally {
+            setLoading(btn, false, 'Сохранить исключения');
+        }
     },
 
     async handleSave(e) {

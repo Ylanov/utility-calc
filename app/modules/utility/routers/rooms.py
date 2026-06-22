@@ -1044,6 +1044,19 @@ async def dormitory_overview(
         "available_tariffs": [
             {"id": t.id, "name": t.name, "charges": _charges(t)} for t in avail
         ],
+        # Список помещений здания — для окна «Исключения по квартирам»
+        # (точечный тариф на отдельную квартиру).
+        "rooms": [
+            {
+                "id": r.id,
+                "room_number": r.room_number,
+                "apartment_number": r.apartment_number,
+                "tariff_id": r.tariff_id,
+                "is_singles_apartment": bool(r.is_singles_apartment),
+                "residents": res_by_room.get(r.id, 0),
+            }
+            for r in sorted(rooms, key=lambda x: str(x.room_number or x.apartment_number or x.id))
+        ],
     }
 
 

@@ -474,4 +474,32 @@
             </div>
         </div>
     </div>
+
+    <!-- ============================================
+         ИСКЛЮЧЕНИЯ ПО КВАРТИРАМ — точечный тариф отдельным помещениям
+         (одни квартиры на одном тарифе, другие на другом)
+         ============================================ -->
+    <div id="tariffExceptionsModal" class="modal-overlay">
+        <div class="modal-window" style="width: 640px; max-height: 88vh; overflow-y: auto;">
+            <div class="modal-header">
+                <h3><i class="fa-solid fa-list-check" style="margin-right:8px;"></i> Исключения по квартирам: <span id="tariffExBuilding">—</span></h3>
+                <button class="close-btn" data-tariffex-close>&times;</button>
+            </div>
+            <div class="modal-form" style="padding: 14px 18px;">
+                <p class="hint-text" style="font-size: 12px; margin: 0 0 12px;">
+                    По умолчанию все квартиры на тарифе дома. Здесь отдельным квартирам можно назначить ДРУГОЙ тариф (исключение).
+                    «Как у дома» — вернуть квартиру на общий тариф дома.
+                </p>
+                <div id="tariffExList"></div>
+                <div style="font-size: 11px; color: #b45309; margin-top: 10px;">
+                    ⚠ Тариф вступит в силу для будущих расчётов. Уже сохранённые квитанции не пересчитываются —
+                    при необходимости сделайте перерасчёт периода.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="action-btn secondary-btn" data-tariffex-close>Закрыть</button>
+                <button type="button" class="action-btn primary-btn" id="btnSaveTariffExceptions">Сохранить исключения</button>
+            </div>
+        </div>
+    </div>
 </div>

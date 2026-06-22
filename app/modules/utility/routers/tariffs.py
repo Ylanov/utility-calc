@@ -727,6 +727,56 @@ async def assign_tariff_to_dormitory(
 
 
 # =====================================================
+# ASSIGN-ROOM-OVERRIDES — тариф-исключения по отдельным квартирам
+# =====================================================
+class RoomTariffOverride(BaseModel):
+    room_id: int
+    tariff_id: Optional[int] = None  # None = снять исключение (вернуть на тариф дома)
+
+
+class AssignRoomOverridesRequest(BaseModel):
+    items: List[RoomTariffOverride]
+
+
+@router.post("/assign-room-overrides", summary="Тариф-исключения по отдельным квартирам")
+async def assign_room_tariff_overrides(
+    data: AssignRoomOverridesRequest,
+    current_user: User = Depends(allow_management_roles),
+    db: AsyncSession = Depends(get_db),
+):
+    """Точечно проставляет Room.tariff_id отдельным помещениям — исключения из
+    тарифа дома (одни квартиры на одном тарифе, другие на другом). tariff_id=null
+    — снять исключение (вернуть на общий тариф дома). Вступает в силу для БУДУЩИХ
+    расчётов; уже сохранённые квитанции НЕ пересчитываются (нужен перерасчёт)."""
+    if not data.items:
+        return {"status": "ok", "rooms_affected": 0}
+
+    wanted = {it.tariff_id for it in data.items if it.tariff_id is not None}
+    if wanted:
+        found = {tid for (tid,) in (await db.execute(
+            select(Tariff.id).where(Tariff.id.in_(wanted), Tariff.is_active.is_(True))
+        )).all()}
+        missing = wanted - found
+        if missing:
+            raise HTTPException(404, f"Активные тарифы не найдены: {sorted(missing)}")
+
+    affected = 0
+    for it in data.items:
+        res = await db.execute(
+            update(Room).where(Room.id == it.room_id).values(tariff_id=it.tariff_id))
+        affected += res.rowcount or 0
+
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action="tariff_room_overrides", entity_type="tariff", entity_id=None,
+        details={"count": len(data.items), "rooms_affected": affected},
+    )
+    await db.commit()
+    await _safe_clear_cache("tariffs")
+    return {"status": "ok", "rooms_affected": affected}
+
+
+# =====================================================
 # CACHE STATS — диагностика для UI «эффективность кеша»
 # =====================================================
 @router.get("/cache/stats", summary="Состояние in-memory кеша тарифов")
