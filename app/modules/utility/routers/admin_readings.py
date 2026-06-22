@@ -337,6 +337,19 @@ async def get_manual_reading_state(
     return await admin_readings_list.get_manual_state(db, user_id)
 
 
+@router.get("/api/admin/readings/manual-grid-state/{user_id}")
+async def get_manual_grid_state_route(
+        user_id: int,
+        period_ids: str = "",
+        current_user: User = Depends(allow_readings_manage),
+        db: AsyncSession = Depends(get_db)
+):
+    """Состояние строчного мульти-месячного ввода. period_ids — список id
+    периодов через запятую (выбранный + предыдущие)."""
+    ids = [int(x) for x in period_ids.split(",") if x.strip().isdigit()]
+    return await admin_readings_list.get_manual_grid_state(db, user_id, ids)
+
+
 @router.post("/api/admin/readings/manual")
 async def save_manual_reading(
         data: AdminManualReadingSchema,

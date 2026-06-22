@@ -725,3 +725,92 @@ async def get_manual_state(db: AsyncSession, user_id: int):
         "submission_required": submission_required,
         **meter_config,
     }
+
+
+async def get_manual_grid_state(db: AsyncSession, user_id: int, period_ids: list):
+    """Состояние для СТРОЧНОГО мульти-месячного ручного ввода: по каждому из
+    запрошенных периодов отдаёт хронологический prev (для «Пред:») и уже
+    сохранённое показание (draft/approved) этого жильца — UI предзаполняет
+    клетки. Плюс конфиг счётчиков комнаты (одинаков для всех месяцев)."""
+    user = (await db.execute(
+        select(User).options(selectinload(User.room)).where(
+            User.id == user_id, User.is_deleted.is_(False)))).scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    room = user.room
+
+    def _room_meter(attr: str) -> bool:
+        rv = getattr(room, attr, None) if room else None
+        return bool(rv) if rv is not None else bool(getattr(user, attr, True))
+
+    meter_config = {
+        "has_hw_meter": _room_meter("has_hw_meter"),
+        "has_cw_meter": _room_meter("has_cw_meter"),
+        "has_el_meter": _room_meter("has_el_meter"),
+    }
+
+    from app.modules.utility.services.period_helpers import period_chron_key
+    from app.modules.utility.services.reading_calculator import is_meaningful_prev
+
+    periods_out = []
+    if room:
+        # Approved-показания жильца в этой комнате — для выбора prev по
+        # хронологии месяца (как в save_manual_entry, fix 2026-06-16).
+        approved_rows = (await db.execute(
+            select(MeterReading, BillingPeriod)
+            .join(BillingPeriod, MeterReading.period_id == BillingPeriod.id)
+            .where(
+                MeterReading.user_id == user.id,
+                MeterReading.room_id == room.id,
+                MeterReading.is_approved.is_(True),
+                MeterReading.period_id.isnot(None),
+            )
+        )).all()
+        keyed = [(period_chron_key(p.name), mr) for mr, p in approved_rows]
+
+        for pid in period_ids:
+            period = await db.get(BillingPeriod, pid)
+            if period is None:
+                continue
+            cur_key = period_chron_key(period.name)
+            earlier = sorted(
+                [(k, mr) for (k, mr) in keyed
+                 if k is not None and cur_key is not None and k < cur_key and is_meaningful_prev(mr)],
+                key=lambda x: x[0],
+            )
+            prev = earlier[-1][1] if earlier else None
+            existing = (await db.execute(
+                select(MeterReading).where(
+                    MeterReading.user_id == user.id,
+                    MeterReading.room_id == room.id,
+                    MeterReading.period_id == pid,
+                ).order_by(MeterReading.is_approved.desc(), MeterReading.id.desc()).limit(1)
+            )).scalars().first()
+            periods_out.append({
+                "period_id": pid,
+                "name": period.name,
+                "is_active": bool(period.is_active),
+                "prev_hot": str(prev.hot_water) if prev else "0",
+                "prev_cold": str(prev.cold_water) if prev else "0",
+                "prev_elect": str(prev.electricity) if prev else "0",
+                "reading_id": existing.id if existing else None,
+                "is_approved": bool(existing.is_approved) if existing else False,
+                "cur_hot": str(existing.hot_water) if existing else None,
+                "cur_cold": str(existing.cold_water) if existing else None,
+                "cur_elect": str(existing.electricity) if existing else None,
+            })
+
+    return {
+        "user_id": user.id,
+        "username": user.username,
+        "room": ({
+            "id": room.id,
+            "dormitory_name": room.dormitory_name,
+            "room_number": room.room_number,
+            "apartment_area": float(room.apartment_area or 0),
+            "total_room_residents": room.total_room_residents,
+            "is_singles_apartment": bool(getattr(room, "is_singles_apartment", False)),
+        } if room else None),
+        **meter_config,
+        "periods": periods_out,
+    }

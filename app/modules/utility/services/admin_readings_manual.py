@@ -388,9 +388,12 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
             flags=src_reading.anomaly_flags, is_approved=bool(src_reading.is_approved),
         )
 
+    await db.flush()  # гарантируем reading_id для нового показания (нужно UI для «Утвердить»)
+    reading_id = src_reading.id
     await db.commit()
     return {
         "status": "success",
+        "reading_id": reading_id,
         "updated_kind": "draft" if draft else ("approved" if approved_current else "new_draft"),
         "auto_approved": is_past_closed,
         "chain_recalced": recalced,
