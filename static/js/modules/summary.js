@@ -1492,9 +1492,11 @@ export const SummaryModule = {
                     ${esc(String(room.apartment_area))} м² ·
                     ${esc(String(room.total_room_residents))} чел. в комнате${u.resident_type === 'single' ? ' (холостяцкая, делёж поровну)' : ''}
                 </div>
-                ${r.is_baseline
-                    ? '<div style="margin-top:8px; padding:6px 10px; background:#fef3c7; color:#92400e; border-radius:4px; font-size:12px;"><i class="fa-solid fa-info-circle"></i> Это BASELINE (первая подача): потребление (вода/свет) НЕ начисляется — счётчик может быть «накручен» за годы. Но содержание, наём, ТКО и отопление начисляются по площади ВСЕГДА.</div>'
-                    : ''}
+                ${r.is_unconditional
+                    ? `<div style="margin-top:8px; padding:6px 10px; background:#faf5ff; color:#5b21b6; border-radius:4px; font-size:12px;"><i class="fa-solid fa-gauge-high"></i> Тариф «БЕЗ УСЛОВИЙ»: расход начисляется по <b>нормативу на квартиру</b> (счётчики не нужны) — ГВС ${esc(String((tariff.norms || {}).hw_norm || '0'))} · ХВС ${esc(String((tariff.norms || {}).cw_norm || '0'))} · Свет ${esc(String((tariff.norms || {}).el_norm || '0'))}. ${u.resident_type === 'single' ? 'У холостяков делится поровну.' : 'Семья платит норму целиком.'} Площадные статьи (наём/ТКО/отопл/содерж) — по площади.</div>`
+                    : (r.is_baseline
+                        ? '<div style="margin-top:8px; padding:6px 10px; background:#fef3c7; color:#92400e; border-radius:4px; font-size:12px;"><i class="fa-solid fa-info-circle"></i> Это BASELINE (первая подача): потребление (вода/свет) НЕ начисляется — счётчик может быть «накручен» за годы. Но содержание, наём, ТКО и отопление начисляются по площади ВСЕГДА.</div>'
+                        : '')}
                 ${d.calculation_error
                     ? `<div style="margin-top:8px; padding:8px 12px; background:#fee2e2; color:#991b1b; border-radius:4px; font-size:12px;"><i class="fa-solid fa-circle-exclamation"></i> Ошибка расчёта: ${esc(d.calculation_error)}</div>`
                     : ''}
@@ -1542,7 +1544,9 @@ export const SummaryModule = {
                             <div>Свет: <strong style="font-family:monospace;">${esc(prev.electricity)}</strong></div>
                             <div style="font-size:10px; color:var(--text-tertiary); margin-top:4px;">из «${esc(prev.period_name || '—')}»</div>
                           </div>`
-                        : '<div style="font-size:12px; color:var(--text-tertiary);">Нет — это первая подача (baseline).</div>'}
+                        : (r.is_unconditional
+                            ? '<div style="font-size:12px; color:var(--text-tertiary);">Не используется — начисление по нормативу (без счётчиков).</div>'
+                            : '<div style="font-size:12px; color:var(--text-tertiary);">Нет — это первая подача (baseline).</div>')}
                 </div>
                 <div style="background:var(--bg-page); padding:10px 14px; border-radius:6px;">
                     <div style="font-size:11px; color:var(--text-secondary); text-transform:uppercase; margin-bottom:6px;">Текущие</div>

@@ -1929,6 +1929,20 @@ async def _build_explain_response(reading_id: int, db: AsyncSession) -> dict:
 
     area = Decimal(str(room.apartment_area or 0))
 
+    # Тариф «БЕЗ УСЛОВИЙ»: расход = НОРМАТИВ на квартиру (не дельта счётчиков).
+    # Переопределяем объёмы как в reading_calculator.compute_reading_breakdown,
+    # чтобы «Проверка расчёта» совпадала с реальным биллингом, а не показывала
+    # ложный «baseline 0 / потребление не начисляется».
+    from app.modules.utility.services.calculations import is_unconditional as _is_uncond
+    is_unconditional_tariff = _is_uncond(tariff)
+    if is_unconditional_tariff:
+        _uncond_singles = bool(getattr(room, "is_singles_apartment", False))
+        d_hot = Decimal(str(getattr(tariff, "hw_norm_per_capita", 0) or 0))
+        d_cold = Decimal(str(getattr(tariff, "cw_norm_per_capita", 0) or 0))
+        d_sewage = d_hot + d_cold
+        _el_norm = Decimal(str(getattr(tariff, "el_norm_per_capita", 0) or 0))
+        elect_share = ((residents / total_room) * _el_norm) if _uncond_singles else _el_norm
+
     # 6. Пересчёт через ту же calculate_utilities (для сравнения с БД).
     # Пробуем; если падает на CalculationError — показываем причину явно.
     from app.modules.utility.services.calculations import (
@@ -1936,7 +1950,8 @@ async def _build_explain_response(reading_id: int, db: AsyncSession) -> dict:
     )
     calc_error = None
     calc_result = None
-    is_baseline = prev is None
+    # Для «без условий» это НЕ baseline (расход по нормативу начисляется).
+    is_baseline = (prev is None) and not is_unconditional_tariff
     # Сезонные флаги — «Проверить расчёт» обязан использовать тот же набор,
     # что и реальный /api/calculate: global + per-tariff.
     from app.modules.utility.routers.settings import _load_seasonal
@@ -2147,6 +2162,7 @@ async def _build_explain_response(reading_id: int, db: AsyncSession) -> dict:
             "anomaly_score": reading.anomaly_score,
             "created_at": reading.created_at.isoformat() if reading.created_at else None,
             "is_baseline": is_baseline,
+            "is_unconditional": is_unconditional_tariff,
         },
         "user": {
             "id": user.id,
@@ -2174,6 +2190,11 @@ async def _build_explain_response(reading_id: int, db: AsyncSession) -> dict:
                 "social_rent": f(tariff.social_rent),
                 "waste_disposal": f(tariff.waste_disposal),
                 "heating": f(tariff.heating),
+            },
+            "norms": {
+                "hw_norm": f3(getattr(tariff, "hw_norm_per_capita", 0)),
+                "cw_norm": f3(getattr(tariff, "cw_norm_per_capita", 0)),
+                "el_norm": f3(getattr(tariff, "el_norm_per_capita", 0)),
             },
         },
         "previous_reading": (

@@ -1001,10 +1001,13 @@ async def dormitory_overview(
         current_meters = {"has_hw_meter": hwm, "has_cw_meter": cwm, "has_el_meter": elm}
 
     # Доступные тарифы для типа здания (+ универсальные) с профилем начислений.
+    # NULL-tolerant (как /api/tariffs): легаси-тариф без applicable_to всё равно
+    # доступен, иначе он бы пропал из дропдауна/модалки исключений.
+    from sqlalchemy import or_ as _or
     avail = (await db.execute(
         select(Tariff).where(
             Tariff.is_active.is_(True),
-            Tariff.applicable_to.in_(applicable),
+            _or(Tariff.applicable_to.is_(None), Tariff.applicable_to.in_(applicable)),
         ).order_by(Tariff.name)
     )).scalars().all()
 

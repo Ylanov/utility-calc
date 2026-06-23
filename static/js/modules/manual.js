@@ -366,11 +366,11 @@ export const ManualModule = {
         const cell = (m, on, prevVal, curVal) => {
             if (!on) return '<td style="text-align:center; color:var(--text-tertiary);">—</td>';
             const pv = (prevVal == null ? '0' : String(prevVal));
-            return `<td style="padding:3px 5px; text-align:center;">
+            return `<td style="padding:4px 8px; text-align:center;">
                 <input type="text" inputmode="decimal" data-meter="${m}" value="${curVal != null ? esc(String(curVal)) : ''}"
                        placeholder="${esc(pv)}"
-                       style="width:94px; padding:5px 6px; font-family:monospace; font-size:13px; text-align:center; border:1px solid var(--border-color); border-radius:6px;">
-                <div style="font-size:10px; color:var(--text-tertiary); margin-top:1px;">пред ${esc(pv)}</div>
+                       style="width:100%; max-width:220px; box-sizing:border-box; padding:7px 8px; font-family:monospace; font-size:14px; text-align:center; border:1px solid var(--border-color); border-radius:6px;">
+                <div style="font-size:10px; color:var(--text-tertiary); margin-top:2px;">пред ${esc(pv)}</div>
             </td>`;
         };
 
@@ -403,7 +403,8 @@ export const ManualModule = {
             </div>
             ${noMeters ? '<div style="font-size:12px; color:#92400e; background:#fef3c7; border-radius:6px; padding:6px 10px;">У помещения нет счётчиков — ручной ввод показаний недоступен.</div>' : `
             <div style="overflow-x:auto;">
-                <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                <table style="width:100%; border-collapse:collapse; font-size:13px; table-layout:fixed;">
+                    <colgroup><col style="width:16%"><col><col><col></colgroup>
                     <thead><tr style="color:var(--text-secondary); font-size:11px; text-align:center;">
                         <th style="text-align:left; padding:3px 8px;">Месяц</th>
                         <th>🔥 ГВС</th><th>💧 ХВС</th><th>⚡ Электр.</th>
