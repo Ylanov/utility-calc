@@ -1331,7 +1331,14 @@ export const SummaryModule = {
             '  <div class="modal-header"><h3><i class="fa-solid fa-file-excel"></i> Выгрузка в 1С</h3>' +
             '    <button class="close-btn close-icon" data-x1c-close>&times;</button></div>' +
             '  <div class="modal-body" style="max-height:55vh; overflow:auto;">' +
-            '    <div style="font-size:12px; color:var(--text-secondary); margin-bottom:10px;">Отметьте дома/общежития — выгрузятся в один файл:</div>' +
+            '    <div style="font-size:12px; color:var(--text-secondary); margin-bottom:6px;">1. Какой счёт выгружаем:</div>' +
+            '    <div style="display:flex; gap:8px; margin-bottom:14px;">' +
+            '      <label style="flex:1; display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--border-color,#e2e8f0); border-radius:8px; cursor:pointer;">' +
+            '        <input type="radio" name="x1c-account" value="209" checked><span><b>209</b> — коммуналка</span></label>' +
+            '      <label style="flex:1; display:flex; align-items:center; gap:8px; padding:8px 10px; border:1px solid var(--border-color,#e2e8f0); border-radius:8px; cursor:pointer;">' +
+            '        <input type="radio" name="x1c-account" value="205"><span><b>205</b> — наём</span></label>' +
+            '    </div>' +
+            '    <div style="font-size:12px; color:var(--text-secondary); margin-bottom:10px;">2. Отметьте дома/общежития — выгрузятся в один файл:</div>' +
             '    <label style="' + rowCss + ' font-weight:600; background:var(--bg-secondary,#f8fafc);">' +
             '      <input type="checkbox" data-x1c-all style="width:16px; height:16px;"><span style="flex:1;">📦 Все</span><span style="color:var(--text-secondary);">' + totalCnt + ' чел.</span></label>' +
             (groups.length ? '<div style="height:1px; background:var(--border-color,#e2e8f0); margin:4px 0 8px;"></div>' : '') +
@@ -1369,13 +1376,14 @@ export const SummaryModule = {
             if (!e.target.closest('[data-x1c-go]')) return;
             const picked = cbs().filter((c) => c.checked).map((c) => c.value);
             if (!picked.length) return;
+            const account = ov.querySelector('input[name="x1c-account"]:checked')?.value || '209';
             const all = picked.length === cbs().length;  // все выбраны → без фильтра (быстрее)
             close();
             setLoading(this.dom.btn1C, true, 'Формирование…');
             try {
                 const qs = all ? '' : picked.map((g) => `&group=${encodeURIComponent(g)}`).join('');
-                const fnameSuffix = all ? '' : (picked.length === 1 ? '_' + picked[0] : `_vyborka_${picked.length}`);
-                await api.download(`/admin/export-1c?period_id=${pid}${qs}`, `Vygruzka_1C_${pid}${fnameSuffix}.xlsx`);
+                const fnameSuffix = (all ? '' : (picked.length === 1 ? '_' + picked[0] : `_vyborka_${picked.length}`));
+                await api.download(`/admin/export-1c?period_id=${pid}&account=${account}${qs}`, `Vygruzka_1C_sch${account}_${pid}${fnameSuffix}.xlsx`);
             } catch (e2) {
                 toast('Ошибка выгрузки в 1С: ' + (e2.message || e2), 'error');
             } finally {

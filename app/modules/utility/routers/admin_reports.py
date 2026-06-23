@@ -366,18 +366,19 @@ async def export_1c_groups(
     return {"period_id": target_period_id, "groups": groups}
 
 
-@router.get("/api/admin/export-1c", summary="Выгрузка в 1С (XLSX: Контрагент/Договор/Сумма 209+205)")
+@router.get("/api/admin/export-1c", summary="Выгрузка в 1С (XLSX: Контрагент/Договор/Сумма по счёту 209 или 205)")
 async def export_1c(
         period_id: Optional[int] = Query(None, description="ID периода"),
         group: Optional[List[str]] = Query(None, description="Дом/общага (имя блока) — можно несколько, выгрузить только по ним"),
+        account: Optional[str] = Query(None, description="Счёт: '209' (коммуналка) или '205' (наём). Пусто = 209+205 вместе (легаси)"),
         current_user: User = Depends(get_current_user),
         db: AsyncSession = Depends(get_db),
 ):
     """Выгрузка начислений за месяц в формате загрузки 1С. На каждого жильца с
     утверждённым показанием: ФИО (Контрагент), договор найма, Количество=1,
-    Сумма = коммуналка за месяц (счёт 209 + счёт 205). Колонки документа-
-    основания/статуса оставляем пустыми — заполняет 1С. Формат «один в один»
-    с шаблоном загрузки."""
+    Сумма = начисление за месяц ПО ВЫБРАННОМУ СЧЁТУ (209 — коммуналка, 205 —
+    наём; для бухгалтерии счета грузятся раздельно). Нулевые по выбранному счёту
+    строки пропускаем. Колонки документа-основания/статуса пустые — заполняет 1С."""
     if current_user.role not in ("accountant", "admin"):
         raise HTTPException(status_code=403)
 
@@ -437,11 +438,23 @@ async def export_1c(
         "Отразить в графике исполнения договора", "Статус платежа",
     ])
 
+    _acc = (account or "").strip()
     for user, reading, _room in rows:
-        total = Decimal(reading.total_209 or 0) + Decimal(reading.total_205 or 0)
+        t209 = Decimal(reading.total_209 or 0)
+        t205 = Decimal(reading.total_205 or 0)
+        if _acc == "209":
+            amount = t209
+        elif _acc == "205":
+            amount = t205
+        else:
+            amount = t209 + t205
+        # При выборе конкретного счёта нулевые строки пропускаем (нет начисления
+        # по этому счёту — нечего грузить).
+        if _acc in ("209", "205") and amount == 0:
+            continue
         # Сумма — СТРОКОЙ с ТОЧКОЙ-разделителем (1С требует точку, не запятую).
         # Decimal-str всегда даёт точку независимо от локали Excel.
-        sum_str = str(total.quantize(Decimal("0.01")))
+        sum_str = str(amount.quantize(Decimal("0.01")))
         worksheet.append([
             user.username,
             _fmt_contract_1c(contracts.get(user.id)),
@@ -451,12 +464,13 @@ async def export_1c(
         ])
 
     _picked = [g for g in (group or []) if g]
+    _acc_suffix = f"_sch{_acc}" if _acc in ("209", "205") else ""
     if len(_picked) == 1:
-        _suffix = f"_{_picked[0]}"
+        _suffix = f"{_acc_suffix}_{_picked[0]}"
     elif len(_picked) > 1:
-        _suffix = f"_vyborka_{len(_picked)}"
+        _suffix = f"{_acc_suffix}_vyborka_{len(_picked)}"
     else:
-        _suffix = ""
+        _suffix = _acc_suffix
     filename = f"Vygruzka_1C_{period.name.replace(' ', '_')}{_suffix}.xlsx"
     encoded_filename = quote(filename)
     output = io.BytesIO()
