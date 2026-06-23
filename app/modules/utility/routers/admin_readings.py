@@ -422,6 +422,20 @@ async def save_manual_reading(
 ):
     return await admin_readings_manual.save_manual_entry(db, data)
 
+
+@router.post("/api/admin/readings/recalc-user/{user_id}")
+async def recalc_user_period_endpoint(
+        user_id: int,
+        period_id: int = Query(..., description="ID периода (любой — открытый/закрытый)"),
+        current_user: User = Depends(allow_readings_manage),
+        db: AsyncSession = Depends(get_db)
+):
+    """Перерасчёт ОДНОГО жильца за выбранный период по текущему тарифу. Без
+    проверки открыт/закрыт период. Холостяк — выравнивание поровну, семья —
+    прямой пересчёт."""
+    return await admin_readings_manual.recalc_user_period(
+        db, user_id=user_id, period_id=period_id)
+
 # Эндпоинт POST /api/admin/readings/one-time УДАЛЁН (аудит #21): схема
 # OneTimeChargeSchema не совпадала с полями, которые читал сервис →
 # гарантированный 500 с Initial commit; фронт его не вызывал, выселение/переезд

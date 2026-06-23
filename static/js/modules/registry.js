@@ -10,7 +10,7 @@ import { GSheetsModule } from './gsheets.js';
 
 function esc(s) {
   if (s === null || s === undefined) return '';
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 // Палитра статусов — как STATUS_META старого gsheets-реестра (привычна админу).
@@ -84,6 +84,8 @@ export const RegistryModule = {
   bind() {
     this.dom.src?.addEventListener('change', () => { this.state.source = this.dom.src.value; this.state.page = 1; this.load(); });
     this.dom.refresh?.addEventListener('click', () => this.load());
+    // Делегированный клик: инлайн-правка ячеек счётчиков + история по ФИО.
+    this.dom.body?.addEventListener('click', (e) => this._onBodyClick(e));
     let t = null;
     this.dom.search?.addEventListener('input', () => {
       clearTimeout(t);
@@ -113,8 +115,14 @@ export const RegistryModule = {
     this.dom.body.innerHTML = items.map((r) => {
       var when = r.timestamp ? new Date(r.timestamp).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }) : '—';
 
+      // user_id для инлайн-правки и истории: у боевых — r.user_id, у буфера — matched.
+      var uid = (r.row_type === 'reading') ? r.user_id : (r.matched && r.matched.user_id);
+
       // ФИО + под ним: общага серым; для буфера — итог сопоставления.
-      var fioCell = '<b>' + esc(r.fio || '—') + '</b>';
+      // Клик по ФИО → история показаний жильца (если есть user_id).
+      var fioCell = uid
+        ? '<b data-reg-fio="' + uid + '" style="cursor:pointer; border-bottom:1px dashed var(--primary-color);" title="Показать прошлые показания">' + esc(r.fio || '—') + '</b>'
+        : '<b>' + esc(r.fio || '—') + '</b>';
       if (r.dormitory) fioCell += '<br><span style="font-size:11px; color:var(--text-secondary);">' + esc(r.dormitory) + '</span>';
       if (r.row_type === 'gsheets' && r.matched) {
         if (r.matched.user_id) {
@@ -149,15 +157,28 @@ export const RegistryModule = {
         act += '<button class="action-btn danger-btn" style="padding:3px 8px; font-size:11px;" data-reg-reject data-rt="' + r.row_type + '" data-id="' + r.id + '" title="Отклонить — жилец получит уведомление на QR-портале"><i class="fa-solid fa-xmark"></i></button>';
       }
 
-      return '<tr style="' + rowTint(r) + '">' +
+      // Инлайн-правка счётчиков — только для боевых показаний с user_id.
+      var editable = (r.row_type === 'reading' && r.user_id != null);
+      var rawAttr = function (v) { return v == null ? '' : esc(String(v)); };
+      var trAttrs = editable
+        ? ' data-uid="' + r.user_id + '" data-pid="' + (r.period_id || '') + '"' +
+          ' data-hot="' + rawAttr(r.hot) + '" data-cold="' + rawAttr(r.cold) + '" data-elect="' + rawAttr(r.elect) + '"'
+        : '';
+      var meterTd = function (field, val) {
+        return editable
+          ? '<td class="reg-edit" data-field="' + field + '" data-raw="' + rawAttr(val) + '" style="text-align:right; font-family:monospace; cursor:text;" title="Нажми, чтобы изменить показание">' + fmtNum(val) + '</td>'
+          : '<td style="text-align:right; font-family:monospace;">' + fmtNum(val) + '</td>';
+      };
+
+      return '<tr style="' + rowTint(r) + '"' + trAttrs + '>' +
         '<td style="font-size:12px; color:var(--text-secondary); white-space:nowrap;">' + esc(when) + '</td>' +
         '<td>' + badge(SRC[r.source], r.source) + '</td>' +
         '<td>' + fioCell + '</td>' +
         '<td style="font-size:13px;">' + esc(r.room || '—') + '</td>' +
         '<td style="font-size:11px; color:var(--text-secondary);">' + esc(r.tariff || '—') + '</td>' +
-        '<td style="text-align:right; font-family:monospace;">' + fmtNum(r.hot) + '</td>' +
-        '<td style="text-align:right; font-family:monospace;">' + fmtNum(r.cold) + '</td>' +
-        '<td style="text-align:right; font-family:monospace;">' + fmtNum(r.elect) + '</td>' +
+        meterTd('hot', r.hot) +
+        meterTd('cold', r.cold) +
+        meterTd('elect', r.elect) +
         '<td>' + statusCell + '</td>' +
         '<td style="text-align:right; color:#15803d; font-weight:600; white-space:nowrap;">' + sum + '</td>' +
         '<td style="text-align:right; white-space:nowrap;">' + act + '</td>' +
@@ -173,6 +194,116 @@ export const RegistryModule = {
     this.dom.body.querySelectorAll('[data-reg-reassign]').forEach((btn) => {
       btn.addEventListener('click', () => this.reassign(btn.dataset.id));
     });
+  },
+
+  // ---- Инлайн-правка ячеек + история по ФИО (делегировано на tbody) ----
+  _onBodyClick(e) {
+    var cell = e.target.closest('td.reg-edit');
+    if (cell && !cell.querySelector('input')) { this._editCell(cell); return; }
+    var fio = e.target.closest('[data-reg-fio]');
+    if (fio) { this._toggleHistory(fio.dataset.regFio, fio); return; }
+  },
+
+  _editCell(td) {
+    var tr = td.closest('tr');
+    var field = td.dataset.field;
+    var raw = td.dataset.raw || '';
+    var old = td.innerHTML;
+    td.innerHTML = '<input type="text" inputmode="decimal" value="' + esc(raw) + '" ' +
+      'style="width:92px; text-align:right; font-family:monospace; padding:3px 5px; border:1px solid var(--primary-color); border-radius:4px;">';
+    var inp = td.querySelector('input');
+    inp.focus(); inp.select();
+    var done = false;
+    var self = this;
+    var cancel = function () { if (done) return; done = true; td.innerHTML = old; };
+    var save = function () { if (done) return; done = true; self._saveCell(tr, td, field, inp.value, old); };
+    inp.addEventListener('keydown', function (ev) {
+      if (ev.key === 'Enter') { ev.preventDefault(); save(); }
+      else if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
+    });
+    inp.addEventListener('blur', save);
+  },
+
+  async _saveCell(tr, td, field, valueStr, oldHtml) {
+    var uid = Number(tr.dataset.uid);
+    var pid = Number(tr.dataset.pid);
+    var num = function (s) { var v = parseFloat(String(s).replace(',', '.')); return Number.isFinite(v) ? v : null; };
+    var cur = { hot: tr.dataset.hot, cold: tr.dataset.cold, elect: tr.dataset.elect };
+    cur[field] = valueStr;
+    var hot = num(cur.hot), cold = num(cur.cold), elect = num(cur.elect);
+    var payload = { user_id: uid, period_id: pid };
+    if (hot != null && cold != null) { payload.hot_water = hot; payload.cold_water = cold; }
+    else if (field === 'hot' || field === 'cold') {
+      toast('Вода (ГВС+ХВС) подаётся парой — заполните оба', 'warning');
+      td.innerHTML = oldHtml; return;
+    }
+    if (elect != null) payload.electricity = elect;
+    if (payload.hot_water == null && payload.electricity == null) { td.innerHTML = oldHtml; return; }
+    td.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+    try {
+      await api.post('/admin/readings/manual', payload);
+      toast('Показание обновлено и пересчитано', 'success');
+      this.load();
+    } catch (e) {
+      toast('Ошибка: ' + (e.message || e), 'error');
+      this.load();
+    }
+  },
+
+  async _toggleHistory(uidStr, el) {
+    var uid = Number(uidStr);
+    if (!uid) return;
+    var tr = el.closest('tr');
+    var next = tr.nextElementSibling;
+    if (next && next.classList.contains('reg-hist-row') && next.dataset.uid === String(uid)) {
+      next.remove(); return;
+    }
+    this.dom.body.querySelectorAll('.reg-hist-row').forEach(function (n) { n.remove(); });
+    var detail = document.createElement('tr');
+    detail.className = 'reg-hist-row';
+    detail.dataset.uid = String(uid);
+    detail.innerHTML = '<td colspan="11" style="background:#fafafa; padding:10px 16px;"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка истории…</td>';
+    tr.after(detail);
+    try {
+      var data = await api.get('/admin/residents/' + uid + '/finance-detail?history_periods=6');
+      detail.querySelector('td').innerHTML = this._histHtml(data);
+      var self = this;
+      detail.querySelectorAll('[data-hist-approve]').forEach(function (btn) {
+        btn.addEventListener('click', function () { self.approve('reading', btn.dataset.histApprove, btn); });
+      });
+    } catch (e) {
+      detail.querySelector('td').innerHTML = '<span style="color:var(--danger-color);">Ошибка: ' + esc(e.message || e) + '</span>';
+    }
+  },
+
+  _histHtml(data) {
+    var hist = (data && data.history) || [];
+    if (!hist.length) return '<span style="color:var(--text-secondary);">Нет истории показаний.</span>';
+    var rows = hist.map(function (h) {
+      var st = h.reading_id
+        ? (h.is_approved ? '<span style="color:#15803d;">утв.</span>' : '<span style="color:#92400e;">черновик</span>')
+        : '<span style="color:var(--text-tertiary);">нет</span>';
+      var approveBtn = (h.reading_id && !h.is_approved)
+        ? '<button class="action-btn success-btn" style="padding:2px 7px; font-size:11px;" data-hist-approve="' + h.reading_id + '"><i class="fa-solid fa-check"></i> Утвердить</button>'
+        : '';
+      var sum = (h.total_cost != null) ? Number(h.total_cost).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽' : '—';
+      return '<tr style="border-bottom:1px solid #eef2f7;">' +
+        '<td style="padding:4px 8px;">' + esc(h.period_name) + '</td>' +
+        '<td style="padding:4px 8px; text-align:right; font-family:monospace;">' + fmtNum(h.hot_water) + '</td>' +
+        '<td style="padding:4px 8px; text-align:right; font-family:monospace;">' + fmtNum(h.cold_water) + '</td>' +
+        '<td style="padding:4px 8px; text-align:right; font-family:monospace;">' + fmtNum(h.electricity) + '</td>' +
+        '<td style="padding:4px 8px; text-align:right;">' + sum + '</td>' +
+        '<td style="padding:4px 8px;">' + st + '</td>' +
+        '<td style="padding:4px 8px; text-align:right;">' + approveBtn + '</td>' +
+        '</tr>';
+    }).join('');
+    return '<div style="font-size:12px;"><b><i class="fa-solid fa-clock-rotate-left"></i> Показания за последние периоды:</b>' +
+      '<table style="width:100%; margin-top:6px; border-collapse:collapse; font-size:12px;">' +
+      '<thead><tr style="color:var(--text-secondary); font-size:11px; text-align:left;">' +
+      '<th style="padding:3px 8px;">Период</th><th style="padding:3px 8px; text-align:right;">ГВС</th>' +
+      '<th style="padding:3px 8px; text-align:right;">ХВС</th><th style="padding:3px 8px; text-align:right;">Свет</th>' +
+      '<th style="padding:3px 8px; text-align:right;">Итог</th><th style="padding:3px 8px;">Статус</th><th></th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table></div>';
   },
 
   async reassign(id) {

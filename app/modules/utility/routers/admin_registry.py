@@ -84,6 +84,7 @@ async def unified_registry(
             room = r.room
             items.append({
                 "row_type": "reading", "id": r.id,
+                "user_id": r.user_id, "period_id": r.period_id,
                 "source": src, "source_label": label,
                 "timestamp": r.created_at.isoformat() if r.created_at else None,
                 "fio": r.user.username if r.user else "—",

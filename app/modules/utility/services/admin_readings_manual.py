@@ -97,6 +97,127 @@ async def _recompute_real_chain(db: AsyncSession, user, room, tariff) -> int:
         changed += 1
     return changed
 
+
+async def recalc_user_period(db: AsyncSession, *, user_id: int, period_id: int) -> dict:
+    """Перерасчёт ОДНОГО жильца за ОДИН период по текущему тарифу/состоянию.
+    Работает для ЛЮБОГО периода (открытый/закрытый — не важно, без проверки
+    is_active). Холостяцкая квартира → выравнивание поровну (equalize); семья →
+    прямой пересчёт его показания. Сальдо 1С (debt/overpayment) не трогаем."""
+    from app.modules.utility.services.reading_calculator import (
+        compute_reading_breakdown, is_meaningful_prev,
+    )
+    from app.modules.utility.services.period_helpers import period_chron_key
+    from app.modules.utility.routers.settings import _load_seasonal
+    from app.modules.utility.services.tariff_cache import tariff_cache
+    from app.modules.utility.services.singles_billing import (
+        equalize_singles_room, propagate_singles_reading,
+    )
+    from app.modules.utility.services.room_assignment import recount_singles_residents
+
+    user = (await db.execute(
+        select(User).options(selectinload(User.room)).where(User.id == user_id)
+    )).scalars().first()
+    if not user or user.is_deleted:
+        raise HTTPException(404, "Жилец не найден")
+    room = user.room
+    if not room:
+        raise HTTPException(400, "Жилец не привязан к помещению")
+    period = await db.get(BillingPeriod, period_id)
+    if period is None:
+        raise HTTPException(404, "Период не найден")
+
+    tariff = tariff_cache.get_effective_tariff(user=user, room=room) or \
+        (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().first()
+    if tariff is None:
+        raise HTTPException(400, "Нет активного тарифа")
+
+    is_singles = bool(getattr(room, "is_singles_apartment", False))
+
+    # Холостяцкая квартира: equalize пересчитывает источник (макс. счётчик) по
+    # текущему тарифу и раскидывает РАВНУЮ долю на всех. Делитель освежаем.
+    if is_singles:
+        await recount_singles_residents(db, room.id)
+        await db.flush()
+        res = await equalize_singles_room(db, room=room, period_id=period_id)
+        if res.get("status") == "equalized":
+            await db.commit()
+            s209 = res.get("share_209") or 0
+            s205 = res.get("share_205") or 0
+            return {"status": "ok", "singles": True,
+                    "total_209": float(s209), "total_205": float(s205),
+                    "total_cost": float(s209 + s205), "detail": res}
+        # equalize пропустил (черновик / <2 жильцов) → прямой пересчёт ниже.
+
+    # Прямой пересчёт показания ЭТОГО жильца за период (черновик ИЛИ approved).
+    reading = (await db.execute(
+        select(MeterReading).where(
+            MeterReading.user_id == user.id,
+            MeterReading.room_id == room.id,
+            MeterReading.period_id == period_id,
+        ).order_by(MeterReading.is_approved.desc(), MeterReading.id.desc()).limit(1)
+    )).scalars().first()
+    if reading is None:
+        raise HTTPException(404, "Нет показания этого жильца за выбранный период")
+
+    # prev — последнее ОСМЫСЛЕННОЕ approved-показание ХРОНОЛОГИЧЕСКИ раньше.
+    cur_key = period_chron_key(period.name)
+    prev_rows = (await db.execute(
+        select(MeterReading, BillingPeriod)
+        .join(BillingPeriod, MeterReading.period_id == BillingPeriod.id)
+        .where(
+            MeterReading.user_id == user.id,
+            MeterReading.room_id == room.id,
+            MeterReading.is_approved.is_(True),
+        )
+    )).all()
+    earlier = [(period_chron_key(p.name), mr) for mr, p in prev_rows]
+    earlier = [(k, mr) for k, mr in earlier
+               if k is not None and cur_key is not None and k < cur_key and is_meaningful_prev(mr)]
+    earlier.sort(key=lambda x: x[0])
+    prev_reading = earlier[-1][1] if earlier else None
+
+    seasonal = await _load_seasonal(db)
+    heating = seasonal.heating_season_active and tariff.is_heating_active_now()
+    hw = seasonal.hot_water_heating_active and tariff.is_hw_heating_active_now()
+    bd = compute_reading_breakdown(
+        user=user, room=room, tariff=tariff,
+        current_hot=reading.hot_water, current_cold=reading.cold_water,
+        current_elect=reading.electricity, prev_reading=prev_reading,
+        heating_season_active=heating, hot_water_heating_active=hw,
+    )
+    adj = {row[0]: (row[1] or ZERO) for row in (await db.execute(
+        select(Adjustment.account_type, func.sum(Adjustment.amount))
+        .where(Adjustment.user_id == user.id, Adjustment.period_id == period_id)
+        .group_by(Adjustment.account_type))).all()}
+    t209 = bd["total_209"] + (adj.get("209") or ZERO)
+    t205 = bd["total_205"] + (adj.get("205") or ZERO)
+    for k, v in costs_for_model_fields(bd).items():
+        setattr(reading, k, v)
+    reading.total_209, reading.total_205, reading.total_cost = t209, t205, t209 + t205
+    # Флаг BASELINE синхронизируем (как _recompute_real_chain) — чтобы в реестре
+    # не висел устаревший после появления/исчезновения prev.
+    if bd.get("is_baseline"):
+        reading.anomaly_flags, reading.anomaly_score = "BASELINE", 0
+    elif (reading.anomaly_flags or "") == "BASELINE":
+        reading.anomaly_flags, reading.anomaly_score = "", 0
+    db.add(reading)
+
+    # Холостяк (fallback-путь): раскидать РАВНУЮ долю (без корректировок) на остальных.
+    if is_singles:
+        await db.flush()
+        _costs = {f: getattr(reading, f) for f in MODEL_COST_FIELDS}
+        await propagate_singles_reading(
+            db, room=room, period_id=period_id, source_user_id=user.id,
+            hot=reading.hot_water, cold=reading.cold_water, elect=reading.electricity,
+            costs=_costs, total_209=bd["total_209"], total_205=bd["total_205"],
+            flags=reading.anomaly_flags, is_approved=bool(reading.is_approved),
+        )
+
+    await db.commit()
+    return {"status": "ok", "singles": is_singles,
+            "total_209": float(t209), "total_205": float(t205),
+            "total_cost": float(t209 + t205)}
+
 async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
     """Сохранение черновика бухгалтером вручную.
 

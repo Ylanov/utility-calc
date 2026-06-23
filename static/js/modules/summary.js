@@ -237,6 +237,14 @@ export const SummaryModule = {
                 return;
             }
 
+            // Кнопка «Перерасчёт за период» — пересчитать одного жильца за выбранный период.
+            const recalcBtn = e.target.closest('button[data-recalc-uid]');
+            if (recalcBtn) {
+                e.stopPropagation();
+                this.recalcUserPeriod(Number(recalcBtn.dataset.recalcUid));
+                return;
+            }
+
             // Разворот квартиры (режим «Квартиры») — список жильцов + история подач.
             const roomRow = e.target.closest('[data-toggle-room]');
             if (roomRow) {
@@ -933,6 +941,11 @@ export const SummaryModule = {
                 <span style="font-size:11px; color:var(--text-tertiary);">
                     (удалит мусорные reading'и за ${year}, пересоберёт из таблицы с swap если нужно)
                 </span>
+                <button class="action-btn" data-recalc-uid="${userId}"
+                        style="padding:6px 12px; font-size:12px; background:#0ea5e9; color:#fff; border:1px solid #0ea5e9;"
+                        title="Пересчитать показание этого жильца за выбранный период по текущему тарифу. Открытый/закрытый период — не важно.">
+                    <i class="fa-solid fa-rotate"></i> Перерасчёт за период
+                </button>
             </div>`;
     },
 
@@ -1893,6 +1906,29 @@ export const SummaryModule = {
             await this.toggleResident(userId);  // развернуть с новыми данными
         } catch (e) {
             toast('Ошибка пересборки: ' + (e.message || e), 'error');
+        }
+    },
+
+    /** Перерасчёт ОДНОГО жильца за выбранный период по текущему тарифу.
+     *  Работает для любого периода (открытый/закрытый). Холостяк — выравнивание
+     *  поровну, семья — прямой пересчёт его показания. */
+    async recalcUserPeriod(userId) {
+        const pid = Number(this.state.selectedPeriodId);
+        if (!userId || !pid) { toast('Сначала выберите период', 'warning'); return; }
+        const period = (this.periodsCache || []).find(p => Number(p.id) === pid);
+        const pName = period?.name || `id=${pid}`;
+        if (!await showConfirm(
+            `Пересчитать показание жильца за «${pName}» по текущему тарифу?\n` +
+            `Период может быть закрытым — пересчёт всё равно выполнится. Сальдо 1С не трогается.`,
+            { title: 'Перерасчёт за период', confirmText: 'Пересчитать' }
+        )) return;
+        try {
+            const res = await api.post(`/admin/readings/recalc-user/${userId}?period_id=${pid}`, {});
+            toast(`Пересчитано: коммуналка ${fmtMoney(res.total_209)}, наём ${fmtMoney(res.total_205)}.`, 'success');
+            this.state.residentDetailCache.delete(userId);
+            await this.loadData();
+        } catch (e) {
+            toast('Ошибка перерасчёта: ' + (e.message || e), 'error');
         }
     },
 };
