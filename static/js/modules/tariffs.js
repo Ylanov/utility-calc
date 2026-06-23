@@ -81,9 +81,6 @@ export const TariffsModule = {
             usageBlock: document.getElementById('tariffUsageBlock'),
             usageStats: document.getElementById('tariffUsageStats'),
             usageDetails: document.getElementById('tariffUsageDetails'),
-            assignDormSelect: document.getElementById('assignDormSelect'),
-            btnAssignDorm: document.getElementById('btnAssignDorm'),
-            btnUnassignDorm: document.getElementById('btnUnassignDorm'),
             // Модалка «Квартиры на тарифе» — углублённое управление привязками.
             btnTariffRooms: document.getElementById('btnTariffRooms'),
             tariffRoomsBtnCount: document.getElementById('tariffRoomsBtnCount'),
@@ -150,12 +147,12 @@ export const TariffsModule = {
                 e.preventDefault();
                 this._applyChargePreset(btn.getAttribute('data-charge-preset'));
             });
-            // Bug AU: любое изменение charge_* / singles_skip_* чекбокса —
-            // мгновенный пересчёт превью внизу страницы.
+            // Bug AU: любое изменение charge_*-чекбокса — мгновенный пересчёт
+            // превью внизу страницы.
             this.dom.form.addEventListener('change', (e) => {
                 const t = e.target;
                 if (!t || t.type !== 'checkbox') return;
-                if (!t.id || !(t.id.startsWith('t_charge_') || t.id.startsWith('t_singles_skip_'))) return;
+                if (!t.id || !t.id.startsWith('t_charge_')) return;
                 if (typeof this.recalcPreview === 'function') this.recalcPreview();
             });
         }
@@ -223,10 +220,6 @@ export const TariffsModule = {
             const inp = document.getElementById(htmlId);
             inp?.addEventListener('input', debouncedPreview);
         });
-
-        // Массовая привязка к общежитию
-        this.dom.btnAssignDorm?.addEventListener('click', () => this.assignToDormitory(false));
-        this.dom.btnUnassignDorm?.addEventListener('click', () => this.assignToDormitory(true));
 
         // Модалка «Квартиры на тарифе».
         this.dom.btnTariffRooms?.addEventListener('click', () => this.openRoomsModal());
@@ -490,17 +483,6 @@ export const TariffsModule = {
         setDate('t_hw_heating_start', tariff.hw_heating_season_start);
         setDate('t_hw_heating_end', tariff.hw_heating_season_end);
 
-        // Bug AS этап 3: skip-флаги для холостяцких квартир. Все default
-        // false — для существующих тарифов чекбоксы пустые, поведение
-        // не меняется (см. calculate_utilities этапа 4).
-        const setCbStrict = (id, v) => {
-            const el = document.getElementById(id);
-            if (el) el.checked = !!v;
-        };
-        setCbStrict('t_singles_skip_maintenance', tariff.singles_skip_maintenance);
-        setCbStrict('t_singles_skip_social_rent', tariff.singles_skip_social_rent);
-        setCbStrict('t_singles_skip_heating', tariff.singles_skip_heating);
-        setCbStrict('t_singles_skip_waste', tariff.singles_skip_waste);
 
         // Bug AT этап 2: charge_* — default true для существующих тарифов
         // (null/undefined → true), снимаем только если backend явно вернул false.
@@ -522,9 +504,8 @@ export const TariffsModule = {
             this.dom.btnDelete.style.display = (tariff.id === 1) ? 'none' : 'block';
         }
 
-        // Загружаем «Где применяется» + список общежитий + перерисовываем превью.
+        // Загружаем «Где применяется» + перерисовываем превью.
         this.loadUsage(tariff.id);
-        this.loadDormitoriesForAssign();
         this.recalcPreview();
     },
 
@@ -592,12 +573,6 @@ export const TariffsModule = {
         ['t_heating_start', 't_heating_end', 't_hw_heating_start', 't_hw_heating_end'].forEach(id => {
             const el = document.getElementById(id);
             if (el) el.value = '';
-        });
-        // Bug AS: skip-флаги default false — холостяки платят за всё, как все.
-        ['t_singles_skip_maintenance', 't_singles_skip_social_rent',
-         't_singles_skip_heating', 't_singles_skip_waste'].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.checked = false;
         });
         // Bug AT: charge_* default true — новый тариф начисляет всё.
         ['t_charge_hot_water', 't_charge_cold_water', 't_charge_sewage',
@@ -913,55 +888,6 @@ export const TariffsModule = {
         }
     },
 
-    /** Загружает уникальные общежития из существующих тарифов/комнат
-     * (через usage всех тарифов). Простой подход: дёргаем уже знакомый
-     * /housing/dormitories или (если его нет) собираем из usage активного
-     * тарифа. Здесь возьмём с housing endpoint — он есть в проекте. */
-    async loadDormitoriesForAssign() {
-        if (!this.dom.assignDormSelect) return;
-        // Один раз грузим
-        if (this.dom.assignDormSelect.dataset.loaded) return;
-        try {
-            const data = await api.get('/rooms/dormitories');
-            const list = Array.isArray(data) ? data : (data.items || []);
-            const opts = list.map(d => {
-                const name = typeof d === 'string' ? d : (d.name || d.dormitory_name || d.dormitory);
-                return `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`;
-            }).join('');
-            this.dom.assignDormSelect.innerHTML =
-                '<option value="">Выберите общежитие…</option>' + opts;
-            this.dom.assignDormSelect.dataset.loaded = '1';
-        } catch (e) {
-            // Фоллбек: если такого endpoint нет, пробуем взять список из текущего usage —
-            // у других тарифов могут быть привязки, в которых видны общежития. Не критично.
-            console.warn('Не удалось загрузить список общежитий:', e.message);
-        }
-    },
-
-    async assignToDormitory(unassign = false) {
-        const dorm = this.dom.assignDormSelect?.value;
-        if (!dorm) return toast('Выберите общежитие', 'warning');
-        const tariffId = parseInt(this.dom.inputId?.value);
-        if (!unassign && !tariffId) return toast('Сначала выберите тариф', 'warning');
-
-        const action = unassign
-            ? `снять комнатный тариф со ВСЕХ комнат общежития «${dorm}»?\nЖильцы вернутся на персональный тариф (или дефолтный).`
-            : `привязать тариф «${this.dom.inputName?.value || ''}» ко ВСЕМ комнатам общежития «${dorm}»?\nЭто переопределит персональные тарифы жильцов.`;
-        if (!await showConfirm('Вы уверены — ' + action, { confirmText: 'Продолжить' })) return;
-
-        try {
-            const r = await api.post('/tariffs/assign-to-dormitory', {
-                dormitory_name: dorm,
-                tariff_id: unassign ? null : tariffId,
-            });
-            toast(`Готово: затронуто ${r.rooms_affected} комнат`, 'success');
-            // Перезагружаем «Где применяется» для всех тарифов — состояние изменилось.
-            if (tariffId) this.loadUsage(tariffId);
-        } catch (e) {
-            toast('Ошибка: ' + e.message, 'error');
-        }
-    },
-
     async loadScheduledTariffs() {
         if (!this.dom.scheduledCard || !this.dom.scheduledList) return;
         try {
@@ -1046,12 +972,7 @@ export const TariffsModule = {
         data.hw_heating_season_start = dt('t_hw_heating_start');
         data.hw_heating_season_end = dt('t_hw_heating_end');
 
-        // Bug AS этап 3: skip-флаги для холостяцких квартир.
         const cbStrict = (id) => !!document.getElementById(id)?.checked;
-        data.singles_skip_maintenance = cbStrict('t_singles_skip_maintenance');
-        data.singles_skip_social_rent = cbStrict('t_singles_skip_social_rent');
-        data.singles_skip_heating = cbStrict('t_singles_skip_heating');
-        data.singles_skip_waste = cbStrict('t_singles_skip_waste');
 
         // Bug AT этап 2: charge_* — что начисляет тариф.
         data.charge_hot_water = cbStrict('t_charge_hot_water');
