@@ -1595,6 +1595,62 @@ async def swap_row_columns(
     }
 
 
+class GSheetsRowEditSchema(BaseModel):
+    hot_water: Optional[Decimal] = None
+    cold_water: Optional[Decimal] = None
+
+
+@router.post("/rows/{row_id}/edit-values")
+async def edit_row_values(
+    row_id: int,
+    data: GSheetsRowEditSchema,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ручная правка значений ГВС/ХВС строки буфера ПРЯМО в реестре (до
+    утверждения). Use case: жилец прислал кривое число (450160 вместо 450.160)
+    — админ правит inline. Значения обновляются, конфликт-причина сбрасывается,
+    статус conflict→pending (переоценится при утверждении). Reading не создаётся."""
+    require_admin(current_user)
+    if data.hot_water is None and data.cold_water is None:
+        raise HTTPException(400, "Не передано ни одного значения")
+    row = (await db.execute(
+        select(GSheetsImportRow).where(GSheetsImportRow.id == row_id).with_for_update()
+    )).scalars().first()
+    if not row:
+        raise HTTPException(404, "Строка не найдена")
+    if row.status == "approved" and row.reading_id:
+        raise HTTPException(409, "Строка уже утверждена — правка невозможна. Сначала удалите reading.")
+    before = {"hot": str(row.hot_water), "cold": str(row.cold_water)}
+    if data.hot_water is not None:
+        if data.hot_water < 0:
+            raise HTTPException(400, "Отрицательное показание")
+        row.hot_water = data.hot_water
+    if data.cold_water is not None:
+        if data.cold_water < 0:
+            raise HTTPException(400, "Отрицательное показание")
+        row.cold_water = data.cold_water
+    # Сбрасываем конфликт — пусть переоценится при утверждении (как swap-columns).
+    row.conflict_reason = None
+    if row.status == "conflict":
+        row.status = "pending"
+    db.add(row)
+    try:
+        await write_audit_log(
+            db, current_user.id, current_user.username,
+            action="gsheets_row_edit_values", entity_type="gsheets_import_row",
+            entity_id=row.id,
+            details={"row_id": row.id, "fio": row.raw_fio, "before": before,
+                     "after": {"hot": str(row.hot_water), "cold": str(row.cold_water)}},
+        )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning("audit_log for edit-values failed")
+    await db.commit()
+    return {"status": "ok", "row_id": row.id,
+            "new_hot_water": str(row.hot_water), "new_cold_water": str(row.cold_water)}
+
+
 @router.post("/rows/{row_id}/make-baseline")
 async def make_row_baseline(
     row_id: int,

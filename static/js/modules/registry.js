@@ -157,15 +157,21 @@ export const RegistryModule = {
         act += '<button class="action-btn danger-btn" style="padding:3px 8px; font-size:11px;" data-reg-reject data-rt="' + r.row_type + '" data-id="' + r.id + '" title="Отклонить — жилец получит уведомление на QR-портале"><i class="fa-solid fa-xmark"></i></button>';
       }
 
-      // Инлайн-правка счётчиков — только для боевых показаний с user_id.
-      var editable = (r.row_type === 'reading' && r.user_id != null);
+      // Инлайн-правка счётчиков: боевые показания (все 3) ИЛИ строка буфера
+      // GSheets (только ГВС/ХВС — электричества в буфере нет), пока не утверждена.
       var rawAttr = function (v) { return v == null ? '' : esc(String(v)); };
+      var editReading = (r.row_type === 'reading' && r.user_id != null);
+      var editBuffer = (r.row_type === 'gsheets' && r.status !== 'approved' && r.status !== 'rejected');
+      var editable = editReading || editBuffer;
       var trAttrs = editable
-        ? ' data-uid="' + r.user_id + '" data-pid="' + (r.period_id || '') + '"' +
+        ? ' data-rt="' + r.row_type + '" data-id="' + r.id + '"' +
+          (editReading ? ' data-uid="' + r.user_id + '" data-pid="' + (r.period_id || '') + '"' : '') +
           ' data-hot="' + rawAttr(r.hot) + '" data-cold="' + rawAttr(r.cold) + '" data-elect="' + rawAttr(r.elect) + '"'
         : '';
       var meterTd = function (field, val) {
-        return editable
+        // У буфера электричества нет — его ячейку не редактируем.
+        var cellEditable = editable && !(editBuffer && field === 'elect');
+        return cellEditable
           ? '<td class="reg-edit" data-field="' + field + '" data-raw="' + rawAttr(val) + '" style="text-align:right; font-family:monospace; cursor:text;" title="Нажми, чтобы изменить показание">' + fmtNum(val) + '</td>'
           : '<td style="text-align:right; font-family:monospace;">' + fmtNum(val) + '</td>';
       };
@@ -225,9 +231,32 @@ export const RegistryModule = {
   },
 
   async _saveCell(tr, td, field, valueStr, oldHtml) {
+    var num = function (s) { var v = parseFloat(String(s).replace(',', '.')); return Number.isFinite(v) ? v : null; };
+
+    // Строка буфера GSheets — правим её значение (ГВС/ХВС), без пересчёта;
+    // конфликт сбрасывается, статус → pending (переоценится при утверждении).
+    if (tr.dataset.rt === 'gsheets') {
+      var bv = num(valueStr);
+      if (bv == null || bv < 0) { td.innerHTML = oldHtml; return; }
+      var body = {};
+      if (field === 'hot') body.hot_water = bv;
+      else if (field === 'cold') body.cold_water = bv;
+      else { td.innerHTML = oldHtml; return; }
+      td.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+      try {
+        await api.post('/admin/gsheets/rows/' + tr.dataset.id + '/edit-values', body);
+        toast('Значение исправлено', 'success');
+        this.load();
+      } catch (e) {
+        toast('Ошибка: ' + (e.message || e), 'error');
+        this.load();
+      }
+      return;
+    }
+
+    // Боевое показание — пересчёт через save_manual_entry (вода парой).
     var uid = Number(tr.dataset.uid);
     var pid = Number(tr.dataset.pid);
-    var num = function (s) { var v = parseFloat(String(s).replace(',', '.')); return Number.isFinite(v) ? v : null; };
     var cur = { hot: tr.dataset.hot, cold: tr.dataset.cold, elect: tr.dataset.elect };
     cur[field] = valueStr;
     var hot = num(cur.hot), cold = num(cur.cold), elect = num(cur.elect);
