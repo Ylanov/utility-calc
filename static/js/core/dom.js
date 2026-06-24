@@ -119,25 +119,36 @@ export function toast(message, type = 'success') {
 
     const toastEl = el('div', {
         class: 'toast show',
+        title: 'Нажмите, чтобы закрыть',
         style: {
             backgroundColor: colors[type] || colors.success,
             display: 'flex',
-            alignItems: 'center',
-            gap: '10px'
+            alignItems: 'flex-start',
+            gap: '10px',
+            cursor: 'pointer',
+            lineHeight: '1.4',
+            wordBreak: 'break-word',
         }
     },
-        el('span', { style: { fontSize: '18px' } }, icon),
+        el('span', { style: { fontSize: '18px', flexShrink: '0', lineHeight: '1.4' } }, icon),
         el('span', {}, message)
     );
 
     container.appendChild(toastEl);
 
-    // Анимация удаления
-    setTimeout(() => {
+    // Удаление: по клику сразу, иначе по таймеру. Ошибки/предупреждения держим
+    // ДОЛЬШЕ — их надо успеть прочесть (раньше все гасли за 4с).
+    let removed = false;
+    const remove = () => {
+        if (removed) return;
+        removed = true;
         toastEl.style.opacity = '0';
         toastEl.style.transform = 'translateX(100%)';
         setTimeout(() => toastEl.remove(), 300);
-    }, 4000); // Держим 4 секунды (чуть дольше для длинных текстов)
+    };
+    toastEl.addEventListener('click', remove);
+    const ms = type === 'error' ? 12000 : (type === 'warning' ? 8000 : 4000);
+    setTimeout(remove, ms);
 }
 
 /**

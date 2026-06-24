@@ -184,10 +184,11 @@ def validate_meter_reading(
 
     # Динамические пороги из analyzer_config (с fallback на defaults).
     max_water = _threshold("validator.max_water_meter", MAX_WATER_METER_VALUE)
-    max_elect = _threshold("validator.max_electricity_meter", MAX_ELECTRICITY_METER_VALUE)
     max_water_delta = _threshold("validator.max_water_delta_per_month", MAX_WATER_DELTA_PER_MONTH)
-    max_elect_delta = _threshold("validator.max_electricity_delta_per_month", MAX_ELECTRICITY_DELTA_PER_MONTH)
     max_first_submission = _threshold("validator.max_first_submission_value", MAX_FIRST_SUBMISSION_VALUE)
+    # ЭЛЕКТРИЧЕСТВО НЕ валидируем (потолок / монотонность / дельта / baseline) —
+    # его подают ЭЛЕКТРИКИ, не жильцы, значениям доверяем (2026-06-24). Ниже
+    # остаётся только проверка неотрицательности (универсальная санити).
 
     # 1. Не-null для воды (gsheets иногда не передаёт electricity — ОК).
     if hot is None:
@@ -200,11 +201,10 @@ def validate_meter_reading(
         if value is not None and value < 0:
             result.errors.append(f"{name} не может быть отрицательным: {value}")
 
-    # 3. Абсолютный потолок (защита от пропущенной десятичной точки).
+    # 3. Абсолютный потолок (защита от пропущенной десятичной точки). Только вода.
     for name, value, ceiling in [
         ("hot_water", hot, max_water),
         ("cold_water", cold, max_water),
-        ("electricity", elect, max_elect),
     ]:
         if value is not None and value > ceiling:
             result.errors.append(
@@ -229,7 +229,6 @@ def validate_meter_reading(
         for name, value, prev in [
             ("hot_water", hot, prev_hot),
             ("cold_water", cold, prev_cold),
-            ("electricity", elect, prev_elect),
         ]:
             if value is not None and prev is not None and value < prev:
                 result.errors.append(
@@ -248,12 +247,10 @@ def validate_meter_reading(
         # При synth-baseline режем по жёсткому порогу первой подачи —
         # это спасает от Пегарькова (+236 м³ ХВС с AUTO_GENERATED prev=0).
         effective_water_delta = max_first_submission if prev_is_synth else max_water_delta
-        effective_elect_delta = max_elect_delta if not prev_is_synth else max_first_submission * Decimal("100")  # электричество всё-таки не вода
 
         for name, value, prev, max_delta in [
             ("hot_water", hot, prev_hot, effective_water_delta),
             ("cold_water", cold, prev_cold, effective_water_delta),
-            ("electricity", elect, prev_elect, effective_elect_delta),
         ]:
             if value is None or prev is None:
                 continue
@@ -294,11 +291,7 @@ def validate_meter_reading(
                     f"через «Начальный период» в Ручном вводе, и только "
                     f"после этого подавайте текущие значения."
                 )
-        if elect is not None and elect > max_elect_delta:
-            result.errors.append(
-                f"electricity={elect} слишком велико для первой подачи. "
-                f"Установите начальное показание через «Начальный период»."
-            )
+        # Электричество на baseline НЕ проверяем — подают электрики.
 
     return result
 

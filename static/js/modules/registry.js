@@ -13,6 +13,17 @@ function esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+// Чистим технические коды из ошибки сервера — оставляем человеческое объяснение.
+function cleanError(e) {
+  let m = String(e && e.message ? e.message : (e || 'Ошибка'));
+  m = m.replace(/manual_approve_blocked:\s*/gi, '')
+       .replace(/high_delta_or_baseline_overflow:\s*/gi, '')
+       .replace(/meter_decreased:\s*/gi, '')
+       .replace(/total_cost_too_high:\s*/gi, '')
+       .replace(/baseline_overflow:\s*/gi, '');
+  return m.trim();
+}
+
 // Палитра статусов — как STATUS_META старого gsheets-реестра (привычна админу).
 const STATUS = {
   draft:         { t: 'Черновик',       c: '#92400e', b: '#fef3c7' },
@@ -248,7 +259,7 @@ export const RegistryModule = {
         toast('Значение исправлено', 'success');
         this.load();
       } catch (e) {
-        toast('Ошибка: ' + (e.message || e), 'error');
+        toast('Ошибка: ' + cleanError(e), 'error');
         this.load();
       }
       return;
@@ -370,7 +381,7 @@ export const RegistryModule = {
       this.load();
     } catch (e) {
       btn.disabled = false;
-      toast('Не удалось отклонить: ' + (e.message || e), 'error');
+      toast('Не удалось отклонить. ' + cleanError(e), 'error');
     }
   },
 
@@ -388,7 +399,7 @@ export const RegistryModule = {
       this.load();
     } catch (e) {
       btn.disabled = false;
-      toast('Не удалось утвердить: ' + (e.message || e) + '. Для конфликтов — блок «Детальная работа» ниже.', 'error');
+      toast('Не удалось утвердить. ' + cleanError(e), 'error');
     }
   },
 };
