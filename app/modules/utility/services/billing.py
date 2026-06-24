@@ -7,6 +7,7 @@ from sqlalchemy.orm import selectinload
 
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Optional
 import logging
 from collections import defaultdict
 
@@ -598,11 +599,25 @@ async def auto_fill_period_readings(
     }
 
 
+def _building_key(room) -> str:
+    """Имя ЗДАНИЯ — как _report_group в финотчёте (дом → «ул. X, д. Y»,
+    общага → dormitory_name). Для фильтра «начислить только выбранным домам»."""
+    if getattr(room, "place_type", None) == "house":
+        parts = []
+        if getattr(room, "street", None):
+            parts.append(f"ул. {room.street}")
+        if getattr(room, "house_number", None):
+            parts.append(f"д. {room.house_number}")
+        return ", ".join(parts) if parts else "Дома"
+    return getattr(room, "dormitory_name", None) or "Без общежития"
+
+
 async def charge_static_rent_for_houses(
     db: AsyncSession,
     period_id: int,
     dry_run: bool = False,
     recompute: bool = False,
+    groups: Optional[list] = None,
 ) -> dict:
     """СТАТИЧНОЕ начисление (наём 205) для жильцов ДОМОВ (place_type='house')
     в указанном периоде — ЧЕРНОВИКОМ (is_approved=False).
@@ -672,12 +687,20 @@ async def charge_static_rent_for_houses(
     zero_money = Decimal("0.00")
     preview = []
     by_room: dict[str, int] = {}
+    by_building: dict[str, int] = {}
+    _groups = set(groups) if groups else None
     created = updated = skipped = 0
 
     for user in users_all:
         room = user.room
         if room and room.is_vacant:
             continue
+        # Фильтр по выбранным домам (модалка «начислить выбранным»). Без groups —
+        # все дома (старое поведение).
+        bkey = _building_key(room) if room else "—"
+        if _groups is not None and bkey not in _groups:
+            continue
+        by_building[bkey] = by_building.get(bkey, 0) + 1
         existing = existing_by_user.get(user.id)
         # recompute=False (открытие периода): идемпотентно — уже начисленных
         # пропускаем. recompute=True (кнопка «пересчитать наём домам»): обновляем
@@ -706,7 +729,7 @@ async def charge_static_rent_for_houses(
         if dry_run:
             preview.append({
                 "user_id": user.id, "username": user.username,
-                "room": addr, "total_205": float(cost_205),
+                "room": addr, "building": bkey, "total_205": float(cost_205),
                 "total_cost": float(costs.get("total_cost", zero_money)),
                 "mode": "update" if existing is not None else "create",
             })
@@ -756,6 +779,7 @@ async def charge_static_rent_for_houses(
         "would_create": len(preview) if dry_run else None,
         "skipped_has_reading": skipped,
         "by_room": by_room,
+        "by_building": [{"name": k, "count": v} for k, v in sorted(by_building.items())],
         "preview": preview[:50] if dry_run else None,
         "dry_run": dry_run, "recompute": recompute,
     }
@@ -766,6 +790,7 @@ async def charge_unconditional_norm(
     period_id: int,
     dry_run: bool = False,
     recompute: bool = False,
+    groups: Optional[list] = None,
 ) -> dict:
     """Начисление по тарифу «БЕЗ УСЛОВИЙ» (tariff_type='unconditional'): расход =
     НОРМАТИВ НА КВАРТИРУ из тарифа (фиксировано, без счётчиков). Создаётся СРАЗУ
@@ -802,7 +827,7 @@ async def charge_unconditional_norm(
     empty = {
         "status": "ok", "period_id": target_period.id, "period_name": target_period.name,
         "processed": 0, "created": 0, "updated": 0, "skipped_has_reading": 0, "by_room": {},
-        "errors": [], "skipped_errors": 0,
+        "by_building": [], "errors": [], "skipped_errors": 0,
         "would_create": 0 if dry_run else None, "preview": [] if dry_run else None,
         "dry_run": dry_run, "recompute": recompute,
     }
@@ -835,12 +860,18 @@ async def charge_unconditional_norm(
     zero_money = Decimal("0.00")
     preview = []
     by_room: dict[str, int] = {}
+    by_building: dict[str, int] = {}
+    _groups = set(groups) if groups else None
     errors: list[dict] = []
     created = updated = skipped = 0
 
     for user in users_all:
         room = user.room
         if room and getattr(room, "is_vacant", False):
+            continue
+        # Фильтр по выбранным зданиям (модалка). Без groups — все.
+        bkey = _building_key(room) if room else "—"
+        if _groups is not None and bkey not in _groups:
             continue
         existing = existing_by_user.get(user.id)
         if existing is not None and not recompute:
@@ -849,6 +880,7 @@ async def charge_unconditional_norm(
         tariff = tariff_cache.get_effective_tariff(user=user, room=room)
         if tariff is None or not is_unconditional(tariff):
             continue
+        by_building[bkey] = by_building.get(bkey, 0) + 1
         _heating = _seasonal.heating_season_active and tariff.is_heating_active_now()
         _hw = _seasonal.hot_water_heating_active and tariff.is_hw_heating_active_now()
         try:
@@ -872,6 +904,7 @@ async def charge_unconditional_norm(
         if dry_run:
             preview.append({
                 "user_id": user.id, "username": user.username, "room": addr,
+                "building": bkey,
                 "total_205": float(cost_205), "total_cost": float(total_cost),
                 "mode": "update" if existing is not None else "create",
             })
@@ -912,6 +945,7 @@ async def charge_unconditional_norm(
         "updated": updated if not dry_run else 0,
         "would_create": len(preview) if dry_run else None,
         "skipped_has_reading": skipped, "by_room": by_room,
+        "by_building": [{"name": k, "count": v} for k, v in sorted(by_building.items())],
         "errors": errors[:20], "skipped_errors": len(errors),
         "preview": preview[:50] if dry_run else None,
         "dry_run": dry_run, "recompute": recompute,

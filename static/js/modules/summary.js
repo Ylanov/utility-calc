@@ -190,6 +190,15 @@ export const SummaryModule = {
 
         // Делегирование клика для раскрытия карточек общежитий и PDF
         this.dom.container?.addEventListener('click', (e) => {
+            // Кнопка «Перерасчёт дома» в шапке карточки — ПЕРЕД toggle-dorm,
+            // иначе клик по ней и раскрыл/свернул бы карточку.
+            const recalcBuildingBtn = e.target.closest('button[data-recalc-building]');
+            if (recalcBuildingBtn) {
+                e.stopPropagation();
+                this.recalcBuildingPeriod(recalcBuildingBtn.dataset.recalcBuilding);
+                return;
+            }
+
             const head = e.target.closest('[data-toggle-dorm]');
             if (head) {
                 const name = head.dataset.toggleDorm;
@@ -436,6 +445,11 @@ export const SummaryModule = {
                         ${d.total_overpay > 0 ? ` · переплат ${fmtMoney(d.total_overpay)}` : ''}
                     </div>
                 </div>
+                <button type="button" data-recalc-building="${esc(d.name)}"
+                        title="Пересчитать ВСЕХ жильцов этого дома за выбранный период по текущему тарифу"
+                        style="flex:none; padding:6px 12px; font-size:12px; background:#0ea5e9; color:#fff; border:none; border-radius:6px; cursor:pointer; font-weight:500; white-space:nowrap;">
+                    <i class="fa-solid fa-rotate"></i> Перерасчёт дома
+                </button>
             </div>
             ${body}
         </div>`;
@@ -1700,58 +1714,99 @@ export const SummaryModule = {
      *  закрытия периода. Двухстадийно: dry-run → confirm с превью (сколько
      *  домов и суммы) → реальный запуск → обновление таблицы. Идемпотентно:
      *  сервер пропускает дома, у которых reading за период уже есть. */
+    /** Модалка выбора зданий (домов/общаг) для адресного начисления.
+     *  items: [{key, label, count, sum}]. Возвращает Promise<string[]|null>
+     *  (массив выбранных key, либо null если отменили). */
+    _pickBuildingsModal({ title, subtitle, items, confirmText = 'Применить', confirmColor = '#0891b2' }) {
+        return new Promise((resolve) => {
+            const overlay = document.createElement('div');
+            overlay.style.cssText = 'position:fixed; inset:0; background:rgba(15,23,42,0.5); display:flex; align-items:center; justify-content:center; z-index:10050; padding:20px;';
+            const rows = items.map(it => `
+                <label style="display:flex; align-items:center; gap:10px; padding:9px 12px; border:1px solid var(--border-color); border-radius:8px; cursor:pointer; background:var(--bg-card);">
+                    <input type="checkbox" class="bpick-cb" data-key="${esc(it.key)}" checked style="width:16px; height:16px; cursor:pointer;">
+                    <span style="flex:1; min-width:0;">
+                        <span style="font-weight:600; font-size:13px;">${esc(it.label)}</span>
+                        <span style="color:var(--text-secondary); font-size:11px; margin-left:6px;">${it.count} ${it.count === 1 ? 'квартира' : 'квартир'}</span>
+                    </span>
+                    ${it.sum != null ? `<span style="font-family:monospace; font-size:12px; color:#059669; font-weight:600;">${fmtMoney(it.sum)}</span>` : ''}
+                </label>`).join('');
+            overlay.innerHTML = `
+                <div style="background:var(--bg-card); border-radius:12px; max-width:540px; width:100%; max-height:84vh; display:flex; flex-direction:column; box-shadow:0 16px 50px rgba(0,0,0,0.35); overflow:hidden;">
+                    <div style="padding:16px 20px; border-bottom:1px solid var(--border-color);">
+                        <div style="font-size:16px; font-weight:700;">${esc(title)}</div>
+                        ${subtitle ? `<div style="font-size:12px; color:var(--text-secondary); margin-top:4px; line-height:1.4;">${esc(subtitle)}</div>` : ''}
+                    </div>
+                    <div style="padding:10px 20px; display:flex; align-items:center; gap:10px; border-bottom:1px solid var(--border-color);">
+                        <button type="button" class="bpick-all" style="font-size:12px; padding:5px 10px; background:var(--bg-page); border:1px solid var(--border-color); border-radius:6px; cursor:pointer;">Выбрать все</button>
+                        <button type="button" class="bpick-none" style="font-size:12px; padding:5px 10px; background:var(--bg-page); border:1px solid var(--border-color); border-radius:6px; cursor:pointer;">Снять все</button>
+                        <span class="bpick-counter" style="margin-left:auto; font-size:12px; color:var(--text-secondary);"></span>
+                    </div>
+                    <div class="bpick-list" style="padding:14px 20px; display:flex; flex-direction:column; gap:8px; overflow-y:auto;">${rows}</div>
+                    <div style="padding:14px 20px; border-top:1px solid var(--border-color); display:flex; justify-content:flex-end; gap:10px;">
+                        <button type="button" class="bpick-cancel" style="font-size:13px; padding:8px 16px; background:var(--bg-page); border:1px solid var(--border-color); border-radius:7px; cursor:pointer;">Отмена</button>
+                        <button type="button" class="bpick-ok" style="font-size:13px; padding:8px 18px; background:${confirmColor}; color:#fff; border:none; border-radius:7px; cursor:pointer; font-weight:600;">${esc(confirmText)}</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(overlay);
+            const cbs = () => Array.from(overlay.querySelectorAll('.bpick-cb'));
+            const counter = overlay.querySelector('.bpick-counter');
+            const updateCounter = () => {
+                const n = cbs().filter(c => c.checked).length;
+                counter.textContent = `Выбрано: ${n} из ${items.length}`;
+            };
+            updateCounter();
+            overlay.querySelector('.bpick-all').addEventListener('click', () => { cbs().forEach(c => { c.checked = true; }); updateCounter(); });
+            overlay.querySelector('.bpick-none').addEventListener('click', () => { cbs().forEach(c => { c.checked = false; }); updateCounter(); });
+            overlay.querySelector('.bpick-list').addEventListener('change', updateCounter);
+            const cleanup = (val) => { overlay.remove(); resolve(val); };
+            overlay.querySelector('.bpick-cancel').addEventListener('click', () => cleanup(null));
+            overlay.querySelector('.bpick-ok').addEventListener('click', () => {
+                cleanup(cbs().filter(c => c.checked).map(c => c.dataset.key));
+            });
+            overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) cleanup(null); });
+        });
+    },
+
+    /** «Начислить наём домам» — теперь с выбором конкретных домов (модалка).
+     *  dry-run (без groups) → модалка из by_building → apply с выбранными. */
     async chargeRentNowSelectedPeriod() {
         const pid = Number(this.state.selectedPeriodId);
-        if (!pid) {
-            toast('Сначала выберите период', 'warning');
-            return;
-        }
+        if (!pid) { toast('Сначала выберите период', 'warning'); return; }
         const period = (this.periodsCache || []).find(p => Number(p.id) === pid);
         const pName = period?.name || `id=${pid}`;
         let preview;
         try {
-            // recompute=true: и начислить новым домам, и ПЕРЕСЧИТАТЬ уже начисленных
-            // по текущему тарифу (смена ставки наёма применяется сразу).
             preview = await api.post(`/admin/billing/charge-rent-now/${pid}?dry_run=true&recompute=true`);
-        } catch (e) {
-            toast('Не удалось получить preview: ' + (e.message || e), 'error');
-            return;
-        }
-        const willCreate = preview.would_create || 0;
-        const skipped = preview.skipped_has_reading || 0;
-        if (willCreate === 0) {
-            toast(`В периоде «${pName}» нет домов для начисления наёма.`, 'info');
-            return;
-        }
-        // Превью: список домов с суммой наёма (205). Ограничиваем вывод, чтобы
-        // confirm не превратился в портянку при большом числе домов.
-        const previewRows = preview.preview || [];
-        const lines = previewRows.slice(0, 20)
-            .map(p => `  • ${p.room || p.username}: ${fmtMoney(p.total_205)}`).join('\n');
-        const more = previewRows.length > 20 ? `\n  …и ещё ${previewRows.length - 20}` : '';
-        const ok = await showConfirm(
-            `Начислить/пересчитать наём (205) домам в периоде «${pName}»?\n\n` +
-            `Домов к начислению/пересчёту: ${willCreate}\n${lines}${more}\n` +
-            `\nДома платят только наём (205) = площадь × ставка тарифа. Пересчёт ` +
-            `применяет ТЕКУЩИЙ тариф ко всем домам (смена ставки наёма отразится ` +
-            `сразу). Сальдо 1С не трогается.`,
-            { title: 'Начислить/пересчитать наём домам', confirmText: 'Применить' }
-        );
-        if (!ok) return;
+        } catch (e) { toast('Не удалось получить preview: ' + (e.message || e), 'error'); return; }
+        const buildings = preview.by_building || [];
+        if (!buildings.length) { toast(`В периоде «${pName}» нет домов для начисления наёма.`, 'info'); return; }
+        // Сумма наёма (205) по зданию из строк превью.
+        const sums = {};
+        (preview.preview || []).forEach(r => {
+            const k = r.building || '—';
+            sums[k] = (sums[k] || 0) + Number(r.total_205 || 0);
+        });
+        const items = buildings.map(b => ({ key: b.name, label: b.name, count: b.count, sum: sums[b.name] }));
+        const chosen = await this._pickBuildingsModal({
+            title: 'Начислить наём (205) домам',
+            subtitle: `Период «${pName}». Наём = площадь × ставка тарифа. Пересчитывает выбранные дома по текущему тарифу. Сальдо 1С не трогается.`,
+            items, confirmText: 'Начислить', confirmColor: '#0891b2',
+        });
+        if (!chosen) return;
+        if (!chosen.length) { toast('Не выбрано ни одного дома.', 'warning'); return; }
         try {
-            const res = await api.post(`/admin/billing/charge-rent-now/${pid}?recompute=true`);
+            const qs = new URLSearchParams({ recompute: 'true' });
+            chosen.forEach(g => qs.append('groups', g));
+            const res = await api.post(`/admin/billing/charge-rent-now/${pid}?${qs}`, {});
             const c = res.created || 0; const u = res.updated || 0;
             toast(`Дома (${pName}): начислено ${c}, пересчитано ${u}`, 'success');
             await this.loadData();
-        } catch (e) {
-            toast('Ошибка начисления наёма: ' + (e.message || e), 'error');
-        }
+        } catch (e) { toast('Ошибка начисления наёма: ' + (e.message || e), 'error'); }
     },
 
-    /** «Начислить по нормативу» (тариф БЕЗ УСЛОВИЙ) для выбранного периода.
-     *  Расход = норматив на квартиру (без счётчиков). Семья платит норму
-     *  целиком, холостяки делят поровну. Двухстадийно: dry-run → confirm →
-     *  apply. Идемпотентно; recompute=true пересчитывает уже начисленных. */
+    /** «Начислить по нормативу» (тариф БЕЗ УСЛОВИЙ) — с выбором зданий (модалка).
+     *  Расход = норматив на квартиру. Семья платит норму целиком, холостяки
+     *  делят поровну. dry-run → модалка из by_building → apply с выбранными. */
     async chargeNormNowSelectedPeriod() {
         const pid = Number(this.state.selectedPeriodId);
         if (!pid) { toast('Сначала выберите период', 'warning'); return; }
@@ -1761,25 +1816,25 @@ export const SummaryModule = {
         try {
             preview = await api.post(`/admin/billing/charge-norm-now/${pid}?dry_run=true&recompute=true`);
         } catch (e) { toast('Не удалось получить preview: ' + (e.message || e), 'error'); return; }
-        const willCreate = preview.would_create || 0;
-        if (willCreate === 0) {
-            toast(`В периоде «${pName}» нет жильцов на тарифе «БЕЗ УСЛОВИЙ».`, 'info');
-            return;
-        }
-        const previewRows = preview.preview || [];
-        const lines = previewRows.slice(0, 20)
-            .map(p => `  • ${p.room || p.username}: ${fmtMoney(p.total_cost)}`).join('\n');
-        const more = previewRows.length > 20 ? `\n  …и ещё ${previewRows.length - 20}` : '';
-        const ok = await showConfirm(
-            `Начислить/пересчитать по нормативу (тариф «БЕЗ УСЛОВИЙ») в периоде «${pName}»?\n\n` +
-            `Жильцов к начислению/пересчёту: ${willCreate}\n${lines}${more}\n` +
-            `\nРасход = норматив на квартиру (без счётчиков). Семья платит норму ` +
-            `целиком, холостяки делят поровну. Сальдо 1С не трогается.`,
-            { title: 'Начислить по нормативу', confirmText: 'Применить' }
-        );
-        if (!ok) return;
+        const buildings = preview.by_building || [];
+        if (!buildings.length) { toast(`В периоде «${pName}» нет жильцов на тарифе «БЕЗ УСЛОВИЙ».`, 'info'); return; }
+        const sums = {};
+        (preview.preview || []).forEach(r => {
+            const k = r.building || '—';
+            sums[k] = (sums[k] || 0) + Number(r.total_cost || 0);
+        });
+        const items = buildings.map(b => ({ key: b.name, label: b.name, count: b.count, sum: sums[b.name] }));
+        const chosen = await this._pickBuildingsModal({
+            title: 'Начислить по нормативу (БЕЗ УСЛОВИЙ)',
+            subtitle: `Период «${pName}». Расход = норматив на квартиру. Семья — норму целиком, холостяки делят поровну. Сальдо 1С не трогается.`,
+            items, confirmText: 'Начислить', confirmColor: '#7c3aed',
+        });
+        if (!chosen) return;
+        if (!chosen.length) { toast('Не выбрано ни одного здания.', 'warning'); return; }
         try {
-            const res = await api.post(`/admin/billing/charge-norm-now/${pid}?recompute=true`);
+            const qs = new URLSearchParams({ recompute: 'true' });
+            chosen.forEach(g => qs.append('groups', g));
+            const res = await api.post(`/admin/billing/charge-norm-now/${pid}?${qs}`, {});
             const c = res.created || 0; const u = res.updated || 0;
             toast(`По нормативу (${pName}): начислено ${c}, пересчитано ${u}`, 'success');
             // Часть жильцов могла не начислиться (напр. пустой тариф) — показываем,
@@ -1789,9 +1844,31 @@ export const SummaryModule = {
                     (res.errors || []).slice(0, 3).map(e => e.username || e.user_id).join(', '), 'warning');
             }
             await this.loadData();
-        } catch (e) {
-            toast('Ошибка начисления по нормативу: ' + (e.message || e), 'error');
-        }
+        } catch (e) { toast('Ошибка начисления по нормативу: ' + (e.message || e), 'error'); }
+    },
+
+    /** Перерасчёт ВСЕГО дома за выбранный период (кнопка в шапке карточки).
+     *  Пробегает жильцов здания, каждого пересчитывает по текущему тарифу.
+     *  Холостяки — выравнивание поровну, семья — прямой пересчёт. */
+    async recalcBuildingPeriod(group) {
+        const pid = Number(this.state.selectedPeriodId);
+        if (!group || !pid) { toast('Сначала выберите период', 'warning'); return; }
+        const period = (this.periodsCache || []).find(p => Number(p.id) === pid);
+        const pName = period?.name || `id=${pid}`;
+        if (!await showConfirm(
+            `Пересчитать ВСЕХ жильцов дома «${group}» за период «${pName}» по текущему тарифу?\n` +
+            `Период может быть закрытым — пересчёт всё равно выполнится. Сальдо 1С не трогается.`,
+            { title: 'Перерасчёт дома', confirmText: 'Пересчитать дом' }
+        )) return;
+        try {
+            const qs = new URLSearchParams({ period_id: String(pid), group });
+            const res = await api.post(`/admin/readings/recalc-building?${qs}`, {});
+            let msg = `Дом «${group}»: пересчитано ${res.processed} жильцов.`;
+            if (res.errors_count > 0) msg += ` Пропущено ${res.errors_count} (нет показаний за период).`;
+            toast(msg, res.errors_count > 0 ? 'warning' : 'success');
+            this.state.residentDetailCache.clear();
+            await this.loadData();
+        } catch (e) { toast('Ошибка перерасчёта дома: ' + (e.message || e), 'error'); }
     },
 
     async rebuildResidentYear(userId, year) {

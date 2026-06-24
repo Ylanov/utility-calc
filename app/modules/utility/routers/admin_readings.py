@@ -1,6 +1,6 @@
 # app/modules/utility/routers/admin_readings.py
 
-from typing import Optional
+from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -266,19 +266,20 @@ async def charge_houses_rent_endpoint(
         period_id: int,
         dry_run: bool = False,
         recompute: bool = False,
+        groups: Optional[List[str]] = Query(None, description="Дома (имена зданий) — начислить только им; пусто = всем"),
         current_user: User = Depends(allow_readings_manage),
         db: AsyncSession = Depends(get_db),
 ):
     """Начислить статичный наём (205) жильцам ДОМОВ (place_type='house') в
     периоде — ЧЕРНОВИКОМ, сразу, не дожидаясь закрытия (наём статичен:
     площадь × тариф). Идемпотентно (жильцы с reading в периоде пропускаются).
-    dry_run=true → preview без записи. На закрытии черновики утвердятся штатно.
+    dry_run=true → preview без записи. groups — выбор конкретных домов.
     """
     from app.modules.utility.services.billing import charge_static_rent_for_houses
 
     if dry_run:
         try:
-            return await charge_static_rent_for_houses(db, period_id, dry_run=True, recompute=recompute)
+            return await charge_static_rent_for_houses(db, period_id, dry_run=True, recompute=recompute, groups=groups)
         except ValueError as e:
             raise HTTPException(400, str(e))
 
@@ -299,7 +300,7 @@ async def charge_houses_rent_endpoint(
         raise HTTPException(
             409, "Начисление наёма домам по этому периоду уже выполняется — дождитесь завершения")
     try:
-        result = await charge_static_rent_for_houses(db, period_id, dry_run=False, recompute=recompute)
+        result = await charge_static_rent_for_houses(db, period_id, dry_run=False, recompute=recompute, groups=groups)
         try:
             from app.modules.utility.routers.admin_dashboard import write_audit_log
             await write_audit_log(
@@ -333,17 +334,18 @@ async def charge_unconditional_norm_endpoint(
         period_id: int,
         dry_run: bool = False,
         recompute: bool = False,
+        groups: Optional[List[str]] = Query(None, description="Здания (имена) — начислить только им; пусто = всем"),
         current_user: User = Depends(allow_readings_manage),
         db: AsyncSession = Depends(get_db),
 ):
     """Начислить по тарифу «БЕЗ УСЛОВИЙ» (норматив на квартиру) жильцам на таких
     тарифах в периоде — сразу, approved. Семья платит норму целиком, холостяки
-    делят поровну. dry_run=true → preview. recompute=true → пересчёт существующих."""
+    делят поровну. dry_run=true → preview. groups — выбор конкретных зданий."""
     from app.modules.utility.services.billing import charge_unconditional_norm
 
     if dry_run:
         try:
-            return await charge_unconditional_norm(db, period_id, dry_run=True, recompute=recompute)
+            return await charge_unconditional_norm(db, period_id, dry_run=True, recompute=recompute, groups=groups)
         except ValueError as e:
             raise HTTPException(400, str(e))
 
@@ -362,7 +364,7 @@ async def charge_unconditional_norm_endpoint(
         raise HTTPException(
             409, "Начисление по нормативу для этого периода уже выполняется — дождитесь завершения")
     try:
-        result = await charge_unconditional_norm(db, period_id, dry_run=False, recompute=recompute)
+        result = await charge_unconditional_norm(db, period_id, dry_run=False, recompute=recompute, groups=groups)
         try:
             from app.modules.utility.routers.admin_dashboard import write_audit_log
             await write_audit_log(
@@ -435,6 +437,20 @@ async def recalc_user_period_endpoint(
     прямой пересчёт."""
     return await admin_readings_manual.recalc_user_period(
         db, user_id=user_id, period_id=period_id)
+
+
+@router.post("/api/admin/readings/recalc-building")
+async def recalc_building_period_endpoint(
+        period_id: int = Query(..., description="ID периода (любой)"),
+        group: str = Query(..., description="Имя здания (как в карточке финотчёта/фильтре начислений)"),
+        current_user: User = Depends(allow_readings_manage),
+        db: AsyncSession = Depends(get_db)
+):
+    """Перерасчёт ВСЕГО дома/общаги за период: пробегает жильцов здания и для
+    каждого делает recalc_user_period. Здание задаётся `group` — именем из
+    карточки финотчёта (совпадает с _building_key)."""
+    return await admin_readings_manual.recalc_building_period(
+        db, period_id=period_id, group=group)
 
 # Эндпоинт POST /api/admin/readings/one-time УДАЛЁН (аудит #21): схема
 # OneTimeChargeSchema не совпадала с полями, которые читал сервис →

@@ -218,6 +218,43 @@ async def recalc_user_period(db: AsyncSession, *, user_id: int, period_id: int) 
             "total_209": float(t209), "total_205": float(t205),
             "total_cost": float(t209 + t205)}
 
+
+async def recalc_building_period(
+    db: AsyncSession, *, period_id: int, group: str,
+) -> dict:
+    """Перерасчёт ВСЕГО дома/общаги за период: пробегает активных жильцов здания
+    и для каждого вызывает recalc_user_period (холостяк→equalize, семья→прямой).
+    Любой период (открытый/закрытый). Здание задаётся `group` — тем же ключом,
+    что _building_key (как в финотчёте и в фильтре начислений), поэтому фронт
+    шлёт ровно имя из карточки дома. Возвращает {processed, errors}."""
+    from app.modules.utility.services.billing import _building_key
+    from app.modules.utility.models import Room as _Room
+
+    rooms = (await db.execute(select(_Room))).scalars().all()
+    room_ids = [r.id for r in rooms if _building_key(r) == group]
+    if not room_ids:
+        raise HTTPException(404, "Здание не найдено")
+    users = (await db.execute(
+        select(User.id).where(
+            User.role == "user", User.is_deleted.is_(False), User.room_id.in_(room_ids),
+        )
+    )).scalars().all()
+
+    processed = 0
+    errors: list[dict] = []
+    for uid in users:
+        try:
+            await recalc_user_period(db, user_id=uid, period_id=period_id)
+            processed += 1
+        except HTTPException as e:
+            # «нет показания за период» и т.п. — пропускаем, копим в errors.
+            errors.append({"user_id": uid, "reason": str(getattr(e, "detail", e))})
+        except Exception as e:  # noqa: BLE001
+            errors.append({"user_id": uid, "reason": str(e)})
+    return {"status": "ok", "processed": processed,
+            "errors": errors[:20], "errors_count": len(errors)}
+
+
 async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
     """Сохранение черновика бухгалтером вручную.
 
