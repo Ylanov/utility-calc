@@ -1046,8 +1046,6 @@ async def get_accountant_summary_v2(
                 prev_costs=prev_costs,
                 prev_debts=prev_debts,
                 has_reading=has_reading,
-                resident_type="family",
-                billing_mode="by_meter",
             )
             if ra["missing_count"] and not has_reading and "MISSING_RECEIPT" not in flags:
                 flags = list(flags) + ["MISSING_RECEIPT"]

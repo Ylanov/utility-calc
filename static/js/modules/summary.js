@@ -290,31 +290,14 @@ export const SummaryModule = {
             });
             this.dom.periodSelector.appendChild(sel);
 
-            // Bug AN: кнопка «Авто-добить нормативом» — применяет к
-            // выбранному периоду логику AUTO_NORM_SANCTION/AVG/etc.
-            // Создаёт reading'и для жильцов, кто не подал в этом месяце.
-            const autoFillBtn = document.createElement('button');
-            autoFillBtn.type = 'button';
-            autoFillBtn.style.cssText =
-                'padding:7px 12px; margin-left:10px; font-size:12px; background:#7c3aed; color:#fff; ' +
-                'border:none; border-radius:4px; cursor:pointer; font-weight:500;';
-            autoFillBtn.title = 'Создать показания по нормативу для жильцов, не подавших в этом периоде. ' +
-                'После 3 пропусков подряд включается коэффициент × 3.';
-            autoFillBtn.innerHTML = '<i class="fa-solid fa-wand-sparkles"></i> Авто-добить нормативом';
-            autoFillBtn.addEventListener('click', () => this.autoFillSelectedPeriod());
-            this.dom.periodSelector.appendChild(autoFillBtn);
-
-            // Начислить наём (205) для помещений-домов. Дома платят только
-            // наём, статично — начисляем сразу, не дожидаясь закрытия периода.
-            // Двухстадийно (dry-run → подтверждение → apply), идемпотентно:
-            // сервер пропускает дома, у которых reading за период уже есть.
+            // Начислить наём (205) домам — теперь с ВЫБОРОМ конкретных домов
+            // (модалка), а не всем сразу.
             const rentBtn = document.createElement('button');
             rentBtn.type = 'button';
             rentBtn.style.cssText =
                 'padding:7px 12px; margin-left:10px; font-size:12px; background:#0891b2; color:#fff; ' +
                 'border:none; border-radius:4px; cursor:pointer; font-weight:500;';
-            rentBtn.title = 'Дома платят только наём (205), статично. Начисляется сразу, ' +
-                'не дожидаясь закрытия периода. На закрытии утвердится как обычно.';
+            rentBtn.title = 'Начислить наём (205) выбранным домам за период.';
             rentBtn.innerHTML = '<i class="fa-solid fa-key"></i> Начислить наём домам';
             rentBtn.addEventListener('click', () => this.chargeRentNowSelectedPeriod());
             this.dom.periodSelector.appendChild(rentBtn);
@@ -400,52 +383,18 @@ export const SummaryModule = {
         const countHint = rooms ? `${k.rooms_count ?? 0} квартир` : `${k.residents_count ?? 0} жильцов`;
         const missingHint = rooms ? 'квартир без подачи' : 'жильцы не подали';
         const flaggedLabel = rooms ? 'Проблемных квартир' : 'Аномалий';
+        // Долги/Переплаты убраны из финотчёта (2026-06-24, по запросу) — не нужны.
         this.dom.kpis.innerHTML = [
             card('Всего начислено', fmtMoney(k.total_billed),     '#059669', countHint),
-            card('Долгов',          fmtMoney(k.total_debt),       k.total_debt > 0 ? '#dc2626' : '#10b981', 'к возврату'),
-            card('Переплат',        fmtMoney(k.total_overpay),    k.total_overpay > 0 ? '#7c3aed' : '#9ca3af', 'аванс'),
             card(flaggedLabel,      String(k.flagged_count || 0), k.flagged_count > 0 ? '#f59e0b' : '#10b981', 'требуют внимания'),
             card('Без квитанции',   String(k.missing_count || 0), k.missing_count > 0 ? '#dc2626' : '#10b981', missingHint),
         ].join('');
     },
 
-    renderTopRow(d) {
-        const debtorsList = (d.top_debtors || []).slice(0, 5);
-        const overList = (d.top_overpayers || []).slice(0, 5);
-        const renderList = (items, color, fld) => {
-            if (!items.length) {
-                return '<div style="padding:14px; color:var(--text-secondary); font-size:12px;">— нет —</div>';
-            }
-            return items.map(r => {
-                // Режим «Квартиры»: главная строка — адрес, подпись — кол-во жильцов.
-                const isRoom = r.room_id !== undefined && r.username === undefined;
-                const mainLine = isRoom ? (r.address || `комн. ${r.room_number || '—'}`) : r.username;
-                const subLine = isRoom
-                    ? `${r.residents_count || 0} чел.`
-                    : `комн. ${r.room_number || '—'}`;
-                return `
-                <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 12px; border-bottom:1px solid var(--border-color);">
-                    <div style="flex:1; min-width:0;">
-                        <div style="font-weight:600; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${esc(mainLine)}</div>
-                        <div style="color:var(--text-secondary); font-size:11px;">${esc(subLine)}</div>
-                    </div>
-                    <div style="font-weight:700; color:${color}; white-space:nowrap;">${fmtMoney(r[fld])}</div>
-                </div>`;
-            }).join('');
-        };
-        this.dom.topRow.innerHTML = `
-            <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; overflow:hidden;">
-                <div style="padding:10px 14px; background:#fee2e2; color:#991b1b; font-weight:600; font-size:13px; border-bottom:1px solid var(--border-color);">
-                    <i class="fa-solid fa-arrow-trend-down"></i> Топ должников
-                </div>
-                ${renderList(debtorsList, '#dc2626', 'debt')}
-            </div>
-            <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:10px; overflow:hidden;">
-                <div style="padding:10px 14px; background:#ede9fe; color:#5b21b6; font-weight:600; font-size:13px; border-bottom:1px solid var(--border-color);">
-                    <i class="fa-solid fa-coins"></i> Топ переплат
-                </div>
-                ${renderList(overList, '#7c3aed', 'overpayment')}
-            </div>`;
+    renderTopRow() {
+        // «Топ должников» / «Топ переплат» убраны из финотчёта (2026-06-24) —
+        // не нужны. Прячем контейнер целиком.
+        if (this.dom.topRow) this.dom.topRow.style.display = 'none';
     },
 
     renderSummary() {
