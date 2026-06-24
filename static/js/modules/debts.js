@@ -270,15 +270,20 @@ export const DebtsModule = {
 
     async saveOnecConfig() {
         try {
+            // Шлём только заполненные поля — чтобы клик/чекбокс до прогрузки статуса
+            // не затёр настройки сервера пустыми строками (enabled — всегда).
+            const body = { enabled: !!this.dom.onecEnabled?.checked };
+            const naem = (this.dom.onecAccNaem?.value || '').trim();
+            const comm = (this.dom.onecAccComm?.value || '').trim();
+            const base = (this.dom.onecBaseUrl?.value || '').trim();
+            const ib = (this.dom.onecInfobase?.value || '').trim();
             const dh = parseInt(this.dom.onecHour?.value, 10);
-            await api.put('/financier/onec/config', {
-                enabled: !!this.dom.onecEnabled?.checked,
-                account_naem: (this.dom.onecAccNaem?.value || '').trim(),
-                account_comm: (this.dom.onecAccComm?.value || '').trim(),
-                daily_hour: Number.isNaN(dh) ? 6 : dh,
-                base_url: (this.dom.onecBaseUrl?.value || '').trim() || undefined,
-                infobase_path: (this.dom.onecInfobase?.value || '').trim(),
-            });
+            if (naem) body.account_naem = naem;
+            if (comm) body.account_comm = comm;
+            if (base) body.base_url = base;
+            if (ib) body.infobase_path = ib;
+            if (!Number.isNaN(dh)) body.daily_hour = dh;
+            await api.put('/financier/onec/config', body);
             toast('Настройки 1С сохранены', 'info');
             this.loadOnecStatus();
         } catch (e) {

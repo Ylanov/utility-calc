@@ -963,6 +963,7 @@ _ONEC_RELAY_DEFAULTS = {
     "login": None,                             # логин 1С (показываем в статусе)
     "password_enc": None,                      # Fernet-шифр пароля (в статус НЕ отдаём)
     "creds_pending": False,                    # есть неотданная смена учётки
+    "creds_version": 0,                         # версия учётки (ack-доставка релею)
     "report_name": "Оборотно-сальдовая ведомость по счёту",
     "account_naem": "205.31",                  # счёт наёма 1С → наш account_type «205»
     "account_comm": "",                        # счёт коммуналки 1С → наш «209» (заполнить)
@@ -1009,6 +1010,22 @@ def _onec_public(cfg: dict) -> dict:
     return out
 
 
+def _onec_allowed_hosts() -> set:
+    return {h.strip().lower() for h in (settings.ONEC_ALLOWED_HOSTS or "").split(",") if h.strip()}
+
+
+def _onec_host_ok(base_url: str) -> bool:
+    """https + хост в белом списке — иначе релею НЕ отдаём расшифрованные креды
+    (защита от подмены base_url → увода учётки 1С на чужой хост)."""
+    from urllib.parse import urlparse
+    try:
+        u = urlparse((base_url or "").strip())
+    except Exception:
+        return False
+    allow = _onec_allowed_hosts()
+    return u.scheme == "https" and bool(u.hostname) and u.hostname.lower() in allow
+
+
 # ─── UI (финансист) ──────────────────────────────────────────────────────
 @router.get("/onec/status", summary="Статус авто-подгрузки 1С (UI)")
 async def onec_status(current_user: User = Depends(get_current_user),
@@ -1048,6 +1065,13 @@ async def onec_config_put(payload: OnecConfigIn,
         data["daily_hour"] = max(0, min(23, int(data["daily_hour"])))
     if "base_url" in data:
         data["base_url"] = data["base_url"].strip().rstrip("/")
+        if not _onec_host_ok(data["base_url"]):
+            allow = ", ".join(sorted(_onec_allowed_hosts())) or "(список пуст)"
+            raise HTTPException(
+                status_code=400,
+                detail=f"Недопустимый адрес 1С: нужен https и хост из белого списка "
+                       f"({allow}). Иначе учётка 1С могла бы уйти на чужой хост.",
+            )
     if "infobase_path" in data:
         data["infobase_path"] = data["infobase_path"].strip()
     cfg.update(data)
@@ -1069,10 +1093,14 @@ async def onec_credentials(payload: OnecCredsIn,
     p = payload.password or ""
     if not u or not p:
         raise HTTPException(status_code=400, detail="Укажите логин и пароль 1С")
+    # \n/\r ломают построчный onec.env на релее (молчаливое обрезание пароля).
+    if any(ch in (u + p) for ch in ("\n", "\r")):
+        raise HTTPException(status_code=400, detail="Логин/пароль не должны содержать переводы строк")
     cfg = await _load_onec_cfg(db)
     cfg["login"] = u
     cfg["password_enc"] = fernet.encrypt(p.encode()).decode()
     cfg["creds_pending"] = True
+    cfg["creds_version"] = int(cfg.get("creds_version", 0)) + 1
     await _save_onec_cfg(db, cfg)
     return {"ok": True, "queued": True}
 
@@ -1083,6 +1111,9 @@ async def onec_run_now(probe: bool = False,
                        db: AsyncSession = Depends(get_db)):
     _require_finance(current_user)
     cfg = await _load_onec_cfg(db)
+    if not cfg.get("enabled"):
+        # Иначе run_now «зависнет» взведённым и сработает неожиданно при включении.
+        raise HTTPException(status_code=400, detail="Сначала включите авто-подгрузку 1С (галка «Включена»)")
     if not cfg.get("login") or not cfg.get("password_enc"):
         raise HTTPException(status_code=400, detail="Сначала задайте логин/пароль 1С")
     if not probe and not (cfg.get("account_naem") or cfg.get("account_comm")):
@@ -1096,6 +1127,7 @@ async def onec_run_now(probe: bool = False,
 # ─── Релей (token-auth, тот же GISGMP_SYNC_TOKEN) ─────────────────────────
 @router.get("/onec/relay-config", summary="Релей берёт конфиг 1С (token-auth)")
 async def onec_relay_config(v: Optional[str] = None,
+                            creds_ack: Optional[int] = None,
                             authorization: Optional[str] = Header(None),
                             db: AsyncSession = Depends(get_db)):
     _check_gisgmp_token(authorization)
@@ -1103,6 +1135,11 @@ async def onec_relay_config(v: Optional[str] = None,
     cfg["last_poll_at"] = utcnow().isoformat()
     if v:
         cfg["relay_version"] = v
+    # Релей подтвердил приём учётки версии creds_ack → гасим pending. Это
+    # at-least-once: пока ack не пришёл, учётка отдаётся снова (потеря ответа не
+    # теряет пароль навсегда).
+    if creds_ack is not None and int(creds_ack) == int(cfg.get("creds_version", 0)):
+        cfg["creds_pending"] = False
 
     should_run, reason = False, ""
     if cfg.get("enabled"):
@@ -1125,14 +1162,26 @@ async def onec_relay_config(v: Optional[str] = None,
                         should_run, reason = True, "bad_last_run"
 
     probe = bool(cfg.get("probe")) and should_run
+    # Креды отдаём ПОКА pending (гасит только ack релея, см. выше) и ТОЛЬКО на
+    # разрешённый хост — иначе подменённый base_url увёл бы пароль 1С на чужой хост.
     creds = None
     if cfg.get("creds_pending") and cfg.get("password_enc"):
-        try:
-            creds = {"login": cfg.get("login"),
-                     "password": fernet.decrypt(cfg["password_enc"].encode()).decode()}
-            cfg["creds_pending"] = False   # claim — отдаём один раз
-        except Exception:
-            logger.exception("[onec] не удалось расшифровать пароль 1С")
+        if not _onec_host_ok(cfg.get("base_url")):
+            cfg["last_status"] = "error"
+            cfg["last_message"] = ("Учётка 1С НЕ отдана релею: base_url вне белого списка "
+                                   "(ONEC_ALLOWED_HOSTS). Исправьте адрес 1С.")
+        else:
+            try:
+                creds = {"login": cfg.get("login"),
+                         "version": int(cfg.get("creds_version", 0)),
+                         "password": fernet.decrypt(cfg["password_enc"].encode()).decode()}
+            except Exception:
+                # Битый шифр / сменился ENCRYPTION_KEY — не зацикливаемся каждый опрос.
+                logger.error("[onec] пароль 1С не расшифровывается — сбрасываю, нужна повторная установка")
+                cfg["password_enc"] = None
+                cfg["creds_pending"] = False
+                cfg["last_status"] = "error"
+                cfg["last_message"] = "Пароль 1С не расшифровывается (сменился ключ?) — введите учётку заново."
 
     if should_run:
         cfg["run_now"] = False
@@ -1156,7 +1205,8 @@ async def onec_relay_config(v: Optional[str] = None,
         "report_name": cfg.get("report_name"),
         "accounts": accounts,
         "period": period,
-        "credentials": creds,   # None если уже отдан / нет смены
+        "credentials": creds,   # None пока ack не получен / нет смены / хост запрещён
+        "creds_version": int(cfg.get("creds_version", 0)),
     }
 
 

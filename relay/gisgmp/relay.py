@@ -461,6 +461,9 @@ def _onec_load_creds():
 
 
 def _onec_save_creds(login, password):
+    # \n/\r сломали бы построчный onec.env (молчаливое обрезание пароля).
+    login = (login or "").replace("\r", "").replace("\n", "")
+    password = (password or "").replace("\r", "").replace("\n", "")
     try:
         lines = []
         if os.path.exists(ONEC_ENV_FILE):
@@ -476,9 +479,12 @@ def _onec_save_creds(login, password):
     os.environ["ONEC_PASSWORD"] = password
 
 
-def get_onec_config():
+def get_onec_config(creds_ack=None):
+    params = {"v": RELAY_VERSION}
+    if creds_ack is not None:
+        params["creds_ack"] = creds_ack
     r = requests.get(f"{JKH_URL}/api/financier/onec/relay-config",
-                     headers=_auth(), params={"v": RELAY_VERSION}, timeout=30)
+                     headers=_auth(), params=params, timeout=30)
     r.raise_for_status()
     return r.json()
 
@@ -688,13 +694,19 @@ def run_onec(oc):
                 count_205=counts["205"], count_209=counts["209"])
 
 
+_ONEC_HAVE_VERSION = None  # версия учётки, которую релей уже сохранил (для ack)
+
+
 def onec_tick():
-    """Один цикл 1С: опрос конфига, приём учётки, запуск по should_run."""
-    oc = get_onec_config()
+    """Один цикл 1С: опрос конфига, приём учётки (ack-доставка), запуск по should_run."""
+    global _ONEC_HAVE_VERSION
+    oc = get_onec_config(creds_ack=_ONEC_HAVE_VERSION)
     creds = oc.get("credentials")
     if creds and creds.get("login") and creds.get("password"):
         _onec_save_creds(creds["login"], creds["password"])
-        log("[onec] учётка 1С получена из ЖКХ")
+        # Запоминаем версию — на следующем опросе подтвердим (ack), ЖКХ погасит pending.
+        _ONEC_HAVE_VERSION = creds.get("version", oc.get("creds_version"))
+        log("[onec] учётка 1С получена из ЖКХ (v=%s)" % _ONEC_HAVE_VERSION)
     if oc.get("should_run"):
         log(f"[onec] запуск 1С (reason={oc.get('reason')}, probe={oc.get('probe')})")
         try:
