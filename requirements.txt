@@ -27,7 +27,7 @@ pyotp==2.9.0
 argon2-cffi==25.1.0
 
 # --- Cache & Background Tasks ---
-redis[hiredis]==4.6.0    # hiredis = C-парсер ответов Redis (кэш/лимитер/брокер)
+redis[hiredis]==8.0.0    # hiredis = C-парсер ответов Redis (кэш/лимитер/брокер)
 fastapi-limiter[redis]==0.1.5
 fastapi-cache2[redis]==0.2.2
 celery==5.6.2
