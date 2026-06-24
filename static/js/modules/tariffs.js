@@ -992,6 +992,39 @@ export const TariffsModule = {
             ? 'unconditional'
             : (ttypeRadio ? ttypeRadio.value : 'family');
 
+        // Защита от частой ошибки: ставка задана, но галочка «начислять» снята —
+        // статья молча не начисляется (как было с тарифом «без условий 1 этаж»:
+        // наём 33.68 задан, но csr=false → 205=0). Предупреждаем и предлагаем
+        // включить. «Отмена» — сохранить как есть (намеренный случай, напр. клуб).
+        const _rate = (k) => Number(data[k] || 0);
+        const _mismatch = [];
+        [['social_rent', 'charge_social_rent', 'Наём (205)'],
+         ['maintenance_repair', 'charge_maintenance', 'Содержание'],
+         ['waste_disposal', 'charge_waste', 'ТКО'],
+         ['heating', 'charge_heating', 'Отопление'],
+         ['electricity_rate', 'charge_electricity', 'Электричество'],
+         ['sewage', 'charge_sewage', 'Водоотведение']].forEach(([rk, ck, lbl]) => {
+            if (_rate(rk) > 0 && !data[ck]) _mismatch.push([ck, lbl]);
+        });
+        if (_rate('water_heating') > 0 && !data.charge_hot_water) _mismatch.push(['charge_hot_water', 'ГВС']);
+        if (_rate('water_supply') > 0 && !data.charge_cold_water) _mismatch.push(['charge_cold_water', 'ХВС']);
+        if (_mismatch.length) {
+            const names = _mismatch.map(m => m[1]).join(', ');
+            const enable = await showConfirm(
+                `⚠ Ставка задана, но статья НЕ начисляется (снята галочка «Что начисляет»): ${names}.\n\n` +
+                `Обычно это ошибка. Включить начисление этих статей?\n` +
+                `«Отмена» — сохранить как есть (не начислять).`,
+                { title: 'Ставка задана, но не начисляется', confirmText: 'Включить и сохранить' }
+            );
+            if (enable) {
+                _mismatch.forEach(([ck]) => {
+                    data[ck] = true;
+                    const box = document.getElementById('t_' + ck);
+                    if (box) box.checked = true;
+                });
+            }
+        }
+
         setLoading(btnSubmit, true, 'Сохранение...');
 
         try {
