@@ -40,7 +40,7 @@ UA = "Mozilla/5.0 (gisgmp-relay)"
 # Версия релея — отправляется при опросе конфига, ЖКХ показывает её в статусе и
 # сравнивает с актуальной (из задеплоенного relay.py) → видно «обновлён или нет».
 # БАМПАТЬ при изменении relay.py (формат YYYY-MM-DD[.N]).
-RELAY_VERSION = "2026-06-05.1"
+RELAY_VERSION = "2026-06-24.1"
 
 # Пауза между запросами актуализации (бережём тормозной сервер реестра).
 ACTUALIZE_SLEEP = float(os.environ.get("ACTUALIZE_SLEEP", "1.2"))
@@ -428,6 +428,282 @@ def handle_control(ctrl):
         _reexec()
 
 
+# =========================================================================
+# 1С (БГУ) — БРАУЗЕР-АВТОМАТИЗАЦИЯ: ОСВ по счёту → Excel → ЖКХ
+# =========================================================================
+# Тот же демон headless-браузером (Playwright) заходит в веб-клиент 1С:БГУ,
+# формирует «Оборотно-сальдовую ведомость по счёту» за период (с начала года →
+# сегодня), сохраняет в xlsx и шлёт в ЖКХ /api/financier/onec/sync — там тот же
+# парсер, что и для ручной загрузки. Креды 1С приходят из ЖКХ (onec/relay-config)
+# и хранятся в onec.env. Селекторы веб-клиента 1С динамические → первый прогон
+# делаем в режиме probe (логин + скрины/DOM) и по ним дорабатываем селекторы.
+# playwright импортируется ЛЕНИВО — если он не установлен, ГИС-ГМП-ветка цела.
+
+ONEC_ENV_FILE = os.environ.get("ONEC_ENV_FILE", "/opt/gisgmp-relay/onec.env")
+ONEC_PROBE_DIR = os.environ.get("ONEC_PROBE_DIR", "/opt/gisgmp-relay/onec_probe")
+
+
+def _onec_load_creds():
+    u = os.environ.get("ONEC_LOGIN", "")
+    p = os.environ.get("ONEC_PASSWORD", "")
+    if u and p:
+        return u, p
+    try:
+        with open(ONEC_ENV_FILE, encoding="utf-8") as f:
+            for ln in f.read().splitlines():
+                if ln.startswith("ONEC_LOGIN="):
+                    u = ln.split("=", 1)[1]
+                elif ln.startswith("ONEC_PASSWORD="):
+                    p = ln.split("=", 1)[1]
+    except FileNotFoundError:
+        pass
+    return u, p
+
+
+def _onec_save_creds(login, password):
+    try:
+        lines = []
+        if os.path.exists(ONEC_ENV_FILE):
+            with open(ONEC_ENV_FILE, encoding="utf-8") as f:
+                lines = f.read().splitlines()
+        lines = _set_env_line(lines, "ONEC_LOGIN", login)
+        lines = _set_env_line(lines, "ONEC_PASSWORD", password)
+        with open(ONEC_ENV_FILE, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+    except Exception as e:
+        log("[onec] не смог записать onec.env:", e)
+    os.environ["ONEC_LOGIN"] = login
+    os.environ["ONEC_PASSWORD"] = password
+
+
+def get_onec_config():
+    r = requests.get(f"{JKH_URL}/api/financier/onec/relay-config",
+                     headers=_auth(), params={"v": RELAY_VERSION}, timeout=30)
+    r.raise_for_status()
+    return r.json()
+
+
+def onec_report(ok, status=None, message="", count_205=0, count_209=0):
+    try:
+        requests.post(f"{JKH_URL}/api/financier/onec/relay-report",
+                      headers=_auth(),
+                      json={"ok": ok, "status": status, "message": (message or "")[:1500],
+                            "count_205": count_205, "count_209": count_209},
+                      timeout=30)
+    except Exception as e:
+        log("[onec] отчёт не ушёл:", e)
+
+
+def onec_upload(files):
+    """files: dict {'file_205': (name, bytes), 'file_209': (name, bytes)}."""
+    xlsx = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    data = {k: (v[0], v[1], xlsx) for k, v in files.items()}
+    r = requests.post(f"{JKH_URL}/api/financier/onec/sync",
+                      headers=_auth(), files=data, timeout=300)
+    r.raise_for_status()
+    return r.json()
+
+
+def _onec_shot(pg, name, notes):
+    try:
+        pg.screenshot(path=os.path.join(ONEC_PROBE_DIR, name + ".png"), full_page=True)
+        notes.append(name)
+    except Exception as e:
+        log("[onec] скрин не вышел:", name, e)
+
+
+def _onec_dump(pg, name):
+    try:
+        with open(os.path.join(ONEC_PROBE_DIR, name + ".html"), "w", encoding="utf-8") as f:
+            f.write(pg.content())
+    except Exception as e:
+        log("[onec] dump:", name, e)
+
+
+def _onec_click_text(pg, texts):
+    for t in texts:
+        try:
+            loc = pg.get_by_text(t, exact=False).first
+            if loc.count() and loc.is_visible():
+                loc.click()
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _onec_fill_labeled(pg, labels, value):
+    if not value:
+        return False
+    for lb in labels:
+        try:
+            field = pg.locator(
+                f"xpath=//*[normalize-space(text())='{lb}']/following::input[1]"
+            ).first
+            if field.count():
+                field.click()
+                field.fill(str(value))
+                field.press("Tab")
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _onec_login(pg, login, password):
+    """Форма входа веб-клиента 1С. Якорь — поле пароля (самое надёжное)."""
+    pw = pg.locator("input[type=password]").first
+    pw.wait_for(state="visible", timeout=60000)
+    try:
+        user = pg.locator(
+            "input[type=text]:visible, input:not([type]):visible"
+        ).first
+        if user.count():
+            user.fill(login)
+    except Exception as e:
+        log("[onec] поле логина не найдено:", e)
+    pw.fill(password)
+    if not _onec_click_text(pg, ["Войти", "Вход", "ОК", "OK"]):
+        pw.press("Enter")
+
+
+def _onec_open_report(pg, report_name):
+    """Навигация: раздел → Стандартные отчёты → нужный отчёт. Названия раздела —
+    кандидаты (на ВМ уточним по probe-скринам)."""
+    _onec_click_text(pg, ["Учет и отчетность", "Учёт и отчётность",
+                          "Бухгалтерский учет", "Бухгалтерский учёт"])
+    pg.wait_for_timeout(1500)
+    _onec_click_text(pg, ["Стандартные отчеты", "Стандартные отчёты"])
+    pg.wait_for_timeout(1500)
+    _onec_click_text(pg, [report_name, "Оборотно-сальдовая ведомость по счету",
+                          "Оборотно-сальдовая ведомость по счёту"])
+    pg.wait_for_timeout(2500)
+
+
+def _onec_collect_account(pg, report_name, code, period, notes, at):
+    """ОСВ по счёту: задать счёт+период, Сформировать, сохранить в xlsx → bytes."""
+    _onec_open_report(pg, report_name)
+    _onec_fill_labeled(pg, ["Счет", "Счёт"], code)
+    _onec_fill_labeled(pg, ["с", "Период с", "Начало периода"], period.get("from"))
+    _onec_fill_labeled(pg, ["по", "Период по", "Конец периода"], period.get("to"))
+    _onec_shot(pg, f"form_{at}", notes)
+    _onec_click_text(pg, ["Сформировать"])
+    pg.wait_for_timeout(5000)
+    _onec_shot(pg, f"formed_{at}", notes)
+    # Сохранить табличный документ в xlsx (ловим браузерный download).
+    try:
+        with pg.expect_download(timeout=60000) as dl:
+            if not _onec_click_text(pg, ["Сохранить как", "Сохранить"]):
+                _onec_click_text(pg, ["Ещё", "Еще"])
+                pg.wait_for_timeout(800)
+                _onec_click_text(pg, ["Сохранить как…", "Сохранить как", "Сохранить"])
+            pg.wait_for_timeout(1200)
+            _onec_click_text(pg, ["Лист Excel 2007", "Лист Excel", "Excel (xlsx)", "xlsx"])
+            _onec_click_text(pg, ["Сохранить", "ОК", "OK"])
+        path = os.path.join(ONEC_PROBE_DIR, f"osv_{at}.xlsx")
+        dl.value.save_as(path)
+        with open(path, "rb") as f:
+            return f.read()
+    except Exception as e:
+        log(f"[onec] сохранение xlsx ({at}) не удалось:", e)
+        _onec_dump(pg, f"save_{at}")
+        return None
+
+
+def run_onec(oc):
+    """Прогон 1С. oc — ответ get_onec_config(). probe=True → только разведка."""
+    from playwright.sync_api import sync_playwright  # ленивый импорт
+
+    login, password = _onec_load_creds()
+    if not login or not password:
+        onec_report(False, status="error", message="нет логина/пароля 1С (не отдан из ЖКХ?)")
+        return
+    base = (oc.get("base_url") or "").rstrip("/")
+    ib = (oc.get("infobase_path") or "").strip().strip("/")
+    url = base + (("/" + ib) if ib else "")
+    probe = bool(oc.get("probe"))
+    headless = bool(oc.get("headless", True))
+    period = oc.get("period") or {}
+    accounts = oc.get("accounts") or []
+    report_name = oc.get("report_name") or "Оборотно-сальдовая ведомость по счёту"
+    os.makedirs(ONEC_PROBE_DIR, exist_ok=True)
+    notes = []
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=headless, args=["--no-sandbox"])
+        ctx = browser.new_context(accept_downloads=True, ignore_https_errors=True,
+                                  viewport={"width": 1600, "height": 900})
+        pg = ctx.new_page()
+        pg.set_default_timeout(60000)
+        try:
+            log("[onec] открываю", url)
+            pg.goto(url, wait_until="domcontentloaded")
+            pg.wait_for_timeout(3000)
+            _onec_shot(pg, "01_open", notes)
+            try:
+                _onec_login(pg, login, password)
+                pg.wait_for_timeout(5000)
+                _onec_shot(pg, "02_after_login", notes)
+            except Exception as e:
+                _onec_shot(pg, "02_login_fail", notes)
+                _onec_dump(pg, "login_fail")
+                onec_report(False, status="error", message="логин 1С не удался: " + str(e)[:300])
+                return
+
+            if probe:
+                _onec_dump(pg, "desktop")
+                try:
+                    _onec_open_report(pg, report_name)
+                    _onec_shot(pg, "03_report_form", notes)
+                    _onec_dump(pg, "report_form")
+                except Exception as e:
+                    log("[onec] разведка отчёта:", e)
+                onec_report(True, status="probe",
+                            message="разведка ок, артефакты в " + ONEC_PROBE_DIR
+                                    + ": " + ", ".join(notes))
+                return
+
+            files = {}
+            counts = {"205": 0, "209": 0}
+            for acc in accounts:
+                code, at = acc.get("code"), acc.get("account_type")
+                try:
+                    data = _onec_collect_account(pg, report_name, code, period, notes, at)
+                    if data:
+                        files[f"file_{at}"] = (f"osv_{at}.xlsx", data)
+                        counts[at] = 1
+                except Exception as e:
+                    _onec_shot(pg, f"err_{at}", notes)
+                    _onec_dump(pg, f"collect_{at}")
+                    log(f"[onec] счёт {code}/{at} не собрался:", e)
+        finally:
+            browser.close()
+
+    if not files:
+        onec_report(False, status="error", message="ни один счёт не выгрузился в Excel")
+        return
+    res = onec_upload(files)
+    onec_report(True, status="ok",
+                message=f"ОСВ выгружены {list(files.keys())}; staged batch={res.get('batch_id')}",
+                count_205=counts["205"], count_209=counts["209"])
+
+
+def onec_tick():
+    """Один цикл 1С: опрос конфига, приём учётки, запуск по should_run."""
+    oc = get_onec_config()
+    creds = oc.get("credentials")
+    if creds and creds.get("login") and creds.get("password"):
+        _onec_save_creds(creds["login"], creds["password"])
+        log("[onec] учётка 1С получена из ЖКХ")
+    if oc.get("should_run"):
+        log(f"[onec] запуск 1С (reason={oc.get('reason')}, probe={oc.get('probe')})")
+        try:
+            run_onec(oc)
+        except Exception as e:
+            log("[onec] ошибка прогона 1С:", e)
+            onec_report(False, status="error", message=str(e)[:400])
+
+
 def main():
     miss = [k for k in ("GISGMP_SYNC_TOKEN", "PASSPORT_USERNAME", "PASSPORT_PASSWORD")
             if not os.environ.get(k)]
@@ -470,6 +746,11 @@ def main():
                 except Exception as e:
                     log("[relay] ошибка прогона:", e)
                     report(False, message=str(e)[:400])
+            # 1С (БГУ) — отдельный конфиг/ветка (та же ВМ, headless-браузер).
+            try:
+                onec_tick()
+            except Exception as e:
+                log("[onec] ошибка опроса конфига 1С:", e)
             # Команды управления из ЖКХ (обновление/рестарт/смена учётки).
             # ПОСЛЕ прогона — чтобы плановый запуск этого цикла не потерялся.
             ctrl = cfg.get("control")

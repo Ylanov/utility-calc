@@ -225,6 +225,24 @@ def encrypt_totp_secret(secret: str) -> str:
     return f"enc:{encrypted_bytes.decode()}"
 
 
+def encrypt_secret(plain: str) -> str:
+    """Шифрует произвольный секрет (напр. пароль 1С) тем же Fernet-ключом, что и
+    TOTP. Маркер 'enc:' — чтобы decrypt отличал зашифрованное от легаси-открытого."""
+    if not plain:
+        return ""
+    return f"enc:{fernet.encrypt(plain.encode()).decode()}"
+
+
+def decrypt_secret(token: str) -> str:
+    """Расшифровывает секрет из encrypt_secret. Пусто→пусто; без маркера 'enc:'
+    возвращает как есть (обратная совместимость / открытое значение)."""
+    if not token:
+        return ""
+    if token.startswith("enc:"):
+        return fernet.decrypt(token[4:].encode()).decode()
+    return token
+
+
 def decrypt_totp_secret(db_secret: str) -> str:
     """Расшифровывает секрет. Если маркера 'enc:' нет — возвращает как есть (обратная совместимость)."""
     if not db_secret:

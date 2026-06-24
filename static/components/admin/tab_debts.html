@@ -171,6 +171,80 @@
     </div>
 
     <!-- ============================================
+         АВТО-ПОДГРУЗКА 1С (БГУ) — релей + браузер (Playwright)
+         ============================================ -->
+    <div class="card mt-20" style="border-left:4px solid #f59e0b; margin-bottom:0;">
+        <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+            <h3><i class="fa-solid fa-robot" style="color:#f59e0b; margin-right:8px;"></i> Авто-подгрузка из 1С (ОСВ)</h3>
+            <label style="display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer;">
+                <input type="checkbox" id="onecEnabled" style="cursor:pointer;"> Включена
+            </label>
+        </div>
+        <p class="hint-text" style="font-size:12px; margin:0 0 12px; color:var(--text-secondary);">
+            Релей headless-браузером заходит в веб-клиент 1С (sv00web19), формирует «Оборотно-сальдовую ведомость по счёту» за период
+            <b>с начала года → сегодня</b>, сохраняет в Excel и грузит сюда <b>черновиком</b>. Долги/переплаты применит кнопка «Выгрузить».
+            Дебетовое сальдо = долг, кредитовое = переплата.
+        </p>
+
+        <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; margin-bottom:12px;">
+            <div>
+                <label style="display:block; font-size:11px; color:var(--text-secondary); margin-bottom:3px;">Счёт наёма (→ 205)</label>
+                <input type="text" id="onecAccNaem" placeholder="205.31" style="width:120px; padding:5px 7px;">
+            </div>
+            <div>
+                <label style="display:block; font-size:11px; color:var(--text-secondary); margin-bottom:3px;">Счёт коммуналки (→ 209)</label>
+                <input type="text" id="onecAccComm" placeholder="напр. 209.34" style="width:140px; padding:5px 7px;">
+            </div>
+            <div>
+                <label style="display:block; font-size:11px; color:var(--text-secondary); margin-bottom:3px;" title="Час ежедневного авто-сбора по Москве">Час сбора (МСК)</label>
+                <input type="number" id="onecHour" min="0" max="23" style="width:90px; padding:5px 7px;">
+            </div>
+            <button id="btnOnecSave" class="action-btn secondary-btn" style="font-size:13px;"><i class="fa-solid fa-floppy-disk"></i> Сохранить</button>
+        </div>
+
+        <details style="margin-bottom:12px;">
+            <summary style="cursor:pointer; font-size:12px; color:var(--text-secondary);">Адрес 1С (по умолчанию sv00web19)</summary>
+            <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end; margin-top:8px;">
+                <div>
+                    <label style="display:block; font-size:11px; color:var(--text-secondary); margin-bottom:3px;">Базовый URL</label>
+                    <input type="text" id="onecBaseUrl" placeholder="https://sv00web19.mchs.ru" style="width:260px; padding:5px 7px;">
+                </div>
+                <div>
+                    <label style="display:block; font-size:11px; color:var(--text-secondary); margin-bottom:3px;" title="Путь публикации инфобазы в URL, если он есть (после хоста)">Путь инфобазы</label>
+                    <input type="text" id="onecInfobase" placeholder="(если есть)" style="width:180px; padding:5px 7px;">
+                </div>
+            </div>
+        </details>
+
+        <div style="padding-top:10px; border-top:1px dashed var(--border-color, #ddd);">
+            <div style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:6px;">
+                <i class="fa-solid fa-key"></i> Учётка 1С (вводится здесь, уходит релею один раз)
+            </div>
+            <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:flex-end;">
+                <div>
+                    <label style="display:block; font-size:11px; color:var(--text-secondary); margin-bottom:3px;">Логин 1С</label>
+                    <input type="text" id="onecLogin" autocomplete="off" placeholder="Пользователь" style="width:200px; padding:5px 7px;">
+                </div>
+                <div>
+                    <label style="display:block; font-size:11px; color:var(--text-secondary); margin-bottom:3px;">Пароль 1С</label>
+                    <input type="password" id="onecPass" autocomplete="new-password" placeholder="••••••••" style="width:170px; padding:5px 7px;">
+                </div>
+                <button id="btnOnecCreds" class="action-btn secondary-btn" style="font-size:13px;"><i class="fa-solid fa-key"></i> Сохранить учётку 1С</button>
+            </div>
+            <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:10px;">
+                <button id="btnOnecRunNow" class="action-btn primary-btn" style="background:#f59e0b; border-color:#f59e0b; font-size:13px;"><i class="fa-solid fa-play"></i> Запустить сбор сейчас</button>
+                <button id="btnOnecProbe" class="action-btn secondary-btn" style="font-size:13px;" title="Первый прогон: релей логинится и снимает скрины/DOM 1С (без сбора) — чтобы донастроить селекторы"><i class="fa-solid fa-binoculars"></i> Разведка (probe)</button>
+            </div>
+            <p class="hint-text" style="font-size:11px; margin:6px 0 0; color:#92400e;">
+                Команды применяются на ближайшем опросе релея (~2 мин). Пароль хранится зашифрованным (Fernet), в статусе не показывается.
+                Скрины/DOM разведки релей кладёт в <code>/opt/gisgmp-relay/onec_probe</code> на ВМ.
+            </p>
+        </div>
+
+        <div id="onecStatus" style="font-size:13px; color:var(--text-secondary); margin-top:12px;">Загрузка статуса…</div>
+    </div>
+
+    <!-- ============================================
          НЕРАЗНЕСЁННЫЕ ДОЛГИ (ФИО не сопоставлены с жильцом)
          ============================================ -->
     <div id="debtsUnassignedCard" class="card mt-20" style="display:none; border-left:4px solid #f59e0b; margin-bottom:0;">

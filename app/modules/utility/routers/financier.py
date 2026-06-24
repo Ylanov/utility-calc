@@ -943,6 +943,284 @@ async def gisgmp_relay_credentials(
     return {"ok": True, "queued": True}
 
 
+# =========================================================================
+# 1С (БГУ) — АВТО-ПОДГРУЗКА ДОЛГОВ/ПЕРЕПЛАТ ЧЕРЕЗ РЕЛЕЙ (браузер-автоматизация)
+# =========================================================================
+# Тот же релей-демон, что ходит в ГИС ГМП, headless-браузером (Playwright)
+# заходит в веб-клиент 1С:БГУ (sv00web19.mchs.ru), формирует ОСВ по счёту за
+# период (с начала года → сегодня), сохраняет в Excel и шлёт сюда. Файл проходит
+# через ТОТ ЖЕ парсер, что и ручная загрузка Excel-ОСВ (sync_import_debts_process,
+# stage_only) → черновик → ручная кнопка «Выгрузить». Креды 1С вводятся в UI,
+# шифруются (Fernet, ENCRYPTION_KEY) и отдаются релею ОДИН раз через relay-config
+# (token+HTTPS). Машинный канал авторизуется тем же GISGMP_SYNC_TOKEN (один
+# доверенный демон на одной ВМ). Дебетовое сальдо ОСВ = долг, кредитовое = переплата.
+
+ONEC_RELAY_KEY = "onec_relay"
+_ONEC_RELAY_DEFAULTS = {
+    "enabled": False,
+    "base_url": "https://sv00web19.mchs.ru",   # хост публикации 1С
+    "infobase_path": "",                        # путь инфобазы в URL (если есть)
+    "login": None,                             # логин 1С (показываем в статусе)
+    "password_enc": None,                      # Fernet-шифр пароля (в статус НЕ отдаём)
+    "creds_pending": False,                    # есть неотданная смена учётки
+    "report_name": "Оборотно-сальдовая ведомость по счёту",
+    "account_naem": "205.31",                  # счёт наёма 1С → наш account_type «205»
+    "account_comm": "",                        # счёт коммуналки 1С → наш «209» (заполнить)
+    "headless": True,
+    "daily_hour": 6,                           # час ежедневного авто-сбора (МСК)
+    "run_now": False,
+    "probe": False,                            # режим разведки: логин + скрины/DOM, без сбора
+    "last_run_at": None, "last_poll_at": None,
+    "last_report_at": None, "last_status": None, "last_message": None,
+    "last_count_205": 0, "last_count_209": 0,
+    "relay_version": None,
+}
+
+
+async def _load_onec_cfg(db: AsyncSession) -> dict:
+    row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == ONEC_RELAY_KEY)
+    )).scalars().first()
+    cfg = dict(_ONEC_RELAY_DEFAULTS)
+    if row and row.value:
+        try:
+            cfg.update(json.loads(row.value))
+        except Exception:
+            pass
+    return cfg
+
+
+async def _save_onec_cfg(db: AsyncSession, cfg: dict) -> None:
+    row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == ONEC_RELAY_KEY)
+    )).scalars().first()
+    if row is None:
+        row = SystemSetting(key=ONEC_RELAY_KEY, value="{}",
+                            description="Конфиг и статус авто-подгрузки 1С (релей, браузер)")
+        db.add(row)
+    row.value = json.dumps(cfg, ensure_ascii=False)
+    await db.commit()
+
+
+def _onec_public(cfg: dict) -> dict:
+    """Конфиг для UI — без пароля (только факт его наличия)."""
+    out = {k: v for k, v in cfg.items() if k != "password_enc"}
+    out["has_password"] = bool(cfg.get("password_enc"))
+    return out
+
+
+# ─── UI (финансист) ──────────────────────────────────────────────────────
+@router.get("/onec/status", summary="Статус авто-подгрузки 1С (UI)")
+async def onec_status(current_user: User = Depends(get_current_user),
+                      db: AsyncSession = Depends(get_db)):
+    _require_finance(current_user)
+    cfg = await _load_onec_cfg(db)
+    online = False
+    lp = cfg.get("last_poll_at")
+    if lp:
+        try:
+            online = (utcnow() - datetime.fromisoformat(lp)).total_seconds() < 360
+        except Exception:
+            online = False
+    pub = _onec_public(cfg)
+    pub["online"] = online
+    return pub
+
+
+class OnecConfigIn(BaseModel):
+    enabled: Optional[bool] = None
+    base_url: Optional[str] = None
+    infobase_path: Optional[str] = None
+    account_naem: Optional[str] = None
+    account_comm: Optional[str] = None
+    daily_hour: Optional[int] = None
+    headless: Optional[bool] = None
+
+
+@router.put("/onec/config", summary="Настройки авто-подгрузки 1С")
+async def onec_config_put(payload: OnecConfigIn,
+                          current_user: User = Depends(get_current_user),
+                          db: AsyncSession = Depends(get_db)):
+    _require_finance(current_user)
+    cfg = await _load_onec_cfg(db)
+    data = payload.model_dump(exclude_none=True)
+    if "daily_hour" in data:
+        data["daily_hour"] = max(0, min(23, int(data["daily_hour"])))
+    if "base_url" in data:
+        data["base_url"] = data["base_url"].strip().rstrip("/")
+    if "infobase_path" in data:
+        data["infobase_path"] = data["infobase_path"].strip()
+    cfg.update(data)
+    await _save_onec_cfg(db, cfg)
+    return _onec_public(cfg)
+
+
+class OnecCredsIn(BaseModel):
+    login: str
+    password: str
+
+
+@router.post("/onec/credentials", summary="Логин/пароль 1С (шифруется, уходит релею один раз)")
+async def onec_credentials(payload: OnecCredsIn,
+                           current_user: User = Depends(get_current_user),
+                           db: AsyncSession = Depends(get_db)):
+    _require_finance(current_user)
+    u = (payload.login or "").strip()
+    p = payload.password or ""
+    if not u or not p:
+        raise HTTPException(status_code=400, detail="Укажите логин и пароль 1С")
+    cfg = await _load_onec_cfg(db)
+    cfg["login"] = u
+    cfg["password_enc"] = fernet.encrypt(p.encode()).decode()
+    cfg["creds_pending"] = True
+    await _save_onec_cfg(db, cfg)
+    return {"ok": True, "queued": True}
+
+
+@router.post("/onec/run-now", summary="Запустить сбор 1С сейчас (probe=true — только разведка)")
+async def onec_run_now(probe: bool = False,
+                       current_user: User = Depends(get_current_user),
+                       db: AsyncSession = Depends(get_db)):
+    _require_finance(current_user)
+    cfg = await _load_onec_cfg(db)
+    if not cfg.get("login") or not cfg.get("password_enc"):
+        raise HTTPException(status_code=400, detail="Сначала задайте логин/пароль 1С")
+    if not probe and not (cfg.get("account_naem") or cfg.get("account_comm")):
+        raise HTTPException(status_code=400, detail="Укажите хотя бы один счёт (наём/коммуналка)")
+    cfg["run_now"] = True
+    cfg["probe"] = bool(probe)
+    await _save_onec_cfg(db, cfg)
+    return {"ok": True, "probe": bool(probe)}
+
+
+# ─── Релей (token-auth, тот же GISGMP_SYNC_TOKEN) ─────────────────────────
+@router.get("/onec/relay-config", summary="Релей берёт конфиг 1С (token-auth)")
+async def onec_relay_config(v: Optional[str] = None,
+                            authorization: Optional[str] = Header(None),
+                            db: AsyncSession = Depends(get_db)):
+    _check_gisgmp_token(authorization)
+    cfg = await _load_onec_cfg(db)
+    cfg["last_poll_at"] = utcnow().isoformat()
+    if v:
+        cfg["relay_version"] = v
+
+    should_run, reason = False, ""
+    if cfg.get("enabled"):
+        if cfg.get("run_now"):
+            should_run, reason = True, ("probe" if cfg.get("probe") else "run_now")
+        else:
+            msk = timedelta(hours=3)
+            now_msk = utcnow() + msk
+            daily_hour = max(0, min(23, int(cfg.get("daily_hour", 6))))
+            target = now_msk.replace(hour=daily_hour, minute=0, second=0, microsecond=0)
+            last = cfg.get("last_run_at")
+            if now_msk >= target:
+                if not last:
+                    should_run, reason = True, "daily_first"
+                else:
+                    try:
+                        if datetime.fromisoformat(last) + msk < target:
+                            should_run, reason = True, "daily"
+                    except Exception:
+                        should_run, reason = True, "bad_last_run"
+
+    probe = bool(cfg.get("probe")) and should_run
+    creds = None
+    if cfg.get("creds_pending") and cfg.get("password_enc"):
+        try:
+            creds = {"login": cfg.get("login"),
+                     "password": fernet.decrypt(cfg["password_enc"].encode()).decode()}
+            cfg["creds_pending"] = False   # claim — отдаём один раз
+        except Exception:
+            logger.exception("[onec] не удалось расшифровать пароль 1С")
+
+    if should_run:
+        cfg["run_now"] = False
+        cfg["last_run_at"] = utcnow().isoformat()
+        if probe:
+            cfg["probe"] = False  # разведка одноразовая
+
+    await _save_onec_cfg(db, cfg)
+
+    now_msk = utcnow() + timedelta(hours=3)
+    period = {"from": f"01.01.{now_msk.year}", "to": now_msk.strftime("%d.%m.%Y")}
+    accounts = [a for a in [
+        ({"code": cfg.get("account_naem"), "account_type": "205"} if cfg.get("account_naem") else None),
+        ({"code": cfg.get("account_comm"), "account_type": "209"} if cfg.get("account_comm") else None),
+    ] if a]
+    return {
+        "enabled": bool(cfg.get("enabled")),
+        "should_run": should_run, "reason": reason, "probe": probe,
+        "base_url": cfg.get("base_url"), "infobase_path": cfg.get("infobase_path"),
+        "headless": bool(cfg.get("headless", True)),
+        "report_name": cfg.get("report_name"),
+        "accounts": accounts,
+        "period": period,
+        "credentials": creds,   # None если уже отдан / нет смены
+    }
+
+
+class OnecReportIn(BaseModel):
+    ok: bool = True
+    status: Optional[str] = None
+    message: str = ""
+    count_205: int = 0
+    count_209: int = 0
+
+
+@router.post("/onec/relay-report", summary="Релей отчитывается о прогоне 1С (token-auth)")
+async def onec_relay_report(payload: OnecReportIn,
+                            authorization: Optional[str] = Header(None),
+                            db: AsyncSession = Depends(get_db)):
+    _check_gisgmp_token(authorization)
+    cfg = await _load_onec_cfg(db)
+    cfg["last_report_at"] = utcnow().isoformat()
+    cfg["last_status"] = (payload.status or ("ok" if payload.ok else "error"))
+    cfg["last_message"] = (payload.message or "")[:2000]
+    cfg["last_count_205"] = int(payload.count_205 or 0)
+    cfg["last_count_209"] = int(payload.count_209 or 0)
+    await _save_onec_cfg(db, cfg)
+    return {"ok": True}
+
+
+@router.post("/onec/sync", summary="Релей шлёт Excel-ОСВ из 1С → черновик долгов (token-auth)")
+async def onec_sync(
+    file_205: UploadFile = File(None),
+    file_209: UploadFile = File(None),
+    authorization: Optional[str] = Header(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """Принимает один-два Excel-ОСВ (наём=205, коммуналка=209), сохраняет и
+    ставит ТЕ ЖЕ задачи импорта, что и ручная парная загрузка — stage_only,
+    т.е. ЧЕРНОВИК. Применит долги жильцам отдельная кнопка «Выгрузить»."""
+    _check_gisgmp_token(authorization)
+    if not file_205 and not file_209:
+        raise HTTPException(status_code=400, detail="Передайте хотя бы один файл (205/209)")
+    batch_id = str(uuid.uuid4())
+    from celery import chain
+    signatures = []
+    out = []
+    # 209 первым (как в ручной парной загрузке — сериализация через chain).
+    for f, account in [(file_209, "209"), (file_205, "205")]:
+        if f is None:
+            continue
+        file_path, _orig = await _save_uploaded_debt_file(f, account, batch_id)
+        signatures.append(import_debts_task.si(
+            file_path, account,
+            started_by_id=None,
+            started_by_username="1С (авто, релей)",
+            batch_id=batch_id,
+            original_file_name=f"1С ОСВ {account} (авто).xlsx",
+        ))
+        out.append({"account_type": account})
+    if not signatures:
+        return {"status": "noop", "batch_id": batch_id}
+    chain(*signatures).apply_async()
+    logger.info("[ONEC] staged import batch=%s accounts=%s",
+                batch_id, [o["account_type"] for o in out])
+    return {"status": "processing", "batch_id": batch_id, "accounts": out}
+
+
 @router.get("/gisgmp/payer-charges", summary="Все начисления одного плательщика (клик по ФИО)")
 async def gisgmp_payer_charges(
     q: str,

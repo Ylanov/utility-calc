@@ -70,6 +70,7 @@ export const DebtsModule = {
         this.loadUsers();
         this.loadImportHistory();
         this.loadGisgmpStatus();
+        this.loadOnecStatus();
         this.loadStagedStatus();
         // Авто-обновление статуса ГИС ГМП раз в 15с — «живой» статус (тикает возраст
         // опроса релея, прогресс актуализации). Только когда вкладка Долги видима.
@@ -78,6 +79,7 @@ export const DebtsModule = {
             const box = this.dom.gisgmpStatus;
             if (box && box.offsetParent !== null) {
                 this.loadGisgmpStatus();
+                this.loadOnecStatus();
                 this.loadStagedStatus();
             }
         }, 15000);
@@ -227,6 +229,87 @@ export const DebtsModule = {
         } catch (e) {
             toast('Ошибка: ' + (e?.message || e), 'error');
         }
+    },
+
+    // ─── 1С (БГУ): авто-подгрузка через релей (браузер) ────────────────────
+    async loadOnecStatus() {
+        const box = this.dom.onecStatus;
+        if (!box) return;
+        try {
+            const s = await api.get('/financier/onec/status');
+            if (this.dom.onecEnabled) this.dom.onecEnabled.checked = !!s.enabled;
+            if (this.dom.onecAccNaem && !this.dom.onecAccNaem.value) this.dom.onecAccNaem.value = s.account_naem || '';
+            if (this.dom.onecAccComm && !this.dom.onecAccComm.value) this.dom.onecAccComm.value = s.account_comm || '';
+            if (this.dom.onecHour && !this.dom.onecHour.value) this.dom.onecHour.value = s.daily_hour ?? 6;
+            if (this.dom.onecBaseUrl && !this.dom.onecBaseUrl.value) this.dom.onecBaseUrl.value = s.base_url || '';
+            if (this.dom.onecInfobase && !this.dom.onecInfobase.value) this.dom.onecInfobase.value = s.infobase_path || '';
+            if (this.dom.onecLogin && !this.dom.onecLogin.value && s.login) this.dom.onecLogin.value = s.login;
+
+            const parts = [];
+            parts.push(s.online
+                ? 'Релей: <b style="color:#047857;">🟢 онлайн</b>'
+                : 'Релей: <b style="color:#b91c1c;">🔴 офлайн</b> (поднимется при опросе)');
+            parts.push(`Учётка 1С: <b>${s.has_password ? (esc(s.login || '') + ' ✓') : '<span style=\"color:#b91c1c;\">не задана</span>'}</b>`);
+            if (s.creds_pending) parts.push('<span style="color:#d97706;">⏳ учётка ждёт выдачи релею (~2 мин)</span>');
+            parts.push(s.last_run_at
+                ? `Последний запуск: <b>${fmtDateTime(s.last_run_at)}</b>`
+                : 'Ещё не запускался.');
+            if (s.last_status) {
+                const ok = s.last_status === 'ok' || s.last_status === 'probe';
+                parts.push(`Результат: <b style="color:${ok ? '#047857' : '#b91c1c'}">${esc(s.last_status)}</b>`
+                    + (s.last_message ? ` — ${esc(s.last_message)}` : ''));
+            }
+            if (s.last_count_205 || s.last_count_209) {
+                parts.push(`Выгружено ОСВ: наём(205) <b>${s.last_count_205 || 0}</b>, коммуналка(209) <b>${s.last_count_209 || 0}</b> → проверь черновики и «Выгрузить».`);
+            }
+            box.innerHTML = parts.join('<br>');
+        } catch (e) {
+            box.textContent = 'Не удалось загрузить статус 1С.';
+        }
+    },
+
+    async saveOnecConfig() {
+        try {
+            const dh = parseInt(this.dom.onecHour?.value, 10);
+            await api.put('/financier/onec/config', {
+                enabled: !!this.dom.onecEnabled?.checked,
+                account_naem: (this.dom.onecAccNaem?.value || '').trim(),
+                account_comm: (this.dom.onecAccComm?.value || '').trim(),
+                daily_hour: Number.isNaN(dh) ? 6 : dh,
+                base_url: (this.dom.onecBaseUrl?.value || '').trim() || undefined,
+                infobase_path: (this.dom.onecInfobase?.value || '').trim(),
+            });
+            toast('Настройки 1С сохранены', 'info');
+            this.loadOnecStatus();
+        } catch (e) {
+            toast('Ошибка сохранения: ' + (e?.message || e), 'error');
+        }
+    },
+
+    async saveOnecCreds() {
+        const u = (this.dom.onecLogin?.value || '').trim();
+        const p = this.dom.onecPass?.value || '';
+        if (!u || !p) { toast('Укажи логин и пароль 1С', 'warning'); return; }
+        if (!await showConfirm('Сохранить учётку 1С для релея? Пароль шифруется (Fernet) и уйдёт релею один раз на ближайшем опросе (~2 мин).')) return;
+        try {
+            await api.post('/financier/onec/credentials', { login: u, password: p });
+            if (this.dom.onecPass) this.dom.onecPass.value = '';
+            toast('Учётка 1С сохранена (зашифровано). Релей заберёт на опросе (~2 мин).', 'info');
+            this.loadOnecStatus();
+        } catch (e) { toast('Ошибка: ' + (e?.message || e), 'error'); }
+    },
+
+    async runOnec(probe) {
+        const msg = probe
+            ? 'Запустить РАЗВЕДКУ 1С? Релей залогинится и снимет скрины/DOM (без сбора долгов) в /opt/gisgmp-relay/onec_probe — пришли их мне, я донастрою селекторы.'
+            : 'Запустить сбор ОСВ из 1С сейчас? Релей сформирует ведомости за период с начала года и зальёт черновиком (~2 мин до старта).';
+        if (!await showConfirm(msg)) return;
+        try {
+            await api.post(`/financier/onec/run-now?probe=${probe ? 'true' : 'false'}`, {});
+            toast(probe ? 'Разведка поставлена — релей выполнит на ближайшем опросе (~2 мин).'
+                        : 'Сбор поставлен — релей выполнит на ближайшем опросе (~2 мин).', 'info');
+            this.loadOnecStatus();
+        } catch (e) { toast('Ошибка: ' + (e?.message || e), 'error'); }
     },
 
     // Раздельное окно отладки: что нашёл ГИС ГМП (в долги пока не пишется).
@@ -1156,6 +1239,20 @@ ${(d.orphans || []).length ? `<h2>Не найдены в базе (1С/ГИС е
             btnRelayCreds: document.getElementById('btnRelayCreds'),
             relayUser: document.getElementById('relayUser'),
             relayPass: document.getElementById('relayPass'),
+            // 1С (БГУ) авто-подгрузка через релей
+            onecEnabled: document.getElementById('onecEnabled'),
+            onecAccNaem: document.getElementById('onecAccNaem'),
+            onecAccComm: document.getElementById('onecAccComm'),
+            onecHour: document.getElementById('onecHour'),
+            onecBaseUrl: document.getElementById('onecBaseUrl'),
+            onecInfobase: document.getElementById('onecInfobase'),
+            onecLogin: document.getElementById('onecLogin'),
+            onecPass: document.getElementById('onecPass'),
+            btnOnecSave: document.getElementById('btnOnecSave'),
+            btnOnecCreds: document.getElementById('btnOnecCreds'),
+            btnOnecRunNow: document.getElementById('btnOnecRunNow'),
+            btnOnecProbe: document.getElementById('btnOnecProbe'),
+            onecStatus: document.getElementById('onecStatus'),
             // Модалка корректировки
             adjustModal: document.getElementById('debtAdjustModal'),
             adjustForm: document.getElementById('debtAdjustForm'),
@@ -1211,6 +1308,12 @@ ${(d.orphans || []).length ? `<h2>Не найдены в базе (1С/ГИС е
         this.dom.btnRelayUpdate?.addEventListener('click', () => this.relayUpdate());
         this.dom.btnRelayRestart?.addEventListener('click', () => this.relayRestart());
         this.dom.btnRelayCreds?.addEventListener('click', () => this.relaySaveCreds());
+        // 1С (БГУ) авто-подгрузка
+        this.dom.btnOnecSave?.addEventListener('click', () => this.saveOnecConfig());
+        this.dom.onecEnabled?.addEventListener('change', () => this.saveOnecConfig());
+        this.dom.btnOnecCreds?.addEventListener('click', () => this.saveOnecCreds());
+        this.dom.btnOnecRunNow?.addEventListener('click', () => this.runOnec(false));
+        this.dom.btnOnecProbe?.addEventListener('click', () => this.runOnec(true));
         this.dom.btnUpload?.addEventListener('click', () => this.handleUpload());
         this.dom.btnPublishDebts?.addEventListener('click', () => this.publishDebts());
         this.dom.btnRematchBase?.addEventListener('click', () => this.rematchBase());
