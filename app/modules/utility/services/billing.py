@@ -687,7 +687,10 @@ async def charge_static_rent_for_houses(
     zero_money = Decimal("0.00")
     preview = []
     by_room: dict[str, int] = {}
-    by_building: dict[str, int] = {}
+    # by_building[bkey] = {count, sum} — count и сумма наёма (205) ТОЛЬКО по
+    # реально начисляемым (после скипа existing/recompute), чтобы цифры в модалке
+    # выбора домов совпадали с тем, что начислится на apply.
+    by_building: dict[str, dict] = {}
     _groups = set(groups) if groups else None
     created = updated = skipped = 0
 
@@ -700,7 +703,6 @@ async def charge_static_rent_for_houses(
         bkey = _building_key(room) if room else "—"
         if _groups is not None and bkey not in _groups:
             continue
-        by_building[bkey] = by_building.get(bkey, 0) + 1
         existing = existing_by_user.get(user.id)
         # recompute=False (открытие периода): идемпотентно — уже начисленных
         # пропускаем. recompute=True (кнопка «пересчитать наём домам»): обновляем
@@ -725,6 +727,9 @@ async def charge_static_rent_for_houses(
         cost_209 = costs.get("total_cost", zero_money) - cost_205
         addr = room.format_address if room else "—"
         by_room[addr] = by_room.get(addr, 0) + 1
+        _bb = by_building.setdefault(bkey, {"count": 0, "sum": 0.0})
+        _bb["count"] += 1
+        _bb["sum"] += float(cost_205)
 
         if dry_run:
             preview.append({
@@ -779,7 +784,8 @@ async def charge_static_rent_for_houses(
         "would_create": len(preview) if dry_run else None,
         "skipped_has_reading": skipped,
         "by_room": by_room,
-        "by_building": [{"name": k, "count": v} for k, v in sorted(by_building.items())],
+        "by_building": [{"name": k, "count": v["count"], "sum": v["sum"]}
+                        for k, v in sorted(by_building.items())],
         "preview": preview[:50] if dry_run else None,
         "dry_run": dry_run, "recompute": recompute,
     }
@@ -860,7 +866,9 @@ async def charge_unconditional_norm(
     zero_money = Decimal("0.00")
     preview = []
     by_room: dict[str, int] = {}
-    by_building: dict[str, int] = {}
+    # by_building[bkey] = {count, sum} — ТОЛЬКО реально начисляемые (после скипа
+    # и УСПЕШНОГО расчёта), чтобы цифры модалки совпали с apply. sum = total_cost.
+    by_building: dict[str, dict] = {}
     _groups = set(groups) if groups else None
     errors: list[dict] = []
     created = updated = skipped = 0
@@ -880,7 +888,6 @@ async def charge_unconditional_norm(
         tariff = tariff_cache.get_effective_tariff(user=user, room=room)
         if tariff is None or not is_unconditional(tariff):
             continue
-        by_building[bkey] = by_building.get(bkey, 0) + 1
         _heating = _seasonal.heating_season_active and tariff.is_heating_active_now()
         _hw = _seasonal.hot_water_heating_active and tariff.is_hw_heating_active_now()
         try:
@@ -900,6 +907,9 @@ async def charge_unconditional_norm(
         cost_205, cost_209, total_cost = bd["total_205"], bd["total_209"], bd["total_cost"]
         addr = room.format_address if room else "—"
         by_room[addr] = by_room.get(addr, 0) + 1
+        _bb = by_building.setdefault(bkey, {"count": 0, "sum": 0.0})
+        _bb["count"] += 1
+        _bb["sum"] += float(total_cost)
 
         if dry_run:
             preview.append({
@@ -945,7 +955,8 @@ async def charge_unconditional_norm(
         "updated": updated if not dry_run else 0,
         "would_create": len(preview) if dry_run else None,
         "skipped_has_reading": skipped, "by_room": by_room,
-        "by_building": [{"name": k, "count": v} for k, v in sorted(by_building.items())],
+        "by_building": [{"name": k, "count": v["count"], "sum": v["sum"]}
+                        for k, v in sorted(by_building.items())],
         "errors": errors[:20], "skipped_errors": len(errors),
         "preview": preview[:50] if dry_run else None,
         "dry_run": dry_run, "recompute": recompute,

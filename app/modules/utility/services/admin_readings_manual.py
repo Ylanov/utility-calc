@@ -231,25 +231,44 @@ async def recalc_building_period(
     from app.modules.utility.models import Room as _Room
 
     rooms = (await db.execute(select(_Room))).scalars().all()
-    room_ids = [r.id for r in rooms if _building_key(r) == group]
+    matching = [r for r in rooms if _building_key(r) == group]
+    room_ids = [r.id for r in matching]
     if not room_ids:
         raise HTTPException(404, "Здание не найдено")
+    # Холостяцкие комнаты: equalize_singles_room (внутри recalc_user_period)
+    # пересчитывает и раскидывает на ВСЕХ жильцов комнаты разом — поэтому
+    # достаточно одного вызова на комнату, иначе работа (recompute+propagate+
+    # commit) повторяется на каждого соседа. Считаем покрытых жильцов отдельно.
+    singles_room_ids = {r.id for r in matching if getattr(r, "is_singles_apartment", False)}
     users = (await db.execute(
-        select(User.id).where(
+        select(User.id, User.room_id).where(
             User.role == "user", User.is_deleted.is_(False), User.room_id.in_(room_ids),
         )
-    )).scalars().all()
+    )).all()
+    residents_per_room: dict[int, int] = {}
+    for _uid, rid in users:
+        residents_per_room[rid] = residents_per_room.get(rid, 0) + 1
 
     processed = 0
     errors: list[dict] = []
-    for uid in users:
+    done_singles: set[int] = set()
+    for uid, rid in users:
+        if rid in singles_room_ids:
+            if rid in done_singles:
+                continue  # комната уже выровнена этим прогоном
+            done_singles.add(rid)
         try:
             await recalc_user_period(db, user_id=uid, period_id=period_id)
-            processed += 1
+            # У холостяков один вызов покрывает всех жильцов комнаты.
+            processed += residents_per_room.get(rid, 1) if rid in singles_room_ids else 1
         except HTTPException as e:
             # «нет показания за период» и т.п. — пропускаем, копим в errors.
+            # rollback: recalc_user_period мог flush'нуть recount делителя ДО
+            # raise — откатываем, чтобы частичная мутация не утекла в след. жильца.
+            await db.rollback()
             errors.append({"user_id": uid, "reason": str(getattr(e, "detail", e))})
         except Exception as e:  # noqa: BLE001
+            await db.rollback()
             errors.append({"user_id": uid, "reason": str(e)})
     return {"status": "ok", "processed": processed,
             "errors": errors[:20], "errors_count": len(errors)}

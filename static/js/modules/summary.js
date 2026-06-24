@@ -1780,13 +1780,9 @@ export const SummaryModule = {
         } catch (e) { toast('Не удалось получить preview: ' + (e.message || e), 'error'); return; }
         const buildings = preview.by_building || [];
         if (!buildings.length) { toast(`В периоде «${pName}» нет домов для начисления наёма.`, 'info'); return; }
-        // Сумма наёма (205) по зданию из строк превью.
-        const sums = {};
-        (preview.preview || []).forEach(r => {
-            const k = r.building || '—';
-            sums[k] = (sums[k] || 0) + Number(r.total_205 || 0);
-        });
-        const items = buildings.map(b => ({ key: b.name, label: b.name, count: b.count, sum: sums[b.name] }));
+        // Сумма наёма (205) и число квартир — из by_building (агрегат по ВСЕМ
+        // начисляемым на сервере, без зависимости от усечённого preview[:50]).
+        const items = buildings.map(b => ({ key: b.name, label: b.name, count: b.count, sum: b.sum }));
         const chosen = await this._pickBuildingsModal({
             title: 'Начислить наём (205) домам',
             subtitle: `Период «${pName}». Наём = площадь × ставка тарифа. Пересчитывает выбранные дома по текущему тарифу. Сальдо 1С не трогается.`,
@@ -1818,12 +1814,9 @@ export const SummaryModule = {
         } catch (e) { toast('Не удалось получить preview: ' + (e.message || e), 'error'); return; }
         const buildings = preview.by_building || [];
         if (!buildings.length) { toast(`В периоде «${pName}» нет жильцов на тарифе «БЕЗ УСЛОВИЙ».`, 'info'); return; }
-        const sums = {};
-        (preview.preview || []).forEach(r => {
-            const k = r.building || '—';
-            sums[k] = (sums[k] || 0) + Number(r.total_cost || 0);
-        });
-        const items = buildings.map(b => ({ key: b.name, label: b.name, count: b.count, sum: sums[b.name] }));
+        // Сумма (total_cost) и число квартир — из by_building (агрегат по ВСЕМ
+        // начисляемым на сервере, не из усечённого preview[:50]).
+        const items = buildings.map(b => ({ key: b.name, label: b.name, count: b.count, sum: b.sum }));
         const chosen = await this._pickBuildingsModal({
             title: 'Начислить по нормативу (БЕЗ УСЛОВИЙ)',
             subtitle: `Период «${pName}». Расход = норматив на квартиру. Семья — норму целиком, холостяки делят поровну. Сальдо 1С не трогается.`,
