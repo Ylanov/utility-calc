@@ -87,6 +87,10 @@ class ApproveRowBody(BaseModel):
     """
     fix_hot: Optional[Decimal] = None
     fix_cold: Optional[Decimal] = None
+    # replace=True: если за период уже есть утверждённое показание (норматив/авто/
+    # наём/прошлая подача), снять его (is_approved=False) и принять эту подачу
+    # вместо него. Без флага — 409-конфликт (защита от дублей).
+    replace: bool = False
 
 
 class CreateAndMatchRequest(BaseModel):
@@ -936,6 +940,19 @@ async def _resolve_period_for_row(
     return period
 
 
+def _existing_reading_kind(flags) -> str:
+    """Человеческий тип существующего начисления — для conflict-сообщения,
+    чтобы админ понимал, ЧТО уже есть за период (норматив/наём/авто/подача)."""
+    f = (flags or "").upper()
+    if "NORM_UNCONDITIONAL" in f:
+        return "по нормативу"
+    if "STATIC_RENT" in f:
+        return "наём (дом)"
+    if "AUTO" in f:
+        return "авто/норматив"
+    return "показание жильца"
+
+
 async def _apply_approve(
     db: AsyncSession,
     row: GSheetsImportRow,
@@ -943,6 +960,7 @@ async def _apply_approve(
     move_to_raw_room: bool = False,
     fix_hot: Optional[Decimal] = None,
     fix_cold: Optional[Decimal] = None,
+    replace: bool = False,
 ) -> MeterReading:
     """
     Создаёт MeterReading на основании импортированной строки.
@@ -1136,6 +1154,17 @@ async def _apply_approve(
                 MeterReading.is_approved.is_(True),
             ).limit(1)
         )).scalars().first()
+        if duplicate and replace:
+            # Админ выбрал «Заменить»: снимаем старое начисление (норматив/авто/
+            # наём/прошлую подачу) и принимаем эту подачу вместо него. Сальдо 1С
+            # (debt/overpayment) на старом не трогаем — оно перенесётся при расчёте.
+            duplicate.is_approved = False
+            _f = duplicate.anomaly_flags or ""
+            if "SUPERSEDED" not in _f:
+                duplicate.anomaly_flags = (_f + ",SUPERSEDED_BY_SUBMISSION").lstrip(",")
+            db.add(duplicate)
+            await db.flush()
+            duplicate = None
         if duplicate:
             raise HTTPException(
                 status_code=409,
@@ -1154,6 +1183,8 @@ async def _apply_approve(
                             "hot_water": float(duplicate.hot_water or 0),
                             "cold_water": float(duplicate.cold_water or 0),
                             "electricity": float(duplicate.electricity or 0),
+                            "total_cost": float(duplicate.total_cost or 0),
+                            "kind": _existing_reading_kind(duplicate.anomaly_flags),
                             "created_at": duplicate.created_at.isoformat() if duplicate.created_at else None,
                         },
                         "incoming": {
@@ -1834,6 +1865,7 @@ async def approve_row(
         move_to_raw_room=move_to_raw_room,
         fix_hot=body.fix_hot if body else None,
         fix_cold=body.fix_cold if body else None,
+        replace=bool(body.replace) if body else False,
     )
     await db.commit()
     return {"status": "ok", "reading_id": reading.id}

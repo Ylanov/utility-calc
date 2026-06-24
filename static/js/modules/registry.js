@@ -398,6 +398,36 @@ export const RegistryModule = {
       toast('Утверждено', 'success');
       this.load();
     } catch (e) {
+      // Конфликт: за период у жильца уже есть начисление (норматив/наём/авто/
+      // прошлая подача). Показываем его и предлагаем ЗАМЕНИТЬ этой подачей.
+      if (rowType === 'gsheets' && e.status === 409 && e.data && e.data.conflict) {
+        const c = e.data.conflict;
+        const ex = c.existing || {};
+        const inc = c.incoming || {};
+        const sum = ex.total_cost != null ? Number(ex.total_cost).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽' : '—';
+        const ok = await showConfirm(
+          `За «${c.period_name}» у жильца УЖЕ есть начисление (${ex.kind || 'показание'}) на ${sum}:\n` +
+          `  ГВС ${fmtNum(ex.hot_water)} · ХВС ${fmtNum(ex.cold_water)} · свет ${fmtNum(ex.electricity)}\n\n` +
+          `Эта подача из таблицы: ГВС ${fmtNum(inc.hot_water)} · ХВС ${fmtNum(inc.cold_water)}.\n\n` +
+          `Заменить существующее начисление этой подачей?\n` +
+          `«Отмена» — оставить как есть (лишнюю подачу можно отклонить ✗).`,
+          { title: 'За период уже есть начисление', confirmText: 'Заменить' }
+        );
+        if (ok) {
+          try {
+            await api.post('/admin/gsheets/rows/' + id + '/approve', { replace: true });
+            toast('Заменено и утверждено', 'success');
+            this.load();
+            return;
+          } catch (e2) {
+            btn.disabled = false;
+            toast('Не удалось заменить. ' + cleanError(e2), 'error');
+            return;
+          }
+        }
+        btn.disabled = false;
+        return;
+      }
       btn.disabled = false;
       toast('Не удалось утвердить. ' + cleanError(e), 'error');
     }
