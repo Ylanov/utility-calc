@@ -40,7 +40,7 @@ UA = "Mozilla/5.0 (gisgmp-relay)"
 # Версия релея — отправляется при опросе конфига, ЖКХ показывает её в статусе и
 # сравнивает с актуальной (из задеплоенного relay.py) → видно «обновлён или нет».
 # БАМПАТЬ при изменении relay.py (формат YYYY-MM-DD[.N]).
-RELAY_VERSION = "2026-06-24.1"
+RELAY_VERSION = "2026-06-25.10"
 
 # Пауза между запросами актуализации (бережём тормозной сервер реестра).
 ACTUALIZE_SLEEP = float(os.environ.get("ACTUALIZE_SLEEP", "1.2"))
@@ -556,6 +556,23 @@ def _onec_fill_labeled(pg, labels, value):
     return False
 
 
+def _onec_click(pg, text, timeout=12000, exact=True):
+    """Клик по видимому элементу с текстом (ждём появления). True/False."""
+    try:
+        loc = pg.get_by_text(text, exact=exact).first
+        loc.wait_for(state="visible", timeout=timeout)
+        loc.click()
+        return True
+    except Exception:
+        return False
+
+
+def _onec_wait_desktop(pg, timeout=120000):
+    """Ждём готовности рабочего стола 1С (плитки разделов #themesCell_theme_N),
+    а не фикс. паузу — за сплэшем веб-клиент догружается 10-40с."""
+    pg.locator("[id^='themesCell_theme_']").first.wait_for(state="visible", timeout=timeout)
+
+
 def _onec_login(pg, login, password):
     """Форма входа веб-клиента 1С. Якорь — поле пароля (самое надёжное)."""
     pw = pg.locator("input[type=password]").first
@@ -573,47 +590,156 @@ def _onec_login(pg, login, password):
         pw.press("Enter")
 
 
-def _onec_open_report(pg, report_name):
-    """Навигация: раздел → Стандартные отчёты → нужный отчёт. Названия раздела —
-    кандидаты (на ВМ уточним по probe-скринам)."""
-    _onec_click_text(pg, ["Учет и отчетность", "Учёт и отчётность",
-                          "Бухгалтерский учет", "Бухгалтерский учёт"])
-    pg.wait_for_timeout(1500)
-    _onec_click_text(pg, ["Стандартные отчеты", "Стандартные отчёты"])
-    pg.wait_for_timeout(1500)
-    _onec_click_text(pg, [report_name, "Оборотно-сальдовая ведомость по счету",
-                          "Оборотно-сальдовая ведомость по счёту"])
-    pg.wait_for_timeout(2500)
+def _onec_open_report(pg, report_name, shot=None):
+    """Навигация: раздел «Учет и отчетность» → «Стандартные отчеты» → отчёт.
+    Разделы рисуются плитками .themeBox (#themesCell_theme_N). Скрин после
+    каждого шага (shot) — чтобы видеть, где застряло."""
+    def _s(n):
+        if shot:
+            shot(n)
+    # 1. Раздел «Учет и отчетность» (плитка раздела)
+    sect = pg.locator(".themeBox", has_text="Учет и отчетность").first
+    if not sect.count():
+        sect = pg.get_by_text("Учет и отчетность", exact=True).first
+    sect.wait_for(state="visible", timeout=30000)
+    sect.click()
+    pg.wait_for_timeout(3000)
+    _s("nav1_section")
+    # 2. «Стандартные отчеты» (навигация раздела)
+    if not _onec_click(pg, "Стандартные отчеты"):
+        _onec_click(pg, "Стандартные отчёты")
+    pg.wait_for_timeout(3000)
+    _s("nav2_stdreports")
+    # 3. Сам отчёт «Оборотно-сальдовая ведомость по счету»
+    if not _onec_click(pg, "Оборотно-сальдовая ведомость по счету"):
+        _onec_click(pg, report_name, exact=False)
+    pg.wait_for_timeout(3500)
+    _s("nav3_report")
 
 
-def _onec_collect_account(pg, report_name, code, period, notes, at):
-    """ОСВ по счёту: задать счёт+период, Сформировать, сохранить в xlsx → bytes."""
-    _onec_open_report(pg, report_name)
-    _onec_fill_labeled(pg, ["Счет", "Счёт"], code)
-    _onec_fill_labeled(pg, ["с", "Период с", "Начало периода"], period.get("from"))
-    _onec_fill_labeled(pg, ["по", "Период по", "Конец периода"], period.get("to"))
-    _onec_shot(pg, f"form_{at}", notes)
-    _onec_click_text(pg, ["Сформировать"])
-    pg.wait_for_timeout(5000)
-    _onec_shot(pg, f"formed_{at}", notes)
-    # Сохранить табличный документ в xlsx (ловим браузерный download).
+def _onec_date_digits(d):
+    """'01.01.2026' (ДД.ММ.ГГГГ от ЖКХ) → 'MMDDYYYY' цифрами — маска поля дат
+    этого 1С (показывает 'M/D/YYYY'). Печатаем цифры, маска сама расставит '/'."""
     try:
+        dd, mm, yy = d.split(".")
+        return f"{mm}{dd}{yy}"
+    except Exception:
+        return d
+
+
+def _onec_set(pg, suffix, value):
+    """Заполнить поле 1С. suffix — окончание id без префикса формы (напр. '_Счет',
+    '_НачалоПериода'). 1С прячет настоящий <input class=editInput> до активации
+    ячейки → кликаем по ячейке (.field-предок), затем печатаем с клавиатуры."""
+    if not value:
+        return
+    inp = pg.locator(f"[id$='{suffix}_i0']").first
+    cell = inp.locator("xpath=ancestor-or-self::*[contains(@class,'field')][1]")
+    target = cell if cell.count() else inp
+    target.scroll_into_view_if_needed(timeout=8000)
+    target.click(timeout=15000)          # активировать ячейку → input станет видим
+    pg.wait_for_timeout(450)
+    # ВСЕ действия привязаны к КОНКРЕТНОМУ input (а не глоб. фокус — иначе печать
+    # утекает в предыдущее поле). press_sequentially уважает маску даты.
+    inp.click(timeout=8000)
+    inp.press("Control+a")
+    inp.press("Delete")
+    inp.press_sequentially(str(value), delay=30)
+    inp.press("Tab")
+    pg.wait_for_timeout(900)
+
+
+def _onec_set_account(pg, code):
+    """Счёт — это КОМБОБОКС: клик по ячейке открывает выпадающий список (он
+    перекрывает input, поэтому inp.click не годится). Активируем ячейку, печатаем
+    код в фокусированный combobox-input, выбираем точное совпадение из списка."""
+    if not code:
+        return
+    inp = pg.locator("[id$='_Счет_i0']").first
+    cell = inp.locator("xpath=ancestor-or-self::*[contains(@class,'field')][1]")
+    (cell if cell.count() else inp).click(timeout=15000)
+    pg.wait_for_timeout(600)
+    pg.keyboard.press("Control+a")
+    pg.keyboard.press("Delete")
+    pg.keyboard.type(str(code), delay=45)   # combobox в фокусе (Счёт ставим последним)
+    pg.wait_for_timeout(1300)               # дать выпасть списку
+    opt = pg.get_by_text(str(code), exact=True).last
+    try:
+        opt.click(timeout=5000)
+    except Exception:
+        pg.keyboard.press("Enter")
+    pg.wait_for_timeout(1000)
+
+
+def _onec_save_xlsx(pg, at, shot=None):
+    """Экспорт результата ОСВ в xlsx. Кнопка «Сохранить» табличного документа
+    (VW_pageN…_cmd_SaveButton) открывает диалог: Имя файла + Тип файла (по умолч.
+    *.mxl) + кнопка OK (Ctrl+Enter). Меняем Тип на Excel и жмём OK → download."""
+    def _s(n):
+        if shot:
+            shot(n)
+    save_btn = pg.locator("[id^='VW_'][id$='_cmd_SaveButton']:visible").first
+    if not save_btn.count():
+        save_btn = pg.locator("[id$='_cmd_SaveButton']:visible").first
+    save_btn.click(timeout=15000)
+    pg.wait_for_timeout(2000)
+    _s(f"save_dialog_{at}")
+    try:
+        # Сменить Тип файла на Excel: открыть выпадающий список (DLB) и выбрать.
+        dlb = pg.locator("[id$='_FileType_DLB']:visible").first
+        if dlb.count():
+            dlb.click(timeout=8000)
+            pg.wait_for_timeout(1000)
+            _onec_dump(pg, f"filetype_{at}")     # список форматов (для проверки)
+            # Берём ИМЕННО xlsx (Excel 2007+), а не плейн «Лист Excel» (это .xls/OLE2,
+            # который openpyxl не читает). Якорь — подстрока «xlsx».
+            (_onec_click(pg, "xlsx", exact=False)
+             or _onec_click(pg, "2007", exact=False)
+             or _onec_click(pg, "Лист Excel 2007", exact=False))
+            pg.wait_for_timeout(800)
+        _s(f"save_fmt_{at}")
+        # OK диалога = Ctrl+Enter (так в подписи кнопки). Ловим download.
         with pg.expect_download(timeout=60000) as dl:
-            if not _onec_click_text(pg, ["Сохранить как", "Сохранить"]):
-                _onec_click_text(pg, ["Ещё", "Еще"])
-                pg.wait_for_timeout(800)
-                _onec_click_text(pg, ["Сохранить как…", "Сохранить как", "Сохранить"])
-            pg.wait_for_timeout(1200)
-            _onec_click_text(pg, ["Лист Excel 2007", "Лист Excel", "Excel (xlsx)", "xlsx"])
-            _onec_click_text(pg, ["Сохранить", "ОК", "OK"])
+            pg.keyboard.press("Control+Enter")
+            pg.wait_for_timeout(1500)
+            ok = pg.locator("[id$='_popup_OK']:visible").first
+            try:
+                if ok.count():
+                    ok.click(timeout=3000)
+            except Exception:
+                pass
         path = os.path.join(ONEC_PROBE_DIR, f"osv_{at}.xlsx")
         dl.value.save_as(path)
         with open(path, "rb") as f:
             return f.read()
     except Exception as e:
-        log(f"[onec] сохранение xlsx ({at}) не удалось:", e)
+        log(f"[onec] экспорт xlsx ({at}) не удался:", e)
+        _s(f"save_fail_{at}")
         _onec_dump(pg, f"save_{at}")
         return None
+
+
+def _onec_collect_account(pg, code, period, at, shot=None, dry=False, set_dates=True):
+    """Один счёт в УЖЕ ОТКРЫТОМ отчёте ОСВ: задать период (один раз) + счёт,
+    Сформировать, сохранить в xlsx → bytes. Отчёт НЕ переоткрываем (для 2-го счёта
+    1С просто фокусировал бы существующую вкладку → поля недоступны)."""
+    def _s(n):
+        if shot:
+            shot(n)
+    _s(f"preform_{at}")
+    # Даты ПЕРВЫМИ (один раз), Счёт — комбобокс, ставим ПОСЛЕДНИМ.
+    if set_dates:
+        _onec_set(pg, "_НачалоПериода", _onec_date_digits(period.get("from")))
+        _s(f"d1_{at}")
+        _onec_set(pg, "_КонецПериода", _onec_date_digits(period.get("to")))
+        _s(f"d2_{at}")
+    _onec_set_account(pg, code)
+    _s(f"form_{at}")
+    pg.locator("[id$='_СформироватьОтчет']:visible").first.click(timeout=15000)
+    pg.wait_for_timeout(7000)
+    _s(f"formed_{at}")
+    data = _onec_save_xlsx(pg, at, shot=shot)
+    return None if dry else data
 
 
 def run_onec(oc):
@@ -641,6 +767,10 @@ def run_onec(oc):
                                   viewport={"width": 1600, "height": 900})
         pg = ctx.new_page()
         pg.set_default_timeout(60000)
+
+        def shot(n):
+            _onec_shot(pg, n, notes)
+
         try:
             log("[onec] открываю", url)
             pg.goto(url, wait_until="domcontentloaded")
@@ -648,22 +778,30 @@ def run_onec(oc):
             _onec_shot(pg, "01_open", notes)
             try:
                 _onec_login(pg, login, password)
-                pg.wait_for_timeout(5000)
+                _onec_wait_desktop(pg)          # ждём рабочий стол (а не фикс. паузу)
+                pg.wait_for_timeout(1500)
                 _onec_shot(pg, "02_after_login", notes)
             except Exception as e:
                 _onec_shot(pg, "02_login_fail", notes)
                 _onec_dump(pg, "login_fail")
-                onec_report(False, status="error", message="логин 1С не удался: " + str(e)[:300])
+                onec_report(False, status="error", message="логин/загрузка 1С не удалась: " + str(e)[:300])
                 return
+
+            # Отчёт открываем ОДИН раз, дальше переключаем счёт в нём же.
+            _onec_open_report(pg, report_name, shot=shot)
 
             if probe:
                 _onec_dump(pg, "desktop")
                 try:
-                    _onec_open_report(pg, report_name)
+                    pa = accounts[0] if accounts else {"code": "205.31", "account_type": "205"}
+                    _onec_collect_account(pg, pa.get("code"), period,
+                                          pa.get("account_type"), shot=shot, dry=True)
                     _onec_shot(pg, "03_report_form", notes)
                     _onec_dump(pg, "report_form")
                 except Exception as e:
                     log("[onec] разведка отчёта:", e)
+                    _onec_shot(pg, "03_nav_fail", notes)
+                    _onec_dump(pg, "nav_fail")
                 onec_report(True, status="probe",
                             message="разведка ок, артефакты в " + ONEC_PROBE_DIR
                                     + ": " + ", ".join(notes))
@@ -671,10 +809,12 @@ def run_onec(oc):
 
             files = {}
             counts = {"205": 0, "209": 0}
-            for acc in accounts:
+            for i, acc in enumerate(accounts):
                 code, at = acc.get("code"), acc.get("account_type")
                 try:
-                    data = _onec_collect_account(pg, report_name, code, period, notes, at)
+                    # Даты ставим только на первом счёте (потом сохраняются в форме).
+                    data = _onec_collect_account(pg, code, period, at, shot=shot,
+                                                 set_dates=(i == 0))
                     if data:
                         files[f"file_{at}"] = (f"osv_{at}.xlsx", data)
                         counts[at] = 1
