@@ -200,9 +200,30 @@ async def portal_state(
                     "amount": round(float(r.total_cost or 0), 2),
                 })
 
+    # Долг/переплата ПО КВАРТИРЕ — опубликованные 1С-значения (обновляются раз в
+    # день после «Выгрузить»). Сумма по всем жильцам комнаты (balance_209/205 —
+    # нетто на счёт: >0 долг, <0 переплата; есть во всех формах баланса).
+    from app.modules.utility.routers.admin_reports import _compute_user_balance
+    room_residents = (await db.execute(
+        select(User.id).where(
+            User.role == "user", User.is_deleted.is_(False), User.room_id == room.id,
+        )
+    )).scalars().all()
+    net = 0.0
+    for ruid in room_residents:
+        b = await _compute_user_balance(db, ruid, room.id)
+        net += float(b.get("balance_209", 0) or 0) + float(b.get("balance_205", 0) or 0)
+    net = round(net, 2)
+    balance = {
+        "net": net,
+        "debt": net if net > 0.005 else 0.0,
+        "overpayment": -net if net < -0.005 else 0.0,
+    }
+
     return {
         "period": period.name if period else None,
         "has_period": bool(period),
+        "balance": balance,          # долг/переплата по квартире (опубликованное 1С)
         "metered": metered,
         "meters": meters,            # какие счётчики спрашивать (hot/cold/el)
         "no_residents": rep_id is None,

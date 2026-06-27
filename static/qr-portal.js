@@ -196,6 +196,28 @@
     return out;
   }
 
+  function money(v) {
+    return Number(v || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  // Долг/переплата по квартире (по данным 1С, обновляется раз в день).
+  function balanceBlock(state) {
+    var b = state && state.balance;
+    if (!b) return '';
+    var base = 'margin:10px 0; padding:12px 14px; border-radius:10px; font-size:15px;';
+    if (b.debt > 0.005) {
+      return '<div style="' + base + ' background:#fef2f2; border:1px solid #fecaca; color:#991b1b;">' +
+        'Ваш долг: <b>' + money(b.debt) + ' ₽</b>' +
+        '<div style="font-size:11px; color:#9ca3af; margin-top:2px;">по данным 1С · обновляется раз в день</div></div>';
+    }
+    if (b.overpayment > 0.005) {
+      return '<div style="' + base + ' background:#f0fdf4; border:1px solid #bbf7d0; color:#166534;">' +
+        'Ваша переплата (аванс): <b>' + money(b.overpayment) + ' ₽</b>' +
+        '<div style="font-size:11px; color:#9ca3af; margin-top:2px;">по данным 1С · обновляется раз в день</div></div>';
+    }
+    return '<div style="' + base + ' background:#f8fafc; border:1px solid #e2e8f0; color:#475569;">Задолженности нет ✓ <span style="font-size:11px; color:#9ca3af;">(по данным 1С)</span></div>';
+  }
+
   function showForm(state) {
     var cur = state.current || {};
     var editing = state.editable;
@@ -205,6 +227,7 @@
       '<div class="card">' +
       '  <h1>Подача показаний</h1>' +
       '  <p class="sub">Период: ' + esc(state.period || '—') + '</p>' +
+      balanceBlock(state) +
       (editing ? banner('b-warn', 'Показания за этот период уже переданы. Можно исправить — измените и отправьте снова.') : '') +
       lastActualBlock(state) +
       '  <div class="hint">Вводите как на счётчике: крупные (чёрные) цифры до запятой, мелкие (красные, 3 шт.) — после. Красные пишите, даже если их «не считают».</div>' +
@@ -338,21 +361,21 @@
     }
     if (!state.metered) {
       app.className = ''; app.innerHTML = '<div class="card"><h1>Ваша квартира</h1>' + banner('b-ok',
-        'По этой квартире показания счётчиков не подаются — сумма фиксированная.') + '</div>' + footer(state);
+        'По этой квартире показания счётчиков не подаются — сумма фиксированная.') + balanceBlock(state) + '</div>' + footer(state);
       return;
     }
     if (state.approved) {
       app.className = ''; app.innerHTML = '<div class="card center">' +
         '<div style="font-size:54px;">📋</div><h1>Показания приняты</h1>' +
         banner('b-ok', 'Показания за ' + esc(state.period) + ' уже проверены бухгалтерией. Изменить нельзя.') +
-        '</div>' + footer(state);
+        balanceBlock(state) + '</div>' + footer(state);
       return;
     }
     if (!state.window_open) {
       var w = state.window || {};
       app.className = ''; app.innerHTML = '<div class="card"><h1>Подача показаний</h1>' + banner('b-warn',
         'Приём показаний сейчас закрыт. Окно подачи: с ' + esc(w.start) + ' по ' + esc(w.end) +
-        ' число месяца (сегодня ' + esc(w.today) + ').') + '</div>' + footer(state);
+        ' число месяца (сегодня ' + esc(w.today) + ').') + balanceBlock(state) + '</div>' + footer(state);
       return;
     }
     showForm(state);
