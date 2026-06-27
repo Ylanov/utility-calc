@@ -1044,6 +1044,63 @@ async def onec_status(current_user: User = Depends(get_current_user),
     return pub
 
 
+@router.get("/onec/last-found", summary="Что нашёл релей в последнем сборе 1С (ФИО + долги/переплаты)")
+async def onec_last_found(current_user: User = Depends(get_current_user),
+                          db: AsyncSession = Depends(get_db)):
+    """Последний АВТО-сбор релея из 1С: ФИО с долгами/переплатами по 209/205 —
+    и сопоставленные с базой, и не найденные. Read-only: читает applied_state/
+    not_found_users последних staged|completed DebtImportLog с пометкой «(авто)»."""
+    _require_finance(current_user)
+    rows: dict = {}
+    meta: dict = {}
+    for acc in ("209", "205"):
+        log = (await db.execute(
+            select(DebtImportLog).where(
+                DebtImportLog.account_type == acc,
+                DebtImportLog.status.in_(["staged", "completed"]),
+                DebtImportLog.file_name.ilike("%(авто)%"),
+            ).order_by(desc(DebtImportLog.started_at)).limit(1)
+        )).scalars().first()
+        meta[acc] = ({"file": log.file_name, "status": log.status,
+                      "at": log.started_at.isoformat() if log.started_at else None,
+                      "matched": log.processed, "not_found": log.not_found_count}
+                     if log else None)
+        if not log:
+            continue
+
+        def _row(fio):
+            return rows.setdefault(fio, {"fio": fio, "matched": False,
+                                         "debt_209": 0.0, "over_209": 0.0,
+                                         "debt_205": 0.0, "over_205": 0.0})
+        for st in (log.applied_state or {}).values():
+            fio = (st.get("username") or "").strip()
+            if not fio:
+                continue
+            r = _row(fio)
+            r["matched"] = True   # есть в applied_state → сопоставлен с жильцом
+            r[f"debt_{acc}"] += float(st.get(f"debt_{acc}") or 0)
+            r[f"over_{acc}"] += float(st.get(f"overpayment_{acc}") or 0)
+        for nf in (log.not_found_users or []):
+            fio = (nf.get("fio") or "").strip()
+            if not fio:
+                continue
+            r = _row(fio)   # matched остаётся False, если только в not_found
+            r[f"debt_{acc}"] += float(nf.get("debt") or 0)
+            r[f"over_{acc}"] += float(nf.get("overpayment") or 0)
+
+    items = sorted(rows.values(), key=lambda x: (x["matched"], x["fio"]))
+    totals = {
+        "people": len(items),
+        "matched": sum(1 for x in items if x["matched"]),
+        "not_found": sum(1 for x in items if not x["matched"]),
+        "debt_209": round(sum(x["debt_209"] for x in items), 2),
+        "debt_205": round(sum(x["debt_205"] for x in items), 2),
+        "over_209": round(sum(x["over_209"] for x in items), 2),
+        "over_205": round(sum(x["over_205"] for x in items), 2),
+    }
+    return {"meta": meta, "totals": totals, "items": items[:3000]}
+
+
 class OnecConfigIn(BaseModel):
     enabled: Optional[bool] = None
     base_url: Optional[str] = None

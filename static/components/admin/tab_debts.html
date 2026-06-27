@@ -234,7 +234,9 @@
             <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:10px;">
                 <button id="btnOnecRunNow" class="action-btn primary-btn" style="background:#f59e0b; border-color:#f59e0b; font-size:13px;"><i class="fa-solid fa-play"></i> Запустить сбор сейчас</button>
                 <button id="btnOnecProbe" class="action-btn secondary-btn" style="font-size:13px;" title="Первый прогон: релей логинится и снимает скрины/DOM 1С (без сбора) — чтобы донастроить селекторы"><i class="fa-solid fa-binoculars"></i> Разведка (probe)</button>
+                <button id="btnOnecFound" class="action-btn secondary-btn" style="font-size:13px;" title="Показать, что релей нашёл в последнем сборе 1С: ФИО + долги/переплаты по 209/205 (сопоставленные и не найденные)"><i class="fa-solid fa-table-list"></i> Что нашёл релей</button>
             </div>
+            <div id="onecFoundBody" style="display:none; margin-top:12px;"></div>
             <p class="hint-text" style="font-size:11px; margin:6px 0 0; color:#92400e;">
                 Команды применяются на ближайшем опросе релея (~2 мин). Пароль хранится зашифрованным (Fernet), в статусе не показывается.
                 Скрины/DOM разведки релей кладёт в <code>/opt/gisgmp-relay/onec_probe</code> на ВМ.

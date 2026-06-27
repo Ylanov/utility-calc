@@ -317,6 +317,56 @@ export const DebtsModule = {
         } catch (e) { toast('Ошибка: ' + (e?.message || e), 'error'); }
     },
 
+    // «Что нашёл релей» — последний авто-сбор 1С: ФИО + долги/переплаты 209/205.
+    async loadOnecFound() {
+        const box = this.dom.onecFoundBody;
+        if (!box) return;
+        if (box.style.display === 'block') { box.style.display = 'none'; return; }
+        box.style.display = 'block';
+        box.innerHTML = '<div style="padding:10px; color:var(--text-secondary);">Загрузка…</div>';
+        try {
+            const d = await api.get('/financier/onec/last-found');
+            const it = d.items || [];
+            const t = d.totals || {};
+            if (!it.length) {
+                box.innerHTML = '<div style="padding:10px; color:#9ca3af;">Релей ещё ничего не собрал из 1С (нет авто-импортов). Запусти «Сбор сейчас».</div>';
+                return;
+            }
+            const m209 = d.meta && d.meta['209'];
+            const m205 = d.meta && d.meta['205'];
+            const fmt = (v) => Number(v || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            const rows = it.map(x => `<tr style="${x.matched ? '' : 'background:#fff7ed;'}">
+                <td>${esc(x.fio)}</td>
+                <td>${x.matched ? '<span style="color:#166534;">в базе</span>' : '<span style="color:#b45309;">не найден</span>'}</td>
+                <td style="text-align:right;">${x.debt_209 ? fmt(x.debt_209) : '—'}</td>
+                <td style="text-align:right;">${x.debt_205 ? fmt(x.debt_205) : '—'}</td>
+                <td style="text-align:right; color:#16a34a;">${(x.over_209 + x.over_205) ? fmt(x.over_209 + x.over_205) : '—'}</td>
+            </tr>`).join('');
+            box.innerHTML = `
+                <div style="font-size:12px; color:var(--text-secondary); margin-bottom:6px;">
+                    Источник: ${esc((m209 && m209.file) || (m205 && m205.file) || '—')}
+                    ${m209 && m209.at ? '· ' + fmtDateTime(m209.at) : ''} ·
+                    людей <b>${t.people}</b> (в базе ${t.matched}, не найдено ${t.not_found}) ·
+                    долг 209 <b>${fmt(t.debt_209)}</b> · долг 205 <b>${fmt(t.debt_205)}</b> ·
+                    переплат <b>${fmt(t.over_209 + t.over_205)}</b>
+                </div>
+                <div style="max-height:420px; overflow-y:auto;">
+                <table style="width:100%; border-collapse:collapse; font-size:13px;">
+                    <thead><tr style="position:sticky; top:0; background:var(--bg-card,#fff);">
+                        <th style="text-align:left; padding:5px 8px; border-bottom:1px solid var(--border-color,#e5e7eb);">ФИО</th>
+                        <th style="text-align:left; padding:5px 8px; border-bottom:1px solid var(--border-color,#e5e7eb);">Сопоставление</th>
+                        <th style="text-align:right; padding:5px 8px; border-bottom:1px solid var(--border-color,#e5e7eb);">Долг 209</th>
+                        <th style="text-align:right; padding:5px 8px; border-bottom:1px solid var(--border-color,#e5e7eb);">Долг 205</th>
+                        <th style="text-align:right; padding:5px 8px; border-bottom:1px solid var(--border-color,#e5e7eb);">Переплата</th>
+                    </tr></thead>
+                    <tbody>${rows}</tbody>
+                </table></div>`;
+        } catch (e) {
+            box.innerHTML = `<div style="padding:10px; color:#b91c1c;">Ошибка: ${(e?.message || e)}</div>`;
+        }
+    },
+
     // Раздельное окно отладки: что нашёл ГИС ГМП (в долги пока не пишется).
     // Поиск по фамилии — мгновенный, по сырым начислениям из последнего синка.
     async openGisgmpFindings() {
@@ -1257,6 +1307,8 @@ ${(d.orphans || []).length ? `<h2>Не найдены в базе (1С/ГИС е
             btnOnecCreds: document.getElementById('btnOnecCreds'),
             btnOnecRunNow: document.getElementById('btnOnecRunNow'),
             btnOnecProbe: document.getElementById('btnOnecProbe'),
+            btnOnecFound: document.getElementById('btnOnecFound'),
+            onecFoundBody: document.getElementById('onecFoundBody'),
             onecStatus: document.getElementById('onecStatus'),
             // Модалка корректировки
             adjustModal: document.getElementById('debtAdjustModal'),
@@ -1319,6 +1371,7 @@ ${(d.orphans || []).length ? `<h2>Не найдены в базе (1С/ГИС е
         this.dom.btnOnecCreds?.addEventListener('click', () => this.saveOnecCreds());
         this.dom.btnOnecRunNow?.addEventListener('click', () => this.runOnec(false));
         this.dom.btnOnecProbe?.addEventListener('click', () => this.runOnec(true));
+        this.dom.btnOnecFound?.addEventListener('click', () => this.loadOnecFound());
         this.dom.btnUpload?.addEventListener('click', () => this.handleUpload());
         this.dom.btnPublishDebts?.addEventListener('click', () => this.publishDebts());
         this.dom.btnRematchBase?.addEventListener('click', () => this.rematchBase());
