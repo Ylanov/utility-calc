@@ -295,7 +295,7 @@ function handleRoute() {
     // для обратной совместимости.
     // ВАЖНО: при добавлении новой вкладки — обязательно добавить её сюда,
     // иначе clickByHash сделает fallback на dashboard.
-    const validTabs = ['dashboard', 'readings', 'tools', 'housing', 'users', 'debts', 'certs', 'safety', 'audit', 'tickets', 'errors'];
+    const validTabs = ['dashboard', 'readings', 'tools', 'housing', 'users', 'passport', 'debts', 'certs', 'safety', 'audit', 'tickets', 'errors'];
     let tabToLoad = validTabs.includes(hash) ? hash : defaultTab;
     // «Безопасность» объединена с «Ошибки» (2026-06-09) — старый хеш ведёт туда.
     if (hash === 'security') tabToLoad = 'errors';
@@ -440,6 +440,14 @@ async function initModule(tabId) {
                     loadedModules.users = UsersModule;
                 }
                 loadedModules.users.init();
+                break;
+            // Глобальный поиск по ФИО → карточка жильца 360° (всё из всех источников).
+            case 'passport':
+                if (!loadedModules.passport) {
+                    const { PassportModule } = await import('./modules/passport.js');
+                    loadedModules.passport = PassportModule;
+                }
+                loadedModules.passport.init();
                 break;
             // E3-C: «Копилка ошибок» — список бэк/celery/frontend ошибок
             // с auto-investigation и кнопкой «Скопировать в Claude».

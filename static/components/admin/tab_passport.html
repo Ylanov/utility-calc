@@ -1,0 +1,28 @@
+<div id="passport" class="tab-content">
+    <style>
+        #passport .p360-chip { display:inline-block; padding:2px 8px; border-radius:12px; background:var(--bg-hover,#eef2ff); color:#3730a3; font-size:12px; }
+        #passport .p360-badge { display:inline-block; padding:1px 7px; border-radius:10px; font-size:11px; font-weight:600; margin-left:6px; vertical-align:middle; }
+        #passport .p360-table { width:100%; border-collapse:collapse; }
+        #passport .p360-table th { text-align:left; font-size:12px; color:var(--text-secondary); font-weight:600; padding:6px 8px; border-bottom:1px solid var(--border-color,#e5e7eb); }
+        #passport .p360-table td { padding:6px 8px; border-bottom:1px solid var(--border-color,#f3f4f6); }
+    </style>
+    <div class="card" style="margin-bottom:16px;">
+        <div class="card-header" style="border-bottom:none; margin-bottom:8px;">
+            <h3><i class="fa-solid fa-id-card" style="color:var(--primary-color); margin-right:8px;"></i> Поиск жильца — карточка 360°</h3>
+        </div>
+        <p class="hint-text" style="font-size:13px; color:var(--text-secondary); margin:0 0 12px;">
+            Введите ФИО — увидите всё в одном месте: где живёт, тариф (за что платит), <b>все показания из всех источников</b>
+            (QR/приложение, Google-таблица, ручной ввод, черновики), и долги/переплаты <b>1С</b> и <b>ГИС ГМП</b> —
+            последнее загруженное (в т.ч. неутверждённое) и опубликованное.
+        </p>
+        <div style="position:relative; max-width:600px;">
+            <input id="p360Search" type="text" autocomplete="off" placeholder="Фамилия или ФИО…"
+                   style="width:100%; padding:11px 14px; font-size:15px; border:1px solid var(--border-color,#d1d5db); border-radius:10px;">
+            <div id="p360Results" style="display:none; position:absolute; z-index:60; top:calc(100% + 4px); left:0; right:0;
+                 max-height:340px; overflow-y:auto; background:var(--bg-card,#fff); border:1px solid var(--border-color,#e5e7eb);
+                 border-radius:10px; box-shadow:0 10px 28px rgba(0,0,0,.16);"></div>
+        </div>
+    </div>
+
+    <div id="p360Card"></div>
+</div>

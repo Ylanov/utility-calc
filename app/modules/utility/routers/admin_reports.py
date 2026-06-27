@@ -11,7 +11,7 @@ from starlette.background import BackgroundTask
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse, FileResponse
-from sqlalchemy import func
+from sqlalchemy import func, desc, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -21,7 +21,11 @@ from decimal import Decimal
 from urllib.parse import quote
 
 from app.core.database import get_db
-from app.modules.utility.models import User, MeterReading, Tariff, BillingPeriod, Adjustment, Room, RentalContract
+from app.modules.utility.models import (
+    User, MeterReading, Tariff, BillingPeriod, Adjustment, Room, RentalContract,
+    DebtImportLog, GSheetsImportRow,
+)
+from app.modules.utility.services.gsheets_sync import normalize_fio
 from app.core.dependencies import get_current_user
 from app.modules.utility.services.pdf_generator import generate_receipt_pdf
 from app.modules.utility.services.s3_client import s3_service
@@ -1738,6 +1742,194 @@ async def get_resident_finance_detail(
         "adjustments": adjustments,
         "contract": contract_data,
         "balance": await _compute_user_balance(db, user.id, user.room_id),
+    }
+
+
+# ─── Жилец 360°: единый поиск/карточка по ФИО (read-only агрегатор) ──────────
+_GIS_FINDINGS_KEY = "gisgmp_findings"
+_GIS_SOURCE_LABEL = "ГИС ГМП (авто)"
+
+
+def _p360_reading_source(flags):
+    """Источник боевого показания по anomaly_flags (как в едином реестре)."""
+    f = (flags or "").upper()
+    if "GSHEETS" in f:
+        return "gsheets", "📄 Google Sheets"
+    if "MANUAL_RECEIPT" in f:
+        return "manual", "✍️ Вручную"
+    if any(a in f for a in ("AUTO_NORM", "AUTO_AVG", "AUTO_GENERATED",
+                            "AUTO_NO_HISTORY", "STATIC_RENT")):
+        return "auto", "🤖 Норматив/авто"
+    return "user", "📱 QR/приложение"
+
+
+@router.get("/api/admin/residents/{user_id}/passport-360",
+            summary="Карточка жильца 360° — всё из всех источников")
+async def get_resident_passport_360(
+    user_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Единая карточка: где живёт, тариф (за что платит), ВСЯ история показаний
+    (боевые+черновики+буфер Google-таблицы+QR соседей по комнате) и долги/
+    переплаты 1С (последний импорт/черновик, вкл. неутверждённые) + ГИС ГМП.
+    Read-only, композиция готовых источников — ничего не пишет."""
+    if current_user.role not in ("accountant", "admin", "financier"):
+        raise HTTPException(403, "Доступ запрещён")
+
+    # БЕЗ фильтра is_deleted — карточка открывает и выселенных/должников без
+    # комнаты (ключ — user_id, не ФИО).
+    user = (await db.execute(
+        select(User).options(selectinload(User.room)).where(User.id == user_id)
+    )).scalars().first()
+    if not user:
+        raise HTTPException(404, "Жилец не найден")
+    room = user.room
+
+    # 1) Богатое ядро — переиспользуем finance-detail (квитанция+история+баланс+
+    # договор+корректировки, уже включает черновики). У выселенных оно 404-ит.
+    core = None
+    try:
+        core = await get_resident_finance_detail(
+            user_id, period_id=None, history_periods=24,
+            current_user=current_user, db=db)
+    except HTTPException:
+        core = None
+
+    # 2) Тариф — эффективный = тариф КОМНАТЫ (что-биллится).
+    tariff = room.tariff if room else None
+    tariff_info = None
+    if tariff:
+        tariff_info = {
+            "id": tariff.id, "name": tariff.name,
+            "tariff_type": getattr(tariff, "tariff_type", None),
+            "per_capita_amount": float(getattr(tariff, "per_capita_amount", 0) or 0),
+            "norm_per_capita": float(getattr(tariff, "norm_per_capita", 0) or 0),
+            "charges": {fld: bool(getattr(tariff, fld, False)) for fld in (
+                "charge_hot_water", "charge_cold_water", "charge_sewage",
+                "charge_electricity", "charge_heating", "charge_maintenance",
+                "charge_social_rent", "charge_unconditional_norm")
+                if hasattr(tariff, fld)},
+        }
+
+    # 3) ВСЯ история показаний из всех путей.
+    pname = {p.id: p.name for p in
+             (await db.execute(select(BillingPeriod))).scalars().all()}
+    # 3a) боевые MeterReading по user_id ИЛИ комнате (QR/подача соседа привязаны
+    # к комнате), включая черновики (is_approved=False).
+    rd_cond = MeterReading.user_id == user_id
+    if user.room_id:
+        rd_cond = (MeterReading.user_id == user_id) | (MeterReading.room_id == user.room_id)
+    mrs = (await db.execute(
+        select(MeterReading).where(rd_cond).order_by(MeterReading.created_at.desc())
+    )).scalars().all()
+    readings = []
+    for r in mrs:
+        skey, slabel = _p360_reading_source(getattr(r, "anomaly_flags", None))
+        readings.append({
+            "row_type": "reading", "id": r.id,
+            "period": pname.get(r.period_id, "—"), "period_id": r.period_id,
+            "date": r.created_at.isoformat() if r.created_at else None,
+            "hot_water": float(r.hot_water or 0), "cold_water": float(r.cold_water or 0),
+            "electricity": float(r.electricity or 0),
+            "is_approved": bool(r.is_approved),
+            "own": r.user_id == user_id,   # False = подал сосед/представитель по комнате
+            "source": skey, "source_label": slabel,
+            "total_209": float(getattr(r, "total_209", 0) or 0),
+            "total_205": float(getattr(r, "total_205", 0) or 0),
+        })
+    # 3b) буфер Google-таблицы (ещё не промоутнутые) по matched_user_id, все даты.
+    gsr = (await db.execute(
+        select(GSheetsImportRow).where(
+            GSheetsImportRow.matched_user_id == user_id,
+            GSheetsImportRow.reading_id.is_(None),   # промоутнутые уже среди readings
+        ).order_by(GSheetsImportRow.sheet_timestamp.desc().nullslast())
+    )).scalars().all()
+    buffer_rows = [{
+        "row_type": "buffer", "id": g.id,
+        "date": (g.sheet_timestamp or g.created_at).isoformat()
+                if (g.sheet_timestamp or g.created_at) else None,
+        "hot_water": float(g.hot_water or 0), "cold_water": float(g.cold_water or 0),
+        "status": g.status, "match_score": g.match_score,
+        "raw_room": g.raw_room_number, "raw_fio": g.raw_fio,
+        "source": "gsheets", "source_label": "📄 Google Sheets (буфер)",
+    } for g in gsr]
+
+    # 4) Долги/переплаты — 1С (последний импорт/черновик по 209/205, вкл.
+    # неутверждённые staged) + ГИС ГМП.
+    onec = {}
+    for acc in ("209", "205"):
+        log = (await db.execute(
+            select(DebtImportLog).where(
+                DebtImportLog.account_type == acc,
+                DebtImportLog.status.in_(["staged", "completed"]),
+                DebtImportLog.file_name != _GIS_SOURCE_LABEL,
+            ).order_by(desc(DebtImportLog.started_at)).limit(1)
+        )).scalars().first()
+        e = {"debt": 0.0, "overpayment": 0.0, "file": None,
+             "status": None, "at": None, "found": False}
+        if log:
+            e.update(file=log.file_name, status=log.status,
+                     at=log.started_at.isoformat() if log.started_at else None)
+            st = (log.applied_state or {}).get(str(user_id))
+            if not st:
+                for v in (log.applied_state or {}).values():
+                    if (v.get("username") or "") == user.username:
+                        st = v
+                        break
+            if st:
+                e.update(debt=float(st.get(f"debt_{acc}") or 0),
+                         overpayment=float(st.get(f"overpayment_{acc}") or 0), found=True)
+            else:
+                for nf in (log.not_found_users or []):
+                    if normalize_fio(nf.get("fio") or "") == normalize_fio(user.username):
+                        e.update(debt=float(nf.get("debt") or 0),
+                                 overpayment=float(nf.get("overpayment") or 0), found=True)
+                        break
+        onec[acc] = e
+
+    # ГИС ГМП — долг из находок (по нормализованному ФИО).
+    gis = {"debt_209": 0.0, "debt_205": 0.0, "found": False, "synced_at": None}
+    try:
+        fres = (await db.execute(
+            text("SELECT (value::jsonb -> 'summary')::text AS s, "
+                 "value::jsonb ->> 'synced_at' AS at FROM system_settings WHERE key=:k"),
+            {"k": _GIS_FINDINGS_KEY},
+        )).first()
+        if fres and fres.s:
+            import json as _json
+            gis["synced_at"] = fres.at
+            target = normalize_fio(user.username)
+            for frow in _json.loads(fres.s):
+                if normalize_fio(frow.get("fio") or "") == target:
+                    gis.update(debt_209=float(frow.get("debt_209") or 0),
+                               debt_205=float(frow.get("debt_205") or 0), found=True)
+                    break
+    except Exception:
+        logger.exception("[passport-360] ГИС находки не прочитаны")
+
+    return {
+        "resident": {
+            "user_id": user.id, "fio": user.username,
+            "login": getattr(user, "login", None), "full_name": user.full_name,
+            "is_deleted": bool(user.is_deleted), "role": user.role,
+            "room": ({
+                "id": room.id, "address": room.format_address,
+                "place_type": room.place_type, "dormitory_name": room.dormitory_name,
+                "room_number": room.room_number,
+                "is_singles_apartment": bool(getattr(room, "is_singles_apartment", False)),
+                "total_room_residents": room.total_room_residents or 1,
+            } if room else None),
+            "tariff": tariff_info,
+        },
+        "core": core,            # для рендеров истории/баланса
+        "readings": readings,    # боевые (свои + по комнате), вкл. черновики
+        "buffer": buffer_rows,   # буфер Google-таблицы (не промоутнут)
+        "debts": {
+            "published": (core or {}).get("balance"),  # из MeterReading (опубликовано)
+            "onec": onec,        # последний импорт/черновик 1С по 209/205
+            "gis": gis,          # ГИС ГМП находки
+        },
     }
 
 
