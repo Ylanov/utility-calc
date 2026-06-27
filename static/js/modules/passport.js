@@ -241,7 +241,7 @@ export const PassportModule = {
             <td style="text-align:right;">${b.cold_water || '—'}</td>
             <td style="text-align:right;">—</td>
             <td>${esc(b.source_label)}</td>
-            <td colspan="3"><span class="p360-badge" style="background:#dbeafe; color:#1e40af;">буфер: ${esc(b.status)}</span> <span style="font-size:11px; color:#9ca3af;">${esc(b.raw_fio || '')}</span></td>
+            <td colspan="3"><span class="p360-badge" style="background:#dbeafe; color:#1e40af;">буфер: ${esc(b.status)}</span>${b.linked === false ? ' <span class="p360-badge" style="background:#fef3c7; color:#92400e;" title="Найдено по ФИО, но не привязано к жильцу — утвердите в Реестре показаний">не привязано</span>' : ''} <span style="font-size:11px; color:#9ca3af;">${esc(b.raw_fio || '')}</span></td>
         </tr>`).join('');
 
         const empty = (!readings.length && !buffer.length)

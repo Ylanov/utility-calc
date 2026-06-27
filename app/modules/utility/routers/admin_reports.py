@@ -11,7 +11,7 @@ from starlette.background import BackgroundTask
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse, FileResponse
-from sqlalchemy import func, desc, text
+from sqlalchemy import func, desc, text, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -1851,13 +1851,24 @@ async def get_resident_passport_360(
             "total_209": float(getattr(r, "total_209", 0) or 0),
             "total_205": float(getattr(r, "total_205", 0) or 0),
         })
-    # 3b) буфер Google-таблицы (ещё не промоутнутые) по matched_user_id, все даты.
-    gsr = (await db.execute(
-        select(GSheetsImportRow).where(
-            GSheetsImportRow.matched_user_id == user_id,
-            GSheetsImportRow.reading_id.is_(None),   # промоутнутые уже среди readings
-        ).order_by(GSheetsImportRow.sheet_timestamp.desc().nullslast())
+    # 3b) буфер Google-таблицы (ещё не промоутнутые), ВСЕ даты. Ищем не только по
+    # matched_user_id (fuzzy-привязка), но и по самому ФИО (raw_fio) — иначе подачи,
+    # которые матчер НЕ привязал к жильцу, терялись («не все показания»).
+    target_fio = normalize_fio(user.username or "")
+    surname = (user.username or "").split()[0] if user.username else ""
+    gq = select(GSheetsImportRow).where(GSheetsImportRow.reading_id.is_(None))
+    if surname:
+        gq = gq.where(or_(GSheetsImportRow.matched_user_id == user_id,
+                          GSheetsImportRow.raw_fio.ilike(f"%{surname}%")))
+    else:
+        gq = gq.where(GSheetsImportRow.matched_user_id == user_id)
+    gsr_all = (await db.execute(
+        gq.order_by(GSheetsImportRow.sheet_timestamp.desc().nullslast())
     )).scalars().all()
+    # ilike по фамилии — широкий; оставляем точное совпадение по нормализованному
+    # ФИО либо уже привязанные к этому user_id.
+    gsr = [g for g in gsr_all
+           if g.matched_user_id == user_id or normalize_fio(g.raw_fio or "") == target_fio]
     buffer_rows = [{
         "row_type": "buffer", "id": g.id,
         "date": (g.sheet_timestamp or g.created_at).isoformat()
@@ -1865,6 +1876,7 @@ async def get_resident_passport_360(
         "hot_water": float(g.hot_water or 0), "cold_water": float(g.cold_water or 0),
         "status": g.status, "match_score": g.match_score,
         "raw_room": g.raw_room_number, "raw_fio": g.raw_fio,
+        "linked": g.matched_user_id == user_id,   # False = найдено по ФИО, не привязано
         "source": "gsheets", "source_label": "📄 Google Sheets (буфер)",
     } for g in gsr]
 
