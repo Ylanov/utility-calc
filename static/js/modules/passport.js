@@ -139,7 +139,42 @@ export const PassportModule = {
             </div>
         </div>`;
 
-        return header + this._renderDebts(d.debts || {}) + this._renderReadings(d.readings || [], d.buffer || []);
+        return header + this._renderDebts(d.debts || {})
+            + this._renderFinance(d.finance) + this._renderReadings(d.readings || [], d.buffer || []);
+    },
+
+    // Начисления ПО ТАРИФУ — те же числа, что в финотчётности (reuse finance-detail).
+    _renderFinance(fin) {
+        if (!fin || !fin.history) return '';
+        const f = (v) => v == null ? '—' : Number(v).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const dlt = (v) => v == null ? '' : ` <span style="color:#9ca3af;">(${v > 0 ? '+' : ''}${Number(v).toLocaleString('ru-RU', { maximumFractionDigits: 2 })})</span>`;
+        const rows = (fin.history || []).filter(h => h.reading_id).map(h => `<tr>
+            <td>${esc(h.period_name)}</td>
+            <td style="text-align:right;">${h.hot_water == null ? '—' : h.hot_water}${dlt(h.delta_hot)}</td>
+            <td style="text-align:right;">${h.cold_water == null ? '—' : h.cold_water}${dlt(h.delta_cold)}</td>
+            <td style="text-align:right;">${h.electricity == null ? '—' : h.electricity}${dlt(h.delta_elect)}</td>
+            <td style="text-align:right;">${f(h.total_209)}</td>
+            <td style="text-align:right;">${f(h.total_205)}</td>
+            <td style="text-align:right; font-weight:600;">${f(h.total_cost)}</td>
+        </tr>`).join('');
+        const c = fin.current;
+        let receipt = '';
+        if (c && c.costs) {
+            const L = { cost_hot_water: 'ГВС', cost_cold_water: 'ХВС', cost_sewage: 'Водоотв.', cost_electricity: 'Электр.', cost_maintenance: 'Содерж.', cost_social_rent: 'Наём', cost_waste: 'ТКО', cost_fixed_part: 'Фикс.' };
+            const items = Object.entries(L).filter(([k]) => Math.abs(c.costs[k] || 0) > 0.005)
+                .map(([k, lab]) => `<span class="p360-chip">${lab}: ${f(c.costs[k])}</span>`).join(' ');
+            receipt = `<div style="margin-top:10px; font-size:13px; padding-top:8px; border-top:1px dashed var(--border-color,#eee);">
+                <b>Квитанция за ${esc(fin.period ? fin.period.name : '')}</b> (расчёт по тарифу): ${items || '<span style="color:#9ca3af;">нет начислений</span>'}
+                <div style="margin-top:4px;">Итого: <b>${f(c.total_cost)} ₽</b> · коммуналка (209) ${f(c.total_209)} · наём (205) ${f(c.total_205)}</div></div>`;
+        }
+        return `<div class="card" style="margin-bottom:14px;">
+            <div class="card-header" style="margin-bottom:10px;"><h3><i class="fa-solid fa-calculator" style="color:#0ea5e9; margin-right:6px;"></i> Начисления по тарифу (расчёт как в финотчётности)</h3></div>
+            <div style="overflow-x:auto;"><table class="p360-table" style="width:100%; font-size:13px;">
+                <thead><tr><th>Период</th><th style="text-align:right;">ГВС</th><th style="text-align:right;">ХВС</th><th style="text-align:right;">Эл.</th>
+                    <th style="text-align:right;">Коммун. 209</th><th style="text-align:right;">Наём 205</th><th style="text-align:right;">Итого ₽</th></tr></thead>
+                <tbody>${rows || '<tr><td colspan="7" style="color:#9ca3af; text-align:center; padding:12px;">Нет рассчитанных начислений.</td></tr>'}</tbody>
+            </table></div>${receipt}
+        </div>`;
     },
 
     _renderDebts(debts) {

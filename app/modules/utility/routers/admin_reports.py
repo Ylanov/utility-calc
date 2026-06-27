@@ -1791,9 +1791,19 @@ async def get_resident_passport_360(
     room = user.room
 
     # 1) Опубликованный баланс (что жилец видит) — напрямую через _compute_user_balance
-    # (берёт 209/205 с РАЗНЫХ последних показаний). Не тащим тяжёлый finance-detail
-    # ради одного баланса — карточка рисует свою таблицу показаний.
+    # (берёт 209/205 с РАЗНЫХ последних показаний; работает и для выселенных).
     published_balance = await _compute_user_balance(db, user.id, user.room_id)
+
+    # 1b) Начисления ПО ТАРИФУ «один в один как в финотчётности» — переиспользуем
+    # тот же finance-detail (история периодов с total_209/205/итого + детальная
+    # квитанция с разбивкой по услугам). У выселенных 404 → None (деградируем).
+    finance = None
+    try:
+        finance = await get_resident_finance_detail(
+            user_id, period_id=None, history_periods=12,
+            current_user=current_user, db=db)
+    except HTTPException:
+        finance = None
 
     # 2) Тариф — эффективный = тариф КОМНАТЫ (что-биллится).
     tariff = room.tariff if room else None
@@ -1937,6 +1947,7 @@ async def get_resident_passport_360(
         },
         "readings": readings,    # боевые (свои + по комнате), вкл. черновики
         "buffer": buffer_rows,   # буфер Google-таблицы (не промоутнут)
+        "finance": finance,      # расчёт по тарифу как в финотчётности (history+receipt)
         "debts": {
             "published": published_balance,  # баланс из MeterReading (опубликовано)
             "onec": onec,        # последний импорт/черновик 1С по 209/205
