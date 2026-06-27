@@ -40,7 +40,7 @@ UA = "Mozilla/5.0 (gisgmp-relay)"
 # Версия релея — отправляется при опросе конфига, ЖКХ показывает её в статусе и
 # сравнивает с актуальной (из задеплоенного relay.py) → видно «обновлён или нет».
 # БАМПАТЬ при изменении relay.py (формат YYYY-MM-DD[.N]).
-RELAY_VERSION = "2026-06-25.10"
+RELAY_VERSION = "2026-06-27.1"
 
 # Пауза между запросами актуализации (бережём тормозной сервер реестра).
 ACTUALIZE_SLEEP = float(os.environ.get("ACTUALIZE_SLEEP", "1.2"))
@@ -753,6 +753,11 @@ def run_onec(oc):
     base = (oc.get("base_url") or "").rstrip("/")
     ib = (oc.get("infobase_path") or "").strip().strip("/")
     url = base + (("/" + ib) if ib else "")
+    # 1С по умолчанию редиректит на /en/ (англ. локаль) — там форма входа НЕ
+    # рендерится (пустая страница → таймаут ожидания поля пароля). Принудительно
+    # русская локаль /ru/, если она ещё не указана в пути.
+    if ib and "/ru" not in ("/" + ib + "/"):
+        url = url.rstrip("/") + "/ru/"
     probe = bool(oc.get("probe"))
     headless = bool(oc.get("headless", True))
     period = oc.get("period") or {}
