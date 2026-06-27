@@ -241,7 +241,9 @@ export const PassportModule = {
             <td style="text-align:right;">${b.cold_water || '—'}</td>
             <td style="text-align:right;">—</td>
             <td>${esc(b.source_label)}</td>
-            <td colspan="3"><span class="p360-badge" style="background:#dbeafe; color:#1e40af;">буфер: ${esc(b.status)}</span>${b.linked === false ? ' <span class="p360-badge" style="background:#fef3c7; color:#92400e;" title="Найдено по ФИО, но не привязано к жильцу — утвердите в Реестре показаний">не привязано</span>' : ''} <span style="font-size:11px; color:#9ca3af;">${esc(b.raw_fio || '')}</span></td>
+            <td colspan="3">${b.promoted
+                ? `<span class="p360-badge" style="background:#dcfce7; color:#166534;" title="Эта подача уже стала показанием #${b.reading_id}">→ показание #${b.reading_id}</span>`
+                : `<span class="p360-badge" style="background:#dbeafe; color:#1e40af;">буфер: ${esc(b.status)}</span>`}${b.linked === false ? ' <span class="p360-badge" style="background:#fef3c7; color:#92400e;" title="Найдено по ФИО, но не привязано к жильцу — утвердите в Реестре показаний">не привязано</span>' : ''} <span style="font-size:11px; color:#9ca3af;">${esc(b.raw_fio || '')}</span></td>
         </tr>`).join('');
 
         const empty = (!readings.length && !buffer.length)
@@ -249,7 +251,7 @@ export const PassportModule = {
 
         return `<div class="card">
             <div class="card-header" style="margin-bottom:10px;"><h3><i class="fa-solid fa-chart-line" style="color:var(--primary-color); margin-right:6px;"></i> Показания — все источники, все даты</h3>
-                <span style="font-size:12px; color:var(--text-secondary);">боевые: ${readings.length} · буфер Google: ${buffer.length}</span>
+                <span style="font-size:12px; color:var(--text-secondary);">боевые: ${readings.length} · подачи Google: ${buffer.length}</span>
             </div>
             <div style="overflow-x:auto;">
             <table class="p360-table" style="width:100%; font-size:13px;">

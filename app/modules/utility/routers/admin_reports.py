@@ -1851,12 +1851,14 @@ async def get_resident_passport_360(
             "total_209": float(getattr(r, "total_209", 0) or 0),
             "total_205": float(getattr(r, "total_205", 0) or 0),
         })
-    # 3b) буфер Google-таблицы (ещё не промоутнутые), ВСЕ даты. Ищем не только по
-    # matched_user_id (fuzzy-привязка), но и по самому ФИО (raw_fio) — иначе подачи,
-    # которые матчер НЕ привязал к жильцу, терялись («не все показания»).
+    # 3b) ВСЕ подачи из Google-таблицы по жильцу, за все даты, ВКЛЮЧАЯ уже
+    # промоутнутые (reading_id != NULL). Иначе терялись: (1) непривязанные матчером
+    # (matched_user_id NULL) и (2) промоутнутые — когда НЕСКОЛЬКО месячных подач
+    # слиплись в ОДНО показание (reading_id одинаковый) → в карточке видно меньше
+    # подач, чем в таблице. Ищем и по matched_user_id, и по самому ФИО (raw_fio).
     target_fio = normalize_fio(user.username or "")
     surname = (user.username or "").split()[0] if user.username else ""
-    gq = select(GSheetsImportRow).where(GSheetsImportRow.reading_id.is_(None))
+    gq = select(GSheetsImportRow)
     if surname:
         gq = gq.where(or_(GSheetsImportRow.matched_user_id == user_id,
                           GSheetsImportRow.raw_fio.ilike(f"%{surname}%")))
@@ -1877,7 +1879,9 @@ async def get_resident_passport_360(
         "status": g.status, "match_score": g.match_score,
         "raw_room": g.raw_room_number, "raw_fio": g.raw_fio,
         "linked": g.matched_user_id == user_id,   # False = найдено по ФИО, не привязано
-        "source": "gsheets", "source_label": "📄 Google Sheets (буфер)",
+        "promoted": g.reading_id is not None,      # True = уже стало показанием
+        "reading_id": g.reading_id,
+        "source": "gsheets", "source_label": "📄 Google Sheets",
     } for g in gsr]
 
     # 4) Долги/переплаты — 1С (последний импорт/черновик по 209/205, вкл.
