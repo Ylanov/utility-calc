@@ -128,7 +128,7 @@ export const DebtsModule = {
         if (!await showConfirm('Выгрузить долги жильцам? Возьму последние черновики 1С (209/205) + активные ГИС-оверрайды и запишу долги в показания активного периода. Полная замена по выгружаемому счёту (кого нет в черновике → 0). Снимок до — для отката через историю.', { title: 'Выгрузить долги', confirmText: 'Выгрузить' })) return;
         try {
             const r = await api.post('/financier/debts/publish', {});
-            toast(`Выгружено: счета ${(r.accounts || []).join('+')}, обновлено ${r.updated}, создано ${r.created}, ГИС-оверрайдов ${r.overrides_applied}.`, 'success');
+            toast(`Выгружено: счета ${(r.accounts || []).join('+')}, обновлено ${r.updated}, создано ${r.created}. Источник долгов — только 1С.`, 'success');
             this.loadStagedStatus();
             this.reload();
         } catch (e) { toast('Ошибка выгрузки: ' + (e?.message || e), 'error'); }
@@ -1011,18 +1011,12 @@ export const DebtsModule = {
         if (q) list = list.filter(r => (r.username || '').toLowerCase().includes(q));
         const rows = list.map(r => {
             const L = LAB[r.flag] || ['', '#666'];
-            const act = r.overridden
-                ? `<button class="recon-revert" data-uid="${r.user_id}" data-fio="${esc(r.username)}" style="font-size:11px;color:#7c3aed;background:none;border:1px solid #7c3aed;border-radius:4px;padding:1px 6px;cursor:pointer;">↩ Откат</button>`
-                : (r.flag !== 'ok'
-                    ? `<button class="recon-apply" data-uid="${r.user_id}" data-fio="${esc(r.username)}" style="font-size:11px;color:#fff;background:#b91c1c;border:none;border-radius:4px;padding:2px 7px;cursor:pointer;">Применить ГИС</button>`
-                    : '');
-            return `<tr${r.overridden ? ' style="background:#f5f3ff;"' : ''}><td><a href="#" class="recon-payer" data-fio="${esc(r.username)}" data-uid="${r.user_id}" style="color:#2563eb;cursor:pointer;">${esc(r.username)}</a></td>`
+            return `<tr><td><a href="#" class="recon-payer" data-fio="${esc(r.username)}" data-uid="${r.user_id}" style="color:#2563eb;cursor:pointer;">${esc(r.username)}</a></td>`
                 + `<td class="text-right">${fmt(r.g209)}</td><td class="text-right">${fmt(r.c209)}</td>${dcell(r.d209)}`
                 + `<td class="text-right">${fmt(r.g205)}</td><td class="text-right">${fmt(r.c205)}</td>${dcell(r.d205)}`
                 + `<td class="text-right"><b>${fmt(r.delta)}</b></td>`
                 + `<td style="text-align:center;font-size:11px;">${r.gis_months || 0}${r.need_pull ? ' <span style="color:#2563eb;" title="ГИС занижен — стоит дотянуть">⤓</span>' : ''}</td>`
-                + `<td><span style="color:${L[1]};font-size:11px;">${L[0]}${r.severity === 'high' ? ' ⚠' : ''}${r.overridden ? ' ✔' : ''}</span></td>`
-                + `<td>${act}</td></tr>`;
+                + `<td><span style="color:${L[1]};font-size:11px;">${L[0]}${r.severity === 'high' ? ' ⚠' : ''}</span></td></tr>`;
         }).join('');
         // Несопоставленные (1С/ГИС есть, жильца в базе нет) — блок внизу, чтобы НЕ ТЕРЯТЬ людей.
         let orph = d.orphans || [];
@@ -1040,8 +1034,8 @@ export const DebtsModule = {
         res.innerHTML = `<div style="font-size:12px;color:var(--text-secondary);margin-bottom:4px;">Показано: ${list.length}. ⚠ = крупное расхождение (≥20k). Красный Δ = ГИС больше, синий = 1С больше.</div>`
             + `<div class="table-responsive" style="max-height:55vh;overflow:auto;"><table class="sticky-header-table" style="font-size:12px;">`
             + `<thead><tr><th>Жилец</th><th class="text-right">209 ГИС</th><th class="text-right">209 1С</th><th class="text-right">Δ209</th>`
-            + `<th class="text-right">205 ГИС</th><th class="text-right">205 1С</th><th class="text-right">Δ205</th><th class="text-right">Σ Δ</th><th title="За сколько разных месяцев долг в ГИС; ⤓ = стоит дотянуть">ГИС, мес</th><th>Флаг</th><th>Действие</th></tr></thead>`
-            + `<tbody>${rows || '<tr><td colspan="11" class="text-center">нет</td></tr>'}</tbody></table></div>`
+            + `<th class="text-right">205 ГИС</th><th class="text-right">205 1С</th><th class="text-right">Δ205</th><th class="text-right">Σ Δ</th><th title="За сколько разных месяцев долг в ГИС; ⤓ = стоит дотянуть">ГИС, мес</th><th>Флаг</th></tr></thead>`
+            + `<tbody>${rows || '<tr><td colspan="10" class="text-center">нет</td></tr>'}</tbody></table></div>`
             + (orph.length ? `<div style="font-size:13px;font-weight:600;color:#92400e;margin:14px 0 4px;">🔶 Не найдены в базе — ${orph.length} (есть в 1С/ГИС, жильца нет). Не теряем — их долги ниже. «Привязать» свяжет с жильцом.</div>`
                 + `<div class="table-responsive" style="max-height:40vh;overflow:auto;"><table class="sticky-header-table" style="font-size:12px;">`
                 + `<thead><tr><th>ФИО (1С/ГИС)</th><th class="text-right">209 ГИС</th><th class="text-right">205 ГИС</th><th class="text-right">209 1С</th><th class="text-right">205 1С</th><th>Где</th><th>Действие</th></tr></thead>`
@@ -1050,8 +1044,6 @@ export const DebtsModule = {
             e.preventDefault();
             this.openPayerCharges(a.getAttribute('data-fio'), a.getAttribute('data-uid'));
         }));
-        res.querySelectorAll('.recon-apply').forEach(b => b.addEventListener('click', () => this.applyGisOverride(b.getAttribute('data-uid'), b.getAttribute('data-fio'))));
-        res.querySelectorAll('.recon-revert').forEach(b => b.addEventListener('click', () => this.revertGisOverride(b.getAttribute('data-uid'), b.getAttribute('data-fio'))));
         res.querySelectorAll('.recon-linkorph').forEach(b => b.addEventListener('click', () => this.linkFioPrompt(b.getAttribute('data-fio'))));
     },
 
@@ -1195,31 +1187,7 @@ ${(d.orphans || []).length ? `<h2>Не найдены в базе (1С/ГИС е
         return m ? new Date(+m[3], +m[2] - 1, +m[1]).getTime() : 0;
     },
 
-    // Применить/откатить ГИС-оверрайд долга жильца (база — 1С).
-    async applyGisOverride(uid, fio) {
-        const r = (this._recon?.residents || []).find(x => String(x.user_id) === String(uid));
-        const fmt = (v) => (Number(v) || 0).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-        const msg = r
-            ? `Применить значения ГИС к долгу жильца «${fio}»? Долг станет: 209 = ${fmt(r.g209)}, 205 = ${fmt(r.g205)} (как в ГИС) — это увидит жилец. Действие обратимо («Откат»). Повторный импорт 1С-Excel перезапишет долг свежими данными 1С.`
-            : `Применить значения ГИС к долгу жильца «${fio}»? Обратимо.`;
-        if (!await showConfirm(msg)) return;
-        try {
-            await api.post('/financier/gisgmp/apply-override', { user_id: Number(uid) });
-            toast(`Применено к «${fio}» — жилец увидит значение ГИС.`, 'info');
-            this.reloadReconcile();
-        } catch (e) { toast('Ошибка: ' + (e?.message || e), 'error'); }
-    },
-
-    async revertGisOverride(uid, fio) {
-        if (!await showConfirm(`Откатить ГИС-оверрайд жильца «${fio}» к прежним значениям?`)) return;
-        try {
-            await api.post('/financier/gisgmp/revert-override', { user_id: Number(uid) });
-            toast(`Откат выполнен для «${fio}».`, 'info');
-            this.reloadReconcile();
-        } catch (e) { toast('Ошибка: ' + (e?.message || e), 'error'); }
-    },
-
-    // Перечитать сверку без сворачивания (после оверрайда/отката).
+    // Перечитать сверку без сворачивания.
     async reloadReconcile() {
         if (!this._recon) return;
         try {
