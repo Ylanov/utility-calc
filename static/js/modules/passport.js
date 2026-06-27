@@ -27,7 +27,7 @@ function dt(iso) {
 const CHARGE_LABELS = {
     charge_hot_water: 'ГВС', charge_cold_water: 'ХВС', charge_sewage: 'Водоотв.',
     charge_electricity: 'Электр.', charge_heating: 'Отопл.', charge_maintenance: 'Содерж.',
-    charge_social_rent: 'Наём', charge_unconditional_norm: 'Норматив',
+    charge_social_rent: 'Наём', charge_waste: 'ТКО',
 };
 
 export const PassportModule = {
@@ -75,9 +75,10 @@ export const PassportModule = {
                 return;
             }
             this.dom.results.innerHTML = items.map(u => {
-                const room = u.room_number ? ` · ${esc(u.dormitory_name || '')} ${esc(u.room_number)}`.trimEnd() : '';
+                const rm = u.room || {};   // вложенный объект room (RoomResponse), не плоские поля
+                const hint = rm.room_number ? ` · ${esc(rm.dormitory_name || '')} ${esc(rm.room_number)}`.trimEnd() : '';
                 return `<div class="p360-opt" data-uid="${u.id}" style="padding:10px 14px; cursor:pointer; border-bottom:1px solid var(--border-color,#f1f1f1);">
-                    <b>${esc(u.username || '—')}</b><span style="color:#9ca3af; font-size:12px;">${room}</span>
+                    <b>${esc(u.username || '—')}</b><span style="color:#9ca3af; font-size:12px;">${hint}</span>
                 </div>`;
             }).join('');
             this.dom.results.style.display = 'block';
@@ -110,7 +111,7 @@ export const PassportModule = {
         const r = d.resident || {};
         const room = r.room;
         const t = r.tariff;
-        const addr = room ? room.address : '<span style="color:#b91c1c;">без комнаты</span>';
+        const addr = room ? esc(room.address) : '<span style="color:#b91c1c;">без комнаты</span>';
         const chargeChips = t && t.charges
             ? Object.entries(t.charges).filter(([, v]) => v)
                 .map(([k]) => `<span class="p360-chip">${CHARGE_LABELS[k] || k}</span>`).join(' ') || '<span style="color:#9ca3af;">нет начислений</span>'
@@ -156,10 +157,11 @@ export const PassportModule = {
                 <td>${stBadge(o.status)}</td>
             </tr>`;
         };
-        // Опубликованный баланс (что жилец видит) — из MeterReading.
-        const pubLine = (pub && (pub.debt != null || pub.total != null || pub.debt_209 != null))
-            ? `Опубликовано (жилец видит сейчас): <b>${money(pub.debt_209 != null ? pub.debt_209 : 0)}</b> (209) · <b>${money(pub.debt_205 != null ? pub.debt_205 : 0)}</b> (205)`
-            : 'Опубликованного баланса нет (показания не утверждены).';
+        // Опубликованный баланс (что жилец видит) — из MeterReading. debt_209/205
+        // есть только в полной форме; для no_room/zero берём balance_209/205 (всегда есть).
+        const d209 = pub.debt_209 != null ? pub.debt_209 : (pub.balance_209 || 0);
+        const d205 = pub.debt_205 != null ? pub.debt_205 : (pub.balance_205 || 0);
+        const pubLine = `Опубликовано (жилец видит сейчас): <b>${money(d209)}</b> (209) · <b>${money(d205)}</b> (205)`;
 
         return `<div class="card" style="margin-bottom:14px;">
             <div class="card-header" style="margin-bottom:10px;"><h3><i class="fa-solid fa-scale-balanced" style="color:#f59e0b; margin-right:6px;"></i> Долги и переплаты</h3></div>
@@ -177,7 +179,7 @@ export const PassportModule = {
                             <tr><td>209 · коммуналка</td><td style="text-align:right;"><b>${money(gis.debt_209)}</b></td></tr>
                             <tr><td>205 · наём</td><td style="text-align:right;"><b>${money(gis.debt_205)}</b></td></tr>
                            </tbody></table>
-                           <button class="action-btn secondary-btn" id="p360GisDetail" style="font-size:12px; margin-top:8px;"><i class="fa-solid fa-list"></i> Начисления ГИС по человеку</button>
+                           <button class="action-btn secondary-btn" id="p360GisDetail" style="font-size:12px; margin-top:8px;"><i class="fa-solid fa-list"></i> Начисления ГИС по фамилии</button>
                            <div id="p360GisCharges"></div>`
                         : '<div style="color:#9ca3af; padding:6px 0;">Нет в находках ГИС ГМП (или всё оплачено / иное написание ФИО).</div>'}
                 </div>

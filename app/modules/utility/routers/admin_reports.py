@@ -1779,22 +1779,21 @@ async def get_resident_passport_360(
 
     # БЕЗ фильтра is_deleted — карточка открывает и выселенных/должников без
     # комнаты (ключ — user_id, не ФИО).
+    # Грузим room И room.tariff заранее — иначе ленивый room.tariff в async даст
+    # MissingGreenlet (sync-IO в асинхронном контексте).
     user = (await db.execute(
-        select(User).options(selectinload(User.room)).where(User.id == user_id)
+        select(User)
+        .options(selectinload(User.room).selectinload(Room.tariff))
+        .where(User.id == user_id)
     )).scalars().first()
     if not user:
         raise HTTPException(404, "Жилец не найден")
     room = user.room
 
-    # 1) Богатое ядро — переиспользуем finance-detail (квитанция+история+баланс+
-    # договор+корректировки, уже включает черновики). У выселенных оно 404-ит.
-    core = None
-    try:
-        core = await get_resident_finance_detail(
-            user_id, period_id=None, history_periods=24,
-            current_user=current_user, db=db)
-    except HTTPException:
-        core = None
+    # 1) Опубликованный баланс (что жилец видит) — напрямую через _compute_user_balance
+    # (берёт 209/205 с РАЗНЫХ последних показаний). Не тащим тяжёлый finance-detail
+    # ради одного баланса — карточка рисует свою таблицу показаний.
+    published_balance = await _compute_user_balance(db, user.id, user.room_id)
 
     # 2) Тариф — эффективный = тариф КОМНАТЫ (что-биллится).
     tariff = room.tariff if room else None
@@ -1804,11 +1803,15 @@ async def get_resident_passport_360(
             "id": tariff.id, "name": tariff.name,
             "tariff_type": getattr(tariff, "tariff_type", None),
             "per_capita_amount": float(getattr(tariff, "per_capita_amount", 0) or 0),
-            "norm_per_capita": float(getattr(tariff, "norm_per_capita", 0) or 0),
+            "norm_per_capita": {
+                "hot": float(getattr(tariff, "hw_norm_per_capita", 0) or 0),
+                "cold": float(getattr(tariff, "cw_norm_per_capita", 0) or 0),
+                "elect": float(getattr(tariff, "el_norm_per_capita", 0) or 0),
+            },
             "charges": {fld: bool(getattr(tariff, fld, False)) for fld in (
                 "charge_hot_water", "charge_cold_water", "charge_sewage",
                 "charge_electricity", "charge_heating", "charge_maintenance",
-                "charge_social_rent", "charge_unconditional_norm")
+                "charge_social_rent", "charge_waste")
                 if hasattr(tariff, fld)},
         }
 
@@ -1881,14 +1884,21 @@ async def get_resident_passport_360(
                 e.update(debt=float(st.get(f"debt_{acc}") or 0),
                          overpayment=float(st.get(f"overpayment_{acc}") or 0), found=True)
             else:
-                for nf in (log.not_found_users or []):
-                    if normalize_fio(nf.get("fio") or "") == normalize_fio(user.username):
-                        e.update(debt=float(nf.get("debt") or 0),
-                                 overpayment=float(nf.get("overpayment") or 0), found=True)
-                        break
+                # Запасной матч по ФИО среди «не найденных» — ТОЛЬКО если совпадение
+                # единственное (иначе риск приписать чужой долг при коллизии ФИО).
+                tgt = normalize_fio(user.username)
+                hits = [nf for nf in (log.not_found_users or [])
+                        if normalize_fio(nf.get("fio") or "") == tgt]
+                if len(hits) == 1:
+                    e.update(debt=float(hits[0].get("debt") or 0),
+                             overpayment=float(hits[0].get("overpayment") or 0), found=True)
+                elif len(hits) > 1:
+                    e["ambiguous"] = True
         onec[acc] = e
 
-    # ГИС ГМП — долг из находок (по нормализованному ФИО).
+    # ГИС ГМП — долг из находок. Сначала по АВТОРИТЕТНОМУ matched_user_id (релей
+    # его проставляет), и только если такого нет — запасной матч по ФИО (с риском
+    # коллизии однофамильцев, поэтому второй приоритет).
     gis = {"debt_209": 0.0, "debt_205": 0.0, "found": False, "synced_at": None}
     try:
         fres = (await db.execute(
@@ -1900,11 +1910,14 @@ async def get_resident_passport_360(
             import json as _json
             gis["synced_at"] = fres.at
             target = normalize_fio(user.username)
-            for frow in _json.loads(fres.s):
-                if normalize_fio(frow.get("fio") or "") == target:
-                    gis.update(debt_209=float(frow.get("debt_209") or 0),
-                               debt_205=float(frow.get("debt_205") or 0), found=True)
-                    break
+            rows_gis = _json.loads(fres.s)
+            frow = next((x for x in rows_gis if x.get("matched_user_id") == user_id), None)
+            if frow is None:
+                frow = next((x for x in rows_gis
+                             if normalize_fio(x.get("fio") or "") == target), None)
+            if frow is not None:
+                gis.update(debt_209=float(frow.get("debt_209") or 0),
+                           debt_205=float(frow.get("debt_205") or 0), found=True)
     except Exception:
         logger.exception("[passport-360] ГИС находки не прочитаны")
 
@@ -1922,11 +1935,10 @@ async def get_resident_passport_360(
             } if room else None),
             "tariff": tariff_info,
         },
-        "core": core,            # для рендеров истории/баланса
         "readings": readings,    # боевые (свои + по комнате), вкл. черновики
         "buffer": buffer_rows,   # буфер Google-таблицы (не промоутнут)
         "debts": {
-            "published": (core or {}).get("balance"),  # из MeterReading (опубликовано)
+            "published": published_balance,  # баланс из MeterReading (опубликовано)
             "onec": onec,        # последний импорт/черновик 1С по 209/205
             "gis": gis,          # ГИС ГМП находки
         },

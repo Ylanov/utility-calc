@@ -394,7 +394,7 @@ async def create_user(
     return result.scalars().first()
 
 
-@router.get("", response_model=PaginatedResponse[UserResponse], dependencies=[Depends(allow_accountant)])
+@router.get("", response_model=PaginatedResponse[UserResponse], dependencies=[Depends(allow_fin_acc)])
 async def get_users(
         page: int = Query(1, ge=1),
         limit: int = Query(50, ge=1, le=500),
