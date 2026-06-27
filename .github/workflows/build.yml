@@ -726,9 +726,13 @@ jobs:
           USED=$(df / --output=pcent 2>/dev/null | tail -1 | tr -dc '0-9')
           echo "[disk] used ${USED:-?}%"
           if [ "${USED:-0}" -ge 85 ]; then
-            echo "[disk] >=85% — чистим builder-кэш и dangling-образы"
+            echo "[disk] >=85% — чистим builder-кэш и НЕИСПОЛЬЗУЕМЫЕ образы"
             docker builder prune -af || true
-            docker image prune -f || true
+            # -af (а не -f): удаляет ВСЕ образы без контейнера, в т.ч. старые
+            # версии :latest, которые копились после каждого деплоя (инцидент
+            # 27.06: диск 100% → воркеры краш, pull деплоя падал молча). Образы
+            # запущенных контейнеров (все стеки) -af НЕ трогает.
+            docker image prune -af || true
           else
             echo "[disk] места достаточно — prune пропущен"
           fi
