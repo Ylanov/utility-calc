@@ -191,18 +191,35 @@ def _threshold() -> int:
 
 
 def clean_decimal(value) -> Decimal:
-    """Очищает и конвертирует значение из Excel в Decimal."""
+    """Excel-значение → Decimal. Понимает И русский формат («1 936 065,31» —
+    пробел/nbsp-разряды, запятая-дробь), И англо/US («1,936,065.31» — запятая-
+    разряды, точка-дробь). Раньше была наивная замена ',' → '.', которая ломала
+    US-числа: «1,318.69» → «1.318.69» → InvalidOperation → 0.00. Релей-экспорт ОСВ
+    из 1С отдаёт US-формат, из-за чего ВСЕ долги ≥ 1000 (с разрядной запятой)
+    обнулялись, а проходили только мелкие < 1000 (без запятой)."""
     if value is None:
         return Decimal("0.00")
     if isinstance(value, (int, float)):
         return Decimal(str(value))
-    if isinstance(value, str):
-        cleaned = value.replace(" ", "").replace("\xa0", "").replace(",", ".")
-        try:
-            return Decimal(cleaned)
-        except Exception:
-            return Decimal("0.00")
-    return Decimal("0.00")
+    if not isinstance(value, str):
+        return Decimal("0.00")
+    s = value.replace(" ", "").replace("\xa0", "").strip()
+    if not s:
+        return Decimal("0.00")
+    has_comma, has_dot = "," in s, "." in s
+    if has_comma and has_dot:
+        # Десятичный разделитель — ПОСЛЕДНИЙ из встретившихся; другой — разрядный.
+        if s.rfind(",") > s.rfind("."):       # «1.936.065,31» — запятая дробная
+            s = s.replace(".", "").replace(",", ".")
+        else:                                  # «1,936,065.31» — точка дробная
+            s = s.replace(",", "")
+    elif has_comma:                            # «1936065,31» — запятая = дробь (рус.)
+        s = s.replace(",", ".")
+    # только точка / без разделителей — оставляем как есть
+    try:
+        return Decimal(s)
+    except Exception:
+        return Decimal("0.00")
 
 
 def normalize_name(value: str) -> str:
