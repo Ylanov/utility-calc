@@ -3,5 +3,5 @@
 # возможность запускать pytest на проде через docker exec, не раздувая
 # образ при этом каким-то монстрами вроде coverage.py и сложных плагинов.
 # Версии зафиксированы — как и в requirements.txt.
-pytest==9.0.2
-pytest-asyncio==1.3.0
+pytest==9.1.1
+pytest-asyncio==1.4.0
