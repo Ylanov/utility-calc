@@ -3,34 +3,34 @@
 # без сюрпризов от свежих мажорных релизов. Обновлять осознанно.
 
 # --- Core Framework ---
-fastapi==0.136.3
-uvicorn[standard]==0.40.0
+fastapi==0.138.2
+uvicorn[standard]==0.49.0
 gunicorn==25.1.0
 
 # --- Database & ORM ---
-sqlalchemy==2.0.46
+sqlalchemy==2.0.51
 asyncpg==0.31.0
-psycopg2-binary==2.9.11   # используется Celery для синхронных соединений
-alembic==1.18.3
+psycopg2-binary==2.9.12   # используется Celery для синхронных соединений
+alembic==1.18.5
 
 # --- Config & Validation ---
-pydantic==2.12.5
+pydantic==2.13.4
 pydantic-settings==2.14.2   # чинит GHSA-4xgf-cpjx-pc3j (pip-audit)
 
 # --- Authentication & Security ---
-python-multipart==0.0.31   # чинит CVE-2026-53540 (+ ранее -40347/-42561)
+python-multipart==0.0.32   # чинит CVE-2026-53540 (+ ранее -40347/-42561)
 passlib[bcrypt]==1.7.4
 bcrypt==4.1.2             # 4.x совместима с Python 3.14 (есть cp314-колёса)
 python-jose[cryptography]==3.5.0
 cryptography==48.0.1    # чинит GHSA-537c-gmf6-5ccf (+ ранее PYSEC-2026-35/-36)
-pyotp==2.9.0
+pyotp==2.10.0
 argon2-cffi==25.1.0
 
 # --- Cache & Background Tasks ---
 redis[hiredis]==4.6.0    # hiredis = C-парсер ответов Redis (кэш/лимитер/брокер)
-fastapi-limiter[redis]==0.1.5
+fastapi-limiter[redis]==0.2.0
 fastapi-cache2[redis]==0.2.2
-celery==5.6.2
+celery==5.6.3
 
 # --- PDF / Reports / S3 ---
 qrcode==8.2
@@ -38,13 +38,13 @@ pillow==12.2.0          # чинит PYSEC-2026-165 + CVE-2026-25990/40192/42309
 jinja2==3.1.6
 weasyprint==68.1
 openpyxl==3.1.5
-rapidfuzz==3.14.3
-boto3==1.42.59
+rapidfuzz==3.14.5
+boto3==1.43.37
 
 # --- Utilities ---
-orjson==3.11.7
+orjson==3.11.9
 httpx==0.28.1
 
 # --- Monitoring ---
-sentry-sdk[fastapi,celery,sqlalchemy]==2.53.0
+sentry-sdk[fastapi,celery,sqlalchemy]==2.63.0
 
