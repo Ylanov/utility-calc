@@ -147,18 +147,35 @@ async def publish_onec_debts(db: AsyncSession, *, guard: bool = False) -> dict:
         )
         updated += res.rowcount or 0
 
-    # Помечаем черновики completed + снимок до (для отката через историю импортов).
+    # Помечаем черновики: ИСТОЧНИК (свежий, что выгрузили) → completed + снимок
+    # до (для отката). ВСЕ ОСТАЛЬНЫЕ staged-черновики тех же счетов → superseded.
+    # Иначе залежавшийся старый черновик при следующей выгрузке перезатрёт свежие
+    # данные full-replace'ом (так обнулился долг Ярощука: после выгрузки свежего
+    # 27.06 кто-то выгрузил старый 26.06 с нулями → долг затёрся в 0).
     now = utcnow().isoformat()
-    for acc, log in staged.items():
-        log.status = "completed"
-        log.snapshot_data = {"before": snapshot_before,
-                             "inserted_reading_ids": inserted_ids,
-                             "published_at": now,
-                             "auto": bool(guard)}
+    source_ids = {lg.id for lg in staged.values()}
+    all_staged = (await db.execute(
+        select(DebtImportLog).where(
+            DebtImportLog.account_type.in_(accts),
+            DebtImportLog.status == "staged",
+        )
+    )).scalars().all()
+    superseded = 0
+    for lg in all_staged:
+        if lg.id in source_ids:
+            lg.status = "completed"
+            lg.snapshot_data = {"before": snapshot_before,
+                                "inserted_reading_ids": inserted_ids,
+                                "published_at": now,
+                                "auto": bool(guard)}
+        else:
+            lg.status = "superseded"
+            superseded += 1
     await db.commit()
 
     return {"ok": True, "status": "published", "accounts": sorted(accts),
-            "updated": updated, "created": len(inserted_ids), "residents": len(target)}
+            "updated": updated, "created": len(inserted_ids), "residents": len(target),
+            "superseded": superseded}
 
 
 async def record_autopublish_status(db: AsyncSession, result: dict) -> None:
