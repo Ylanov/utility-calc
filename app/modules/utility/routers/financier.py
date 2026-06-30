@@ -24,7 +24,7 @@ from app.modules.utility.models import User, MeterReading, BillingPeriod, Room, 
 from app.core.dependencies import get_current_user
 from app.core.auth import fernet
 from app.modules.utility.schemas import PaginatedResponse, UserDebtResponse
-from app.modules.utility.tasks import import_debts_task
+from app.modules.utility.tasks import import_debts_task, onec_autopublish_task
 from app.modules.utility.services.user_service import countable_resident_condition
 from app.modules.utility.services.search_utils import like_contains
 
@@ -1322,8 +1322,11 @@ async def onec_sync(
         out.append({"account_type": account})
     if not signatures:
         return {"status": "noop", "batch_id": batch_id}
+    # После staged-импортов (209→205) — авто-выгрузка долгов жильцам (guard=True):
+    # кошелёк в ЛК/квитанция/админка всегда свежие из 1С, без ручной кнопки.
+    signatures.append(onec_autopublish_task.si(batch_id=batch_id))
     chain(*signatures).apply_async()
-    logger.info("[ONEC] staged import batch=%s accounts=%s",
+    logger.info("[ONEC] staged import + автовыгрузка batch=%s accounts=%s",
                 batch_id, [o["account_type"] for o in out])
     return {"status": "processing", "batch_id": batch_id, "accounts": out}
 
@@ -2009,107 +2012,20 @@ async def debts_publish(
     """Берёт ПОСЛЕДНИЕ черновики импорта 1С (status='staged') по 209 и 205
     и пишет долги в показания активного периода — только теперь жильцы их
     видят. 1С — ЕДИНСТВЕННЫЙ источник долгов (ГИС ГМП НЕ перебивает 1С). Полная
-    замена по выгружаемому счёту (кого нет в черновике → 0). Снимок до — для отката."""
+    замена по выгружаемому счёту (кого нет в черновике → 0). Снимок до — для отката.
+
+    Ручная выгрузка — БЕЗ предохранителя (явное действие админа). Авто-выгрузка
+    после ежедневного сбора 1С идёт через тот же код с guard=True (см.
+    onec_autopublish_task)."""
     _require_finance(current_user)
-    from sqlalchemy import update as _sa_update
+    from app.modules.utility.services.onec_publish import publish_onec_debts
 
-    ap = (await db.execute(
-        select(BillingPeriod).where(BillingPeriod.is_active.is_(True))
-    )).scalars().first()
-    if ap is None:
+    res = await publish_onec_debts(db, guard=False)
+    if res.get("status") == "no_active_period":
         raise HTTPException(409, "Нет активного расчётного периода")
-
-    staged = {}
-    for acc in ("209", "205"):
-        log = (await db.execute(
-            select(DebtImportLog).where(
-                DebtImportLog.account_type == acc,
-                DebtImportLog.status == "staged",
-            ).order_by(desc(DebtImportLog.started_at)).limit(1)
-        )).scalars().first()
-        if log:
-            staged[acc] = log
-    if not staged:
+    if res.get("status") == "no_staged":
         raise HTTPException(409, "Нет черновиков для выгрузки — сначала загрузите Excel 1С")
-    accts = set(staged.keys())
-
-    # Целевые долги по жильцам из черновиков (applied_state).
-    target: dict[int, dict] = {}
-    for acc, log in staged.items():
-        for uid_s, st in (log.applied_state or {}).items():
-            if not str(uid_s).isdigit():
-                continue
-            uid = int(uid_s)
-            t = target.setdefault(uid, {"room_id": st.get("room_id")})
-            t[f"debt_{acc}"] = Decimal(str(st.get(f"debt_{acc}") or 0))
-            t[f"over_{acc}"] = Decimal(str(st.get(f"overpayment_{acc}") or 0))
-            if st.get("room_id"):
-                t["room_id"] = st.get("room_id")
-
-    # Существующие показания активного периода.
-    readings = (await db.execute(
-        select(MeterReading).where(MeterReading.period_id == ap.id)
-    )).scalars().all()
-    by_user = {r.user_id: r for r in readings if r.user_id is not None}
-
-    snapshot_before: dict = {}
-    updates: list = []
-    for uid, r in by_user.items():
-        vals = {}
-        for acc in accts:
-            vals[f"debt_{acc}"] = target.get(uid, {}).get(f"debt_{acc}", Decimal("0"))
-            vals[f"overpayment_{acc}"] = target.get(uid, {}).get(f"over_{acc}", Decimal("0"))
-        snapshot_before[str(r.id)] = {
-            "debt_209": str(r.debt_209 or 0), "overpayment_209": str(r.overpayment_209 or 0),
-            "debt_205": str(r.debt_205 or 0), "overpayment_205": str(r.overpayment_205 or 0),
-        }
-        updates.append((r.id, vals))
-
-    # Создаём показания для жильцов из черновика без показания в периоде.
-    new_objs = []
-    for uid, t in target.items():
-        if uid in by_user:
-            continue
-        new_objs.append(MeterReading(
-            user_id=uid, room_id=t.get("room_id"), period_id=ap.id, is_approved=False,
-            debt_209=t.get("debt_209", Decimal("0")), overpayment_209=t.get("over_209", Decimal("0")),
-            debt_205=t.get("debt_205", Decimal("0")), overpayment_205=t.get("over_205", Decimal("0")),
-        ))
-    inserted_ids = []
-    if new_objs:
-        db.add_all(new_objs)
-        await db.flush()
-        inserted_ids = [n.id for n in new_objs]
-
-    # Партиц-безопасная запись существующих (expunge + явный UPDATE по id).
-    for r in list(by_user.values()):
-        try:
-            db.expunge(r)
-        except Exception:
-            pass
-    updated = 0
-    for rid, vals in updates:
-        res = await db.execute(
-            _sa_update(MeterReading).where(MeterReading.id == rid).values(**vals)
-        )
-        updated += res.rowcount or 0
-
-    # Помечаем черновики published + снимок до (для отката через историю импортов).
-    now = utcnow().isoformat()
-    for acc, log in staged.items():
-        # 'completed' (как у старого импорта) — чтобы все фичи, фильтрующие
-        # completed (история, целостность, сверка с 1С), видели выгруженное.
-        log.status = "completed"
-        log.snapshot_data = {"before": snapshot_before,
-                             "inserted_reading_ids": inserted_ids,
-                             "published_at": now}
-    await db.commit()
-
-    return {
-        "ok": True, "accounts": sorted(accts),
-        "updated": updated, "created": len(inserted_ids),
-        "residents": len(target),
-    }
+    return res
 
 
 async def _build_reconcile(db: AsyncSession) -> dict:

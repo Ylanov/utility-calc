@@ -260,7 +260,15 @@ export const DebtsModule = {
                     + (s.last_message ? ` — ${esc(s.last_message)}` : ''));
             }
             if (s.last_count_205 || s.last_count_209) {
-                parts.push(`Выгружено ОСВ: наём(205) <b>${s.last_count_205 || 0}</b>, коммуналка(209) <b>${s.last_count_209 || 0}</b> → проверь черновики и «Выгрузить».`);
+                parts.push(`Собрано ОСВ: наём(205) <b>${s.last_count_205 || 0}</b>, коммуналка(209) <b>${s.last_count_209 || 0}</b> → авто-выгрузка жильцам (статус ниже).`);
+            }
+            const a = s.last_autopublish;
+            if (a && a.status === 'published') {
+                parts.push(`Авто-выгрузка жильцам: <b style="color:#047857;">✓ ${fmtDateTime(a.at)}</b> — обновлено ${a.updated || 0}, создано ${a.created || 0}.`);
+            } else if (a && a.status === 'guard_tripped') {
+                parts.push(`<b style="color:#b91c1c;">⚠ Авто-выгрузка ОСТАНОВЛЕНА предохранителем (${fmtDateTime(a.at)}):</b> сбор обнулил бы ${a.would_zero}/${a.prev_nonzero} ненулевых долгов — похоже на сбой парсинга. Черновик НЕ выгружен. Проверь и, если данные верны, нажми «Выгрузить» вручную.`);
+            } else if (a && a.status === 'no_active_period') {
+                parts.push(`Авто-выгрузка: <span style="color:#d97706;">нет активного периода</span> (${fmtDateTime(a.at)}).`);
             }
             box.innerHTML = parts.join('<br>');
         } catch (e) {

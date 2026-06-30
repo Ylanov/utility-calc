@@ -360,6 +360,54 @@ def import_debts_task(
     return result
 
 
+@celery.task(
+    name="onec_autopublish_task",
+    autoretry_for=(Exception,),
+    retry_kwargs={"max_retries": 2, "countdown": 30},
+)
+def onec_autopublish_task(batch_id: str | None = None) -> dict:
+    """Авто-выгрузка долгов 1С жильцам после ежедневного сбора.
+
+    Запускается ПОСЛЕДНИМ звеном цепочки onec_sync (после staged-импортов
+    209/205): берёт свежие черновики и пишет долги/переплаты в показания
+    активного периода — кошелёк в ЛК по QR, квитанция и админка всегда
+    показывают свежее из 1С, без ручной кнопки «Выгрузить».
+
+    С предохранителем (guard=True): аномальный сбор, который обнулил бы массу
+    ненулевых долгов (как баг парсинга), НЕ выгружается — черновик остаётся на
+    ручную проверку в «Долги 1С». Итог пишется в onec-статус (last_autopublish).
+
+    Выгрузка коммитится атомарно в конце publish_onec_debts → краш до коммита
+    откатывается, и autoretry безопасен (повтор берёт тот же staged-черновик).
+    """
+    async def _run():
+        # Свой async-engine на вызов (паттерн scan_resident_problems_task):
+        # asyncio.run создаёт новый event loop, asyncpg-коннекты привязаны к нему.
+        from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession as _AS
+        from sqlalchemy.orm import sessionmaker as _smaker
+        from app.modules.utility.services.onec_publish import (
+            publish_onec_debts, record_autopublish_status,
+        )
+        _engine = create_async_engine(
+            settings.DATABASE_URL_ASYNC,
+            echo=False, future=True, pool_pre_ping=True,
+            connect_args={"prepared_statement_cache_size": 0,
+                          "statement_cache_size": 0, "command_timeout": 120},
+        )
+        _mk = _smaker(bind=_engine, class_=_AS, expire_on_commit=False, autoflush=False)
+        try:
+            async with _mk() as db:
+                result = await publish_onec_debts(db, guard=True)
+                await record_autopublish_status(db, result)
+                return result
+        finally:
+            await _engine.dispose()
+
+    result = asyncio.run(_run())
+    logger.info("[onec_autopublish_task] batch=%s %s", batch_id, result)
+    return result
+
+
 @celery.task(name="auto_fill_missing_readings_task")
 def auto_fill_missing_readings_task() -> dict:
     """Bug AO: дневная авто-добивка пропущенных reading'ов по нормативу.
