@@ -2,7 +2,7 @@
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import update, insert, func
+from sqlalchemy import update, insert, func, and_
 from sqlalchemy.orm import selectinload
 
 from datetime import datetime, timezone
@@ -137,10 +137,29 @@ async def close_current_period(db: AsyncSession, admin_user_id: int, generate_no
     # Двушаговая политика: закрытие только ФИНАЛИЗИРУЕТ (утверждает черновики +
     # is_active=False), без авто-норматива. Норматив пропустившим — отдельной
     # кнопкой после проверки (см. docstring). generate_norm=True → старое поведение.
+    # НЕ утверждаем безфлаговые meterless-пустышки (все счётчики NULL и нет
+    # anomaly_flags) — это debt-черновики «Выгрузить долги 1С»: они носят
+    # только сальдо и подачей не являются (аудит 2026-07-14; иначе слепое
+    # утверждение плодило вторые approved и ломало дельты/норматив).
+    # Черновики С флагами (STATIC_RENT, NORM_UNCONDITIONAL и т.п.) —
+    # утверждаются как раньше: их суммы — законные начисления.
+    # Общий предикат для ВСЕХ трёх точек утверждения ниже (finalize-only,
+    # ранний выход generate_norm без кандидатов, финал generate_norm).
+    _is_debt_stub = and_(
+        MeterReading.hot_water.is_(None),
+        MeterReading.cold_water.is_(None),
+        MeterReading.electricity.is_(None),
+        func.coalesce(MeterReading.anomaly_flags, "") == "",
+    )
+
     if not generate_norm:
         await db.execute(
             update(MeterReading)
-            .where(MeterReading.period_id == active_period.id, MeterReading.is_approved.is_(False))
+            .where(
+                MeterReading.period_id == active_period.id,
+                MeterReading.is_approved.is_(False),
+                ~_is_debt_stub,
+            )
             .values(is_approved=True)
         )
         active_period.is_active = False
@@ -191,11 +210,16 @@ async def close_current_period(db: AsyncSession, admin_user_id: int, generate_no
     users_to_process = list(unique_rooms_map.values())
 
     if not users_to_process:
-        # Нечего генерировать, просто утверждаем черновики и закрываем
+        # Нечего генерировать, просто утверждаем черновики (кроме debt-пустышек
+        # 1С — см. _is_debt_stub выше) и закрываем.
         active_period.is_active = False
         await db.execute(
             update(MeterReading)
-            .where(MeterReading.period_id == active_period.id, MeterReading.is_approved.is_(False))
+            .where(
+                MeterReading.period_id == active_period.id,
+                MeterReading.is_approved.is_(False),
+                ~_is_debt_stub,
+            )
             .values(is_approved=True)
         )
         return {"status": "closed", "closed_period": active_period.name, "auto_generated": 0}
@@ -351,10 +375,14 @@ async def close_current_period(db: AsyncSession, admin_user_id: int, generate_no
         if insert_values:
             await db.execute(insert(MeterReading), insert_values)
 
-    # 6. Утверждаем оставшиеся черновики
+    # 6. Утверждаем оставшиеся черновики (кроме debt-пустышек 1С — _is_debt_stub)
     await db.execute(
         update(MeterReading)
-        .where(MeterReading.period_id == active_period.id, MeterReading.is_approved.is_(False))
+        .where(
+            MeterReading.period_id == active_period.id,
+            MeterReading.is_approved.is_(False),
+            ~_is_debt_stub,
+        )
         .values(is_approved=True)
     )
 

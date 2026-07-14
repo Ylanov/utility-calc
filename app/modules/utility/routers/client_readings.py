@@ -277,6 +277,38 @@ async def perform_reading_submission(
             detail="Показания для вашей комнаты уже переданы другим жильцом."
         )
 
+    # Дедуп (аудит 2026-07-14, инцидент «Мороз»): если в периоде УЖЕ ЕСТЬ
+    # утверждённое НАСТОЯЩЕЕ показание комнаты — подача закрыта. Раньше это
+    # проверял только фронт портала (state.approved), а сам эндпоинт молча
+    # создавал ВТОРОЙ reading → два утверждённых на период → нулевые дельты.
+    # «Настоящее» = с показаниями и не служебное (замена счётчика
+    # METER_CLOSED/METER_REPLACEMENT, разовое начисление ONE_TIME_CHARGE,
+    # квитанция-сальдо MANUAL_RECEIPT — они живут рядом с подачей законно).
+    _approved_rows = (await db.execute(
+        select(MeterReading).where(
+            MeterReading.room_id == user.room_id,
+            MeterReading.period_id == period.id,
+            MeterReading.is_approved.is_(True),
+        )
+    )).scalars().all()
+
+    def _real_approved(r) -> bool:
+        has_meters = (r.hot_water is not None or r.cold_water is not None
+                      or r.electricity is not None)
+        fl = r.anomaly_flags or ""
+        return has_meters and not any(
+            m in fl for m in ("METER_", "ONE_TIME_CHARGE", "MANUAL_RECEIPT")
+        )
+
+    if any(_real_approved(r) for r in _approved_rows):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Показания за этот период уже проверены и приняты бухгалтерией. "
+                "Изменить их может только администратор."
+            ),
+        )
+
     # 3. История показаний ЖИЛЬЦА В ЭТОЙ КОМНАТЕ (для расчёта расхода).
     # Не по комнате в целом — если в комнате были показания от прошлого
     # жильца (переезд, GSHEETS_AUTO с чужими большими цифрами и т.п.),
