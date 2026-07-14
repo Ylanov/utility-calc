@@ -772,8 +772,29 @@ async def gisgmp_relay_config(
         except Exception:
             pass
 
-    # Очередь аннулирования (кнопка «Аннулировать всё несквитированное», АДМИН):
-    # отдаём UUID ОДИН раз, помечаем running. Релей разбирает первым (приоритет).
+    # Очереди аннулирования/актуализации: отдаём UUID один раз, помечаем
+    # running. САМОВОССТАНОВЛЕНИЕ (fix 2026-07-14): если релей умер посреди
+    # списка (деплой/рестарт веба, падение), finished не приходит и running
+    # висел НАВСЕГДА — очередь больше не выдавалась, прогон застревал
+    # («отправка 1070 из 1125» несколько дней), а act_busy блокировал ещё и
+    # авто-доведение. Теперь: running при молчащем прогрессе (last_at/
+    # started_at старше 30 мин; прогресс идёт каждые ~12с) считается мёртвым —
+    # очередь выдаётся заново (повторный actualize/у релея идемпотентен).
+    def _claim_queue(qv: dict) -> tuple[bool, bool]:
+        """(выдать_сейчас, был_ли_рестарт_мёртвого)."""
+        if not qv.get("uuids"):
+            return False, False
+        if not qv.get("running"):
+            return True, False
+        ts = qv.get("last_at") or qv.get("started_at")
+        try:
+            stale = ts is None or (
+                utcnow() - datetime.fromisoformat(ts)
+            ).total_seconds() > 1800
+        except Exception:
+            stale = True
+        return stale, stale
+
     an_row = (await db.execute(
         select(SystemSetting).where(SystemSetting.key == "gisgmp_annul")
     )).scalars().first()
@@ -783,15 +804,18 @@ async def gisgmp_relay_config(
             anv = json.loads(an_row.value)
         except Exception:
             anv = {}
-        if anv.get("uuids") and not anv.get("running"):
+        _give, _restarted = _claim_queue(anv)
+        if _give:
             annul = {"uuids": anv["uuids"]}
             anv["running"] = True
             anv["started_at"] = utcnow().isoformat()
+            if _restarted:
+                anv["restarted"] = int(anv.get("restarted") or 0) + 1
+                logger.warning("[gisgmp] очередь аннулирования перевыдана после "
+                               "мёртвого прогона (restarted=%s)", anv["restarted"])
             an_row.value = json.dumps(anv, ensure_ascii=False)
             await db.commit()
 
-    # Очередь массовой актуализации (кнопка «Актуализировать расхождения»):
-    # отдаём полный список UUID ОДИН раз и помечаем running, пока релей идёт.
     act_row = (await db.execute(
         select(SystemSetting).where(SystemSetting.key == "gisgmp_actualize")
     )).scalars().first()
@@ -801,10 +825,16 @@ async def gisgmp_relay_config(
             av = json.loads(act_row.value)
         except Exception:
             av = {}
-        if av.get("uuids") and not av.get("running"):
+        _give, _restarted = _claim_queue(av)
+        if _give:
             actualize = {"uuids": av["uuids"]}
             av["running"] = True
             av["started_at"] = utcnow().isoformat()
+            if _restarted:
+                av["restarted"] = int(av.get("restarted") or 0) + 1
+                logger.warning("[gisgmp] очередь актуализации перевыдана после "
+                               "мёртвого прогона (restarted=%s, uuids=%s)",
+                               av["restarted"], len(av.get("uuids") or []))
             act_row.value = json.dumps(av, ensure_ascii=False)
             await db.commit()
 
