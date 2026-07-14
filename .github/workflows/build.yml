@@ -137,7 +137,7 @@ jobs:
             --ignore-vuln PYSEC-2026-3412
 
       - name: Cache Trivy database
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.cache/trivy
           key: trivy-db
