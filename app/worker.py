@@ -73,6 +73,12 @@ celery.conf.update(
 # =====================================================
 
 celery.conf.beat_schedule = {
+    # Сторож здоровья (диск/релей ГИС/1С/очереди) — каждые 10 минут.
+    # Свежесть записи system_health = «beat жив» (watchdog для дашборда).
+    "system-health-10min": {
+        "task": "system_health_task",
+        "schedule": crontab(minute="*/10"),
+    },
     "check-submission-period-daily": {
         "task": "check_auto_period_task",
         "schedule": crontab(minute=5, hour=0),

@@ -47,6 +47,33 @@ export const DashboardModule = {
         this.loadGsheetsWidget();
         this.loadAttentionCenter();
         this.loadRevenueTrend();
+        this.loadSystemHealth();
+    },
+
+    // Баннер здоровья системы (диск/релей ГИС/1С/beat) — сторож пишет сводку
+    // каждые 10 мин; протухшая сводка сама по себе crit («beat мёртв»).
+    async loadSystemHealth() {
+        const box = document.getElementById('systemHealthBanner');
+        if (!box) return;
+        try {
+            const d = await api.get('/admin/system-health');
+            const alerts = d.alerts || [];
+            if (!alerts.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+            const hasCrit = alerts.some(a => a.level === 'crit');
+            const bg = hasCrit ? 'rgba(239,68,68,0.10)' : 'rgba(245,158,11,0.10)';
+            const bd = hasCrit ? '#ef4444' : '#f59e0b';
+            const icon = hasCrit ? '🛑' : '⚠️';
+            const rows = alerts.map(a =>
+                `<div style="margin:2px 0;">${a.level === 'crit' ? '🛑' : '⚠️'} ${esc(a.message)}</div>`
+            ).join('');
+            box.innerHTML =
+                `<div style="border:1px solid ${bd}; background:${bg}; border-radius:10px; padding:10px 14px; font-size:13px;">` +
+                `<div style="font-weight:700; margin-bottom:4px;">${icon} Система требует внимания</div>${rows}</div>`;
+            box.style.display = 'block';
+        } catch (e) {
+            // Тихо: баннер — вспомогательный, не роняем дашборд из-за него.
+            box.style.display = 'none';
+        }
     },
 
     cacheDOM() {

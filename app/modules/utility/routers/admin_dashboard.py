@@ -502,6 +502,49 @@ async def get_revenue_trend(
 
 
 # =====================================================================
+# ЗДОРОВЬЕ СИСТЕМЫ (сторож system_health_task, аудит 2026-07-14)
+# =====================================================================
+@router.get("/api/admin/system-health", summary="Алерты здоровья системы (баннер дашборда)")
+async def get_system_health(
+    current_user: User = Depends(allow_dashboard),
+    db: AsyncSession = Depends(get_db),
+):
+    """Сводка сторожа (диск/релей ГИС/1С/очереди) из SystemSetting
+    'system_health'. Если запись старше 30 мин (пишется каждые 10) —
+    сами фоновые задачи мертвы (beat/worker) → это первый crit-алерт."""
+    import json as _json
+    from datetime import datetime as _dt
+    from app.core.time_utils import utcnow as _utcnow
+    from app.modules.utility.models import SystemSetting as _SS
+
+    row = (await db.execute(
+        select(_SS).where(_SS.key == "system_health")
+    )).scalars().first()
+    data = {}
+    if row and row.value:
+        try:
+            data = _json.loads(row.value)
+        except Exception:
+            data = {}
+    alerts = list(data.get("alerts") or [])
+    checked_at = data.get("checked_at")
+    stale = True
+    if checked_at:
+        try:
+            stale = (_utcnow() - _dt.fromisoformat(checked_at)).total_seconds() > 1800
+        except Exception:
+            stale = True
+    if stale:
+        alerts.insert(0, {
+            "level": "crit", "code": "beat_dead",
+            "message": ("Фоновые задачи не выполняются (Celery beat/worker): сводка здоровья "
+                        + (f"не обновлялась с {checked_at[:16]}" if checked_at else "ещё ни разу не писалась")
+                        + ". Авто-сборы 1С/ГИС и авто-закрытие периодов стоят."),
+        })
+    return {"checked_at": checked_at, "stale": stale, "alerts": alerts}
+
+
+# =====================================================================
 # ЖУРНАЛ ДЕЙСТВИЙ (AUDIT LOG)
 # =====================================================================
 @router.get("/api/admin/audit-log", summary="Журнал действий администратора")

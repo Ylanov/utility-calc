@@ -1655,3 +1655,129 @@ def cleanup_qr_tickets_task(retention_days: int = 5):
         db.commit()
     logger.info("[cleanup_qr_tickets] удалено %d QR-переписок старше %d дн.", deleted, retention_days)
     return {"deleted": deleted, "retention_days": retention_days}
+
+
+@celery.task(name="system_health_task")
+def system_health_task() -> dict:
+    """Сторож здоровья системы (аудит 2026-07-14): диск / релей ГИС /
+    авто-цикл 1С / зависшие очереди. Пишет сводку в SystemSetting
+    'system_health'; дашборд показывает красный/жёлтый баннер.
+
+    Сам факт свежей записи = «beat жив»: эндпоинт /api/admin/system-health
+    считает запись старше 30 мин признаком мёртвых фоновых задач (классика
+    watchdog: задача пишет отметку времени, веб судит о свежести).
+    """
+    async def _run():
+        import json as _json
+        from sqlalchemy import select as _select, text as _text
+        from sqlalchemy.ext.asyncio import create_async_engine as _cae, AsyncSession as _AS
+        from sqlalchemy.orm import sessionmaker as _smaker
+        from app.modules.utility.models import SystemSetting as _SS
+
+        alerts: list[dict] = []
+
+        def _alert(level: str, code: str, message: str):
+            alerts.append({"level": level, "code": code, "message": message})
+
+        # 1. Диск (внутри контейнера overlay отражает корневой диск ВМ —
+        #    инциденты 2026-06-27/07-14: полный диск = краш воркеров и
+        #    «пустой Chromium» у релея).
+        try:
+            du = shutil.disk_usage("/")
+            pct = du.used / du.total * 100
+            if pct >= 93:
+                _alert("crit", "disk", f"Диск заполнен на {pct:.0f}% — воркеры и релей скоро встанут. Чистить немедленно.")
+            elif pct >= 85:
+                _alert("warn", "disk", f"Диск заполнен на {pct:.0f}% — запланируйте чистку (journald/docker-логи).")
+        except Exception:
+            logger.exception("[health] disk check failed")
+
+        _engine = _cae(
+            settings.DATABASE_URL_ASYNC,
+            echo=False, future=True, pool_pre_ping=True,
+            connect_args={"prepared_statement_cache_size": 0,
+                          "statement_cache_size": 0, "command_timeout": 60},
+        )
+        _mk = _smaker(bind=_engine, class_=_AS, expire_on_commit=False, autoflush=False)
+        try:
+            async with _mk() as db:
+                now = utcnow()
+
+                def _age_min(ts):
+                    try:
+                        return (now - datetime.fromisoformat(ts)).total_seconds() / 60
+                    except Exception:
+                        return None
+
+                async def _cfg(key):
+                    row = (await db.execute(_select(_SS).where(_SS.key == key))).scalars().first()
+                    try:
+                        return _json.loads(row.value) if row and row.value else {}
+                    except Exception:
+                        return {}
+
+                # 2. Релей ГИС ГМП: офлайн / сбор падает.
+                gis = await _cfg("gisgmp_relay")
+                if gis.get("enabled"):
+                    a = _age_min(gis.get("last_poll_at"))
+                    if a is None or a > 10:
+                        _alert("crit", "gis_relay_offline",
+                               "Релей ГИС ГМП не опрашивает сервер (>10 мин) — демон на ВМ упал или сеть.")
+                    if gis.get("last_status") == "error":
+                        _alert("warn", "gis_run_error",
+                               f"Последний сбор ГИС упал: {(gis.get('last_message') or '')[:120]}")
+
+                # 3. Очередь актуализации: повторные перевыдачи/застревание.
+                act = await _cfg("gisgmp_actualize")
+                if act.get("uuids"):
+                    a = _age_min(act.get("last_at") or act.get("started_at"))
+                    if int(act.get("restarted") or 0) >= 2:
+                        _alert("warn", "gis_actualize_restarts",
+                               f"Актуализация ГИС перезапускалась {act.get('restarted')} раз — проверьте релей/учётку.")
+                    elif act.get("running") and a is not None and a > 45:
+                        _alert("warn", "gis_actualize_stale",
+                               "Актуализация ГИС молчит >45 мин — прогон перевыдастся автоматически.")
+
+                # 4. 1С: сбор падает / предохранитель / залежавшиеся черновики.
+                onec = await _cfg("onec_relay")
+                if onec.get("enabled"):
+                    if onec.get("last_status") == "error":
+                        _alert("warn", "onec_run_error",
+                               f"Последний сбор 1С упал: {(onec.get('last_message') or '')[:120]}")
+                    ap = onec.get("last_autopublish") or {}
+                    if ap.get("status") == "guard_tripped":
+                        _alert("crit", "onec_guard",
+                               "ПРЕДОХРАНИТЕЛЬ остановил авто-выгрузку долгов 1С — сбор выглядит битым. "
+                               "Черновик ждёт ручной проверки в «Долги 1С».")
+
+                stale = (await db.execute(_text(
+                    "SELECT count(*) FROM debt_import_logs "
+                    "WHERE status = 'staged' AND started_at < now() - interval '40 hours'"
+                ))).scalar() or 0
+                if stale:
+                    _alert("warn", "onec_stale_drafts",
+                           f"Черновики долгов 1С не выгружены >40ч ({stale} шт.) — авто-выгрузка не доехала.")
+
+                # Запись сводки.
+                row = (await db.execute(_select(_SS).where(_SS.key == "system_health"))).scalars().first()
+                if row is None:
+                    row = _SS(key="system_health", value="{}",
+                              description="Сводка здоровья системы (system_health_task)")
+                    db.add(row)
+                row.value = _json.dumps(
+                    {"checked_at": now.isoformat(), "alerts": alerts},
+                    ensure_ascii=False,
+                )
+                await db.commit()
+        finally:
+            await _engine.dispose()
+        return {"alerts": len(alerts)}
+
+    try:
+        result = asyncio.run(_run())
+        if result.get("alerts"):
+            logger.warning("[system_health_task] alerts=%s", result["alerts"])
+        return result
+    except Exception as e:
+        logger.exception("[system_health_task] crashed")
+        return {"crashed": True, "error": str(e)}

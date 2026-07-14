@@ -99,9 +99,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install ruff jq pip-audit
           pip install -r requirements.txt
+          pip install -r requirements-test.txt
 
       - name: Lint code
         run: ruff check . --fix
+
+      - name: Run pytest (unit, без БД)
+        # Чистые тесты биллинг-критичной логики (clean_decimal, хронология
+        # периодов, выбор prev, валидаторы, предохранитель 1С). БЛОКИРУЮЩИЙ
+        # гейт: красный тест = нет деплоя. Env-минимум задаёт tests/conftest.py.
+        run: python -m pytest tests/ -q
 
       - name: Run pip-audit
         # CVE-2026-3219 — уязвимость в самом pip (26.0.1), не в наших зависимостях.

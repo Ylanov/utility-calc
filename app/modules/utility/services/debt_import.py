@@ -199,6 +199,11 @@ def clean_decimal(value) -> Decimal:
     обнулялись, а проходили только мелкие < 1000 (без запятой)."""
     if value is None:
         return Decimal("0.00")
+    if isinstance(value, Decimal):
+        # Уже Decimal — вернуть как есть (раньше проваливался в ветку
+        # «не строка» и молча давал 0.00 — латентный денежный баг,
+        # пойман тестами 2026-07-14).
+        return value
     if isinstance(value, (int, float)):
         return Decimal(str(value))
     if not isinstance(value, str):
