@@ -169,21 +169,29 @@ export const RegistryModule = {
       }
 
       // Инлайн-правка счётчиков: боевые показания (все 3) ИЛИ строка буфера
-      // GSheets (только ГВС/ХВС — электричества в буфере нет), пока не утверждена.
+      // GSheets. В буфере электричества НЕТ (гугл-форма шлёт только воду) —
+      // но если жилец сопоставлен, клик по «Свет» пишет электричество боевым
+      // показанием этого жильца в активный месяц (тот же путь, что «Ручной
+      // ввод») — админ правит всё из одного места.
       var rawAttr = function (v) { return v == null ? '' : esc(String(v)); };
       var editReading = (r.row_type === 'reading' && r.user_id != null);
       var editBuffer = (r.row_type === 'gsheets' && r.status !== 'approved' && r.status !== 'rejected');
+      var bufMuid = (editBuffer && r.matched && r.matched.user_id) ? r.matched.user_id : null;
       var editable = editReading || editBuffer;
       var trAttrs = editable
         ? ' data-rt="' + r.row_type + '" data-id="' + r.id + '"' +
           (editReading ? ' data-uid="' + r.user_id + '" data-pid="' + (r.period_id || '') + '"' : '') +
+          (bufMuid ? ' data-muid="' + bufMuid + '"' : '') +
           ' data-hot="' + rawAttr(r.hot) + '" data-cold="' + rawAttr(r.cold) + '" data-elect="' + rawAttr(r.elect) + '"'
         : '';
       var meterTd = function (field, val) {
-        // У буфера электричества нет — его ячейку не редактируем.
-        var cellEditable = editable && !(editBuffer && field === 'elect');
+        // Свет у буфера редактируем только при сопоставленном жильце.
+        var cellEditable = editable && !(editBuffer && field === 'elect' && !bufMuid);
+        var hint = (editBuffer && field === 'elect')
+          ? 'В гугл-форме света нет — значение запишется показанием жильца в активный месяц'
+          : 'Нажми, чтобы изменить показание';
         return cellEditable
-          ? '<td class="reg-edit" data-field="' + field + '" data-raw="' + rawAttr(val) + '" style="text-align:right; font-family:monospace; cursor:text;" title="Нажми, чтобы изменить показание">' + fmtNum(val) + '</td>'
+          ? '<td class="reg-edit" data-field="' + field + '" data-raw="' + rawAttr(val) + '" style="text-align:right; font-family:monospace; cursor:text;" title="' + hint + '">' + fmtNum(val) + '</td>'
           : '<td style="text-align:right; font-family:monospace;">' + fmtNum(val) + '</td>';
       };
 
@@ -246,9 +254,26 @@ export const RegistryModule = {
 
     // Строка буфера GSheets — правим её значение (ГВС/ХВС), без пересчёта;
     // конфликт сбрасывается, статус → pending (переоценится при утверждении).
+    // «Свет»: в буфере электричества НЕТ — пишем его боевым показанием
+    // сопоставленного жильца в активный месяц (save_manual_entry, элект.
+    // подаётся независимо от воды).
     if (tr.dataset.rt === 'gsheets') {
       var bv = num(valueStr);
       if (bv == null || bv < 0) { td.innerHTML = oldHtml; return; }
+      if (field === 'elect') {
+        var muid = Number(tr.dataset.muid);
+        if (!muid) { td.innerHTML = oldHtml; return; }
+        td.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
+        try {
+          await api.post('/admin/readings/manual', { user_id: muid, electricity: bv });
+          toast('Свет записан показанием жильца (активный месяц)', 'success');
+          this.load();
+        } catch (e) {
+          toast('Ошибка: ' + (e.message || e), 'error');
+          this.load();
+        }
+        return;
+      }
       var body = {};
       if (field === 'hot') body.hot_water = bv;
       else if (field === 'cold') body.cold_water = bv;
