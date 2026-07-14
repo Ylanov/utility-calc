@@ -90,15 +90,15 @@ def _mr(flags, hot="1.0", cold="1.0", elect="1.0"):
 @pytest.mark.parametrize("flags, src", [
     ("GSHEETS_AUTO", "gsheets"),
     ("GSHEETS_AUTO_BASELINE", "gsheets"),
-    ("MANUAL_RECEIPT", "manual"),
+    ("MANUAL_RECEIPT", "admin"),   # квитанция-сальдо = ввод админа
     ("AUTO_NORM", "auto"),
     ("AUTO_AVG_FALLBACK", "auto"),
     ("STATIC_RENT", "auto"),
-    ("PENDING", "user"),
-    ("BASELINE", "user"),       # первая подача жильца — это user, не auto
-    ("PENDING|SINGLES_SHARED", "user"),
-    ("", "user"),
-    (None, "user"),
+    ("PENDING", "qr"),
+    ("BASELINE", "qr"),         # первая подача жильца — это qr, не auto
+    ("PENDING|SINGLES_SHARED", "qr"),
+    ("", "qr"),
+    (None, "qr"),
 ])
 def test_reading_source(flags, src):
     code, label = _reading_source(_mr(flags))
@@ -112,7 +112,7 @@ def test_reading_source_saldo_stub():
     assert code == "saldo"
     # А с хоть одним показанием — обычная подача жильца.
     code2, _ = _reading_source(_mr(None, hot="5.0", cold=None, elect=None))
-    assert code2 == "user"
+    assert code2 == "qr"
 
 
 # ──────────────────────────────────────────────────────────────

@@ -482,6 +482,7 @@ async def perform_reading_submission(
         costs_for_create = costs_for_model_fields(costs)
 
         new_draft = MeterReading(
+            source="qr",
             user_id=user.id,
             room_id=user.room_id,
             period_id=period.id,
@@ -554,6 +555,7 @@ async def perform_reading_submission(
                 db.add(existing_draft)
             else:
                 clone = MeterReading(
+                    source="qr",
                     user_id=other_user.id,
                     room_id=user.room_id,
                     period_id=period.id,

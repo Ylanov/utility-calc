@@ -28,24 +28,40 @@ router = APIRouter(prefix="/api/admin/registry", tags=["Admin Registry (unified)
 allow_management = RoleChecker(["accountant", "admin", "financier"])
 
 
-def _reading_source(r: MeterReading) -> tuple[str, str]:
-    """Источник боевого показания по anomaly_flags (явного столбца source нет).
+_SOURCE_LABELS = {
+    "qr": ("qr", "📱 QR-портал"),
+    "admin": ("admin", "✍️ Админ"),
+    "gsheets": ("gsheets", "📄 Google Sheets"),
+    "auto": ("auto", "🤖 Норматив/авто"),
+    "excel": ("excel", "📗 Excel"),
+    "saldo": ("saldo", "₽ Сальдо 1С"),
+    # легаси-значения бэкфилла
+    "manual": ("admin", "✍️ Админ"),
+    "user": ("qr", "📱 QR-портал"),
+}
 
-    Fix 2026-07-14: безфлаговая meterless-запись — это САЛЬДО-носитель от
-    «Выгрузить долги 1С» (publish_onec_debts), а не подача жильца. Раньше
-    такие падали в дефолт «QR-портал / Черновик / прочерки» и путали админа.
+
+def _reading_source(r: MeterReading) -> tuple[str, str]:
+    """Источник боевого показания.
+
+    reading_source_001 (2026-07-14): у показаний есть ЧЕСТНАЯ колонка source
+    (штампуется при создании: qr/admin/gsheets/auto/excel/saldo) — раньше
+    источник гадался по anomaly_flags и правки админа маскировались под
+    «QR-портал». Для записей до миграции — прежняя эвристика по флагам.
     """
+    if getattr(r, "source", None):
+        return _SOURCE_LABELS.get(r.source, ("qr", "📱 QR-портал"))
     f = (r.anomaly_flags or "").upper()
     if not f and r.hot_water is None and r.cold_water is None and r.electricity is None:
         return "saldo", "₽ Сальдо 1С"
     if "GSHEETS" in f:
         return "gsheets", "📄 Google Sheets"
     if "MANUAL_RECEIPT" in f:
-        return "manual", "✍️ Вручную"
+        return "admin", "✍️ Админ"
     if any(a in f for a in ("AUTO_NORM", "AUTO_AVG", "AUTO_GENERATED",
                             "AUTO_NO_HISTORY", "STATIC_RENT")):
         return "auto", "🤖 Норматив/авто"
-    return "user", "📱 QR-портал"
+    return "qr", "📱 QR-портал"
 
 
 def _fmt_delta(cur, prev) -> Optional[float]:
@@ -60,9 +76,10 @@ def _fmt_delta(cur, prev) -> Optional[float]:
 @router.get("")
 async def unified_registry(
     period_id: Optional[int] = Query(None),
-    source: Optional[str] = Query(None, description="user|gsheets|auto|manual|buffer|saldo"),
+    source: Optional[str] = Query(None, description="qr|admin|gsheets|auto|excel|buffer|saldo"),
     status: Optional[str] = Query(None, description="approved|draft|pending|conflict|unmatched|auto_approved"),
     search: Optional[str] = Query(None),
+    day: Optional[str] = Query(None, description="фильтр по дню подачи YYYY-MM-DD"),
     show_saldo: bool = Query(False, description="показывать сальдо-заглушки 1С"),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
@@ -143,6 +160,7 @@ async def unified_registry(
                 "status": "approved" if r.is_approved else "draft",
                 "sum": float(r.total_cost or 0),
                 "anomaly_score": int(r.anomaly_score or 0),
+                "admin_edited": bool(getattr(r, "admin_edited", False)),
                 "matched": None,
             })
 
@@ -181,6 +199,7 @@ async def unified_registry(
             "cold": str(g.cold_water) if g.cold_water is not None else None,
             "elect": None,
             "delta_hot": None, "delta_cold": None, "delta_elect": None,
+            "admin_edited": False,
             "status": g.status,
             "sum": None,
             "anomaly_score": None,
@@ -206,12 +225,30 @@ async def unified_registry(
         items = [x for x in items
                  if s in (x["fio"] or "").lower() or s in str(x.get("room") or "").lower()]
 
+    # График месяца: агрегация по ДНЯМ подачи (после source/search/сальдо,
+    # ДО статус- и день-фильтров) — по нему админ кликает день и видит,
+    # кто что прислал в этот день, с разбивкой по источникам.
+    days: dict[str, dict] = {}
+    for x in items:
+        ts = x.get("timestamp") or ""
+        if len(ts) < 10:
+            continue
+        d = ts[:10]
+        bucket = days.setdefault(d, {"total": 0, "qr": 0, "admin": 0,
+                                     "gsheets": 0, "auto": 0, "other": 0})
+        bucket["total"] += 1
+        src_key = x["source"] if x["source"] in ("qr", "admin", "gsheets", "auto") else (
+            "gsheets" if x["source"] == "buffer" else "other")
+        bucket[src_key] += 1
+
     # Счётчики статусов ДО статус-фильтра — для чипов-фильтров в UI.
     counts: dict[str, int] = {}
     for x in items:
         counts[x["status"]] = counts.get(x["status"], 0) + 1
     if status:
         items = [x for x in items if x["status"] == status]
+    if day:
+        items = [x for x in items if (x.get("timestamp") or "").startswith(day)]
 
     # --- Сорт по дате (свежие сверху) + пагинация ---
     items.sort(key=lambda x: x["timestamp"] or "", reverse=True)
@@ -230,6 +267,7 @@ async def unified_registry(
         "items": items[start:start + limit],
         "total": total, "page": page, "limit": limit,
         "counts": counts,
+        "days": days,
         "periods": periods_out,
         "period": period.name if period else None,
         "period_id": period.id if period else None,

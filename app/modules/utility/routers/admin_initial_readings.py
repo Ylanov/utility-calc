@@ -80,6 +80,7 @@ async def set_initial_readings(
         user_id = user_result.scalar_one_or_none()
 
         reading = MeterReading(
+            source="admin",
             room_id=room_id,
             user_id=user_id,
             period_id=None,  # Начальные показания не привязаны к периоду

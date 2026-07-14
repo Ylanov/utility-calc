@@ -34,14 +34,20 @@ const STATUS = {
   approved:      { t: 'Утверждено',     c: '#10b981', b: '#d1fae5' },
   rejected:      { t: 'Отклонено',      c: '#6b7280', b: '#f3f4f6' },
 };
+// Источники — теперь ЧЕСТНЫЕ (колонка readings.source, reading_source_001):
+// подача жильца по QR и правка/ввод админа — разные вещи.
 const SRC = {
-  user:    { t: '📱 QR-портал',      c: '#1e40af', b: '#dbeafe' },
+  qr:      { t: '📱 QR-портал',      c: '#1e40af', b: '#dbeafe' },
+  admin:   { t: '✍️ Админ',          c: '#334155', b: '#e2e8f0' },
   gsheets: { t: '📄 Google Sheets',  c: '#166534', b: '#dcfce7' },
   buffer:  { t: '📄 Sheets (буфер)', c: '#92400e', b: '#fef3c7' },
   auto:    { t: '🤖 Норматив/авто',  c: '#6b21a8', b: '#f3e8ff' },
-  manual:  { t: '✍️ Вручную',        c: '#475569', b: '#f1f5f9' },
+  excel:   { t: '📗 Excel',          c: '#0f766e', b: '#ccfbf1' },
   saldo:   { t: '₽ Сальдо 1С',       c: '#0e7490', b: '#cffafe' },
 };
+
+// Цвета сегментов день-графика (по источникам).
+const DAY_COLORS = { qr: '#3b82f6', admin: '#475569', gsheets: '#16a34a', auto: '#8b5cf6', other: '#06b6d4' };
 
 // Число колонок таблицы — ЕДИНСТВЕННАЯ точка правды для colspan
 // (раньше «11» было захардкожено в 6 местах и ломалось при смене колонок).
@@ -89,7 +95,7 @@ function rowTint(r) {
 export const RegistryModule = {
   isInitialized: false,
   dom: {},
-  state: { source: '', status: '', search: '', period_id: null, show_saldo: false, page: 1, limit: 50 },
+  state: { source: '', status: '', search: '', period_id: null, show_saldo: false, day: '', page: 1, limit: 50 },
 
   init() {
     this.cacheDom();
@@ -106,6 +112,7 @@ export const RegistryModule = {
       total: document.getElementById('registryTotal'),
       refresh: document.getElementById('btnRegistryRefresh'),
       period: document.getElementById('registryPeriod'),
+      days: document.getElementById('registryDays'),
       chips: document.getElementById('registryStatusChips'),
       showSaldo: document.getElementById('registryShowSaldo'),
       pager: document.getElementById('registryPager'),
@@ -130,6 +137,16 @@ export const RegistryModule = {
       this.state.page = 1;
       this.load();
     });
+    // День-график: клик по дню = фильтр «что прислали в этот день»;
+    // повторный клик по активному дню — сброс.
+    this.dom.days?.addEventListener('click', (e) => {
+      var cell = e.target.closest('[data-reg-day]');
+      if (!cell) return;
+      var d = cell.dataset.regDay;
+      this.state.day = (this.state.day === d) ? '' : d;
+      this.state.page = 1;
+      this.load();
+    });
     // Делегированный клик: инлайн-правка ячеек счётчиков + история по ФИО.
     this.dom.body?.addEventListener('click', (e) => this._onBodyClick(e));
     let t = null;
@@ -145,6 +162,7 @@ export const RegistryModule = {
       (this.state.status ? '&status=' + encodeURIComponent(this.state.status) : '') +
       (this.state.period_id ? '&period_id=' + encodeURIComponent(this.state.period_id) : '') +
       (this.state.show_saldo ? '&show_saldo=true' : '') +
+      (this.state.day ? '&day=' + encodeURIComponent(this.state.day) : '') +
       (this.state.search ? '&search=' + encodeURIComponent(this.state.search) : '');
   },
 
@@ -194,6 +212,57 @@ export const RegistryModule = {
       }).join('');
     } else if (this.dom.period && data.period_id != null) {
       this.dom.period.value = String(data.period_id);
+    }
+
+    // ГРАФИК МЕСЯЦА: колонки-дни (стек по источникам), клик = фильтр дня.
+    if (this.dom.days) {
+      var daysMap = data.days || {};
+      var dates = Object.keys(daysMap).sort();
+      if (!dates.length) {
+        this.dom.days.innerHTML = '';
+        this.dom.days.style.display = 'none';
+      } else {
+        var maxN = 1;
+        dates.forEach(function (d) { if (daysMap[d].total > maxN) maxN = daysMap[d].total; });
+        var activeDay = this.state.day;
+        var BAR_H = 52;
+        var cells = dates.map(function (d) {
+          var b = daysMap[d];
+          var h = Math.max(3, Math.round(BAR_H * b.total / maxN));
+          var segs = '';
+          ['qr', 'admin', 'gsheets', 'auto', 'other'].forEach(function (k) {
+            if (!b[k]) return;
+            var sh = Math.max(2, Math.round(h * b[k] / b.total));
+            segs += '<div style="height:' + sh + 'px; background:' + DAY_COLORS[k] + ';"></div>';
+          });
+          var parts = d.split('-');
+          var label = parts[2] + '.' + parts[1];
+          var isActive = (activeDay === d);
+          var tip = label + ': всего ' + b.total +
+            (b.qr ? ' · QR ' + b.qr : '') + (b.admin ? ' · админ ' + b.admin : '') +
+            (b.gsheets ? ' · Sheets ' + b.gsheets : '') + (b.auto ? ' · авто ' + b.auto : '') +
+            (b.other ? ' · прочее ' + b.other : '');
+          return '<button type="button" data-reg-day="' + d + '" title="' + esc(tip) + '" ' +
+            'style="display:flex; flex-direction:column; align-items:center; justify-content:flex-end; gap:3px; ' +
+            'border:1.5px solid ' + (isActive ? 'var(--primary-color)' : 'transparent') + '; cursor:pointer; ' +
+            'background:' + (isActive ? 'rgba(59,130,246,0.10)' : 'transparent') + '; border-radius:8px; padding:5px 4px 3px; min-width:38px;">' +
+            '<span style="font-size:10px; color:var(--text-secondary);">' + b.total + '</span>' +
+            '<div style="width:22px; height:' + h + 'px; display:flex; flex-direction:column; justify-content:flex-end; border-radius:3px; overflow:hidden;">' + segs + '</div>' +
+            '<span style="font-size:10px; font-weight:' + (isActive ? '700' : '400') + '; color:' + (isActive ? 'var(--primary-color)' : 'var(--text-secondary)') + ';">' + label + '</span>' +
+            '</button>';
+        }).join('');
+        var legend = ['qr|QR-портал', 'admin|Админ', 'gsheets|Sheets', 'auto|Авто', 'other|Прочее'].map(function (p) {
+          var kv = p.split('|');
+          return '<span style="display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--text-secondary);">' +
+            '<span style="width:9px; height:9px; border-radius:2px; background:' + DAY_COLORS[kv[0]] + ';"></span>' + kv[1] + '</span>';
+        }).join('');
+        this.dom.days.style.display = 'block';
+        this.dom.days.innerHTML =
+          '<div style="display:flex; align-items:flex-end; gap:2px; overflow-x:auto; padding:4px 2px;">' + cells + '</div>' +
+          '<div style="display:flex; gap:12px; margin-top:4px; align-items:center;">' + legend +
+          (activeDay ? '<button type="button" data-reg-day="' + esc(activeDay) + '" style="margin-left:auto; border:none; background:none; color:var(--primary-color); cursor:pointer; font-size:12px;">✕ сбросить день</button>' : '') +
+          '</div>';
+      }
     }
 
     if (this.dom.chips) {
@@ -320,9 +389,15 @@ export const RegistryModule = {
       // Тариф из колонки переехал в тултип ФИО (меньше шума в таблице).
       var fioTitle = r.tariff ? ' title="Тариф: ' + esc(r.tariff) + '"' : '';
 
+      // ✏️ — админ правил запись после создания (честная метка admin_edited).
+      var srcCell = badge(SRC[r.source], r.source);
+      if (r.admin_edited && r.source !== 'admin') {
+        srcCell += ' <span title="Админ правил эту запись" style="font-size:12px; cursor:help;">✏️</span>';
+      }
+
       return '<tr style="' + rowTint(r) + '"' + trAttrs + '>' +
         '<td style="font-size:12px; color:var(--text-secondary); white-space:nowrap;">' + esc(when) + '</td>' +
-        '<td>' + badge(SRC[r.source], r.source) + '</td>' +
+        '<td>' + srcCell + '</td>' +
         '<td' + fioTitle + '>' + fioCell + '</td>' +
         '<td style="font-size:13px;">' + esc(r.room || '—') + '</td>' +
         meterTd('hot', r.hot, r.delta_hot) +

@@ -211,6 +211,7 @@ async def recalc_user_period(db: AsyncSession, *, user_id: int, period_id: int) 
             hot=reading.hot_water, cold=reading.cold_water, elect=reading.electricity,
             costs=_costs, total_209=bd["total_209"], total_205=bd["total_205"],
             flags=reading.anomaly_flags, is_approved=bool(reading.is_approved),
+            source_tag="admin",
         )
 
     await db.commit()
@@ -500,6 +501,9 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
         # админ намеренно корректирует утверждённую квитанцию.
         target.hot_water, target.cold_water, target.electricity = hot_to_save, cold_to_save, elect_to_save
         target.anomaly_flags, target.anomaly_score = flags, score
+        # Честная маркировка (reading_source_001): админ ПРАВИЛ запись — в
+        # реестре она отличается от нетронутой подачи жильца бейджем ✏️.
+        target.admin_edited = True
         for k, v in costs_for_model_fields(costs).items():
             setattr(target, k, v)
         target.total_209, target.total_205, target.total_cost = total_209, total_205, total_209 + total_205
@@ -584,6 +588,7 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
             elect=src_reading.electricity, costs=_final_costs,
             total_209=src_reading.total_209, total_205=src_reading.total_205,
             flags=src_reading.anomaly_flags, is_approved=bool(src_reading.is_approved),
+            source_tag="admin",
         )
 
     await db.flush()  # гарантируем reading_id для нового показания (нужно UI для «Утвердить»)

@@ -49,6 +49,7 @@ async def propagate_singles_reading(
     flags: Optional[str],
     is_approved: bool,
     exclude_user_ids: Optional[set] = None,
+    source_tag: Optional[str] = None,
 ) -> list:
     """Копирует уже посчитанную (делёную) квитанцию на ВСЕХ остальных активных
     жильцов холостяцкой квартиры за период (upsert). Возвращает список
@@ -112,6 +113,7 @@ async def propagate_singles_reading(
             db.add(existing)
         else:
             db.add(MeterReading(
+                source=source_tag,
                 user_id=ou.id, room_id=room.id, period_id=period_id,
                 debt_209=ZERO, overpayment_209=ZERO,
                 debt_205=ZERO, overpayment_205=ZERO,

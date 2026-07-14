@@ -739,6 +739,7 @@ async def _ensure_prev_baseline(db, user, room, dec, prev_period_id, tariff, sea
     read_el = prev["elect"] if prev["elect"] is not None else D(room.last_electricity or 0)
     costs = _compute_costs(user, room, tariff, ZERO, ZERO, ZERO, seasonal, {}, force_meters=False)
     db.add(MeterReading(
+        source="excel",
         room_id=room.id, user_id=user.id, period_id=prev_period_id,
         hot_water=read_hot, cold_water=read_cold, electricity=read_el,
         total_209=costs["total_209"], total_205=costs["total_205"],
@@ -854,6 +855,7 @@ async def commit_import(
                                    force_meters=(status != "norm"))
 
             reading = MeterReading(
+                source="excel",
                 room_id=room.id, user_id=user.id, period_id=period_id,
                 hot_water=read_hot, cold_water=read_cold, electricity=read_el,
                 total_209=costs["total_209"], total_205=costs["total_205"],
@@ -899,6 +901,7 @@ async def commit_import(
                     costs=src["costs"], total_209=src["total_209"],
                     total_205=src["total_205"], flags=src["flags"],
                     is_approved=True, exclude_user_ids=decided_uids,
+                    source_tag="excel",
                 )
                 singles_shared += len(affected)
             except Exception as ex:  # noqa: BLE001

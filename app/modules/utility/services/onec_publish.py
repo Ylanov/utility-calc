@@ -124,6 +124,7 @@ async def publish_onec_debts(db: AsyncSession, *, guard: bool = False) -> dict:
         if uid in by_user:
             continue
         new_objs.append(MeterReading(
+            source="saldo",
             user_id=uid, room_id=t.get("room_id"), period_id=ap.id, is_approved=False,
             debt_209=t.get("debt_209", Decimal("0")), overpayment_209=t.get("over_209", Decimal("0")),
             debt_205=t.get("debt_205", Decimal("0")), overpayment_205=t.get("over_205", Decimal("0")),

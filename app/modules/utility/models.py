@@ -654,6 +654,13 @@ class MeterReading(Base):
     cold_water = Column(Numeric(12, 3))
     electricity = Column(Numeric(12, 3))
 
+    # Честный источник записи (reading_source_001, 2026-07-14): qr | admin |
+    # gsheets | auto | excel | saldo. Раньше источник гадался по anomaly_flags
+    # и правки админа маскировались под «QR-портал». admin_edited — админ
+    # правил запись после создания (ручной ввод поверх подачи).
+    source = Column(String(16), nullable=True)
+    admin_edited = Column(Boolean, default=False, nullable=False, server_default="false")
+
     debt_209 = Column(Numeric(12, 2), default=0.00)
     overpayment_209 = Column(Numeric(12, 2), default=0.00)
     debt_205 = Column(Numeric(12, 2), default=0.00)

@@ -24,24 +24,30 @@
                 </button>
             </div>
         </div>
+        <!-- Компактный тулбар одной строкой (селекты с жёсткой шириной —
+             глобальный CSS растягивает select на 100%). -->
         <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:10px;">
-            <select id="registryPeriod" style="min-width:150px;" title="Расчётный месяц"></select>
-            <select id="registrySource" style="min-width:165px;">
+            <select id="registryPeriod" style="width:170px; flex:0 0 auto;" title="Расчётный месяц"></select>
+            <select id="registrySource" style="width:180px; flex:0 0 auto;">
                 <option value="">Все источники</option>
-                <option value="user">📱 QR-портал</option>
+                <option value="qr">📱 QR-портал</option>
+                <option value="admin">✍️ Админ</option>
                 <option value="gsheets">📄 Google Sheets</option>
                 <option value="buffer">📄 Sheets (буфер)</option>
                 <option value="auto">🤖 Норматив/авто</option>
-                <option value="manual">✍️ Вручную</option>
+                <option value="excel">📗 Excel</option>
                 <option value="saldo">₽ Сальдо 1С</option>
             </select>
-            <input type="text" id="registrySearch" placeholder="Поиск по ФИО или комнате…  ( / )" style="flex:1; min-width:200px;">
+            <input type="text" id="registrySearch" placeholder="Поиск по ФИО или комнате…  ( / )" style="flex:1 1 200px; min-width:180px;">
             <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-secondary); white-space:nowrap; cursor:pointer;"
                    title="Записи-носители долга/переплаты из «Выгрузить долги 1С» — без показаний. Скрыты, чтобы не шуметь.">
                 <input type="checkbox" id="registryShowSaldo"> сальдо 1С
             </label>
             <button id="btnRegistryRefresh" class="icon-btn" title="Обновить"><i class="fa-solid fa-rotate-right"></i></button>
         </div>
+        <!-- График месяца по ДНЯМ подачи: клик по дню — фильтр «кто что прислал
+             в этот день», цвета = источники (рисует registry.js). -->
+        <div id="registryDays" style="margin-bottom:10px;"></div>
         <!-- Чипы-фильтры по статусу со счётчиками (заполняет registry.js) -->
         <div id="registryStatusChips" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px;"></div>
         <div class="table-responsive">
