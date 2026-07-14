@@ -123,6 +123,9 @@ jobs:
         # через PyPI) это false-positive. Подтверждается несколькими
         # GitHub-issues в jpadilla/fastapi и tiangolo/fastapi от той же
         # даты. Игнорируем до удаления записи из osv.dev.
+        # PYSEC-2026-3412 — weasyprint 68.1, БЕЗ fix-версии на 2026-07-14
+        # (генерация PDF из НАШИХ шаблонов, не пользовательского HTML —
+        # риск низкий). Снять игнор когда выйдет патченный релиз.
         run: |
           pip-audit \
             --ignore-vuln CVE-2024-23342 \
@@ -130,7 +133,8 @@ jobs:
             --ignore-vuln CVE-2026-3219 \
             --ignore-vuln PYSEC-2025-183 \
             --ignore-vuln PYSEC-2025-185 \
-            --ignore-vuln MAL-2026-4750
+            --ignore-vuln MAL-2026-4750 \
+            --ignore-vuln PYSEC-2026-3412
 
       - name: Cache Trivy database
         uses: actions/cache@v5
