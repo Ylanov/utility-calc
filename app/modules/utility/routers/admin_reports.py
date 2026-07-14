@@ -72,7 +72,13 @@ async def get_receipt_pdf(
 
     stmt = (
         select(MeterReading)
-        .options(selectinload(MeterReading.user).selectinload(User.room), selectinload(MeterReading.period))
+        .options(
+            selectinload(MeterReading.user).selectinload(User.room),
+            selectinload(MeterReading.period),
+            # _build_receipt_context обращается к reading.room (тариф) —
+            # без eager-load в async будет MissingGreenlet.
+            selectinload(MeterReading.room),
+        )
         .where(MeterReading.id == reading_id)
     )
     reading = (await db.execute(stmt)).scalars().first()
@@ -82,25 +88,12 @@ async def get_receipt_pdf(
 
     user, room = reading.user, reading.user.room
 
-    # Тариф через единый сервис: Room.tariff_id → User.tariff_id → default.
-    # tariff_cache использует in-memory кеш и учитывает приоритет комнатной привязки.
-    from app.modules.utility.services.tariff_cache import tariff_cache
-    tariff = tariff_cache.get_effective_tariff(user=user, room=room)
-    if not tariff:
-        tariff = (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().first()
-        if not tariff:
-            raise HTTPException(404, "Активный тариф не найден")
-
-    prev = (await db.execute(
-        select(MeterReading)
-        .where(MeterReading.room_id == room.id, MeterReading.is_approved.is_(True),
-               MeterReading.created_at < reading.created_at)
-        .order_by(MeterReading.created_at.desc()).limit(1)
-    )).scalars().first()
-
-    adjustments = (await db.execute(
-        select(Adjustment).where(Adjustment.user_id == user.id, Adjustment.period_id == reading.period_id)
-    )).scalars().all()
+    # ЕДИНЫЙ контекст квитанции (тариф/prev/корректировки) — тот же helper,
+    # что у QR-портала. Раньше здесь был СВОЙ prev по created_at: запись того
+    # же периода (debt-черновик 1С, повтор) становилась prev с теми же цифрами
+    # → в PDF «Объём 0.00» при верных суммах (инцидент Мороз, июнь 2026).
+    from app.modules.utility.routers.client_readings import _build_receipt_context
+    tariff, prev, adjustments = await _build_receipt_context(reading, db)
 
     # tempfile.TemporaryDirectory вместо хардкода "/tmp" — Sonar
     # python:S5443. Изолированная dir с правами 700, удаление при выходе
@@ -1571,10 +1564,19 @@ async def get_resident_finance_detail(
             all_user_readings,
             key=lambda row: period_chron_key(row[1].name),
         )
-        # Двигаемся по цепочке: текущему reading prev = предыдущий в хронологии.
+        # Двигаемся по цепочке: текущему reading prev = последний из СТРОГО
+        # БОЛЕЕ РАННЕГО периода. Дубль в том же периоде (debt-черновик 1С,
+        # повторная подача) prev'ом быть не должен — иначе дельта считается
+        # против записи с теми же цифрами и показывает 0 (инцидент Мороз).
         prev_reading: Optional[MeterReading] = None
+        last_key = None
+        prev_of_key: Optional[MeterReading] = None  # prev для текущей группы периода
         for r, _bp in all_user_readings_chronological:
-            prev_reading_map[r.id] = prev_reading
+            k = period_chron_key(_bp.name)
+            if k != last_key:
+                prev_of_key = prev_reading
+                last_key = k
+            prev_reading_map[r.id] = prev_of_key
             prev_reading = r
 
     def _prev_for(reading):

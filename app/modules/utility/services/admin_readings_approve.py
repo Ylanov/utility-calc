@@ -318,14 +318,13 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
 async def approve_single(db: AsyncSession, reading_id: int, correction_data: ApproveRequest, current_user=None):
     """Ручное утверждение бухгалтером с возможными корректировками объема.
 
-    ИСПРАВЛЕНИЕ: при одновременном approve двумя админами одного reading_id
-    раньше не было блокировки — оба успевали пройти проверку `is_approved=False`
-    и сделать commit. В итоге финансовая сумма записывалась дважды, пуш-уведомление
-    уходило дважды, а в журнал шли два события approve.
-
-    SELECT ... FOR UPDATE заставляет второго админа ждать первого;
-    когда он получит контроль, проверка `if reading.is_approved` уже сработает
-    и второе утверждение будет отклонено с 409.
+    ИДЕМПОТЕНТНО (fix 2026-07-14): повторное утверждение уже утверждённого
+    показания НЕ ошибка — админ авторитетен, пересчитываем и утверждаем заново
+    (суммы ПЕРЕЗАПИСЫВАЮТСЯ, не прибавляются — двойного начисления нет).
+    Раньше здесь был 409 «уже утверждено другим администратором» — ручной ввод
+    поверх утверждённого показания (например, поданного жильцом через портал)
+    всегда падал с ошибкой, хотя данные уже были сохранены. SELECT ... FOR UPDATE
+    остаётся: одновременные утверждения сериализуются, результат один и тот же.
     """
     reading = (await db.execute(
         select(MeterReading)
@@ -339,9 +338,6 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
 
     if not reading:
         raise HTTPException(status_code=404, detail="Показания не найдены")
-    if reading.is_approved:
-        # 409 Conflict точнее отражает «уже утверждено другим админом».
-        raise HTTPException(status_code=409, detail="Показание уже утверждено другим администратором")
 
     user = reading.user
     # Комната САМОГО reading (reading.room), а НЕ текущая комната жильца

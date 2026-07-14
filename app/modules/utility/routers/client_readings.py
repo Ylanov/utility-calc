@@ -245,20 +245,33 @@ async def perform_reading_submission(
         raise HTTPException(500, "Тариф не найден")
 
     # 2. ИСПРАВЛЕНИЕ race condition: используем SELECT FOR UPDATE чтобы заблокировать
-    # черновик на время транзакции. Два соседа не смогут одновременно создать дубль.
-    draft_result = await db.execute(
+    # черновики на время транзакции. Два соседа не смогут одновременно создать дубль.
+    draft_rows = (await db.execute(
         select(MeterReading)
         .where(
             MeterReading.room_id == user.room_id,
             MeterReading.period_id == period.id,
             MeterReading.is_approved.is_(False)
         )
-        .with_for_update()  # блокировка строки на время транзакции
-    )
-    draft = draft_result.scalars().first()
+        .with_for_update()  # блокировка строк на время транзакции
+    )).scalars().all()
 
-    # Если черновик создал сосед — блокируем перезапись
-    if draft and draft.user_id != user.id:
+    # Свой черновик (вкл. debt-черновик 1С без показаний) — обновим его.
+    draft = next((d for d in draft_rows if d.user_id == user.id), None)
+
+    # Чужой черновик блокирует подачу ТОЛЬКО если это реальная подача соседа
+    # (есть показания). Debt-черновик 1С (все счётчики NULL) «Выгрузить долги»
+    # создаёт на ЛЮБОГО жильца комнаты из выгрузки — он носит только сальдо
+    # и подачу представителя комнаты блокировать не должен (fix 2026-07-14;
+    # раньше .first() мог вернуть его → ложное «уже переданы другим жильцом»).
+    foreign_real = next(
+        (d for d in draft_rows
+         if d.user_id != user.id
+         and (d.hot_water is not None or d.cold_water is not None
+              or d.electricity is not None)),
+        None,
+    )
+    if foreign_real is not None:
         raise HTTPException(
             status_code=400,
             detail="Показания для вашей комнаты уже переданы другим жильцом."
@@ -600,16 +613,50 @@ async def _build_receipt_context(reading: MeterReading, db: AsyncSession):
     if not tariff:
         raise HTTPException(500, "Тариф не найден")
 
-    prev = (await db.execute(
-        select(MeterReading)
-        .where(
-            MeterReading.room_id == reading.room_id,
-            MeterReading.is_approved.is_(True),
-            MeterReading.created_at < reading.created_at
-        )
-        .order_by(MeterReading.created_at.desc())
-        .limit(1)
-    )).scalars().first()
+    # prev — по БИЛЛИНГОВОЙ хронологии (строго более ранний месяц), а не по
+    # created_at. По created_at ломалось дважды: (а) ввод прошлых месяцев
+    # задним числом → prev не находился; (б) вторая запись ТОГО ЖЕ периода
+    # (debt-черновик 1С / повторная подача) становилась prev с теми же
+    # цифрами → в PDF «Объём 0.00» при верных суммах (инцидент Мороз).
+    # Зеркалит выбор prev в save_manual_entry: жилец+комната, meaningful,
+    # период строго раньше. Фолбэк — по комнате (показания комнатные).
+    from app.modules.utility.services.period_helpers import period_chron_key
+    from app.modules.utility.services.reading_calculator import is_meaningful_prev
+
+    prev = None
+    cur_period = await db.get(BillingPeriod, reading.period_id) if reading.period_id else None
+    if cur_period is not None:
+        cur_key = period_chron_key(cur_period.name)
+        cand_rows = (await db.execute(
+            select(MeterReading, BillingPeriod)
+            .join(BillingPeriod, BillingPeriod.id == MeterReading.period_id)
+            .where(
+                MeterReading.room_id == reading.room_id,
+                MeterReading.is_approved.is_(True),
+                MeterReading.id != reading.id,
+            )
+        )).all()
+
+        def _pick(rows):
+            earlier = [(period_chron_key(bp.name), mr) for mr, bp in rows
+                       if period_chron_key(bp.name) < cur_key and is_meaningful_prev(mr)]
+            earlier.sort(key=lambda x: x[0])
+            return earlier[-1][1] if earlier else None
+
+        # Сначала — свои показания жильца (как в расчёте суммы), затем комнатные.
+        prev = _pick([rw for rw in cand_rows if rw[0].user_id == reading.user_id]) or _pick(cand_rows)
+    if prev is None and cur_period is None:
+        # Показание без периода (legacy) — прежнее поведение по created_at.
+        prev = (await db.execute(
+            select(MeterReading)
+            .where(
+                MeterReading.room_id == reading.room_id,
+                MeterReading.is_approved.is_(True),
+                MeterReading.created_at < reading.created_at,
+            )
+            .order_by(MeterReading.created_at.desc())
+            .limit(1)
+        )).scalars().first()
 
     adjustments = (await db.execute(
         select(Adjustment).where(

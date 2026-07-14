@@ -465,7 +465,11 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
             )
 
     temp_reading = MeterReading(hot_water=hot_to_save, cold_water=cold_to_save, electricity=elect_to_save)
-    flags, score = check_reading_for_anomalies_v2(temp_reading, history, user=user, room=room)
+    # Аномалии считаем против СТРОГО ПРОШЛЫХ месяцев (_earlier), а не всей
+    # history: при пере-сохранении поверх уже утверждённого показания этого же
+    # периода history[0] — оно само (те же цифры) → дельта 0 → ложные
+    # ZERO_COLD/COMBO_SUSPICIOUS (инцидент Мороз, июнь 2026).
+    flags, score = check_reading_for_anomalies_v2(temp_reading, _earlier, user=user, room=room)
     if is_baseline:
         flags, score = "BASELINE", 0
 
@@ -473,30 +477,23 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
                (await db.execute(select(Adjustment.account_type, func.sum(Adjustment.amount))
                .where(Adjustment.user_id == user.id, Adjustment.period_id == active_period.id).group_by(Adjustment.account_type))).all()}
 
-    # Bug AL: ищем существующее показание ЭТОГО ЖИЛЬЦА в активном периоде —
-    # сначала draft, потом approved. Если admin вводит «поверх» подачи через
-    # Excel/gsheets, мы должны обновить approved, а не создавать второй
-    # reading для того же user_id+period.
-    draft = (await db.execute(
+    # Bug AL + дедуп (fix 2026-07-14): собираем ВСЕ показания этого жильца в
+    # периоде. Цель — УТВЕРЖДЁННОЕ, если есть (админ правит квитанцию; второй
+    # approved-дубль в периоде создавать нельзя — он ломает дельты Δ=0 и
+    # «Объём 0.00» в PDF, инцидент Мороз), иначе черновик. Лишние черновики
+    # этой комнаты (debt-черновик 1С от «Выгрузить», устаревшая подача)
+    # поглощаются ниже: сальдо 1С переносится, строка удаляется.
+    period_rows = (await db.execute(
         select(MeterReading).where(
             MeterReading.user_id == user.id,
-            MeterReading.room_id == room.id,
-            MeterReading.is_approved.is_(False),
             MeterReading.period_id == active_period.id,
-        )
-    )).scalars().first()
+        ).order_by(MeterReading.created_at.desc())
+    )).scalars().all()
+    approved_current = next((r for r in period_rows if r.is_approved), None)
+    room_drafts = [r for r in period_rows if not r.is_approved and r.room_id == room.id]
+    draft = room_drafts[0] if room_drafts else None
 
-    approved_current = None
-    if not draft:
-        approved_current = (await db.execute(
-            select(MeterReading).where(
-                MeterReading.user_id == user.id,
-                MeterReading.period_id == active_period.id,
-                MeterReading.is_approved.is_(True),
-            ).order_by(MeterReading.created_at.desc()).limit(1)
-        )).scalars().first()
-
-    target = draft or approved_current
+    target = approved_current or draft
 
     # Долг/переплата 1С НЕ в ИТОГО (30.05.2026) — только начисление + корректировки.
     # У target поля debt_*/overpayment_* НЕ перезаписываются (см. ниже) —
@@ -531,6 +528,42 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
             **costs_for_model_fields(costs)
         )
         db.add(src_reading)
+
+    # Поглощаем ЛИШНИЕ черновики жильца в этом периоде (target уже обновлён):
+    # debt-черновик от «Выгрузить 1С» или устаревшую неутверждённую подачу.
+    # Сальдо 1С переносим (если у цели пусто), gsheets-строки отвязываем (как
+    # delete_reading), строку удаляем. Иначе после утверждения в периоде живут
+    # ДВЕ записи с одинаковыми цифрами → дельты Δ=0, «Объём 0.00» в PDF.
+    surplus = [d for d in room_drafts if d is not target]
+    if surplus:
+        from sqlalchemy import update as _sa_update
+        from app.modules.utility.models import GSheetsImportRow
+
+        def _has_balance(r) -> bool:
+            return any((x or ZERO) != ZERO for x in
+                       (r.debt_209, r.overpayment_209, r.debt_205, r.overpayment_205))
+
+        for s in surplus:
+            # Сальдо 1С переносим с ПЕРВОГО непустого surplus'а, только если у
+            # цели пусто (пустой surplus перенос не «съедает» — ревью 2026-07-14).
+            if _has_balance(s) and not _has_balance(src_reading):
+                src_reading.debt_209 = s.debt_209 or ZERO
+                src_reading.overpayment_209 = s.overpayment_209 or ZERO
+                src_reading.debt_205 = s.debt_205 or ZERO
+                src_reading.overpayment_205 = s.overpayment_205 or ZERO
+            logging.getLogger(__name__).info(
+                "[manual] absorb draft id=%s user=%s period=%s meters=(%s,%s,%s) "
+                "saldo=(%s,%s,%s,%s)",
+                s.id, user.id, active_period.id,
+                s.hot_water, s.cold_water, s.electricity,
+                s.debt_209, s.overpayment_209, s.debt_205, s.overpayment_205,
+            )
+            await db.execute(
+                _sa_update(GSheetsImportRow)
+                .where(GSheetsImportRow.reading_id == s.id)
+                .values(reading_id=None)
+            )
+            await db.delete(s)
 
     # Доввод за прошлый месяц → пересчитываем цепочку реальных показаний ЭТОГО
     # жильца (источника): следующий месяц (май) подхватит свежее prev (апрель) и
@@ -571,7 +604,7 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
     return {
         "status": "success",
         "reading_id": reading_id,
-        "updated_kind": "draft" if draft else ("approved" if approved_current else "new_draft"),
+        "updated_kind": ("approved" if approved_current else ("draft" if draft else "new_draft")),
         "auto_approved": is_past_closed,
         "chain_recalced": recalced,
         "singles_shared": len(singles_affected),
