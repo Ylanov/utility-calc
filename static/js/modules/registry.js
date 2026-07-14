@@ -139,20 +139,50 @@ export const RegistryModule = {
     });
   },
 
-  async load() {
-    if (!this.dom.body) return;
-    this.dom.body.innerHTML = '<tr><td colspan="' + COLS + '" style="padding:30px; text-align:center; color:var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка…</td></tr>';
-    var q = '/admin/registry?page=' + this.state.page + '&limit=' + this.state.limit +
+  _query() {
+    return '/admin/registry?page=' + this.state.page + '&limit=' + this.state.limit +
       (this.state.source ? '&source=' + encodeURIComponent(this.state.source) : '') +
       (this.state.status ? '&status=' + encodeURIComponent(this.state.status) : '') +
       (this.state.period_id ? '&period_id=' + encodeURIComponent(this.state.period_id) : '') +
       (this.state.show_saldo ? '&show_saldo=true' : '') +
       (this.state.search ? '&search=' + encodeURIComponent(this.state.search) : '');
+  },
+
+  // Полная загрузка (первый вход/смена фильтров): с плейсхолдером.
+  async load() {
+    if (!this.dom.body) return;
+    this.dom.body.innerHTML = '<tr><td colspan="' + COLS + '" style="padding:30px; text-align:center; color:var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка…</td></tr>';
     let data;
-    try { data = await api.get(q); }
+    try { data = await api.get(this._query()); }
     catch (e) { this.dom.body.innerHTML = '<tr><td colspan="' + COLS + '" style="padding:24px; text-align:center; color:var(--danger-color);">Ошибка: ' + esc(e.message || e) + '</td></tr>'; return; }
     this.renderControls(data);
     this.render(data);
+  },
+
+  // ТИХОЕ обновление после точечного действия (правка ячейки/утверждение/
+  // отклонение): без «Загрузка…», с сохранением прокрутки и подсветкой
+  // обновлённой строки — админ не теряет место в списке (жалоба 2026-07-14:
+  // «одну ГВС обновил — страница обновилась, ищи того, кого редактировал»).
+  async softReload(rowKey) {
+    if (!this.dom.body) return this.load();
+    var scroller = this.dom.body.closest('.table-responsive');
+    var winY = window.scrollY;
+    var st = scroller ? scroller.scrollTop : 0;
+    let data;
+    try { data = await api.get(this._query()); }
+    catch (e) { return; /* точечное действие уже показало свой toast */ }
+    this.renderControls(data);
+    this.render(data);
+    if (scroller) scroller.scrollTop = st;
+    window.scrollTo(0, winY);
+    if (rowKey && rowKey.id != null) {
+      var tr = this.dom.body.querySelector('tr[data-rt="' + rowKey.rt + '"][data-id="' + rowKey.id + '"]');
+      if (tr) {
+        tr.style.transition = 'background-color 1.2s ease';
+        tr.style.backgroundColor = 'rgba(16,185,129,0.20)';
+        setTimeout(function () { tr.style.backgroundColor = ''; }, 900);
+      }
+    }
   },
 
   // Период-селектор + чипы статусов + пагинация.
@@ -361,10 +391,10 @@ export const RegistryModule = {
         try {
           await api.post('/admin/readings/manual', { user_id: muid, electricity: bv });
           toast('Свет записан показанием жильца (активный месяц)', 'success');
-          this.load();
+          this.softReload({ rt: 'gsheets', id: tr.dataset.id });
         } catch (e) {
           toast('Ошибка: ' + (e.message || e), 'error');
-          this.load();
+          this.softReload(null);
         }
         return;
       }
@@ -376,10 +406,10 @@ export const RegistryModule = {
       try {
         await api.post('/admin/gsheets/rows/' + tr.dataset.id + '/edit-values', body);
         toast('Значение исправлено', 'success');
-        this.load();
+        this.softReload({ rt: 'gsheets', id: tr.dataset.id });
       } catch (e) {
         toast('Ошибка: ' + cleanError(e), 'error');
-        this.load();
+        this.softReload(null);
       }
       return;
     }
@@ -402,10 +432,10 @@ export const RegistryModule = {
     try {
       await api.post('/admin/readings/manual', payload);
       toast('Показание обновлено и пересчитано', 'success');
-      this.load();
+      this.softReload({ rt: 'reading', id: tr.dataset.id });
     } catch (e) {
       toast('Ошибка: ' + (e.message || e), 'error');
-      this.load();
+      this.softReload(null);
     }
   },
 
@@ -474,7 +504,7 @@ export const RegistryModule = {
     }
     try { await GSheetsModule.reassignPrompt(Number(id)); }
     catch (e) { /* модалка показывает свою ошибку */ }
-    this.load();   // обновить единый список после переназначения
+    this.softReload({ rt: 'gsheets', id: Number(id) });   // тихо, не теряя место
   },
 
   // Отклонение: жилец получает уведомление на QR-портале и подаёт заново.
@@ -497,7 +527,7 @@ export const RegistryModule = {
         await api.post('/admin/gsheets/rows/' + id + '/reject', {});
       }
       toast('Отклонено — жилец увидит уведомление', 'success');
-      this.load();
+      this.softReload(null);
     } catch (e) {
       btn.disabled = false;
       toast('Не удалось отклонить. ' + cleanError(e), 'error');
@@ -515,7 +545,7 @@ export const RegistryModule = {
         await api.post('/admin/gsheets/rows/' + id + '/approve', {});
       }
       toast('Утверждено', 'success');
-      this.load();
+      this.softReload({ rt: rowType, id: Number(id) });
     } catch (e) {
       // Конфликт: за период у жильца уже есть начисление (норматив/наём/авто/
       // прошлая подача). Показываем его и предлагаем ЗАМЕНИТЬ этой подачей.
@@ -536,7 +566,7 @@ export const RegistryModule = {
           try {
             await api.post('/admin/gsheets/rows/' + id + '/approve', { replace: true });
             toast('Заменено и утверждено', 'success');
-            this.load();
+            this.softReload({ rt: rowType, id: Number(id) });
             return;
           } catch (e2) {
             btn.disabled = false;
