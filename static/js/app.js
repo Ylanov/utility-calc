@@ -295,7 +295,9 @@ function handleRoute() {
     // для обратной совместимости.
     // ВАЖНО: при добавлении новой вкладки — обязательно добавить её сюда,
     // иначе clickByHash сделает fallback на dashboard.
-    const validTabs = ['dashboard', 'readings', 'tools', 'housing', 'users', 'passport', 'debts', 'certs', 'safety', 'audit', 'tickets', 'errors'];
+    // 'audit'/'errors' валидны, но БЕЗ кнопок в навбаре — открываются из
+    // Операции → Система (2026-07-14). 'certs' удалён (Справки вырезаны).
+    const validTabs = ['dashboard', 'readings', 'tools', 'housing', 'users', 'passport', 'debts', 'safety', 'audit', 'tickets', 'errors'];
     let tabToLoad = validTabs.includes(hash) ? hash : defaultTab;
     // «Безопасность» объединена с «Ошибки» (2026-06-09) — старый хеш ведёт туда.
     if (hash === 'security') tabToLoad = 'errors';
@@ -584,14 +586,6 @@ async function initModule(tabId) {
                 }
                 break;
             }
-            // Админская вкладка «Справки» (волна 3 фичи заказа справок).
-            case 'certs':
-                if (!loadedModules.certs) {
-                    const { AdminCertificatesModule } = await import('./modules/admin-certificates.js');
-                    loadedModules.certs = AdminCertificatesModule;
-                }
-                loadedModules.certs.init();
-                break;
             // Журнал действий админов (multi-admin прозрачность).
             case 'audit':
                 if (!loadedModules.audit) {
@@ -651,9 +645,6 @@ function refreshModuleData(tabId) {
             break;
         case 'debts':
             if (typeof mod.reload === 'function') mod.reload();
-            break;
-        case 'certs':
-            if (typeof mod.refreshAll === 'function') mod.refreshAll();
             break;
         case 'audit':
             if (typeof mod.refresh === 'function') mod.refresh();

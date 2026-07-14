@@ -1455,6 +1455,20 @@
             Хранятся в system_settings (key-value), API: /api/settings/operator-info.
             =====================================================================
         -->
+        <!-- «Журнал» и «Ошибки и безопасность» убраны из главного навбара
+             (2026-07-14) — открываются отсюда. Вкладки живут по хешу. -->
+        <section class="accordion-section" data-section="service-tabs" data-ops-tab="system">
+            <div style="display:flex; gap:10px; flex-wrap:wrap; padding:12px 4px;">
+                <button type="button" class="action-btn secondary-btn" style="font-size:13px;"
+                        onclick="window.location.hash='audit'">
+                    <i class="fa-solid fa-clock-rotate-left"></i> Развернуть Журнал действий
+                </button>
+                <button type="button" class="action-btn secondary-btn" style="font-size:13px;"
+                        onclick="window.location.hash='errors'">
+                    <i class="fa-solid fa-shield-halved"></i> Развернуть Ошибки и безопасность
+                </button>
+            </div>
+        </section>
         <section class="accordion-section" data-section="operator-info" data-ops-tab="system">
             <button class="accordion-header" type="button" aria-expanded="false">
                 <span class="accordion-title">

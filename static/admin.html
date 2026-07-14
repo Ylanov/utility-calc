@@ -154,17 +154,11 @@
                 <button class="tab-btn" data-tab="housing"><i class="fa-solid fa-city"></i><span>Жилфонд</span></button>
                 <button class="tab-btn" data-tab="users"><i class="fa-solid fa-users"></i><span>Жильцы</span></button>
                 <button class="tab-btn" data-tab="passport" title="Глобальный поиск по ФИО: всё о жильце из всех источников — адрес, тариф, все показания (QR/Google/ручные), долги 1С и ГИС ГМП"><i class="fa-solid fa-magnifying-glass"></i><span>Поиск жильца</span></button>
-                <button class="tab-btn" data-tab="certs"><i class="fa-solid fa-file-lines"></i><span>Справки</span></button>
                 <button class="tab-btn" data-tab="safety" title="Охрана труда: обучение, медосмотры, СОУТ"><i class="fa-solid fa-helmet-safety"></i><span>Охрана труда</span></button>
                 <button class="tab-btn" data-tab="tickets"><i class="fa-solid fa-comments"></i><span>Обращения</span></button>
-                <button class="tab-btn" data-tab="audit"><i class="fa-solid fa-clock-rotate-left"></i><span>Журнал</span></button>
-                <!-- E3-C: «Копилка ошибок» — отдельная вкладка. Бейдж с числом
-                     unresolved-ошибок проставляется JS-модулем errors.js. -->
-                <button class="tab-btn" data-tab="errors" title="Ошибки системы + сводка сканеров безопасности (SonarQube/ZAP/Trivy)">
-                    <i class="fa-solid fa-shield-halved"></i>
-                    <span>Ошибки и безопасность</span>
-                    <span id="errorsBadge" style="display:none; margin-left:6px; background:#ef4444; color:#fff; border-radius:10px; padding:1px 7px; font-size:11px; font-weight:600;"></span>
-                </button>
+                <!-- «Журнал» и «Ошибки и безопасность» убраны из главной навигации
+                     (2026-07-14, решение пользователя) — открываются кнопками в
+                     Операции → Система. Вкладки/модули (audit, errors) живы. -->
             </nav>
 
             <!-- Колокольчик уведомлений (multi-admin прозрачность).

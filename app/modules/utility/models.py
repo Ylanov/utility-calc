@@ -349,16 +349,8 @@ class User(Base):
     passport_issued_by = Column(String(500), nullable=True)
     passport_issued_at = Column(Date, nullable=True)
     registration_date = Column(Date, nullable=True)
-    # Адрес прописки по паспорту — отдельно от адреса комнаты, т.к. они
-    # могут не совпадать (многие прописаны по другому адресу, а в общежитии
-    # проживают по договору найма). Нужен для справок.
-    registration_address = Column(String(500), nullable=True)
-    # «Проживаю один» — альтернатива обязательному списку членов семьи.
-    # Если True — в справке будет только сам наниматель, без таблицы семьи.
-    # По умолчанию False — старое поведение, семья опциональна (но при заказе
-    # теперь проверяется: либо lives_alone, либо хотя бы один полностью
-    # заполненный FamilyMember).
-    lives_alone = Column(Boolean, default=False, nullable=False, server_default="false")
+    # (registration_address и lives_alone удалены 2026-07-14 вместе с фичей
+    # «Справки» — их читал только PDF-генератор; колонки дропает certs_purge_001.)
 
     # --------------------------------------------------------------
     # Валидаторы консистентности — срабатывают на setattr.
@@ -1173,49 +1165,8 @@ class DebtImportLog(Base):
     )
 
 
-# ======================================================
-# FAMILY MEMBER — члены семьи жильца
-# ======================================================
-class FamilyMember(Base):
-    """Супруг(а), дети, другие родственники — прикрепляются к жильцу.
-
-    Используется для генерации справок (выписка из ФЛС и др.),
-    где требуется перечислить состав семьи. Свидетельства о рождении /
-    паспорта можно хранить опционально (поля passport_* nullable) —
-    в базовом сценарии жильцу хватит ФИО + дата рождения.
-    """
-    __tablename__ = "family_members"
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    # spouse | child | parent | other
-    role = Column(String(20), nullable=False)
-    full_name = Column(String(255), nullable=False)
-    birth_date = Column(Date, nullable=True)
-    passport_series = Column(String(20), nullable=True)
-    passport_number = Column(String(20), nullable=True)
-    registration_date = Column(Date, nullable=True)
-    # Дата прибытия (вселения в общежитие) — попадает в таблицу проживающих
-    # в справке-выписке. У нанимателя и членов семьи разные даты только
-    # если они вселились в разное время.
-    arrival_date = Column(Date, nullable=True)
-    # Тип регистрации: permanent (по месту жительства) | temporary (по месту
-    # пребывания). В справке выводится текстом «По месту жительства/пребывания».
-    registration_type = Column(String(20), nullable=True)
-    # Отношение к нанимателю — свободный текст («сын», «дочь», «жена»,
-    # «мать»). role-поле слишком грубое (spouse/child/parent/other), а в
-    # справке нужно точно как в домовой книге. Если не заполнено — при
-    # генерации PDF берём расшифровку role.
-    relation_to_head = Column(String(64), nullable=True)
-
-    created_at = Column(DateTime, default=_utcnow, nullable=False)
-    updated_at = Column(DateTime, nullable=True, onupdate=_utcnow)
-
-    user = relationship("User", foreign_keys=[user_id])
-
-    __table_args__ = (
-        Index("idx_family_user", "user_id"),
-    )
+# (FamilyMember и CertificateRequest удалены 2026-07-14 — фича «Справки»
+# вырезана целиком; таблицы дропает миграция certs_purge_001.)
 
 
 # ======================================================
@@ -1257,42 +1208,6 @@ class RentalContract(Base):
         # (209 и 205 содержат одни и те же строки «Договор №…»). NULL-номера
         # (ручные загрузки без номера) не затрагиваются (NULL в PG различны).
         Index("uq_rental_contract_user_number", "user_id", "number", unique=True),
-    )
-
-
-# ======================================================
-# CERTIFICATE REQUEST — заявка на справку
-# ======================================================
-class CertificateRequest(Base):
-    """Заявка жильца на справку (выписка из ФЛС и др.).
-
-    Жизненный цикл: pending (заказал жилец) → generated (PDF готов) →
-    delivered (админ выдал). rejected — отклонена админом.
-
-    type сейчас поддерживает 'flc' (выписка из финансово-лицевого счёта).
-    В будущем добавятся 'residency' (о проживании), 'composition' (о
-    составе семьи) и т.д. — поле data (JSONB) хранит type-specific поля.
-    """
-    __tablename__ = "certificate_requests"
-
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    type = Column(String(32), nullable=False, default="flc")
-    status = Column(String(16), nullable=False, default="pending")
-    data = Column(JSONB, nullable=True)
-    pdf_s3_key = Column(String(500), nullable=True)
-    note = Column(Text, nullable=True)
-
-    created_at = Column(DateTime, default=_utcnow, nullable=False)
-    processed_at = Column(DateTime, nullable=True)
-    processed_by_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-
-    user = relationship("User", foreign_keys=[user_id])
-    processed_by = relationship("User", foreign_keys=[processed_by_id])
-
-    __table_args__ = (
-        Index("idx_cert_user_created", "user_id", "created_at"),
-        Index("idx_cert_status", "status"),
     )
 
 
