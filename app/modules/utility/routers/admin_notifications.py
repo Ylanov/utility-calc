@@ -199,7 +199,7 @@ async def get_notifications(
             "anomalies": {
                 "count": anomaly_count,
                 "label": "Аномалии в показаниях",
-                "link": "/admin.html#dashboard",
+                "link": "/admin.html#readings",
                 "items": [],  # подробности — в дашборде
             },
             "tickets": {

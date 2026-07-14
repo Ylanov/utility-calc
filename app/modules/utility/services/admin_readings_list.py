@@ -749,13 +749,12 @@ async def get_manual_grid_state(db: AsyncSession, user_id: int, period_ids: list
         "has_el_meter": _room_meter("has_el_meter"),
     }
 
-    from app.modules.utility.services.period_helpers import period_chron_key
-    from app.modules.utility.services.reading_calculator import is_meaningful_prev
+    from app.modules.utility.services.reading_calculator import pick_prev_pair
 
     periods_out = []
     if room:
-        # Approved-показания жильца в этой комнате — для выбора prev по
-        # хронологии месяца (как в save_manual_entry, fix 2026-06-16).
+        # Approved-показания жильца в этой комнате — единый канонический
+        # выбор prev (pick_prev_pair, аудит 2026-07-14).
         approved_rows = (await db.execute(
             select(MeterReading, BillingPeriod)
             .join(BillingPeriod, MeterReading.period_id == BillingPeriod.id)
@@ -766,19 +765,13 @@ async def get_manual_grid_state(db: AsyncSession, user_id: int, period_ids: list
                 MeterReading.period_id.isnot(None),
             )
         )).all()
-        keyed = [(period_chron_key(p.name), mr) for mr, p in approved_rows]
+        pairs = [(mr, p.name) for mr, p in approved_rows]
 
         for pid in period_ids:
             period = await db.get(BillingPeriod, pid)
             if period is None:
                 continue
-            cur_key = period_chron_key(period.name)
-            earlier = sorted(
-                [(k, mr) for (k, mr) in keyed
-                 if k is not None and cur_key is not None and k < cur_key and is_meaningful_prev(mr)],
-                key=lambda x: x[0],
-            )
-            prev = earlier[-1][1] if earlier else None
+            prev, _any, _hist = pick_prev_pair(pairs, period.name)
             existing = (await db.execute(
                 select(MeterReading).where(
                     MeterReading.user_id == user.id,

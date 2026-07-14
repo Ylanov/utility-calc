@@ -353,27 +353,15 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
         .order_by(MeterReading.created_at.desc()).limit(24)
     )).scalars().all()
 
-    # ВЫБОР prev ПО ХРОНОЛОГИИ ПЕРИОДА, а не по дате создания (fix 2026-06-16).
-    # Раньше prev = последний СОЗДАННЫЙ reading — и при вводе ЗА ПРОШЛЫЙ месяц
-    # (напр. апрель, когда май уже введён) prev оказывался майским → апрель <
-    # мая ловилось как «счётчик упал», а дельта считалась от мая. Теперь
-    # prev = ближайшее ПРЕДЫДУЩЕЕ по биллинговому месяцу показание (для апреля
-    # это март, май игнорируется). Админ может вводить за любой месяц в любую
-    # сторону без ложных ошибок.
-    from app.modules.utility.services.period_helpers import period_chron_key
-    from app.modules.utility.services.reading_calculator import is_meaningful_prev
-    _target_key = period_chron_key(active_period.name)
-
-    def _rkey(r):
-        return period_chron_key(r.period.name) if r.period else (0, 0)
-
-    # Кандидаты строго ДО целевого месяца, по убыванию хронологии.
-    _earlier = sorted(
-        [r for r in history if r.period_id != active_period.id and _rkey(r) < _target_key],
-        key=_rkey, reverse=True,
+    # ЕДИНЫЙ канонический выбор prev (аудит 2026-07-14): pick_prev_pair —
+    # хронология по ИМЕНИ периода (ввод за прошлый месяц не ловится как
+    # «счётчик упал», fix 2026-06-16), meaningful-фильтр, приоритет
+    # METER_REPLACEMENT текущего месяца. _earlier — история для анализатора.
+    from app.modules.utility.services.reading_calculator import pick_prev_pair
+    prev_latest, prev_any, _earlier = pick_prev_pair(
+        [(r, r.period.name if r.period else None) for r in history],
+        active_period.name,
     )
-    prev_latest = next((r for r in _earlier if is_meaningful_prev(r)), None)
-    prev_any = _earlier[0] if _earlier else None  # для prev_is_synth-detection
 
     p_hot, p_cold, p_elect = prev_latest.hot_water if prev_latest else ZERO, prev_latest.cold_water if prev_latest else ZERO, prev_latest.electricity if prev_latest else ZERO
 

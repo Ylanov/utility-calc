@@ -3,7 +3,7 @@
 // Колокольчик уведомлений в шапке админки.
 // Polling /api/admin/notifications каждые 30 секунд, badge с числом
 // событий. При клике — dropdown со сгруппированными категориями.
-// Click по категории — переход по link (Tools / Audit / Dashboard).
+// Click по категории — модалка категории; дип-линки бэка ведут на #readings/#tools.
 
 import { api } from './core/api.js';
 import { Auth } from './core/auth.js';

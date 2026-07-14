@@ -28,9 +28,16 @@ router = APIRouter(prefix="/api/admin/registry", tags=["Admin Registry (unified)
 allow_management = RoleChecker(["accountant", "admin", "financier"])
 
 
-def _reading_source(flags: Optional[str]) -> tuple[str, str]:
-    """Источник боевого показания по anomaly_flags (явного столбца source нет)."""
-    f = (flags or "").upper()
+def _reading_source(r: MeterReading) -> tuple[str, str]:
+    """Источник боевого показания по anomaly_flags (явного столбца source нет).
+
+    Fix 2026-07-14: безфлаговая meterless-запись — это САЛЬДО-носитель от
+    «Выгрузить долги 1С» (publish_onec_debts), а не подача жильца. Раньше
+    такие падали в дефолт «QR-портал / Черновик / прочерки» и путали админа.
+    """
+    f = (r.anomaly_flags or "").upper()
+    if not f and r.hot_water is None and r.cold_water is None and r.electricity is None:
+        return "saldo", "₽ Сальдо 1С"
     if "GSHEETS" in f:
         return "gsheets", "📄 Google Sheets"
     if "MANUAL_RECEIPT" in f:
@@ -38,14 +45,25 @@ def _reading_source(flags: Optional[str]) -> tuple[str, str]:
     if any(a in f for a in ("AUTO_NORM", "AUTO_AVG", "AUTO_GENERATED",
                             "AUTO_NO_HISTORY", "STATIC_RENT")):
         return "auto", "🤖 Норматив/авто"
-    return "user", "📱 QR/приложение"
+    return "user", "📱 QR-портал"
+
+
+def _fmt_delta(cur, prev) -> Optional[float]:
+    if cur is None or prev is None:
+        return None
+    try:
+        return float(cur) - float(prev)
+    except Exception:
+        return None
 
 
 @router.get("")
 async def unified_registry(
     period_id: Optional[int] = Query(None),
-    source: Optional[str] = Query(None, description="user|gsheets|auto|manual|buffer"),
+    source: Optional[str] = Query(None, description="user|gsheets|auto|manual|buffer|saldo"),
+    status: Optional[str] = Query(None, description="approved|draft|pending|conflict|unmatched|auto_approved"),
     search: Optional[str] = Query(None),
+    show_saldo: bool = Query(False, description="показывать сальдо-заглушки 1С"),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
     current_user=Depends(allow_management),
@@ -79,9 +97,34 @@ async def unified_registry(
             .options(selectinload(MeterReading.user), selectinload(MeterReading.room))
             .where(MeterReading.period_id == period.id)
         )).scalars().all()
+
+        # Δ к прошлому месяцу — ЕДИНЫЙ канонический prev (pick_prev_pair,
+        # аудит 2026-07-14): одним запросом утверждённые показания этих же
+        # пар (user, room) с именем периода, prev по хронологии имени.
+        from app.modules.utility.services.reading_calculator import pick_prev_pair
+        pair_users = {r.user_id for r in mr if r.user_id}
+        prev_map: dict = {}
+        if pair_users:
+            cand = (await db.execute(
+                select(MeterReading, BillingPeriod.name)
+                .join(BillingPeriod, BillingPeriod.id == MeterReading.period_id)
+                .where(
+                    MeterReading.user_id.in_(pair_users),
+                    MeterReading.is_approved.is_(True),
+                )
+            )).all()
+            by_pair: dict = {}
+            for _m, _pn in cand:
+                by_pair.setdefault((_m.user_id, _m.room_id), []).append((_m, _pn))
+            for pair, rows in by_pair.items():
+                prev_map[pair] = pick_prev_pair(rows, period.name)[0]
+
         for r in mr:
-            src, label = _reading_source(r.anomaly_flags)
+            src, label = _reading_source(r)
             room = r.room
+            prev = prev_map.get((r.user_id, r.room_id))
+            if prev is not None and prev.id == r.id:
+                prev = None
             items.append({
                 "row_type": "reading", "id": r.id,
                 "user_id": r.user_id, "period_id": r.period_id,
@@ -94,6 +137,9 @@ async def unified_registry(
                 "hot": str(r.hot_water) if r.hot_water is not None else None,
                 "cold": str(r.cold_water) if r.cold_water is not None else None,
                 "elect": str(r.electricity) if r.electricity is not None else None,
+                "delta_hot": _fmt_delta(r.hot_water, prev.hot_water if prev else None),
+                "delta_cold": _fmt_delta(r.cold_water, prev.cold_water if prev else None),
+                "delta_elect": _fmt_delta(r.electricity, prev.electricity if prev else None),
                 "status": "approved" if r.is_approved else "draft",
                 "sum": float(r.total_cost or 0),
                 "anomaly_score": int(r.anomaly_score or 0),
@@ -134,6 +180,7 @@ async def unified_registry(
             "hot": str(g.hot_water) if g.hot_water is not None else None,
             "cold": str(g.cold_water) if g.cold_water is not None else None,
             "elect": None,
+            "delta_hot": None, "delta_cold": None, "delta_elect": None,
             "status": g.status,
             "sum": None,
             "anomaly_score": None,
@@ -148,6 +195,10 @@ async def unified_registry(
         })
 
     # --- Фильтры ---
+    # Сальдо-заглушки 1С скрыты по умолчанию (шум: у них нет показаний, они
+    # носят долг/переплату). Показываются тумблером или фильтром source=saldo.
+    if not show_saldo and source != "saldo":
+        items = [x for x in items if x["source"] != "saldo"]
     if source:
         items = [x for x in items if x["source"] == source]
     if search:
@@ -155,13 +206,31 @@ async def unified_registry(
         items = [x for x in items
                  if s in (x["fio"] or "").lower() or s in str(x.get("room") or "").lower()]
 
+    # Счётчики статусов ДО статус-фильтра — для чипов-фильтров в UI.
+    counts: dict[str, int] = {}
+    for x in items:
+        counts[x["status"]] = counts.get(x["status"], 0) + 1
+    if status:
+        items = [x for x in items if x["status"] == status]
+
     # --- Сорт по дате (свежие сверху) + пагинация ---
     items.sort(key=lambda x: x["timestamp"] or "", reverse=True)
     total = len(items)
     start = (page - 1) * limit
+
+    # Периоды для селектора (свежие первыми по хронологии имени).
+    from app.modules.utility.services.period_helpers import period_chron_key
+    all_periods = (await db.execute(select(BillingPeriod))).scalars().all()
+    periods_out = [
+        {"id": p.id, "name": p.name, "is_active": bool(p.is_active)}
+        for p in sorted(all_periods, key=lambda p: period_chron_key(p.name), reverse=True)
+    ]
+
     return {
         "items": items[start:start + limit],
         "total": total, "page": page, "limit": limit,
+        "counts": counts,
+        "periods": periods_out,
         "period": period.name if period else None,
         "period_id": period.id if period else None,
     }

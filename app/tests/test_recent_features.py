@@ -79,6 +79,14 @@ def test_normalize_saldo_never_negative():
 # ──────────────────────────────────────────────────────────────
 # _reading_source — источник боевого показания по anomaly_flags (реестр)
 # ──────────────────────────────────────────────────────────────
+def _mr(flags, hot="1.0", cold="1.0", elect="1.0"):
+    """Стаб показания: _reading_source теперь принимает ОБЪЕКТ (fix 2026-07-14 —
+    безфлаговое meterless = сальдо-носитель 1С, а не подача жильца)."""
+    from app.modules.utility.models import MeterReading
+    return MeterReading(anomaly_flags=flags, hot_water=hot, cold_water=cold,
+                        electricity=elect)
+
+
 @pytest.mark.parametrize("flags, src", [
     ("GSHEETS_AUTO", "gsheets"),
     ("GSHEETS_AUTO_BASELINE", "gsheets"),
@@ -93,9 +101,18 @@ def test_normalize_saldo_never_negative():
     (None, "user"),
 ])
 def test_reading_source(flags, src):
-    code, label = _reading_source(flags)
+    code, label = _reading_source(_mr(flags))
     assert code == src
     assert isinstance(label, str) and label
+
+
+def test_reading_source_saldo_stub():
+    # Безфлаговая запись БЕЗ показаний — сальдо-носитель «Выгрузить долги 1С».
+    code, label = _reading_source(_mr(None, hot=None, cold=None, elect=None))
+    assert code == "saldo"
+    # А с хоть одним показанием — обычная подача жильца.
+    code2, _ = _reading_source(_mr(None, hot="5.0", cold=None, elect=None))
+    assert code2 == "user"
 
 
 # ──────────────────────────────────────────────────────────────

@@ -286,65 +286,6 @@ a:hover {
     min-width: 0; /* фикс переполнения вложенных table-responsive */
 }
 
-/* =========================================
-   Bug AC: ЦЕНТР ВНИМАНИЯ — сетка алертов.
-   Каждая плитка кликабельна, ведёт в нужную вкладку. Цвета и иконки
-   берутся из ответа backend `/api/admin/dashboard/attention-center`.
-   ========================================= */
-.attention-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 12px;
-}
-.attention-tile {
-    display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    padding: 14px 16px;
-    background: #fff;
-    border: 1px solid var(--border-color);
-    border-left: 4px solid #94a3b8;
-    border-radius: 10px;
-    cursor: pointer;
-    transition: transform .15s, box-shadow .15s, border-color .15s;
-}
-.attention-tile:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-}
-.attention-tile.severity-critical { border-left-color: #dc2626; background: #fef2f2; }
-.attention-tile.severity-warning  { border-left-color: #f59e0b; background: #fffbeb; }
-.attention-tile.severity-info     { border-left-color: #0ea5e9; background: #eff6ff; }
-.attention-tile.severity-ok       { border-left-color: #94a3b8; opacity: 0.6; }
-.attention-tile.severity-ok:hover { opacity: 1; }
-
-.attention-tile .at-icon {
-    width: 36px; height: 36px;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.7);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 16px;
-    flex-shrink: 0;
-}
-.attention-tile .at-body { flex: 1; min-width: 0; }
-.attention-tile .at-label {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-main);
-    margin-bottom: 2px;
-}
-.attention-tile .at-hint {
-    font-size: 11px;
-    color: var(--text-secondary);
-    line-height: 1.3;
-}
-.attention-tile .at-count {
-    font-size: 24px;
-    font-weight: 700;
-    line-height: 1;
-    margin-left: auto;
-    align-self: center;
-}
 
 /* =========================================
    Bug AC: БЫСТРЫЕ ДЕЙСТВИЯ — большие кнопки

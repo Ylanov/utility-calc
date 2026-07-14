@@ -24,35 +24,47 @@
                 </button>
             </div>
         </div>
-        <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:12px;">
-            <select id="registrySource" style="min-width:170px;">
+        <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:10px;">
+            <select id="registryPeriod" style="min-width:150px;" title="Расчётный месяц"></select>
+            <select id="registrySource" style="min-width:165px;">
                 <option value="">Все источники</option>
                 <option value="user">📱 QR-портал</option>
                 <option value="gsheets">📄 Google Sheets</option>
                 <option value="buffer">📄 Sheets (буфер)</option>
                 <option value="auto">🤖 Норматив/авто</option>
                 <option value="manual">✍️ Вручную</option>
+                <option value="saldo">₽ Сальдо 1С</option>
             </select>
-            <input type="text" id="registrySearch" placeholder="Поиск по ФИО или комнате…" style="flex:1; min-width:200px;">
+            <input type="text" id="registrySearch" placeholder="Поиск по ФИО или комнате…  ( / )" style="flex:1; min-width:200px;">
+            <label style="display:flex; align-items:center; gap:6px; font-size:12px; color:var(--text-secondary); white-space:nowrap; cursor:pointer;"
+                   title="Записи-носители долга/переплаты из «Выгрузить долги 1С» — без показаний. Скрыты, чтобы не шуметь.">
+                <input type="checkbox" id="registryShowSaldo"> сальдо 1С
+            </label>
             <button id="btnRegistryRefresh" class="icon-btn" title="Обновить"><i class="fa-solid fa-rotate-right"></i></button>
         </div>
+        <!-- Чипы-фильтры по статусу со счётчиками (заполняет registry.js) -->
+        <div id="registryStatusChips" style="display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px;"></div>
         <div class="table-responsive">
-            <table class="sticky-header-table" style="min-width:1080px;">
+            <table class="sticky-header-table" style="min-width:1020px;">
                 <thead><tr>
-                    <th style="width:115px;">Дата</th>
-                    <th style="width:125px;">Источник</th>
+                    <th style="width:112px;">Дата</th>
+                    <th style="width:122px;">Источник</th>
                     <th>ФИО / сопоставление</th>
-                    <th style="width:70px;">Комн.</th>
-                    <th style="width:130px;">Тариф</th>
-                    <th style="width:85px; text-align:right;">ГВС</th>
-                    <th style="width:85px; text-align:right;">ХВС</th>
-                    <th style="width:85px; text-align:right;">Свет</th>
-                    <th style="width:120px;">Статус</th>
-                    <th style="width:105px; text-align:right;">Сумма</th>
-                    <th style="width:125px; text-align:right;">Действия</th>
+                    <th style="width:66px;">Комн.</th>
+                    <th style="width:92px; text-align:right;" title="Показание · под ним Δ к прошлому месяцу">ГВС</th>
+                    <th style="width:92px; text-align:right;" title="Показание · под ним Δ к прошлому месяцу">ХВС</th>
+                    <th style="width:98px; text-align:right;" title="Показание · под ним Δ к прошлому месяцу">Свет</th>
+                    <th style="width:118px;">Статус</th>
+                    <th style="width:104px; text-align:right;">Сумма</th>
+                    <th style="width:122px; text-align:right;">Действия</th>
                 </tr></thead>
-                <tbody id="registryBody"><tr><td colspan="11" style="padding:30px; text-align:center; color:var(--text-secondary);">Загрузка…</td></tr></tbody>
+                <tbody id="registryBody"><tr><td colspan="10" style="padding:30px; text-align:center; color:var(--text-secondary);">Загрузка…</td></tr></tbody>
             </table>
+        </div>
+        <div id="registryPager" style="display:none; justify-content:flex-end; align-items:center; gap:10px; margin-top:10px; font-size:13px;">
+            <button id="registryPrev" class="icon-btn" title="Предыдущая страница"><i class="fa-solid fa-chevron-left"></i></button>
+            <span id="registryPageLabel" style="color:var(--text-secondary);"></span>
+            <button id="registryNext" class="icon-btn" title="Следующая страница"><i class="fa-solid fa-chevron-right"></i></button>
         </div>
     </div>
 
@@ -148,7 +160,7 @@
     <div class="card" style="margin: 0;">
         <div class="card-header" style="flex-direction:column; align-items:stretch; gap:14px;">
             <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap;">
-                <h3 style="margin:0;"><i class="fa-solid fa-chart-line" style="color:var(--primary-color); margin-right:8px;"></i> Реестр показаний</h3>
+                <h3 style="margin:0;"><i class="fa-solid fa-chart-line" style="color:var(--primary-color); margin-right:8px;"></i> Детальная таблица (по источникам)</h3>
                 <div class="header-controls" style="gap:6px;">
                     <div class="compact-upload">
                         <input type="file" id="importReadingsFile" accept=".xlsx, .xls">

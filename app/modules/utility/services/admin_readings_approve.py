@@ -4,7 +4,7 @@ from decimal import Decimal
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func, update, or_, and_
+from sqlalchemy import func, update, or_
 from sqlalchemy.orm import selectinload
 
 from app.modules.utility.models import User, MeterReading, Tariff, BillingPeriod, Adjustment, Room
@@ -69,56 +69,34 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
     user_ids = [row[1].id for row in drafts_rows]
 
     # Предыдущее approved показание считаем ПО ПАРЕ (user_id, room_id),
-    # а не по комнате в целом. Жилец может переехать в комнату, где уже
-    # есть история от прошлого жильца — в таком случае его первая подача
-    # на новом месте должна быть baseline, а не дельтой от чужих цифр.
+    # а не по комнате в целом (переезд: первая подача на новом месте =
+    # baseline, не дельта от чужих цифр).
     #
-    # Аудит #9 (класс «Капранов»): prev ОБЯЗАН быть meaningful и из ПРОШЛОГО
-    # периода. Раньше брали max(created_at) без фильтра флагов/периода → при
-    # авто-утверждении дельта массово считалась от синтетического нуля
-    # (AUTO_NORM/AUTO_GENERATED hot=0). Теперь: max(period_id) среди period_id <
-    # активного и НЕ из PREV_SKIP_FLAGS. ILIKE с escape точно зеркалит
-    # is_meaningful_prev (подстрочное вхождение флага). Единый предикат с
-    # approve_single / client_readings / save_manual_entry.
-    from app.modules.utility.services.reading_calculator import PREV_SKIP_FLAGS
+    # ЕДИНЫЙ канонический выбор prev (аудит 2026-07-14): раньше здесь был
+    # SQL-подзапрос max(period_id) с ILIKE-зеркалом PREV_SKIP_FLAGS — при
+    # ретроактивных периодах (id не отражает месяц) выбирал не тот prev и
+    # расходился с ручным вводом/квитанцией. Теперь: одним запросом тянем
+    # утверждённые показания пар + имя периода, prev выбирает pick_prev_pair
+    # (хронология имени, is_meaningful_prev — класс «Капранов», приоритет
+    # METER_REPLACEMENT текущего месяца).
+    from app.modules.utility.services.reading_calculator import pick_prev_pair
 
-    def _esc_like(s: str) -> str:
-        return s.replace("#", "##").replace("_", "#_").replace("%", "#%")
-
-    _flags_col = func.coalesce(MeterReading.anomaly_flags, "")
-    _meaningful = and_(*[
-        ~_flags_col.ilike(f"%{_esc_like(f)}%", escape="#") for f in PREV_SKIP_FLAGS
-    ])
-    subq_max_pid = select(
-        MeterReading.user_id,
-        MeterReading.room_id,
-        func.max(MeterReading.period_id).label("max_pid")
-    ).where(
-        MeterReading.user_id.in_(user_ids),
-        MeterReading.room_id.in_(room_ids),
-        MeterReading.is_approved.is_(True),
-        # ПРОШЛЫЙ период ИЛИ METER_REPLACEMENT текущего (новый baseline после
-        # замены счётчика; ветка инертна без замены).
-        or_(
-            MeterReading.period_id < active_period.id,
-            and_(MeterReading.period_id == active_period.id,
-                 _flags_col.ilike(f"%{_esc_like('METER_REPLACEMENT')}%", escape="#")),
-        ),
-        _meaningful,
-    ).group_by(MeterReading.user_id, MeterReading.room_id).subquery()
-
-    prev_rows = (await db.execute(
-        select(MeterReading).join(
-            subq_max_pid,
-            (MeterReading.user_id == subq_max_pid.c.user_id) &
-            (MeterReading.room_id == subq_max_pid.c.room_id) &
-            (MeterReading.period_id == subq_max_pid.c.max_pid)
-        # is_approved + meaningful на ВНЕШНЕМ select: при max_pid==active не
-        # зацепить черновик (не approved) или closing (METER_CLOSED не meaningful).
-        ).where(MeterReading.is_approved.is_(True), _meaningful)
-    )).scalars().all()
-    # Ключ — (user_id, room_id), значит та же пара нужна для lookup ниже.
-    prev_readings_map = {(r.user_id, r.room_id): r for r in prev_rows}
+    _cand_rows = (await db.execute(
+        select(MeterReading, BillingPeriod.name)
+        .join(BillingPeriod, BillingPeriod.id == MeterReading.period_id)
+        .where(
+            MeterReading.user_id.in_(user_ids),
+            MeterReading.room_id.in_(room_ids),
+            MeterReading.is_approved.is_(True),
+        )
+    )).all()
+    _by_pair: dict = {}
+    for _mr, _pname in _cand_rows:
+        _by_pair.setdefault((_mr.user_id, _mr.room_id), []).append((_mr, _pname))
+    prev_readings_map = {
+        pair: pick_prev_pair(rows, active_period.name)[0]
+        for pair, rows in _by_pair.items()
+    }
 
     # Загружаем корректировки (долги / скидки)
     adj_res = await db.execute(
@@ -363,40 +341,22 @@ async def approve_single(db: AsyncSession, reading_id: int, correction_data: App
     t = tariff_cache.get_effective_tariff(user=user, room=room) or \
         (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().first()
 
-    # Ищем предыдущее утверждённое ПО ЖИЛЬЦУ В ЭТОЙ КОМНАТЕ, не по комнате
-    # в целом. Иначе если до этого жильца в комнате кто-то уже подавал
-    # показания (старый жилец, GSHEETS_AUTO с огромными цифрами и т.п.),
-    # дельта посчитается относительно чужих значений — получатся миллионы.
-    #
-    # Аудит #3 (регрессия «Капранов»): prev ОБЯЗАН проходить is_meaningful_prev
-    # — иначе берётся синтетический AUTO_GENERATED/AUTO_NORM (hot=0) и дельта
-    # считается от нуля (250-0=250 м³ → десятки тыс. ₽). Берём кандидатов из
-    # ПРОШЛЫХ периодов (period_id < reading.period_id, как у клиента/manual —
-    # period_id=NULL INITIAL не годится в prev) по убыванию периода и берём
-    # первый meaningful. Единый предикат с client_readings/save_manual_entry.
-    from app.modules.utility.services.reading_calculator import is_meaningful_prev
-    # prev — из ПРОШЛОГО периода ИЛИ METER_REPLACEMENT ТЕКУЩЕГО (новый baseline
-    # после замены счётчика в том же периоде; вторая ветка инертна без замены —
-    # см. замену счётчика). order period_id desc → current-period replacement
-    # сверху; created_at desc — tiebreak.
-    _flags_one = func.coalesce(MeterReading.anomaly_flags, "")
-    _prev_candidates = (await db.execute(
-        select(MeterReading)
-        .where(
-            MeterReading.user_id == user.id,
-            MeterReading.room_id == room.id,
-            MeterReading.is_approved,
-            MeterReading.id != reading.id,
-            or_(
-                MeterReading.period_id < reading.period_id,
-                and_(MeterReading.period_id == reading.period_id,
-                     _flags_one.ilike("%METER_REPLACEMENT%")),
-            ),
-        )
-        .order_by(MeterReading.period_id.desc(), MeterReading.created_at.desc())
-        .limit(20)
-    )).scalars().all()
-    prev = next((r for r in _prev_candidates if is_meaningful_prev(r)), None)
+    # ЕДИНЫЙ выбор prev (аудит 2026-07-14): канонический find_prev_reading —
+    # хронология по ИМЕНИ периода (ретроактивные периоды с «неправильным» id
+    # больше не ломают дельту), is_meaningful_prev (регрессия «Капранов»:
+    # синтетический AUTO_* как prev = дельта от нуля → десятки тыс. ₽),
+    # приоритет METER_REPLACEMENT текущего месяца (замена счётчика). Жилец
+    # В ЭТОЙ КОМНАТЕ (не комната в целом — чужие цифры дают миллионы).
+    from app.modules.utility.services.reading_calculator import find_prev_reading
+    prev = None
+    if reading.period_id is not None:
+        _target_period = await db.get(BillingPeriod, reading.period_id)
+        if _target_period is not None:
+            prev, _prev_any, _hist = await find_prev_reading(
+                db, user_id=user.id, room_id=room.id,
+                target_period_name=_target_period.name,
+                exclude_id=reading.id,
+            )
 
     # BASELINE — первая в жизни ЖИЛЬЦА подача в этой комнате.
     # Счётчики уже могут быть накопленные (десятки тысяч за годы), и

@@ -84,7 +84,7 @@ export function adminDashboardFlow(data) {
   const params = { headers: authHeaders(data.adminToken), tags: { name: "admin-dashboard" } };
   const summaryParams = { headers: authHeaders(data.adminToken), tags: { name: "admin-summary" } };
 
-  check(http.get(`${BASE_URL}/api/admin/dashboard`, params), {
+  check(http.get(`${BASE_URL}/api/admin/system-health`, params), {
     "dashboard status is 200": (r) => r.status === 200,
   });
   check(http.get(`${BASE_URL}/api/admin/summary`, summaryParams), {

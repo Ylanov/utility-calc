@@ -91,9 +91,38 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Инициализируем 2FA логику (глобальная модалка находится в admin.html)
     TotpSetup.init();
 
+    // Глобальный баннер здоровья системы (диск/релей ГИС/1С/beat) — виден на
+    // любой вкладке. Обновление раз в 5 минут (сторож пишет каждые 10).
+    loadSystemHealth();
+    setInterval(loadSystemHealth, 5 * 60 * 1000);
+
     // Запускаем роутинг в самом конце, чтобы интерфейс загрузился
     setupRouting();
 });
+
+async function loadSystemHealth() {
+    const box = document.getElementById('systemHealthBanner');
+    if (!box) return;
+    const escT = (s) => String(s ?? '').replace(/[&<>"']/g,
+        c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    try {
+        const d = await api.get('/admin/system-health');
+        const alerts = d.alerts || [];
+        if (!alerts.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+        const hasCrit = alerts.some(a => a.level === 'crit');
+        const bd = hasCrit ? '#ef4444' : '#f59e0b';
+        const bg = hasCrit ? 'rgba(239,68,68,0.10)' : 'rgba(245,158,11,0.10)';
+        const rows = alerts.map(a =>
+            `<div style="margin:2px 0;">${a.level === 'crit' ? '🛑' : '⚠️'} ${escT(a.message)}</div>`
+        ).join('');
+        box.innerHTML =
+            `<div style="border:1px solid ${bd}; background:${bg}; border-radius:10px; padding:10px 14px; font-size:13px;">` +
+            `<div style="font-weight:700; margin-bottom:4px;">${hasCrit ? '🛑' : '⚠️'} Система требует внимания</div>${rows}</div>`;
+        box.style.display = 'block';
+    } catch (e) {
+        box.style.display = 'none'; // вспомогательный элемент — тихо
+    }
+}
 
 function setupHeader() {
     // Выводим имя текущего админа в шапку
@@ -286,21 +315,18 @@ function setupRouting() {
 function handleRoute() {
     const hash = window.location.hash.substring(1);
 
-    // ИСПРАВЛЕНИЕ: дефолтная вкладка — dashboard (ранее readings).
-    // Дашборд — первое что видит администратор при входе: KPI, метрики, журнал.
-    const defaultTab = 'dashboard';
+    // Дашборд ВЫРЕЗАН (2026-07-14) — главный экран админа = «Реестр показаний».
+    const defaultTab = 'readings';
 
-    // Дашборд объединён со сверкой показаний; ручной ввод, тарифы и сводка
-    // объединены в секцию "Операции" (tools). Старые ссылки перенаправляем
-    // для обратной совместимости.
     // ВАЖНО: при добавлении новой вкладки — обязательно добавить её сюда,
-    // иначе clickByHash сделает fallback на dashboard.
+    // иначе clickByHash сделает fallback на readings.
     // 'audit'/'errors' валидны, но БЕЗ кнопок в навбаре — открываются из
     // Операции → Система (2026-07-14). 'certs' удалён (Справки вырезаны).
-    const validTabs = ['dashboard', 'readings', 'tools', 'housing', 'users', 'passport', 'debts', 'safety', 'audit', 'tickets', 'errors'];
+    const validTabs = ['readings', 'tools', 'housing', 'users', 'passport', 'debts', 'safety', 'audit', 'tickets', 'errors'];
     let tabToLoad = validTabs.includes(hash) ? hash : defaultTab;
-    // «Безопасность» объединена с «Ошибки» (2026-06-09) — старый хеш ведёт туда.
+    // Старые хеши — обратная совместимость закладок/дип-линков.
     if (hash === 'security') tabToLoad = 'errors';
+    if (hash === 'dashboard') tabToLoad = 'readings';
     if (hash === 'manual' || hash === 'tariffs' || hash === 'accountant') tabToLoad = 'tools';
 
     switchTab(tabToLoad);
@@ -377,14 +403,7 @@ async function initModule(tabId) {
     try {
         switch (tabId) {
             // Дашборд — объединённый экран: KPI + журнал действий + реестр показаний.
-            // Инициализируем оба модуля: DashboardModule (KPI, audit) и ReadingsModule (таблица, фильтры, импорт).
-            case 'dashboard':
-                if (!loadedModules.dashboard) {
-                    const { DashboardModule } = await import('./modules/dashboard.js');
-                    loadedModules.dashboard = DashboardModule;
-                }
-                loadedModules.dashboard.init();
-                break;
+            // Инициализируем модули вкладки: ReadingsModule (детальная таблица), GSheets, Registry, ExcelReadings.
             // «Реестр показаний» вынесен из дашборда в отдельную вкладку
             // (2026-06-09): все показания MeterReading из всех источников.
             case 'readings':
@@ -618,10 +637,6 @@ function refreshModuleData(tabId) {
 
     switch (tabId) {
         // При возврате на дашборд — обновляем KPI и виджет GSheets.
-        case 'dashboard':
-            if (typeof mod.loadKPI === 'function') mod.loadKPI();
-            if (typeof mod.loadGsheetsWidget === 'function') mod.loadGsheetsWidget();
-            break;
         // «Реестр показаний» — отдельная вкладка (вынесен из дашборда).
         // Объединена с буфером Google Sheets — обновляем и его.
         case 'readings':

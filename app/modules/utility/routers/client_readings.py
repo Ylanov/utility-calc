@@ -309,62 +309,23 @@ async def perform_reading_submission(
             ),
         )
 
-    # 3. История показаний ЖИЛЬЦА В ЭТОЙ КОМНАТЕ (для расчёта расхода).
-    # Не по комнате в целом — если в комнате были показания от прошлого
-    # жильца (переезд, GSHEETS_AUTO с чужими большими цифрами и т.п.),
-    # дельта посчиталась бы относительно чужих значений и дала миллионы.
-    # Первая подача жильца в конкретной комнате = baseline (cost=0).
-    #
-    # ИСПРАВЛЕНИЕ (apr 2026): раньше эти два запроса выполнялись через
-    # asyncio.gather на одной AsyncSession — SQLAlchemy AsyncSession НЕ
-    # concurrent-safe (одна connection в session, нельзя посылать два
-    # параллельных query). Под нагрузкой давало intermittent ошибки
-    # "another operation is in progress". Теперь — последовательно.
-    # ИСПРАВЛЕНИЕ (may 2026): order_by period_id.desc(), а НЕ created_at.
-    # Жильцы импортируют исторические подачи задним числом — created_at
-    # не отражает биллинговую хронологию. Если жилец в мае подал за
-    # февраль (через гугл-таблицу), его reading получает свежий
-    # created_at, но логически идёт ПЕРЕД апрельским. По period_id всё
-    # выстраивается правильно: предыдущий — это предыдущий БИЛЛИНГОВЫЙ
-    # период, не предыдущий по дате создания записи в БД.
-    history_res = await db.execute(
-        select(MeterReading)
-        .where(
-            MeterReading.user_id == user.id,
-            MeterReading.room_id == user.room_id,
-        )
-        .order_by(MeterReading.period_id.desc())
-        .limit(12)
-    )
+    # 3. Корректировки периода (долги/скидки).
     adj_res = await db.execute(
         select(Adjustment.account_type, func.sum(Adjustment.amount))
         .where(Adjustment.user_id == user.id, Adjustment.period_id == period.id)
         .group_by(Adjustment.account_type)
     )
 
-    readings = history_res.scalars().all()
     adj_map = {a[0]: (a[1] or Decimal("0.00")) for a in adj_res.all()}
 
-    # 4. Предыдущие реальные показания. period_id < period.id — строго
-    # хронологически предыдущий период. readings уже отсортированы
-    # period_id.desc(), так что first match — самый свежий из прошлых.
-    from app.modules.utility.services.reading_calculator import is_meaningful_prev
-    # Аудит (замена счётчика): prev — из ПРОШЛОГО периода ИЛИ METER_REPLACEMENT
-    # ТЕКУЩЕГО (новый baseline после замены счётчика в этом же периоде). Без
-    # второй ветки подача в том же периоде после замены считалась бы от старого
-    # большого показания → «счётчик упал»/блок. Ветка инертна без замены.
-    def _prev_ok(r):
-        if not (r.is_approved and r.period_id and is_meaningful_prev(r)):
-            return False
-        if r.period_id < period.id:
-            return True
-        return (r.period_id == period.id
-                and "METER_REPLACEMENT" in (r.anomaly_flags or ""))
-    prev_latest = next((r for r in readings if _prev_ok(r)), None)
-    prev_any = next(
-        (r for r in readings
-         if r.is_approved and r.period_id and r.period_id < period.id),
-        None
+    # 4. Предыдущие реальные показания — ЕДИНЫЙ канонический выбор
+    # (аудит 2026-07-14): find_prev_reading — хронология по ИМЕНИ периода
+    # (ретроактивные периоды не ломают дельту), is_meaningful_prev,
+    # приоритет METER_REPLACEMENT текущего месяца (замена счётчика).
+    from app.modules.utility.services.reading_calculator import find_prev_reading
+    prev_latest, prev_any, _hist = await find_prev_reading(
+        db, user_id=user.id, room_id=user.room_id,
+        target_period_name=period.name,
     )
 
     zero = Decimal("0.000")

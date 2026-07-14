@@ -25,7 +25,7 @@ k6 run load_tests/k6_admin_resident_mix.js \
 This script stresses the hottest read-only routes:
 
 - `/api/token`
-- `/api/admin/dashboard`
+- `/api/admin/system-health`
 - `/api/admin/summary`
 - `/api/admin/readings`
 - `/api/users`

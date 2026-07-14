@@ -40,7 +40,23 @@ const SRC = {
   buffer:  { t: '📄 Sheets (буфер)', c: '#92400e', b: '#fef3c7' },
   auto:    { t: '🤖 Норматив/авто',  c: '#6b21a8', b: '#f3e8ff' },
   manual:  { t: '✍️ Вручную',        c: '#475569', b: '#f1f5f9' },
+  saldo:   { t: '₽ Сальдо 1С',       c: '#0e7490', b: '#cffafe' },
 };
+
+// Число колонок таблицы — ЕДИНСТВЕННАЯ точка правды для colspan
+// (раньше «11» было захардкожено в 6 местах и ломалось при смене колонок).
+const COLS = 10;
+
+// Чипы-фильтры по статусу (порядок = порядок отображения).
+const CHIPS = [
+  ['', 'Все'],
+  ['draft', 'Черновики'],
+  ['pending', 'В ожидании'],
+  ['conflict', 'Конфликты'],
+  ['unmatched', 'Не найдены'],
+  ['auto_approved', 'Авто-утв.'],
+  ['approved', 'Утверждено'],
+];
 
 function badge(meta, fallback) {
   var m = meta || { t: fallback || '—', c: '#475569', b: '#f1f5f9' };
@@ -73,7 +89,7 @@ function rowTint(r) {
 export const RegistryModule = {
   isInitialized: false,
   dom: {},
-  state: { source: '', search: '', page: 1, limit: 50 },
+  state: { source: '', status: '', search: '', period_id: null, show_saldo: false, page: 1, limit: 50 },
 
   init() {
     this.cacheDom();
@@ -89,12 +105,31 @@ export const RegistryModule = {
       search: document.getElementById('registrySearch'),
       total: document.getElementById('registryTotal'),
       refresh: document.getElementById('btnRegistryRefresh'),
+      period: document.getElementById('registryPeriod'),
+      chips: document.getElementById('registryStatusChips'),
+      showSaldo: document.getElementById('registryShowSaldo'),
+      pager: document.getElementById('registryPager'),
+      pagePrev: document.getElementById('registryPrev'),
+      pageNext: document.getElementById('registryNext'),
+      pageLabel: document.getElementById('registryPageLabel'),
     };
   },
 
   bind() {
     this.dom.src?.addEventListener('change', () => { this.state.source = this.dom.src.value; this.state.page = 1; this.load(); });
+    this.dom.period?.addEventListener('change', () => { this.state.period_id = this.dom.period.value || null; this.state.page = 1; this.load(); });
+    this.dom.showSaldo?.addEventListener('change', () => { this.state.show_saldo = !!this.dom.showSaldo.checked; this.state.page = 1; this.load(); });
     this.dom.refresh?.addEventListener('click', () => this.load());
+    this.dom.pagePrev?.addEventListener('click', () => { if (this.state.page > 1) { this.state.page--; this.load(); } });
+    this.dom.pageNext?.addEventListener('click', () => { this.state.page++; this.load(); });
+    // Чипы статусов — делегировано на контейнер.
+    this.dom.chips?.addEventListener('click', (e) => {
+      var chip = e.target.closest('[data-reg-chip]');
+      if (!chip) return;
+      this.state.status = chip.dataset.regChip || '';
+      this.state.page = 1;
+      this.load();
+    });
     // Делегированный клик: инлайн-правка ячеек счётчиков + история по ФИО.
     this.dom.body?.addEventListener('click', (e) => this._onBodyClick(e));
     let t = null;
@@ -106,21 +141,64 @@ export const RegistryModule = {
 
   async load() {
     if (!this.dom.body) return;
-    this.dom.body.innerHTML = '<tr><td colspan="11" style="padding:30px; text-align:center; color:var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка…</td></tr>';
+    this.dom.body.innerHTML = '<tr><td colspan="' + COLS + '" style="padding:30px; text-align:center; color:var(--text-secondary);"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка…</td></tr>';
     var q = '/admin/registry?page=' + this.state.page + '&limit=' + this.state.limit +
       (this.state.source ? '&source=' + encodeURIComponent(this.state.source) : '') +
+      (this.state.status ? '&status=' + encodeURIComponent(this.state.status) : '') +
+      (this.state.period_id ? '&period_id=' + encodeURIComponent(this.state.period_id) : '') +
+      (this.state.show_saldo ? '&show_saldo=true' : '') +
       (this.state.search ? '&search=' + encodeURIComponent(this.state.search) : '');
     let data;
     try { data = await api.get(q); }
-    catch (e) { this.dom.body.innerHTML = '<tr><td colspan="11" style="padding:24px; text-align:center; color:var(--danger-color);">Ошибка: ' + esc(e.message || e) + '</td></tr>'; return; }
+    catch (e) { this.dom.body.innerHTML = '<tr><td colspan="' + COLS + '" style="padding:24px; text-align:center; color:var(--danger-color);">Ошибка: ' + esc(e.message || e) + '</td></tr>'; return; }
+    this.renderControls(data);
     this.render(data);
+  },
+
+  // Период-селектор + чипы статусов + пагинация.
+  renderControls(data) {
+    if (this.dom.period && data.periods && this.dom.period.options.length !== data.periods.length) {
+      this.dom.period.innerHTML = data.periods.map(function (p) {
+        return '<option value="' + p.id + '"' + (p.id === data.period_id ? ' selected' : '') + '>' +
+          esc(p.name) + (p.is_active ? ' · актив' : '') + '</option>';
+      }).join('');
+    } else if (this.dom.period && data.period_id != null) {
+      this.dom.period.value = String(data.period_id);
+    }
+
+    if (this.dom.chips) {
+      var st = this.state.status;
+      var counts = data.counts || {};
+      var totalAll = Object.values(counts).reduce(function (a, b) { return a + b; }, 0);
+      this.dom.chips.innerHTML = CHIPS.map(function (c) {
+        var key = c[0], label = c[1];
+        var n = key === '' ? totalAll : (counts[key] || 0);
+        if (key !== '' && !n && st !== key) return '';   // пустые чипы не показываем
+        var active = (st === key);
+        var meta = STATUS[key];
+        var color = active ? '#fff' : (meta ? meta.c : 'var(--text-secondary)');
+        var bg = active ? 'var(--primary-color)' : (meta ? meta.b : 'var(--bg-secondary, #f1f5f9)');
+        return '<button type="button" data-reg-chip="' + key + '" style="border:none; cursor:pointer; ' +
+          'padding:4px 10px; border-radius:14px; font-size:12px; font-weight:600; background:' + bg + '; color:' + color + ';">' +
+          esc(label) + ' <span style="opacity:.75;">' + n + '</span></button>';
+      }).join('');
+    }
+
+    if (this.dom.pager) {
+      var pages = Math.max(1, Math.ceil((data.total || 0) / this.state.limit));
+      if (this.state.page > pages) this.state.page = pages;
+      this.dom.pager.style.display = pages > 1 ? 'flex' : 'none';
+      if (this.dom.pageLabel) this.dom.pageLabel.textContent = 'стр. ' + (data.page || 1) + ' из ' + pages;
+      if (this.dom.pagePrev) this.dom.pagePrev.disabled = (data.page || 1) <= 1;
+      if (this.dom.pageNext) this.dom.pageNext.disabled = (data.page || 1) >= pages;
+    }
   },
 
   render(data) {
     var items = (data && data.items) || [];
     if (this.dom.total) this.dom.total.textContent = (data.period ? 'Период «' + data.period + '» · ' : '') + 'всего: ' + (data.total || 0);
     if (!items.length) {
-      this.dom.body.innerHTML = '<tr><td colspan="11" style="padding:30px; text-align:center; color:var(--text-secondary);">Нет записей по фильтру.</td></tr>';
+      this.dom.body.innerHTML = '<tr><td colspan="' + COLS + '" style="padding:30px; text-align:center; color:var(--text-secondary);">Нет записей по фильтру.</td></tr>';
       return;
     }
     this.dom.body.innerHTML = items.map((r) => {
@@ -153,10 +231,13 @@ export const RegistryModule = {
       }
 
       var sum = (r.sum != null && r.sum !== 0) ? Number(r.sum).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₽' : '—';
-      var canApprove = (r.status === 'draft' || r.status === 'pending' || r.status === 'auto_approved');
-      var canReject = (r.row_type === 'gsheets')
+      // Сальдо-заглушки 1С (носители долга без показаний): утверждать/
+      // отклонять/править нечего — read-only строка.
+      var isSaldo = (r.source === 'saldo');
+      var canApprove = !isSaldo && (r.status === 'draft' || r.status === 'pending' || r.status === 'auto_approved');
+      var canReject = !isSaldo && ((r.row_type === 'gsheets')
         ? (r.status !== 'approved' && r.status !== 'rejected')
-        : (r.status === 'draft');
+        : (r.status === 'draft'));
       var act = '';
       if (canApprove) {
         act += '<button class="action-btn success-btn" style="padding:3px 8px; font-size:11px;" data-reg-approve data-rt="' + r.row_type + '" data-id="' + r.id + '" title="Утвердить как есть"><i class="fa-solid fa-check"></i></button> ';
@@ -174,7 +255,7 @@ export const RegistryModule = {
       // показанием этого жильца в активный месяц (тот же путь, что «Ручной
       // ввод») — админ правит всё из одного места.
       var rawAttr = function (v) { return v == null ? '' : esc(String(v)); };
-      var editReading = (r.row_type === 'reading' && r.user_id != null);
+      var editReading = (r.row_type === 'reading' && r.user_id != null && !isSaldo);
       var editBuffer = (r.row_type === 'gsheets' && r.status !== 'approved' && r.status !== 'rejected');
       var bufMuid = (editBuffer && r.matched && r.matched.user_id) ? r.matched.user_id : null;
       var editable = editReading || editBuffer;
@@ -184,26 +265,39 @@ export const RegistryModule = {
           (bufMuid ? ' data-muid="' + bufMuid + '"' : '') +
           ' data-hot="' + rawAttr(r.hot) + '" data-cold="' + rawAttr(r.cold) + '" data-elect="' + rawAttr(r.elect) + '"'
         : '';
-      var meterTd = function (field, val) {
+
+      // Δ к прошлому месяцу — мелкой строкой под значением (зелёная норма /
+      // серый ноль; отрицательная — красным, счётчик не может уменьшаться).
+      var deltaHtml = function (d) {
+        if (d == null) return '';
+        var v = Number(d);
+        var col = v < 0 ? '#dc2626' : (v === 0 ? '#9ca3af' : '#16a34a');
+        var txt = (v > 0 ? '+' : '') + v.toLocaleString('ru-RU', { maximumFractionDigits: 2 });
+        return '<br><span style="font-size:10px; color:' + col + ';" title="Расход за месяц (к прошлому показанию)">Δ ' + txt + '</span>';
+      };
+      var meterTd = function (field, val, delta) {
         // Свет у буфера редактируем только при сопоставленном жильце.
         var cellEditable = editable && !(editBuffer && field === 'elect' && !bufMuid);
         var hint = (editBuffer && field === 'elect')
           ? 'В гугл-форме света нет — значение запишется показанием жильца в активный месяц'
           : 'Нажми, чтобы изменить показание';
+        var inner = fmtNum(val) + deltaHtml(delta);
         return cellEditable
-          ? '<td class="reg-edit" data-field="' + field + '" data-raw="' + rawAttr(val) + '" style="text-align:right; font-family:monospace; cursor:text;" title="' + hint + '">' + fmtNum(val) + '</td>'
-          : '<td style="text-align:right; font-family:monospace;">' + fmtNum(val) + '</td>';
+          ? '<td class="reg-edit" data-field="' + field + '" data-raw="' + rawAttr(val) + '" style="text-align:right; font-family:monospace; cursor:text; line-height:1.25;" title="' + hint + '">' + inner + '</td>'
+          : '<td style="text-align:right; font-family:monospace; line-height:1.25;">' + inner + '</td>';
       };
+
+      // Тариф из колонки переехал в тултип ФИО (меньше шума в таблице).
+      var fioTitle = r.tariff ? ' title="Тариф: ' + esc(r.tariff) + '"' : '';
 
       return '<tr style="' + rowTint(r) + '"' + trAttrs + '>' +
         '<td style="font-size:12px; color:var(--text-secondary); white-space:nowrap;">' + esc(when) + '</td>' +
         '<td>' + badge(SRC[r.source], r.source) + '</td>' +
-        '<td>' + fioCell + '</td>' +
+        '<td' + fioTitle + '>' + fioCell + '</td>' +
         '<td style="font-size:13px;">' + esc(r.room || '—') + '</td>' +
-        '<td style="font-size:11px; color:var(--text-secondary);">' + esc(r.tariff || '—') + '</td>' +
-        meterTd('hot', r.hot) +
-        meterTd('cold', r.cold) +
-        meterTd('elect', r.elect) +
+        meterTd('hot', r.hot, r.delta_hot) +
+        meterTd('cold', r.cold, r.delta_cold) +
+        meterTd('elect', r.elect, r.delta_elect) +
         '<td>' + statusCell + '</td>' +
         '<td style="text-align:right; color:#15803d; font-weight:600; white-space:nowrap;">' + sum + '</td>' +
         '<td style="text-align:right; white-space:nowrap;">' + act + '</td>' +
@@ -327,7 +421,7 @@ export const RegistryModule = {
     var detail = document.createElement('tr');
     detail.className = 'reg-hist-row';
     detail.dataset.uid = String(uid);
-    detail.innerHTML = '<td colspan="11" style="background:#fafafa; padding:10px 16px;"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка истории…</td>';
+    detail.innerHTML = '<td colspan="' + COLS + '" style="background:#fafafa; padding:10px 16px;"><i class="fa-solid fa-spinner fa-spin"></i> Загрузка истории…</td>';
     tr.after(detail);
     try {
       var data = await api.get('/admin/residents/' + uid + '/finance-detail?history_periods=6');

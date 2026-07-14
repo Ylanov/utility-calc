@@ -145,10 +145,9 @@
             </a>
 
             <nav class="header-tabs">
-                <!-- Дашборд + сверка показаний объединены: KPI+реестр+журнал
-                     действий в одном экране. -->
-                <button class="tab-btn active" data-tab="dashboard"><i class="fa-solid fa-gauge-high"></i><span>Дашборд</span></button>
-                <button class="tab-btn" data-tab="readings" title="Реестр показаний — все источники (QR/приложение/Google Sheets), фильтры и аномалии"><i class="fa-solid fa-chart-line"></i><span>Реестр показаний</span></button>
+                <!-- Дашборд ВЫРЕЗАН (2026-07-14, решение пользователя) —
+                     главный экран теперь «Реестр показаний». -->
+                <button class="tab-btn active" data-tab="readings" title="Реестр показаний — все источники (QR/приложение/Google Sheets), фильтры и аномалии"><i class="fa-solid fa-chart-line"></i><span>Реестр показаний</span></button>
                 <button class="tab-btn" data-tab="tools"><i class="fa-solid fa-sliders"></i><span>Операции</span></button>
                 <button class="tab-btn" data-tab="debts"><i class="fa-solid fa-file-invoice-dollar"></i><span>Долги 1С</span></button>
                 <button class="tab-btn" data-tab="housing"><i class="fa-solid fa-city"></i><span>Жилфонд</span></button>
@@ -208,6 +207,9 @@
         <!-- CONTENT AREA.
              Дашборд и все остальные вкладки теперь подгружаются динамически через
              /components/admin/tab_*.html — встроенной вкладки больше нет. -->
+        <!-- Глобальный баннер здоровья системы (диск/релей ГИС/1С/beat) —
+             виден на ЛЮБОЙ вкладке; рендерит app.js::loadSystemHealth. -->
+        <div id="systemHealthBanner" style="display:none; margin:10px 16px 0;"></div>
         <main class="content-area" id="content-area"></main>
     </div>
 
