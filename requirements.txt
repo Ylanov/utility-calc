@@ -20,7 +20,7 @@ pydantic-settings==2.14.2   # чинит GHSA-4xgf-cpjx-pc3j (pip-audit)
 # --- Authentication & Security ---
 python-multipart==0.0.31   # чинит CVE-2026-53540 (+ ранее -40347/-42561)
 passlib[bcrypt]==1.7.4
-bcrypt==4.1.2             # 4.x совместима с Python 3.14 (есть cp314-колёса)
+bcrypt==5.0.0             # 4.x совместима с Python 3.14 (есть cp314-колёса)
 python-jose[cryptography]==3.5.0
 cryptography==48.0.1    # чинит GHSA-537c-gmf6-5ccf (+ ранее PYSEC-2026-35/-36)
 pyotp==2.9.0
