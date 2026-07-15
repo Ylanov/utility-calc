@@ -44,3 +44,14 @@ jobs:
       - name: tailscale
         run: |
           tailscale status --peers=false 2>/dev/null | head -3 | tee -a "$GITHUB_STEP_SUMMARY" || echo "tailscale: нет CLI/прав"
+
+      - name: статика деплоя (маркеры свежего фронта)
+        # /opt/utility_calc/static — то, что реально раздаёт nginx (docker cp из
+        # образа на деплое). Проверяем маркеры последнего релиза.
+        run: |
+          S=/opt/utility_calc/static
+          for f in js/modules/manual_entry.js components/admin/tab_readings.html; do
+            if [ -f "$S/$f" ]; then echo "OK  $f" ; else echo "НЕТ $f"; fi
+          done | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "btnManualEntry в tab_readings: $(grep -c btnManualEntry "$S/components/admin/tab_readings.html" 2>/dev/null || echo 0)" | tee -a "$GITHUB_STEP_SUMMARY"
+          [ -f "$S/js/modules/manual.js" ] && echo "⚠ старый manual.js ЕЩЁ на месте" | tee -a "$GITHUB_STEP_SUMMARY" || echo "старый manual.js удалён ✓" | tee -a "$GITHUB_STEP_SUMMARY"
