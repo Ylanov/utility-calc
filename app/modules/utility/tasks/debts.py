@@ -108,6 +108,16 @@ def onec_autopublish_task(batch_id: str | None = None) -> dict:
             async with _mk() as db:
                 result = await publish_onec_debts(db, guard=True)
                 await record_autopublish_status(db, result)
+                if result.get("ok"):
+                    # Контроль 1С↔ГИС: 1С-сторона обновилась. Ленивый импорт —
+                    # financier импортирует tasks, обратный module-level дал бы цикл.
+                    try:
+                        from app.modules.utility.routers.financier._shared import (
+                            refresh_control_snapshot,
+                        )
+                        await refresh_control_snapshot(db)
+                    except Exception:
+                        logger.exception("[onec_autopublish] контроль-снапшот не пересчитался")
                 return result
         finally:
             await _engine.dispose()

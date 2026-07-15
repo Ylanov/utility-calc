@@ -70,6 +70,7 @@ export const DebtsModule = {
         this.loadUsers();
         this.loadImportHistory();
         this.loadGisgmpStatus();
+        this.loadControl();
         this.loadOnecStatus();
         this.loadStagedStatus();
         // Авто-обновление статуса ГИС ГМП раз в 15с — «живой» статус (тикает возраст
@@ -194,16 +195,92 @@ export const DebtsModule = {
             if (pl.length) parts.push(`<span style="color:#d97706;">⏳ В очереди для релея: ${pl.join(', ')} — применится на ближайшем опросе (~2 мин)</span>`);
             try {
                 const act = await api.get('/financier/gisgmp/actualize-status');
-                if (act && act.total) {
+                // Завершённый прогон старше суток не показываем — иначе старая
+                // ошибка «висит» в карточке без возможности убрать.
+                const finAgeH = act && act.finished && act.finished_at
+                    ? (Date.now() - new Date(act.finished_at).getTime()) / 3600000 : 0;
+                if (act && act.total && !(act.finished && finAgeH > 24)) {
                     const pct = Math.round((act.done || 0) / act.total * 100);
-                    const st = act.running ? '⏳ отправка' : (act.finished ? '📨 отправлено — итог в «Истории актуализаций»' : 'в очереди');
-                    parts.push(`<span style="color:#2563eb;">Актуализация: <b>${st}</b> — ${act.done || 0} из ${act.total} (${pct}%, ok ${act.ok || 0}, ошибок ${act.fail || 0})</span>`);
+                    const err = act.finished && act.message && /ошибк/i.test(act.message);
+                    const st = act.running ? '⏳ отправка'
+                        : (act.finished ? (err ? `❌ ${act.message}` : '📨 отправлено — итог в «Истории актуализаций»') : 'в очереди');
+                    parts.push(`<span style="color:${err ? '#dc2626' : '#2563eb'};">Актуализация: <b>${st}</b> — ${act.done || 0} из ${act.total} (${pct}%, ok ${act.ok || 0}, ошибок ${act.fail || 0})</span>`);
                 }
             } catch (e) { /* нет очереди актуализации — норм */ }
             parts.push(`<span style="color:#9ca3af; font-size:11px;">🔄 обновлено ${new Date().toLocaleTimeString('ru-RU')} · авто-обновление каждые 15с</span>`);
             box.innerHTML = parts.join('<br>');
         } catch (e) {
             box.textContent = 'Не удалось загрузить статус ГИС ГМП.';
+        }
+    },
+
+    // ─── Контроль 1С↔ГИС: светофор сверки ──────────────────────────────────
+    // 1С — эталон долгов; ГИС подтягиваем к нему. Снапшот пересчитывают сбор
+    // ГИС и выгрузка 1С; кнопка «Пересчитать» дёргает ?refresh=true.
+    async loadControl(refresh = false) {
+        const box = document.getElementById('gis1cControl');
+        if (!box) return;
+        try {
+            const c = await api.get(`/financier/gisgmp/control${refresh ? '?refresh=true' : ''}`);
+            if (!c || !c.matched) { box.innerHTML = ''; return; }
+            const f = c.flags || {};
+            const nOk = f.ok || 0;
+            const nOver = (f.gis_more || 0) + (f.only_gis || 0);   // ГИС завышен → актуализация
+            const nUnder = f.c1_more || 0;                          // ГИС занижен → дотянуть
+            const nAbsent = f.only_1c || 0;                         // в ГИС нет вовсе
+            const tile = (icon, num, label, color, hint) =>
+                `<div title="${esc(hint)}" style="flex:1 1 120px; min-width:120px; text-align:center; padding:8px 6px; border-radius:8px; background:${color}14; border:1px solid ${color}44;">` +
+                `<div style="font-size:20px; font-weight:700; color:${color};">${icon} ${num}</div>` +
+                `<div style="font-size:11px; color:var(--text-secondary); margin-top:2px;">${label}</div></div>`;
+            const topRows = (c.top || []).map(t =>
+                `<tr><td style="padding:2px 8px 2px 0;">${esc(t.fio || '')}</td>` +
+                `<td style="text-align:right; padding:2px 8px;">${fmtMoney(t.c1)}</td>` +
+                `<td style="text-align:right; padding:2px 8px;">${fmtMoney(t.gis)}</td>` +
+                `<td style="text-align:right; padding:2px 0; color:${(t.delta || 0) > 0 ? '#dc2626' : '#d97706'};">${(t.delta || 0) > 0 ? '+' : ''}${fmtMoney(t.delta)}</td></tr>`
+            ).join('');
+            const namesakes = c.namesakes || [];
+            box.innerHTML =
+                `<div style="border:1px solid var(--border-color,#e5e7eb); border-radius:10px; padding:10px 12px;">` +
+                `<div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:6px; margin-bottom:8px;">` +
+                `<b style="font-size:13px;">🚦 Контроль 1С↔ГИС</b>` +
+                `<span style="font-size:11px; color:#9ca3af;">сверка от ${c.ts ? new Date(c.ts).toLocaleString('ru-RU') : '—'} · сопоставлено ${c.matched}` +
+                ` · <a href="#" id="gis1cControlRefresh" style="color:#2563eb;">пересчитать</a></span></div>` +
+                `<div style="display:flex; gap:8px; flex-wrap:wrap;">` +
+                tile('✅', nOk, 'совпадает', '#16a34a', 'Суммы 1С и ГИС равны — всё правильно') +
+                tile('🔺', nOver, 'ГИС завышен', '#dc2626', 'В ГИС начислено больше, чем в 1С — жми «Актуализация → Актуализировать расхождения»: реестр аннулирует лишнее') +
+                tile('🔻', nUnder, 'ГИС занижен', '#d97706', 'В ГИС меньше, чем в 1С — «Актуализация → Дотянуть расхождения» (глубокий переопрос) либо 1С ещё не довыгрузил в ГИС') +
+                tile('⬜', nAbsent, 'нет в ГИС', '#6b7280', 'Человек есть в 1С, а в реестре ГИС его начислений нет — выгрузка 1С→ГИС не прошла') +
+                tile('👻', c.orphans || 0, 'нет в базе', '#7c3aed', 'Есть в 1С/ГИС, но нет в базе жильцов — «Сверки → Создать отсутствующих в базе»') +
+                `</div>` +
+                `<div style="font-size:12px; color:var(--text-secondary); margin-top:8px;">` +
+                `Итого: 1С <b>${fmtMoney(c.sum_1c)} ₽</b> · ГИС <b>${fmtMoney(c.sum_gis)} ₽</b> · разница ` +
+                `<b style="color:${Math.abs(c.delta || 0) < 1 ? '#16a34a' : ((c.delta || 0) > 0 ? '#dc2626' : '#d97706')};">${(c.delta || 0) > 0 ? '+' : ''}${fmtMoney(c.delta)} ₽</b>` +
+                `${(c.delta || 0) < -1 ? ' (ГИС недовыгружен — эталон всё равно 1С)' : ''}</div>` +
+                ((nOver || nUnder) ?
+                    `<div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">` +
+                    (nOver ? `<button id="gis1cBtnActualize" class="action-btn secondary-btn" style="font-size:12px; color:#dc2626; border-color:#fecaca;">🔺 Актуализировать завышенных (${nOver})</button>` : '') +
+                    (nUnder ? `<button id="gis1cBtnRecheck" class="action-btn secondary-btn" style="font-size:12px; color:#d97706; border-color:#fde68a;">🔻 Дотянуть заниженных (${nUnder})</button>` : '') +
+                    `</div>` : '') +
+                (topRows ?
+                    `<details style="margin-top:8px;"><summary style="cursor:pointer; font-size:12px; color:#2563eb;">Топ расхождений (${(c.top || []).length})</summary>` +
+                    `<table style="font-size:12px; margin-top:6px; border-collapse:collapse;">` +
+                    `<tr style="color:#9ca3af;"><td style="padding:2px 8px 2px 0;">ФИО</td><td style="text-align:right; padding:2px 8px;">1С</td><td style="text-align:right; padding:2px 8px;">ГИС</td><td style="text-align:right;">Δ (ГИС−1С)</td></tr>` +
+                    topRows + `</table></details>` : '') +
+                (namesakes.length ?
+                    `<details style="margin-top:6px;"><summary style="cursor:pointer; font-size:12px; color:#b45309;">⚠ Тёзки: ${namesakes.length} ФИО под несколькими лицевыми счетами — проверьте дубли базы</summary>` +
+                    `<div style="font-size:12px; margin-top:6px; color:var(--text-secondary);">` +
+                    namesakes.map(n => `${esc(n.fio)} ×${n.count}`).join(' · ') +
+                    `</div></details>` : '') +
+                `</div>`;
+            document.getElementById('gis1cControlRefresh')?.addEventListener('click', async (e) => {
+                e.preventDefault();
+                e.target.textContent = 'пересчитываю…';
+                try { await this.loadControl(true); } catch { }
+            });
+            document.getElementById('gis1cBtnActualize')?.addEventListener('click', () => this.actualizeGisgmp());
+            document.getElementById('gis1cBtnRecheck')?.addEventListener('click', () => this.recheckGisgmp());
+        } catch (e) {
+            box.innerHTML = ''; // вспомогательная карточка — тихо
         }
     },
 

@@ -12,6 +12,7 @@ from app.core.dependencies import get_current_user
 
 from ._shared import (
     router,
+    logger,
     _require_finance,
 )
 
@@ -152,4 +153,10 @@ async def debts_publish(
         raise HTTPException(409, "Нет активного расчётного периода")
     if res.get("status") == "no_staged":
         raise HTTPException(409, "Нет черновиков для выгрузки — сначала загрузите Excel 1С")
+    # Контроль 1С↔ГИС: 1С-сторона сверки только что обновилась (тихо).
+    try:
+        from ._shared import refresh_control_snapshot
+        await refresh_control_snapshot(db)
+    except Exception:
+        logger.exception("[debts] контроль-снапшот не пересчитался")
     return res

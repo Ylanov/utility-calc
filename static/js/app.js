@@ -109,6 +109,12 @@ async function loadSystemHealth() {
         const d = await api.get('/admin/system-health');
         const alerts = d.alerts || [];
         if (!alerts.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+        // ✕ скрывает ЭТОТ набор алертов (fingerprint в localStorage) — при
+        // изменении состава/текста баннер вернётся сам (жалоба «не убрать»).
+        const fp = alerts.map(a => a.code + '|' + a.message).join(';');
+        if (localStorage.getItem('healthBannerDismissed') === fp) {
+            box.style.display = 'none'; box.innerHTML = ''; return;
+        }
         const hasCrit = alerts.some(a => a.level === 'crit');
         const bd = hasCrit ? '#ef4444' : '#f59e0b';
         const bg = hasCrit ? 'rgba(239,68,68,0.10)' : 'rgba(245,158,11,0.10)';
@@ -116,9 +122,15 @@ async function loadSystemHealth() {
             `<div style="margin:2px 0;">${a.level === 'crit' ? '🛑' : '⚠️'} ${escT(a.message)}</div>`
         ).join('');
         box.innerHTML =
-            `<div style="border:1px solid ${bd}; background:${bg}; border-radius:10px; padding:10px 14px; font-size:13px;">` +
+            `<div style="position:relative; border:1px solid ${bd}; background:${bg}; border-radius:10px; padding:10px 38px 10px 14px; font-size:13px;">` +
+            `<button id="healthBannerClose" title="Скрыть (вернётся при новых проблемах)" ` +
+            `style="position:absolute; top:6px; right:8px; border:none; background:none; cursor:pointer; font-size:15px; color:inherit; opacity:.6;">✕</button>` +
             `<div style="font-weight:700; margin-bottom:4px;">${hasCrit ? '🛑' : '⚠️'} Система требует внимания</div>${rows}</div>`;
         box.style.display = 'block';
+        document.getElementById('healthBannerClose')?.addEventListener('click', () => {
+            localStorage.setItem('healthBannerDismissed', fp);
+            box.style.display = 'none';
+        });
     } catch (e) {
         box.style.display = 'none'; // вспомогательный элемент — тихо
     }

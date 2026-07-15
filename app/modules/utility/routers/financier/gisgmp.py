@@ -106,6 +106,12 @@ async def gisgmp_sync(
         await _capture_actualize_after(db)
     except Exception:
         logger.exception("[gisgmp] снимок «после» актуализации не удался")
+    # Контроль 1С↔ГИС: пересчитать светофор по свежим находкам (тихо).
+    try:
+        from ._shared import refresh_control_snapshot
+        await refresh_control_snapshot(db)
+    except Exception:
+        logger.exception("[gisgmp] контроль-снапшот не пересчитался")
     return result
 
 

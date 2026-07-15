@@ -433,6 +433,20 @@ def system_health_task() -> dict:
                     _alert("warn", "onec_stale_drafts",
                            f"Черновики долгов 1С не выгружены >40ч ({stale} шт.) — авто-выгрузка не доехала.")
 
+                # 5. Контроль 1С↔ГИС (снапшот пишут сбор ГИС и выгрузка 1С).
+                ctl = await _cfg("gis1c_control")
+                if gis.get("enabled") and ctl:
+                    a = _age_min(ctl.get("ts"))
+                    if a is not None and a > 48 * 60:
+                        _alert("warn", "gis1c_control_stale",
+                               "Сверка 1С↔ГИС не обновлялась >48ч — сборы/выгрузки не пересчитывают контроль.")
+                    flags = ctl.get("flags") or {}
+                    gis_over = int(flags.get("gis_more") or 0) + int(flags.get("only_gis") or 0)
+                    if gis_over >= 30:
+                        _alert("warn", "gis1c_gis_overstated",
+                               f"ГИС завышает долг у {gis_over} жильцов (реестр показывает больше, чем 1С) — "
+                               "запустите «Актуализацию расхождений» в «Долги 1С».")
+
                 # Запись сводки.
                 row = (await db.execute(_select(_SS).where(_SS.key == "system_health"))).scalars().first()
                 if row is None:

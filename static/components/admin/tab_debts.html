@@ -141,6 +141,10 @@
         </p>
         <div id="gisgmpStatus" style="font-size:13px; color:var(--text-secondary);">Загрузка статуса…</div>
 
+        <!-- Контроль 1С↔ГИС: светофор сверки (1С — эталон, ГИС подтягиваем к нему).
+             Снапшот пересчитывают сбор ГИС / выгрузка 1С; рендер — debts.renderControl(). -->
+        <div id="gis1cControl" style="margin-top:12px;"></div>
+
         <!-- Управление демоном релея прямо из UI (pull: применяется на ближайшем опросе ~2 мин) -->
         <div style="margin-top:12px; padding-top:10px; border-top:1px dashed var(--border-color, #ddd);">
             <div style="font-size:12px; font-weight:600; color:var(--text-secondary); margin-bottom:6px;">

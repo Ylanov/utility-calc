@@ -579,3 +579,32 @@ async def gisgmp_purge(
     )
     await db.commit()
     return {"ok": True, "cleared": cleared}
+
+
+@router.get("/gisgmp/control", summary="Контроль 1С-ГИС: светофор сверки (сводка)")
+async def gisgmp_control(
+    refresh: bool = False,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Компактная сводка «разложено по полочкам» (правило: 1С — истина):
+    сколько совпало, где ГИС завышен (лечится актуализацией), где занижен
+    (дотянуть/1С не довыгрузил), кого нет в ГИС/в базе, топ расхождений,
+    тёзки (кандидаты в дубли базы). Снапшот пишется автоматически после
+    каждого сбора ГИС и каждой выгрузки 1С; refresh=true — пересчитать сейчас.
+    """
+    _require_finance(current_user)
+    import json as _json
+    from ._shared import GIS1C_CONTROL_KEY, refresh_control_snapshot
+
+    if refresh:
+        return await refresh_control_snapshot(db)
+    row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GIS1C_CONTROL_KEY)
+    )).scalars().first()
+    if row and row.value:
+        try:
+            return _json.loads(row.value)
+        except Exception:
+            pass
+    return await refresh_control_snapshot(db)

@@ -665,3 +665,74 @@ async def _resolve_view_period(db: AsyncSession, period_id: Optional[int]):
 def _require_finance(user: User) -> None:
     if user.role not in ("financier", "accountant", "admin"):
         raise HTTPException(status_code=403, detail="Доступ запрещен")
+
+
+# =====================================================================
+# КОНТРОЛЬ 1С ↔ ГИС ГМП (2026-07-15, запрос пользователя «разложить по
+# полочкам»). Правило домена: 1С — ИСТИНА, ГИС сверяется с ней.
+# Снапшот сверки пишется после каждого сбора ГИС и каждой выгрузки 1С →
+# карточка-светофор в «Долги 1С» + алерты сторожа без пересчёта на лету.
+# =====================================================================
+GIS1C_CONTROL_KEY = "gis1c_control"
+
+
+async def refresh_control_snapshot(db: AsyncSession) -> dict:
+    """Пересчитывает сверку и сохраняет компактную сводку в SystemSetting.
+
+    Категории (флаги _build_reconcile):
+      ok       — суммы совпали (всё правильно, 1С выгрузился в ГИС);
+      gis_more / only_gis — ГИС ЗАВЫШЕН → лечится «Актуализацией» (реестр
+                 аннулирует лишнее под 1С);
+      c1_more  — ГИС ЗАНИЖЕН → «Дотянуть расхождения» (глубокий переопрос
+                 реестра) либо 1С ещё не довыгрузил;
+      only_1c  — человека нет в ГИС вовсе (выгрузка 1С→ГИС не прошла);
+      orphans  — есть в 1С/ГИС, нет в базе жильцов.
+    Плюс тёзки: одно ФИО под несколькими user_id — кандидаты в дубли базы.
+    """
+    from collections import Counter
+
+    rec = await _build_reconcile(db)
+    residents = rec.get("residents") or []
+    flags = Counter(r.get("flag") for r in residents)
+    sum_gis = round(sum(r.get("sum_gis") or 0 for r in residents), 2)
+    sum_1c = round(sum(r.get("sum_1c") or 0 for r in residents), 2)
+
+    worst = sorted(
+        (r for r in residents if r.get("flag") != "ok"),
+        key=lambda r: -abs(r.get("delta") or 0),
+    )[:10]
+    top = [{
+        "user_id": r.get("user_id"), "fio": r.get("username"),
+        "flag": r.get("flag"),
+        "gis": round(r.get("sum_gis") or 0, 2),
+        "c1": round(r.get("sum_1c") or 0, 2),
+        "delta": round(r.get("delta") or 0, 2),
+    } for r in worst]
+
+    names = Counter((r.get("username") or "").strip() for r in residents)
+    namesakes = sorted(
+        [{"fio": n, "count": c} for n, c in names.items() if c > 1 and n],
+        key=lambda x: -x["count"],
+    )[:10]
+
+    snapshot = {
+        "ts": utcnow().isoformat(),
+        "matched": len(residents),
+        "flags": dict(flags),
+        "sum_gis": sum_gis, "sum_1c": sum_1c,
+        "delta": round(sum_gis - sum_1c, 2),
+        "orphans": len(rec.get("orphans") or []),
+        "top": top,
+        "namesakes": namesakes,
+    }
+
+    row = (await db.execute(
+        select(SystemSetting).where(SystemSetting.key == GIS1C_CONTROL_KEY)
+    )).scalars().first()
+    if row is None:
+        row = SystemSetting(key=GIS1C_CONTROL_KEY, value="{}",
+                            description="Сводка контроля 1С↔ГИС (светофор)")
+        db.add(row)
+    row.value = json.dumps(snapshot, ensure_ascii=False)
+    await db.commit()
+    return snapshot
