@@ -1,0 +1,46 @@
+# Диагностика ХОСТА aleks (прод-ВМ), когда сайт недоступен снаружи, а
+# runner online: nginx/порты/контейнеры/локальный HTTP — ТОЛЬКО чтение,
+# ничего не перезапускает. Репозиторий публичный — не выводим логи
+# приложений/journalctl (ФИО/суммы) и переменные окружения.
+name: Host health check (aleks)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  host-check:
+    name: nginx / ports / containers / local http
+    runs-on: self-hosted
+    timeout-minutes: 5
+    steps:
+      - name: nginx systemd
+        run: |
+          echo "## Хост aleks" >> "$GITHUB_STEP_SUMMARY"
+          state=$(systemctl is-active nginx 2>/dev/null || true)
+          echo "nginx systemd: ${state:-нет юнита}" | tee -a "$GITHUB_STEP_SUMMARY"
+          systemctl show nginx -p ActiveState,SubState,NRestarts,ExecMainStartTimestamp 2>/dev/null || true
+
+      - name: слушающие порты 80/443
+        run: |
+          (ss -tln 2>/dev/null || netstat -tln 2>/dev/null) | grep -E ':(80|443)\b' \
+            | tee -a "$GITHUB_STEP_SUMMARY" || echo "ПОРТЫ 80/443 НЕ СЛУШАЮТСЯ" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: контейнеры (имя/статус/порты)
+        run: |
+          docker ps --format '{{.Names}}  {{.Status}}  {{.Ports}}' | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: локальный HTTP (в обход внешней сети)
+        run: |
+          for u in http://127.0.0.1 http://127.0.0.1:8000/api/health https://127.0.0.1; do
+            code=$(curl -sk -o /dev/null -w '%{http_code}' -m 6 "$u" || echo FAIL)
+            echo "$u -> $code" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+
+      - name: сам себя по публичному домену (hairpin)
+        run: |
+          code=$(curl -sk -o /dev/null -w '%{http_code}' -m 8 https://asy-tk.ru || echo FAIL)
+          echo "https://asy-tk.ru (с самой ВМ) -> $code" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: tailscale
+        run: |
+          tailscale status --peers=false 2>/dev/null | head -3 | tee -a "$GITHUB_STEP_SUMMARY" || echo "tailscale: нет CLI/прав"
