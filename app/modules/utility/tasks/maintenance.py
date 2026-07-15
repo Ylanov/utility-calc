@@ -43,7 +43,8 @@ def _cleanup_gsheets_rows(retention_days: int) -> dict:
         return {"deleted": 0, "cutoff": None, "skipped": True}
 
     cutoff = utcnow() - _td(days=retention_days)
-    terminal_statuses = ("approved", "auto_approved", "rejected")
+    # superseded — автопогашенные (месяц решён другим путём), терминальны как rejected.
+    terminal_statuses = ("approved", "auto_approved", "rejected", "superseded")
 
     CHUNK = 1000
     total_deleted = 0

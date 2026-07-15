@@ -39,6 +39,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.modules.utility.models import GSheetsImportRow, Room, User
+from app.modules.utility.services.period_helpers import MONTH_NAMES_RU as _MONTH_NAMES_RU
 # Пороги вынесены в reading_validators.py — единый источник правды для
 # всех 4 точек входа MeterReading (mobile/gsheets/manual/approve).
 from app.modules.utility.services.reading_validators import (
@@ -815,10 +816,8 @@ def sync_gsheets(
 # и создаёт под них MeterReading (минимальный, total=0 — расчёт подхватит
 # потом пересчёт периода). Идемпотентно по (user_id, period_id).
 
-_MONTH_NAMES_RU = [
-    "", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
-    "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
-]
+# Канонический список месяцев — period_helpers (локальная копия выпилена
+# 2026-07-15, импорт _MONTH_NAMES_RU — в шапке файла).
 
 
 def _ensure_active_period(db: Session):

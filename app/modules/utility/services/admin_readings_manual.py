@@ -952,6 +952,39 @@ async def delete_reading(
         .values(reading_id=None, processed_at=None)
     )
 
+    # Воскрешение перекрытых подач (gsheets_supersede, ревью 2026-07-15):
+    # автопогашение помечало строки буфера superseded, когда месяц жильца
+    # был решён этим (утверждённым) показанием. Удаляем ПОСЛЕДНЕЕ
+    # утверждённое за (жилец, период) — возвращаем его погашенные подачи
+    # этого месяца в pending, иначе подача жильца потеряна навсегда.
+    if reading.is_approved and target_user is not None and reading.period_id:
+        still_approved = (await db.execute(
+            select(MeterReading.id).where(
+                MeterReading.user_id == target_user.id,
+                MeterReading.period_id == reading.period_id,
+                MeterReading.is_approved.is_(True),
+                MeterReading.id != reading_id,
+            ).limit(1)
+        )).first()
+        if still_approved is None:
+            period = await db.get(BillingPeriod, reading.period_id)
+            if period is not None:
+                from app.modules.utility.services.period_helpers import month_period_name
+                sup_rows = (await db.execute(
+                    select(GSheetsImportRow).where(
+                        GSheetsImportRow.matched_user_id == target_user.id,
+                        GSheetsImportRow.status == "superseded",
+                    )
+                )).scalars().all()
+                for g in sup_rows:
+                    if g.sheet_timestamp and month_period_name(g.sheet_timestamp) == period.name:
+                        g.status = "pending"
+                        g.processed_at = None
+                        g.conflict_reason = (
+                            "Возвращено: перекрывавшее показание удалено — "
+                            "проверьте подачу заново"
+                        )
+
     await db.delete(reading)
 
     # Audit. Если actor не передан (legacy caller) — лог пропускаем, но

@@ -33,6 +33,7 @@ const STATUS = {
   auto_approved: { t: 'Авто-утв.',      c: '#8b5cf6', b: '#ede9fe' },
   approved:      { t: 'Утверждено',     c: '#10b981', b: '#d1fae5' },
   rejected:      { t: 'Отклонено',      c: '#6b7280', b: '#f3f4f6' },
+  superseded:    { t: 'Перекрыто',      c: '#6b7280', b: '#f3f4f6' },
 };
 // Источники — теперь ЧЕСТНЫЕ (колонка readings.source, reading_source_001):
 // подача жильца по QR и правка/ввод админа — разные вещи.

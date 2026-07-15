@@ -16,6 +16,19 @@
 """
 from typing import Optional, Tuple
 
+# Имена месяцев (индекс 1-12) — как пишутся в BillingPeriod.name.
+# Канон: до 2026-07-15 этот список был скопипащен в admin_gsheets и gsheets_sync.
+MONTH_NAMES_RU = [
+    "", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
+    "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
+]
+
+
+def month_period_name(dt) -> str:
+    """Имя биллингового периода для даты: «Июнь 2026» (формат BillingPeriod.name)."""
+    return f"{MONTH_NAMES_RU[dt.month]} {dt.year}"
+
+
 # Карта русских месяцев в номера. В именительном падеже — так пишутся
 # в BillingPeriod.name (например «Май 2026»). Регистр игнорируется.
 RUSSIAN_MONTH_TO_NUM: dict[str, int] = {

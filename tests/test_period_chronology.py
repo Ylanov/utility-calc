@@ -31,3 +31,16 @@ def test_backdated_period_scenario():
     # Ретроактивный апрель (создан позже мая, id больше) всё равно РАНЬШЕ мая.
     assert period_chron_key("Апрель 2026") < period_chron_key("Май 2026")
     assert period_chron_key("Май 2026") < period_chron_key("Июнь 2026")
+
+
+def test_month_period_name_roundtrip():
+    # month_period_name даёт ровно тот формат, который парсит period_chron_key —
+    # на этом держится автопогашение буфера GSheets (gsheets_supersede).
+    from datetime import datetime
+    from app.modules.utility.services.period_helpers import month_period_name
+
+    assert month_period_name(datetime(2026, 6, 15)) == "Июнь 2026"
+    assert month_period_name(datetime(2025, 12, 1)) == "Декабрь 2025"
+    for m in range(1, 13):
+        name = month_period_name(datetime(2026, m, 10))
+        assert period_chron_key(name) == (2026, m)

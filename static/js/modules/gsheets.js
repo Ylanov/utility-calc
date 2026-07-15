@@ -22,6 +22,9 @@ const STATUS_META = {
     auto_approved:  { label: 'Авто-утв.',    color: '#8b5cf6', bg: '#ede9fe' },
     approved:       { label: 'Утверждено',   color: '#10b981', bg: '#d1fae5' },
     rejected:       { label: 'Отклонено',    color: '#6b7280', bg: '#f3f4f6' },
+    // Погашено автоматически: месяц жильца уже решён другим путём
+    // (ручной ввод/QR/Excel) — см. gsheets_supersede.py.
+    superseded:     { label: 'Перекрыто',    color: '#6b7280', bg: '#f3f4f6' },
 };
 
 // 60 секунд — компромисс между «свежесть данных» и «нагрузка на API».

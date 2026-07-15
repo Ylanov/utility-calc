@@ -171,6 +171,27 @@ async def unified_registry(
                 "matched": None,
             })
 
+    # Self-heal (кейс Хайбуллина 2026-07-15): подача из гугл-формы висела
+    # «Конфликтом» вечно, если админ решил месяц другим путём (ручной ввод/
+    # QR/Excel). Гасим перекрытые строки ПЕРЕД выборкой буфера — в ОТДЕЛЬНОЙ
+    # сессии, чтобы ошибка лечения не трогала транзакцию этого GET-а.
+    from app.core.database import AsyncSessionLocal
+    from app.modules.utility.services.gsheets_supersede import retire_superseded_rows
+    try:
+        async with AsyncSessionLocal() as heal_db:
+            stale = (await heal_db.execute(
+                select(GSheetsImportRow).where(
+                    GSheetsImportRow.reading_id.is_(None),
+                    GSheetsImportRow.matched_user_id.isnot(None),
+                    GSheetsImportRow.status.in_(
+                        ["pending", "conflict", "unmatched", "auto_approved"]),
+                )
+            )).scalars().all()
+            if await retire_superseded_rows(heal_db, stale):
+                await heal_db.commit()
+    except Exception:
+        pass   # реестр важнее самолечения — покажем как есть
+
     # --- Буфер GSheetsImportRow (необработанные, до промоута) ---
     gs = (await db.execute(
         select(GSheetsImportRow).where(

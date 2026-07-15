@@ -40,6 +40,7 @@ from app.modules.utility.services.gsheets_sync import (
     canonical_initials,
 )
 from app.modules.utility.services.search_utils import like_contains
+from app.modules.utility.services.period_helpers import MONTH_NAMES_RU as _MONTH_NAMES_RU
 
 router = APIRouter(prefix="/api/admin/gsheets", tags=["Admin GSheets"])
 
@@ -895,10 +896,8 @@ async def list_rows(
 # =========================================================================
 # APPROVE (создаёт MeterReading)
 # =========================================================================
-_MONTH_NAMES_RU = [
-    "", "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
-    "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
-]
+# Канонический список месяцев — period_helpers (локальная копия выпилена
+# 2026-07-15, импорт _MONTH_NAMES_RU — в шапке файла).
 
 
 async def _resolve_period_for_row(

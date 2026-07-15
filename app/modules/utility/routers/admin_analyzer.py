@@ -586,7 +586,8 @@ async def cleanup_gsheets_now(
     # Выполняем ту же логику, что и Celery-задача, но в рамках async-сессии.
     from datetime import timedelta
     cutoff = utcnow() - timedelta(days=days)
-    terminal = ("approved", "auto_approved", "rejected")
+    # superseded — автопогашенные (месяц решён другим путём), терминальны как rejected.
+    terminal = ("approved", "auto_approved", "rejected", "superseded")
 
     # Считаем сколько будет удалено (для audit_log) + удаляем пачкой
     count_q = select(func.count(GSheetsImportRow.id)).where(
