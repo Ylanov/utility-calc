@@ -709,11 +709,18 @@ async def refresh_control_snapshot(db: AsyncSession) -> dict:
         "delta": round(r.get("delta") or 0, 2),
     } for r in worst]
 
-    names = Counter((r.get("username") or "").strip() for r in residents)
-    namesakes = sorted(
-        [{"fio": n, "count": c} for n, c in names.items() if c > 1 and n],
-        key=lambda x: -x["count"],
-    )[:10]
+    # Тёзки — по БАЗЕ жильцов (одно ФИО под разными user_id = кандидат в дубли).
+    # По строкам сверки считать нельзя: она матчит по ФИО и схлопывает тёзок.
+    from sqlalchemy import func as _f
+    dup_rows = (await db.execute(
+        select(User.username, _f.count(User.id))
+        .where(User.role == "user", User.is_deleted.is_(False))
+        .group_by(User.username)
+        .having(_f.count(User.id) > 1)
+        .order_by(_f.count(User.id).desc())
+        .limit(10)
+    )).all()
+    namesakes = [{"fio": n, "count": int(c)} for n, c in dup_rows if n]
 
     snapshot = {
         "ts": utcnow().isoformat(),
