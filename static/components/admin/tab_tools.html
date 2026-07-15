@@ -1,9 +1,8 @@
 <!-- static/components/admin/tab_tools.html
-     Объединяет "Ручной ввод" и "Тарифы" в один экран с accordion-секциями.
+     Экран «Операции»: accordion-секции, сгруппированные верхними табами.
      Раскрытие/сворачивание — по клику на заголовок секции (см. ToolsModule).
-
-     ID всех input/button/form сохранены из tab_manual.html и tab_tariffs.html,
-     поэтому ManualModule и TariffsModule работают без правок.
+     «Ручной ввод показаний» переехал в Реестр показаний — кнопка
+     «➕ Ручной ввод» (модалка manual_entry.js, объединение 2026-07-15).
 
      Стили .tcard / .tariff-save-bar / .ops-tabs / .tariff-type-row
      живут в static/style.css (раздел 21/21A). -->
@@ -36,78 +35,6 @@
     </nav>
 
     <div class="accordion-group" id="toolsAccordion">
-
-        <!-- ==========================================
-             СЕКЦИЯ 1: РУЧНОЙ ВВОД ПОКАЗАНИЙ
-             ========================================== -->
-        <section class="accordion-section open" data-section="manual" data-ops-tab="readings">
-            <button class="accordion-header" type="button" aria-expanded="true">
-                <span class="accordion-title">
-                    <span class="accordion-icon"><i class="fa-solid fa-pen-to-square"></i></span>
-                    <span class="accordion-title-text">
-                        <strong>Ручной ввод показаний</strong>
-                        <span class="subtitle">Ввод за жильца, если он не подал показания сам</span>
-                    </span>
-                </span>
-                <i class="fa-solid fa-chevron-down accordion-chevron"></i>
-            </button>
-            <div class="accordion-body">
-                <div class="accordion-content">
-                    <div class="inner">
-                        <!-- Autocomplete-поиск + форма (см. .manual-* в style.css раздел 21B).
-                             Раньше слева висел постоянный 400px-список жильцов — он съедал
-                             полэкрана и пугал. Теперь dropdown появляется только при вводе. -->
-                        <div class="manual-layout">
-
-                            <!-- Период + поиск в одну строку. Выбор поиска ДОБАВЛЯЕТ
-                                 жильца строкой ниже (мульти-ввод за несколько месяцев). -->
-                            <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; margin-bottom:6px;">
-                                <div class="form-group" style="margin:0; min-width:190px;">
-                                    <label style="font-size:13px; font-weight:600;">
-                                        <i class="fa-regular fa-calendar"></i> Месяц (период)
-                                    </label>
-                                    <select id="manualPeriodSelect" style="font-size:14px;">
-                                        <option value="">— Текущий активный —</option>
-                                    </select>
-                                </div>
-                                <div class="manual-search" style="flex:1; min-width:260px;">
-                                    <i class="fa-solid fa-magnifying-glass manual-search-icon"></i>
-                                    <input type="text" id="manualSearchInput"
-                                           class="manual-search-input"
-                                           placeholder="Найди жильца — логин, ФИО или комната → добавится строкой ниже"
-                                           autocomplete="off"
-                                           aria-label="Поиск жильца"
-                                           aria-controls="manualUserList"
-                                           aria-haspopup="listbox">
-                                    <button type="button" id="manualSearchClear"
-                                            class="manual-search-clear" title="Очистить" hidden>
-                                        <i class="fa-solid fa-xmark"></i>
-                                    </button>
-                                    <ul id="manualUserList" class="manual-search-dropdown" role="listbox" hidden></ul>
-                                </div>
-                            </div>
-                            <small id="manualPeriodWarn" class="hint-text" style="display:none; color:#b45309; margin:0 0 8px; font-size:11.5px;">
-                                ⚠️ Выбран <b>прошлый период</b> — ввод за закрытый месяц утверждается сразу.
-                            </small>
-
-                            <div id="manualGridHint" style="font-size:12px; color:var(--text-secondary); margin:6px 0 10px;">
-                                Каждый добавленный жилец — строка с тремя месяцами (выбранный + 2 предыдущих).
-                                Заполни показания счётчиков и нажми «Утвердить» у каждого.
-                            </div>
-
-                            <!-- Хост строк добавленных жильцов (рендерит manual.js) -->
-                            <div id="manualGrid"></div>
-
-                            <!-- Пустое состояние -->
-                            <div id="manualGridEmpty" style="text-align:center; padding:28px; color:var(--text-secondary); border:1px dashed var(--border-color); border-radius:10px;">
-                                <i class="fa-solid fa-users-viewfinder" style="font-size:28px; opacity:.4;"></i>
-                                <div style="margin-top:8px;">Никто не добавлен. Найди жильца в поиске — он появится здесь строкой.</div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </section>
 
         <!-- ==========================================
              СЕКЦИЯ 2: ГРАФИК ПОДАЧИ ПОКАЗАНИЙ

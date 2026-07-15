@@ -9,7 +9,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import selectinload
 
 from app.modules.utility.models import User, MeterReading, Tariff, BillingPeriod, Adjustment
-from app.modules.utility.schemas import AdminManualReadingSchema, OneTimeChargeSchema
+from app.modules.utility.schemas import AdminManualReadingSchema
 from app.modules.utility.services.calculations import (
     calculate_utilities,
     costs_for_model_fields,
@@ -366,9 +366,8 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
 
     p_hot, p_cold, p_elect = prev_latest.hot_water if prev_latest else ZERO, prev_latest.cold_water if prev_latest else ZERO, prev_latest.electricity if prev_latest else ZERO
 
-    # Раздельная подача (только для save_manual_entry; в create_one_time_charge
-    # _provided всегда True — поведение прежнее): для НЕпереданных ресурсов
-    # используем prev → счётчик «не двигается», дельта 0, расход не начисляется.
+    # Раздельная подача: для НЕпереданных ресурсов используем prev →
+    # счётчик «не двигается», дельта 0, расход не начисляется.
     hot_to_save = data.hot_water if hot_provided else p_hot
     cold_to_save = data.cold_water if cold_provided else p_cold
     elect_to_save = data.electricity if elect_provided else p_elect
@@ -602,165 +601,6 @@ async def save_manual_entry(db: AsyncSession, data: AdminManualReadingSchema):
         "chain_recalced": recalced,
         "singles_shared": len(singles_affected),
     }
-
-
-async def create_one_time_charge(db: AsyncSession, data: OneTimeChargeSchema):
-    """Разовое (пропорциональное) начисление при выселении или переезде.
-
-    NB: OneTimeChargeSchema требует все 3 значения (раздельная подача только
-    в save_manual_entry). Заглушки _provided=True сохраняют поведение в общем
-    блоке валидации, который шарится между save_manual_entry и этой функцией.
-    """
-    # Совместимость с общим блоком валидации (см. save_manual_entry):
-    # в charge все три значения всегда заданы по схеме — never partial.
-    hot_provided = True
-    cold_provided = True
-    elect_provided = True
-
-    active_period = (await db.execute(select(BillingPeriod).where(BillingPeriod.is_active))).scalars().first()
-    if not active_period: raise HTTPException(status_code=400, detail="Нет активного периода")
-
-    user = (await db.execute(select(User).options(selectinload(User.room)).where(User.id == data.user_id))).scalars().first()
-    if not user or user.is_deleted: raise HTTPException(status_code=404, detail="Жилец не найден")
-
-    room = user.room
-    if not room: raise HTTPException(status_code=400, detail="Жилец не привязан к помещению")
-
-    if data.total_days_in_month <= 0 or data.days_lived < 0 or data.days_lived > data.total_days_in_month:
-        raise HTTPException(status_code=400, detail="Неверно указаны дни проживания")
-
-    fraction = Decimal(data.days_lived) / Decimal(data.total_days_in_month)
-
-    # Через единый кеш — Room.tariff_id побеждает User.tariff_id (см. tariff_cache.py).
-    from app.modules.utility.services.tariff_cache import tariff_cache
-    t = tariff_cache.get_effective_tariff(user=user, room=room) or \
-        (await db.execute(select(Tariff).where(Tariff.is_active))).scalars().first()
-
-    # История по ЖИЛЬЦУ В ЭТОЙ КОМНАТЕ (см. save_manual_entry выше).
-    history = (await db.execute(
-        select(MeterReading).where(
-            MeterReading.user_id == user.id,
-            MeterReading.room_id == room.id,
-            MeterReading.is_approved,
-            # Ревизия #3 (решение «baseline=0»): period_id=NULL baseline
-            # (INITIAL_SETUP) НЕ берём как prev — первая реальная подача = baseline
-            # (расход 0), единообразно с approve_single/client/tasks/gsheets.
-            MeterReading.period_id.isnot(None),
-        )
-        .order_by(MeterReading.created_at.desc()).limit(6)
-    )).scalars().all()
-
-    # is_meaningful_prev: пропускаем AUTO_GENERATED / DATA_OVERFLOW_RESET /
-    # MANUAL_RECEIPT / AUTO_NO_HISTORY — их значения = 0, использовать как
-    # baseline для дельты → фантастические суммы при следующей реальной подаче
-    # (инцидент may 2026: жилец Капранов получил счёт ~825 000 ₽ потому что
-    # prev был AUTO_GENERATED с 0 ГВС → delta = 1 468 м³ × 311 ₽/м³).
-    from app.modules.utility.services.reading_calculator import is_meaningful_prev
-    prev_latest = next((r for r in history if is_meaningful_prev(r)), None)
-    prev_any = history[0] if history else None
-
-    p_hot, p_cold, p_elect = prev_latest.hot_water if prev_latest else ZERO, prev_latest.cold_water if prev_latest else ZERO, prev_latest.electricity if prev_latest else ZERO
-
-    # Раздельная подача (только для save_manual_entry; в create_one_time_charge
-    # _provided всегда True — поведение прежнее): для НЕпереданных ресурсов
-    # используем prev → счётчик «не двигается», дельта 0, расход не начисляется.
-    hot_to_save = data.hot_water if hot_provided else p_hot
-    cold_to_save = data.cold_water if cold_provided else p_cold
-    elect_to_save = data.electricity if elect_provided else p_elect
-
-    # synth-baseline detection — см. save_manual_entry выше.
-    _prev_is_synth = (prev_latest is None) and (prev_any is not None)
-    if _prev_is_synth:
-        _val_prev_hot, _val_prev_cold, _val_prev_elect = (
-            prev_any.hot_water, prev_any.cold_water, prev_any.electricity,
-        )
-    elif prev_latest is not None:
-        _val_prev_hot, _val_prev_cold, _val_prev_elect = p_hot, p_cold, p_elect
-    else:
-        _val_prev_hot = _val_prev_cold = _val_prev_elect = None
-
-    # Ручной ввод админом НЕ блокируем монотонностью/дельтой/потолком
-    # (fix 2026-06-16): админ авторитетен — вписывает показания за ЛЮБОЙ месяц
-    # в ЛЮБУЮ сторону (доввод за апрель/март поверх мая, правка «его же» цифр)
-    # без ложных ошибок «счётчик не может уменьшаться». Единственный
-    # предохранитель от катастрофы (пропущенная точка → счёт в сотни тысяч) —
-    # финальная validate_total_cost ниже. Флаги аномалий считаются
-    # check_reading_for_anomalies_v2 и видны в реестре, но НЕ блокируют.
-    _ = (_val_prev_hot, _val_prev_cold, _val_prev_elect, _prev_is_synth)
-
-    d_hot = (hot_to_save - p_hot) if hot_provided else ZERO
-    d_cold = (cold_to_save - p_cold) if cold_provided else ZERO
-    d_elect = (elect_to_save - p_elect) if elect_provided else ZERO
-
-    residents_count = paying_residents(user, room)
-    total_room = room.total_room_residents if room.total_room_residents > 0 else 1
-
-    user_share_elect = (Decimal(residents_count) / Decimal(total_room)) * d_elect
-
-    # BASELINE: первая в жизни подача по комнате → потребление = 0, но
-    # area-based начисления платятся всегда (см. Bug L в save_manual_entry).
-    is_baseline = prev_latest is None
-    # См. комментарий в save_manual_entry — те же сезонные флаги (global + per-tariff).
-    from app.modules.utility.routers.settings import _load_seasonal
-    _seasonal = await _load_seasonal(db)
-    _heating = _seasonal.heating_season_active and t.is_heating_active_now()
-    _hw = _seasonal.hot_water_heating_active and t.is_hw_heating_active_now()
-    if is_baseline:
-        costs = calculate_utilities(
-            user=user, room=room, tariff=t,
-            volume_hot=ZERO, volume_cold=ZERO,
-            volume_sewage=ZERO, volume_electricity_share=ZERO, fraction=fraction,
-            heating_season_active=_heating,
-            hot_water_heating_active=_hw,
-        )
-    else:
-        costs = calculate_utilities(
-            user=user, room=room, tariff=t, volume_hot=d_hot, volume_cold=d_cold,
-            volume_sewage=d_hot + d_cold, volume_electricity_share=user_share_elect, fraction=fraction,
-            heating_season_active=_heating,
-            hot_water_heating_active=_hw,
-        )
-
-    adj_map = {row[0]: (row[1] or ZERO) for row in
-               (await db.execute(select(Adjustment.account_type, func.sum(Adjustment.amount))
-               .where(Adjustment.user_id == user.id, Adjustment.period_id == active_period.id).group_by(Adjustment.account_type))).all()}
-
-    draft = (await db.execute(
-        select(MeterReading).where(MeterReading.room_id == room.id, MeterReading.is_approved.is_(False), MeterReading.period_id == active_period.id)
-    )).scalars().first()
-
-    # Долг/переплата 1С НЕ в ИТОГО (30.05.2026) — только начисление + корректировки.
-    total_209 = (costs['total_cost'] - costs['cost_social_rent']) + adj_map.get('209', ZERO)
-    total_205 = costs['cost_social_rent'] + adj_map.get('205', ZERO)
-
-    charge_flag = "ONE_TIME_CHARGE_BASELINE" if is_baseline else "ONE_TIME_CHARGE"
-    if draft:
-        draft.hot_water, draft.cold_water, draft.electricity = hot_to_save, cold_to_save, elect_to_save
-        draft.anomaly_flags, draft.anomaly_score = charge_flag, 0
-        for k, v in costs_for_model_fields(costs).items():
-            setattr(draft, k, v)
-        draft.total_209, draft.total_205, draft.total_cost, draft.is_approved = total_209, total_205, total_209 + total_205, True
-    else:
-        db.add(MeterReading(
-            user_id=user.id, room_id=room.id, period_id=active_period.id,
-            hot_water=hot_to_save, cold_water=cold_to_save, electricity=elect_to_save,
-            debt_209=ZERO, overpayment_209=ZERO, debt_205=ZERO, overpayment_205=ZERO,
-            total_209=total_209, total_205=total_205, total_cost=total_209 + total_205,
-            is_approved=True, anomaly_flags=charge_flag, anomaly_score=0,
-            **costs_for_model_fields(costs)
-        ))
-
-    room.last_hot_water, room.last_cold_water, room.last_electricity = hot_to_save, cold_to_save, elect_to_save
-    db.add(room)
-
-    if data.is_moving_out:
-        user.is_deleted = True
-        user.username = f"{user.username}_deleted_{user.id}"
-        user.login = f"{user.login}_deleted_{user.id}"  # освобождаем и логин
-        user.room_id = None
-
-    await db.commit()
-    return {"status": "success"}
 
 
 async def create_manual_receipt(

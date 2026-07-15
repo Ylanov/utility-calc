@@ -118,7 +118,7 @@ async def unified_registry(
         # Δ к прошлому месяцу — ЕДИНЫЙ канонический prev (pick_prev_pair,
         # аудит 2026-07-14): одним запросом утверждённые показания этих же
         # пар (user, room) с именем периода, prev по хронологии имени.
-        from app.modules.utility.services.reading_calculator import pick_prev_pair
+        from app.modules.utility.services.reading_calculator import build_prev_map
         pair_users = {r.user_id for r in mr if r.user_id}
         prev_map: dict = {}
         if pair_users:
@@ -130,11 +130,17 @@ async def unified_registry(
                     MeterReading.is_approved.is_(True),
                 )
             )).all()
-            by_pair: dict = {}
-            for _m, _pn in cand:
-                by_pair.setdefault((_m.user_id, _m.room_id), []).append((_m, _pn))
-            for pair, rows in by_pair.items():
-                prev_map[pair] = pick_prev_pair(rows, period.name)[0]
+            prev_map = build_prev_map(cand, period.name)
+
+        def _meter_flags(room) -> dict:
+            # Оснащённость счётчиками (как в manual-grid-state): None = счётчик
+            # есть (легаси-комнаты без флагов). Фронт блокирует inline-правку
+            # значений несуществующих счётчиков.
+            def _has(attr):
+                rv = getattr(room, attr, None) if room else None
+                return bool(rv) if rv is not None else True
+            return {"hw": _has("has_hw_meter"), "cw": _has("has_cw_meter"),
+                    "el": _has("has_el_meter")}
 
         for r in mr:
             src, label = _reading_source(r)
@@ -161,6 +167,7 @@ async def unified_registry(
                 "sum": float(r.total_cost or 0),
                 "anomaly_score": int(r.anomaly_score or 0),
                 "admin_edited": bool(getattr(r, "admin_edited", False)),
+                "meters": _meter_flags(room),
                 "matched": None,
             })
 
@@ -255,12 +262,16 @@ async def unified_registry(
     total = len(items)
     start = (page - 1) * limit
 
-    # Периоды для селектора (свежие первыми по хронологии имени).
+    # Периоды для селектора (свежие первыми по хронологии имени). Тайбрейк
+    # по id — непарсимые имена (все → (0,0)) не тасуются между запросами:
+    # на этот порядок опирается «+2 предыдущих месяца» модалки ручного ввода.
     from app.modules.utility.services.period_helpers import period_chron_key
     all_periods = (await db.execute(select(BillingPeriod))).scalars().all()
     periods_out = [
         {"id": p.id, "name": p.name, "is_active": bool(p.is_active)}
-        for p in sorted(all_periods, key=lambda p: period_chron_key(p.name), reverse=True)
+        for p in sorted(all_periods,
+                        key=lambda p: (period_chron_key(p.name), p.id),
+                        reverse=True)
     ]
 
     return {

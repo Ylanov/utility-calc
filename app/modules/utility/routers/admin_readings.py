@@ -452,9 +452,7 @@ async def recalc_building_period_endpoint(
     return await admin_readings_manual.recalc_building_period(
         db, period_id=period_id, group=group)
 
-# Эндпоинт POST /api/admin/readings/one-time УДАЛЁН (аудит #21): схема
-# OneTimeChargeSchema не совпадала с полями, которые читал сервис →
-# гарантированный 500 с Initial commit; фронт его не вызывал, выселение/переезд
-# идёт через POST /users/{id}/relocate → move_user_to_room. Мёртвый сервис-стаб
-# create_one_time_charge оставлен недостижимым; при необходимости разовое
-# пропорциональное начисление переписать заново корректно.
+# Эндпоинт POST /api/admin/readings/one-time УДАЛЁН (аудит #21), мёртвый
+# сервис-стаб create_one_time_charge выпилен (2026-07-15): выселение/переезд
+# идёт через POST /users/{id}/relocate → move_user_to_room; при необходимости
+# разовое пропорциональное начисление переписать заново корректно.

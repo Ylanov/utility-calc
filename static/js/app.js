@@ -339,7 +339,9 @@ function handleRoute() {
     // Старые хеши — обратная совместимость закладок/дип-линков.
     if (hash === 'security') tabToLoad = 'errors';
     if (hash === 'dashboard') tabToLoad = 'readings';
-    if (hash === 'manual' || hash === 'tariffs' || hash === 'accountant') tabToLoad = 'tools';
+    // Ручной ввод переехал в Реестр показаний (кнопка «➕ Ручной ввод», 2026-07-15).
+    if (hash === 'manual') tabToLoad = 'readings';
+    if (hash === 'tariffs' || hash === 'accountant') tabToLoad = 'tools';
 
     switchTab(tabToLoad);
 }
@@ -505,11 +507,11 @@ async function initModule(tabId) {
                 }
                 loadedModules.debts.init();
                 break;
-            // Операции — accordion из 7 секций. Раньше все 7 модулей
-            // инициализировались при открытии вкладки → 7 параллельных
-            // волн API-запросов даже когда оператору нужна одна секция.
-            // Теперь — eager init ТОЛЬКО для уже открытых секций (по умолчанию
-            // первая, manual), остальные — лениво по событию tools:section-opened.
+            // Операции — accordion секций. Раньше все модули
+            // инициализировались при открытии вкладки → параллельные
+            // волны API-запросов даже когда оператору нужна одна секция.
+            // Теперь — eager init ТОЛЬКО для уже открытых секций,
+            // остальные — лениво по событию tools:section-opened.
             case 'tools': {
                 // Tools-контроллер всегда нужен — он обрабатывает аккордеон.
                 if (!loadedModules.tools) {
@@ -521,13 +523,6 @@ async function initModule(tabId) {
                 // Маппинг секции → импорт модуля. Динамические импорты
                 // выполняются только при первом раскрытии секции.
                 const sectionLoaders = {
-                    manual: async () => {
-                        if (!loadedModules.manual) {
-                            const { ManualModule } = await import('./modules/manual.js');
-                            loadedModules.manual = ManualModule;
-                        }
-                        loadedModules.manual.init();
-                    },
                     schedule: async () => {
                         // График подачи живёт внутри модуля Tariffs (общая секция настроек).
                         if (!loadedModules.tariffs) {
@@ -679,14 +674,10 @@ function refreshModuleData(tabId) {
         case 'tickets':
             if (typeof mod.refresh === 'function') mod.refresh();
             break;
-        // Операции: перезагружаем тарифы (lightweight), gsheets, очищаем поиск жильца
+        // Операции: перезагружаем тарифы (lightweight) и gsheets
         case 'tools': {
             const tariffsMod = loadedModules.tariffs;
             if (tariffsMod && typeof tariffsMod.load === 'function') tariffsMod.load();
-            const manualMod = loadedModules.manual;
-            if (manualMod && typeof manualMod.searchUsers === 'function') {
-                manualMod.searchUsers('');
-            }
             const gsheetsMod = loadedModules.gsheets;
             if (gsheetsMod && typeof gsheetsMod.refresh === 'function') {
                 gsheetsMod.refresh();

@@ -1,70 +1,139 @@
-// static/js/modules/manual.js
+// static/js/modules/manual_entry.js
 //
-// Ручной ввод показаний — СТРОЧНЫЙ мульти-ввод (редизайн 2026-06-22).
-// Админ ищет жильца → выбор из dropdown ДОБАВЛЯЕТ его строкой ниже.
-// Можно набрать сразу несколько человек. У каждого — три месяца
-// (выбранный + 2 предыдущих) × ГВС/ХВС/электр. Кнопка «Утвердить» у
-// каждого сохраняет и утверждает все заполненные месяцы этого жильца.
+// Модалка «Ручной ввод показаний» — вызывается из Реестра показаний
+// (кнопка «➕ Ручной ввод»). Перенос строчного мульти-ввода из вкладки
+// «Операции» (бывший manual.js, 2026-07-15): админ ищет жильца → выбор
+// ДОБАВЛЯЕТ его карточкой. У каждого — три месяца (выбранный + 2
+// предыдущих) × ГВС/ХВС/электр. «Утвердить» сохраняет заполненные месяцы
+// хронологически (от старого к новому — prev пересчитывается цепочкой).
+//
+// Периоды приходят от реестра (/api/admin/registry → periods, уже
+// отсортированы бэкендом по period_chron_key, свежие первыми) — свой
+// JS-парсер русских месяцев больше не нужен.
 //
 // Бэкенд: GET /admin/readings/manual-grid-state/{uid}?period_ids=…
 //         POST /admin/readings/manual  (вернёт reading_id, auto_approved)
 //         POST /admin/approve/{reading_id}  (для активного периода)
 import { api } from '../core/api.js';
-import { el, toast, escapeHtml } from '../core/dom.js';
+import { el, toast, escapeHtml, showConfirm } from '../core/dom.js';
 
 const DROPDOWN_LIMIT = 12;
 const MIN_QUERY_LEN = 1;
 const SEARCH_DEBOUNCE_MS = 220;
 
-const RU_MONTHS = {
-    январь: 1, февраль: 2, март: 3, апрель: 4, май: 5, июнь: 6,
-    июль: 7, август: 8, сентябрь: 9, октябрь: 10, ноябрь: 11, декабрь: 12,
-};
-
-// Ключ хронологии по имени периода («Май 2026» → [2026,5]). «Начальный
-// период» и прочее без месяца → [0,0] (сортируется в самое начало).
-function periodKey(name) {
-    const m = String(name || '').toLowerCase().match(/([а-яё]+)\s*(\d{4})?/);
-    if (!m) return [0, 0];
-    const mon = RU_MONTHS[m[1]] || 0;
-    const year = m[2] ? parseInt(m[2], 10) : 0;
-    return [year, mon];
-}
-// Полные (тотальные) компараторы по хронологии — со стабильным tiebreak по id,
-// чтобы периоды с одинаковым ключом (напр. «Начальный период» = [0,0]) не
-// тасовались недетерминированно.
-function cmpAsc(a, b) {
-    const ka = periodKey(a.name), kb = periodKey(b.name);
-    return (ka[0] - kb[0]) || (ka[1] - kb[1]) || (a.id - b.id);
-}
-function cmpDesc(a, b) { return -cmpAsc(a, b); }
-
-export const ManualModule = {
-    isInitialized: false,
+export const ManualEntryModal = {
+    isBuilt: false,
     state: {
         searchTimer: null,
         results: [],
         activeIdx: -1,
         searchToken: 0,
         suppressBlur: false,
-        periods: [],           // [{id, name, is_active}]
-        targetPeriods: [],     // [selected, prev1, prev2] (объекты периода)
+        periods: [],           // от реестра: [{id, name, is_active}], свежие первыми
+        targetPeriods: [],     // [выбранный, prev1, prev2]
         users: [],             // добавленные жильцы [{id, username, room}]
+        onSaved: null,         // колбэк реестру (softReload) после утверждения
+        savedAny: false,
     },
 
-    init() {
-        this.cacheDOM();
-        if (!this.isInitialized) {
-            this.bindEvents();
-            this.isInitialized = true;
-        }
+    // periods — data.periods реестра; defaultPeriodId — выбранный в реестре
+    // период (модалка открывается сразу на нём); onSaved — тихое обновление.
+    open({ periods, defaultPeriodId, onSaved } = {}) {
+        this._build();
+        this.state.periods = periods || [];
+        this.state.onSaved = onSaved || null;
+        this.state.savedAny = false;
+        this._fillPeriodSelect(defaultPeriodId);
+        this._resolveTargets();
+        this._updatePeriodWarn();
         this._hideDropdown();
-        this._loadPeriods();
+        this.dom.overlay.classList.add('open');
+        this.dom.searchInput.value = '';
+        this.dom.searchInput.focus();
+    },
+
+    async close() {
+        if (!this.isBuilt) return;
+        // Несохранённый ввод (значение отличается от отрендеренного) —
+        // подтверждаем закрытие, чтобы случайный Escape/клик мимо окна
+        // не стёр набранное молча.
+        if (this._hasUnsaved()) {
+            const ok = await showConfirm(
+                'Закрыть ручной ввод? Заполненные, но НЕ утверждённые показания будут потеряны.',
+                { title: 'Есть несохранённый ввод', confirmText: 'Закрыть' });
+            if (!ok) return;
+        }
+        this.dom.overlay.classList.remove('open');
+        // Карточки не переживают закрытие — следующий ввод начинается чисто.
+        this.state.users = [];
+        if (this.dom.grid) this.dom.grid.innerHTML = '';
         this._updateEmpty();
+        if (this.state.savedAny && this.state.onSaved) this.state.onSaved();
+    },
+
+    // Есть ли ввод, не совпадающий с последним отрендеренным состоянием
+    // (после успешного сохранения карточка перерисовывается — defaultValue
+    // обновляется, и сохранённые значения «чистые»).
+    _hasUnsaved() {
+        if (!this.dom?.grid) return false;
+        return Array.from(this.dom.grid.querySelectorAll('input[data-meter]'))
+            .some(i => i.value !== i.defaultValue);
+    },
+
+    _build() {
+        if (this.isBuilt) { this.cacheDOM(); return; }
+        const ov = document.createElement('div');
+        ov.id = 'manualEntryOverlay';
+        ov.className = 'modal-overlay';
+        ov.innerHTML = `
+            <div class="modal-window" style="max-width:860px; width:100%;">
+                <div class="modal-header">
+                    <h3><i class="fa-solid fa-pen-to-square"></i> Ручной ввод показаний</h3>
+                    <button class="close-btn close-icon" data-me-close>&times;</button>
+                </div>
+                <div class="modal-body" style="max-height:72vh; overflow:auto;">
+                    <div style="display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; margin-bottom:6px;">
+                        <div class="form-group" style="margin:0; min-width:190px;">
+                            <label style="font-size:13px; font-weight:600;">
+                                <i class="fa-regular fa-calendar"></i> Месяц (период)
+                            </label>
+                            <select id="manualPeriodSelect" style="font-size:14px;"></select>
+                        </div>
+                        <div class="manual-search" style="flex:1; min-width:260px;">
+                            <i class="fa-solid fa-magnifying-glass manual-search-icon"></i>
+                            <input type="text" id="manualSearchInput" class="manual-search-input"
+                                   placeholder="Найди жильца — логин, ФИО или комната → добавится карточкой ниже"
+                                   autocomplete="off" aria-label="Поиск жильца"
+                                   aria-controls="manualUserList" aria-haspopup="listbox">
+                            <button type="button" id="manualSearchClear" class="manual-search-clear" title="Очистить" hidden>
+                                <i class="fa-solid fa-xmark"></i>
+                            </button>
+                            <ul id="manualUserList" class="manual-search-dropdown" role="listbox" hidden></ul>
+                        </div>
+                    </div>
+                    <small id="manualPeriodWarn" class="hint-text" style="display:none; color:#b45309; margin:0 0 8px; font-size:11.5px;">
+                        ⚠️ Выбран <b>прошлый период</b> — ввод за закрытый месяц утверждается сразу.
+                    </small>
+                    <div style="font-size:12px; color:var(--text-secondary); margin:6px 0 10px;">
+                        Каждый добавленный жилец — карточка с тремя месяцами (выбранный + 2 предыдущих).
+                        Заполни показания и нажми «Утвердить» у каждого — они появятся в реестре.
+                    </div>
+                    <div id="manualGrid"></div>
+                    <div id="manualGridEmpty" style="text-align:center; padding:28px; color:var(--text-secondary); border:1px dashed var(--border-color); border-radius:10px;">
+                        <i class="fa-solid fa-users-viewfinder" style="font-size:28px; opacity:.4;"></i>
+                        <div style="margin-top:8px;">Никто не добавлен. Найди жильца в поиске — он появится здесь карточкой.</div>
+                    </div>
+                </div>
+            </div>`;
+        document.body.appendChild(ov);
+        this.isBuilt = true;
+        this.cacheDOM();
+        this.bindEvents();
     },
 
     cacheDOM() {
         this.dom = {
+            overlay: document.getElementById('manualEntryOverlay'),
             searchInput: document.getElementById('manualSearchInput'),
             searchClear: document.getElementById('manualSearchClear'),
             userList: document.getElementById('manualUserList'),
@@ -76,126 +145,107 @@ export const ManualModule = {
     },
 
     bindEvents() {
-        const input = this.dom.searchInput;
-        if (input) {
-            input.addEventListener('input', (e) => this._onSearchInput(e.target.value));
-            input.addEventListener('focus', () => {
-                if (input.value.trim().length >= MIN_QUERY_LEN && this.state.results.length) this._showDropdown();
-            });
-            input.addEventListener('blur', () => {
-                setTimeout(() => {
-                    if (this.state.suppressBlur) { this.state.suppressBlur = false; return; }
-                    this._hideDropdown();
-                }, 120);
-            });
-            input.addEventListener('keydown', (e) => this._onSearchKey(e));
-        }
-        if (this.dom.searchClear) this.dom.searchClear.addEventListener('click', () => this._clearSearch());
-
-        document.addEventListener('click', (e) => {
-            const dd = this.dom.userList, inp = this.dom.searchInput;
-            if (!dd || !inp || dd.hidden) return;
-            if (dd.contains(e.target) || inp.contains(e.target)) return;
-            this._hideDropdown();
+        // Закрытие: крестик, mousedown ПО подложке (click ловил бы и
+        // «drag из инпута с отпусканием над подложкой»), Escape (когда
+        // dropdown закрыт).
+        this.dom.overlay.addEventListener('mousedown', (e) => {
+            if (e.target === this.dom.overlay) this.close();
+        });
+        this.dom.overlay.addEventListener('click', (e) => {
+            if (e.target.closest('[data-me-close]')) this.close();
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key !== 'Escape' || !this.dom.overlay.classList.contains('open')) return;
+            if (!this.dom.userList.hidden) return; // Escape сперва закрывает dropdown (обработчик инпута)
+            this.close();
         });
 
-        if (this.dom.userList) {
-            this.dom.userList.addEventListener('mousedown', (e) => {
-                const li = e.target.closest('li[data-user-id]');
-                if (!li) return;
-                this.state.suppressBlur = true;
-                const id = parseInt(li.dataset.userId, 10);
-                const user = this.state.results.find(u => u.id === id);
-                if (user) this._addUser(user);
-            });
-        }
+        const input = this.dom.searchInput;
+        input.addEventListener('input', (e) => this._onSearchInput(e.target.value));
+        input.addEventListener('focus', () => {
+            if (input.value.trim().length >= MIN_QUERY_LEN && this.state.results.length) this._showDropdown();
+        });
+        input.addEventListener('blur', () => {
+            setTimeout(() => {
+                if (this.state.suppressBlur) { this.state.suppressBlur = false; return; }
+                this._hideDropdown();
+            }, 120);
+        });
+        input.addEventListener('keydown', (e) => this._onSearchKey(e));
+        this.dom.searchClear.addEventListener('click', () => this._clearSearch());
 
-        if (this.dom.periodSelect) {
-            this.dom.periodSelect.addEventListener('change', () => {
-                this._resolveTargets();
-                this._updatePeriodWarn();
-                this._renderAll();
-            });
-        }
+        this.dom.userList.addEventListener('mousedown', (e) => {
+            const li = e.target.closest('li[data-user-id]');
+            if (!li) return;
+            this.state.suppressBlur = true;
+            const id = parseInt(li.dataset.userId, 10);
+            const user = this.state.results.find(u => u.id === id);
+            if (user) this._addUser(user);
+        });
+
+        this.dom.periodSelect.addEventListener('change', () => {
+            this._resolveTargets();
+            this._updatePeriodWarn();
+            this._renderAll();
+        });
 
         // Делегирование действий по карточкам (утвердить / убрать).
-        if (this.dom.grid) {
-            this.dom.grid.addEventListener('click', (e) => {
-                const card = e.target.closest('[data-uid]');
-                if (!card) return;
-                const uid = parseInt(card.dataset.uid, 10);
-                if (e.target.closest('[data-act="remove"]')) this._removeUser(uid);
-                else if (e.target.closest('[data-act="approve"]')) this._approveUser(card, uid);
-            });
-            // Нормализация ввода (запятая → точка, только цифры и одна точка).
-            this.dom.grid.addEventListener('input', (e) => {
-                const inp = e.target;
-                if (!inp.matches('input[data-meter]')) return;
-                let v = inp.value.replace(',', '.').replace(/[^\d.]/g, '');
-                const dot = v.indexOf('.');
-                if (dot !== -1) v = v.slice(0, dot + 1) + v.slice(dot + 1).replace(/\./g, '');
-                inp.value = v;
-            });
-        }
+        this.dom.grid.addEventListener('click', (e) => {
+            const card = e.target.closest('[data-uid]');
+            if (!card) return;
+            const uid = parseInt(card.dataset.uid, 10);
+            if (e.target.closest('[data-act="remove"]')) this._removeUser(uid);
+            else if (e.target.closest('[data-act="approve"]')) this._approveUser(card, uid);
+        });
+        // Нормализация ввода (запятая → точка, только цифры и одна точка).
+        this.dom.grid.addEventListener('input', (e) => {
+            const inp = e.target;
+            if (!inp.matches('input[data-meter]')) return;
+            let v = inp.value.replace(',', '.').replace(/[^\d.]/g, '');
+            const dot = v.indexOf('.');
+            if (dot !== -1) v = v.slice(0, dot + 1) + v.slice(dot + 1).replace(/\./g, '');
+            inp.value = v;
+        });
     },
 
     // -------- ПЕРИОДЫ -------------------------------------------------------
 
-    async _loadPeriods() {
-        if (!this.dom.periodSelect) return;
-        try {
-            const periods = await api.get('/admin/periods/history');
-            const items = Array.isArray(periods) ? periods : (periods.items || []);
-            this.state.periods = items;
-            // Селект: активный сверху, дальше по убыванию хронологии.
-            const sorted = items.slice().sort((a, b) => {
-                if (a.is_active && !b.is_active) return -1;
-                if (!a.is_active && b.is_active) return 1;
-                return cmpDesc(a, b);
-            });
-            const cur = this.dom.periodSelect.querySelector('option[value=""]');
-            this.dom.periodSelect.innerHTML = '';
-            if (cur) this.dom.periodSelect.appendChild(cur);
-            sorted.forEach(p => {
-                const opt = document.createElement('option');
-                opt.value = String(p.id);
-                opt.textContent = p.name + (p.is_active ? ' (активный)' : '');
-                this.dom.periodSelect.appendChild(opt);
-            });
-            this._resolveTargets();
-            this._updatePeriodWarn();
-        } catch (e) {
-            console.warn('manual: не удалось загрузить периоды:', e.message);
-        }
+    _fillPeriodSelect(defaultPeriodId) {
+        const sel = this.dom.periodSelect;
+        sel.innerHTML = '';
+        // periods от реестра уже отсортированы (свежие первыми, активный помечен).
+        this.state.periods.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = String(p.id);
+            opt.textContent = p.name + (p.is_active ? ' (активный)' : '');
+            sel.appendChild(opt);
+        });
+        const def = defaultPeriodId != null ? String(defaultPeriodId)
+            : String((this.state.periods.find(p => p.is_active) || this.state.periods[0] || {}).id || '');
+        if (def) sel.value = def;
     },
 
-    // Выбранный период + 2 хронологически предыдущих СУЩЕСТВУЮЩИХ периода.
+    // Выбранный период + 2 предыдущих СУЩЕСТВУЮЩИХ (periods отсортированы
+    // по убыванию хронологии — предыдущие просто следующие в списке).
     _resolveTargets() {
         const periods = this.state.periods || [];
         if (!periods.length) { this.state.targetPeriods = []; return; }
         const selId = this.dom.periodSelect?.value;
-        let selected = selId ? periods.find(p => String(p.id) === String(selId)) : null;
-        if (!selected) selected = periods.find(p => p.is_active) || periods[0];
-
-        const asc = periods.slice().sort(cmpAsc);
-        const idx = asc.findIndex(p => p.id === selected.id);
-        const targets = [selected];
-        for (let i = idx - 1; i >= 0 && targets.length < 3; i--) targets.push(asc[i]);
-        this.state.targetPeriods = targets;   // [selected, prev1, prev2]
+        let idx = periods.findIndex(p => String(p.id) === String(selId));
+        if (idx === -1) idx = Math.max(0, periods.findIndex(p => p.is_active));
+        this.state.targetPeriods = periods.slice(idx, idx + 3);   // [выбр, prev1, prev2]
     },
 
     _updatePeriodWarn() {
-        if (!this.dom.periodWarn) return;
         const sel = this.state.targetPeriods[0];
-        const isPast = sel && !sel.is_active;
-        this.dom.periodWarn.style.display = isPast ? 'block' : 'none';
+        this.dom.periodWarn.style.display = (sel && !sel.is_active) ? 'block' : 'none';
     },
 
     // -------- ПОИСК (autocomplete) -----------------------------------------
 
     _onSearchInput(value) {
         const q = value.trim();
-        if (this.dom.searchClear) this.dom.searchClear.hidden = (q.length === 0);
+        this.dom.searchClear.hidden = (q.length === 0);
         clearTimeout(this.state.searchTimer);
         if (q.length < MIN_QUERY_LEN) { this._hideDropdown(); return; }
         this.state.searchTimer = setTimeout(() => this._searchUsers(q), SEARCH_DEBOUNCE_MS);
@@ -204,7 +254,7 @@ export const ManualModule = {
 
     _onSearchKey(e) {
         if (e.key === 'Escape') {
-            if (!this.dom.userList.hidden) { this._hideDropdown(); e.preventDefault(); }
+            if (!this.dom.userList.hidden) { this._hideDropdown(); e.preventDefault(); e.stopPropagation(); }
             return;
         }
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -225,7 +275,7 @@ export const ManualModule = {
 
     _clearSearch() {
         this.dom.searchInput.value = '';
-        if (this.dom.searchClear) this.dom.searchClear.hidden = true;
+        this.dom.searchClear.hidden = true;
         this._hideDropdown();
         this.dom.searchInput.focus();
     },
@@ -244,8 +294,8 @@ export const ManualModule = {
         }
     },
 
-    _showDropdown() { if (this.dom.userList) this.dom.userList.hidden = false; },
-    _hideDropdown() { if (this.dom.userList) { this.dom.userList.hidden = true; this.state.activeIdx = -1; } },
+    _showDropdown() { this.dom.userList.hidden = false; },
+    _hideDropdown() { if (this.dom?.userList) { this.dom.userList.hidden = true; this.state.activeIdx = -1; } },
 
     _renderDropdownLoading(query) {
         this.dom.userList.innerHTML = '';
@@ -294,26 +344,23 @@ export const ManualModule = {
         return safe.slice(0, idx) + '<mark>' + safe.slice(idx, end) + '</mark>' + safe.slice(end);
     },
 
-    // -------- ДОБАВЛЕНИЕ / РЕНДЕР СТРОК -------------------------------------
+    // -------- ДОБАВЛЕНИЕ / РЕНДЕР КАРТОЧЕК ----------------------------------
 
     _updateEmpty() {
-        if (this.dom.empty) this.dom.empty.style.display = this.state.users.length ? 'none' : '';
+        this.dom.empty.style.display = this.state.users.length ? 'none' : '';
     },
 
     async _addUser(user) {
-        // Очищаем поиск (готов к следующему).
         this.dom.searchInput.value = '';
-        if (this.dom.searchClear) this.dom.searchClear.hidden = true;
+        this.dom.searchClear.hidden = true;
         this._hideDropdown();
 
-        // Без комнаты ручной ввод показаний невозможен (бэкенд тоже отклонит) —
-        // не плодим «рабочую на вид», но тупиковую карточку.
+        // Без комнаты ручной ввод показаний невозможен (бэкенд тоже отклонит).
         if (!user.room) {
             toast('Жилец не привязан к комнате — ручной ввод недоступен', 'warning');
             this.dom.searchInput.focus();
             return;
         }
-
         if (this.state.users.some(u => u.id === user.id)) {
             const ex = this.dom.grid.querySelector(`[data-uid="${user.id}"]`);
             if (ex) { ex.style.transition = 'background .2s'; ex.style.background = '#fef9c3'; setTimeout(() => { ex.style.background = ''; }, 600); ex.scrollIntoView({ block: 'nearest' }); }
@@ -351,9 +398,18 @@ export const ManualModule = {
             toast('Ошибка загрузки состояния: ' + e.message, 'error');
             return;
         }
+        // Карточку могли убрать (или модалку закрыть), пока грузился
+        // grid-state — не рисуем «зомби» поверх пустого состояния.
+        if (!this.state.users.some(u => u.id === uid)) return;
+
         const esc = escapeHtml;
         const meter = { hw: gs.has_hw_meter !== false, cw: gs.has_cw_meter !== false, el: gs.has_el_meter !== false };
-        const noMeters = !meter.hw && !meter.cw && !meter.el;
+        // Вода подаётся ПАРОЙ (ГВС+ХВС, домен + бэкенд-валидация) — гейтим её
+        // как единицу: клетки воды открыты, пока есть хотя бы один водяной
+        // счётчик, иначе комната с одним счётчиком попадает в тупик
+        // («заполните оба», а вторая клетка заблокирована).
+        const waterOn = meter.hw || meter.cw;
+        const noMeters = !waterOn && !meter.el;
         const pById = {};
         (gs.periods || []).forEach(p => { pById[p.period_id] = p; });
 
@@ -364,7 +420,7 @@ export const ManualModule = {
         const addr = gs.room ? `${esc(gs.room.dormitory_name || '')} ком.${esc(String(gs.room.room_number || ''))}` : 'без комнаты';
 
         const cell = (m, on, prevVal, curVal) => {
-            if (!on) return '<td style="text-align:center; color:var(--text-tertiary);">—</td>';
+            if (!on) return '<td style="text-align:center; color:var(--text-tertiary);" title="У помещения нет этого счётчика">—</td>';
             const pv = (prevVal == null ? '0' : String(prevVal));
             return `<td style="padding:4px 8px; text-align:center;">
                 <input type="text" inputmode="decimal" data-meter="${m}" value="${curVal != null ? esc(String(curVal)) : ''}"
@@ -381,8 +437,8 @@ export const ManualModule = {
             const actBadge = t.is_active ? ' <span style="color:#2563eb; font-size:10px;">актив.</span>' : '';
             rows += `<tr data-pid="${t.id}" data-active="${t.is_active ? 1 : 0}">
                 <td style="padding:5px 8px; white-space:nowrap; font-weight:500;">${esc(t.name)}${actBadge}${okBadge}</td>
-                ${cell('hot', meter.hw, p.prev_hot, p.cur_hot)}
-                ${cell('cold', meter.cw, p.prev_cold, p.cur_cold)}
+                ${cell('hot', waterOn, p.prev_hot, p.cur_hot)}
+                ${cell('cold', waterOn, p.prev_cold, p.cur_cold)}
                 ${cell('elect', meter.el, p.prev_elect, p.cur_elect)}
             </tr>`;
         });
@@ -449,8 +505,8 @@ export const ManualModule = {
         if (!jobs.length) { msg.textContent = '⚠ Не заполнено ни одного показания.'; msg.style.color = '#b45309'; return; }
 
         // Раньше — раньше: сохраняем хронологически с самого старого месяца,
-        // чтобы следующий подхватил свежий prev. targetPeriods = [выбр, prev1, prev2];
-        // jobs идут в порядке строк (выбр первым) → переворачиваем.
+        // чтобы следующий подхватил свежий prev. targetPeriods = [выбр, prev1,
+        // prev2]; jobs идут в порядке строк (выбр первым) → переворачиваем.
         jobs.reverse();
 
         btn.disabled = true;
@@ -469,6 +525,15 @@ export const ManualModule = {
                     });
                 }
                 done++;
+                // Сразу, не после всего цикла: при частичном успехе (второй
+                // месяц упал валидацией) реестр всё равно должен обновиться.
+                this.state.savedAny = true;
+            }
+            // Модалку могли закрыть, пока шли POST'ы — карточек уже нет,
+            // просто обновляем реестр под ней.
+            if (!this.dom.overlay.classList.contains('open')) {
+                if (this.state.onSaved) this.state.onSaved();
+                return;
             }
             // Перерисовываем карточку — подтянутся свежие prev/утв.-галочки —
             // и пишем итог уже на НОВУЮ карточку (старая заменена).

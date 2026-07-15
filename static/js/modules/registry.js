@@ -111,6 +111,7 @@ export const RegistryModule = {
       search: document.getElementById('registrySearch'),
       total: document.getElementById('registryTotal'),
       refresh: document.getElementById('btnRegistryRefresh'),
+      manualEntry: document.getElementById('btnManualEntry'),
       period: document.getElementById('registryPeriod'),
       days: document.getElementById('registryDays'),
       chips: document.getElementById('registryStatusChips'),
@@ -127,6 +128,27 @@ export const RegistryModule = {
     this.dom.period?.addEventListener('change', () => { this.state.period_id = this.dom.period.value || null; this.state.page = 1; this.load(); });
     this.dom.showSaldo?.addEventListener('change', () => { this.state.show_saldo = !!this.dom.showSaldo.checked; this.state.page = 1; this.load(); });
     this.dom.refresh?.addEventListener('click', () => this.load());
+    // «➕ Ручной ввод» — модалка мульти-ввода (бывшая секция «Операций»,
+    // объединение 2026-07-15): создание показаний с нуля и доввод задним
+    // числом. Открывается на периоде, выбранном в реестре; после
+    // утверждений список тихо обновляется.
+    this.dom.manualEntry?.addEventListener('click', async () => {
+      // Периодов нет (первый load упал/ещё идёт) — пробуем догрузить сами,
+      // а не отправляем админа гадать.
+      if (!this._periods || !this._periods.length) await this.load();
+      if (!this._periods || !this._periods.length) {
+        toast('Не удалось загрузить периоды — проверьте связь и нажмите ⟳', 'error');
+        return;
+      }
+      try {
+        const { ManualEntryModal } = await import('./manual_entry.js');
+        ManualEntryModal.open({
+          periods: this._periods,
+          defaultPeriodId: this.state.period_id || this._activePeriodId,
+          onSaved: () => this.softReload(null),
+        });
+      } catch (e) { toast('Не удалось открыть ручной ввод: ' + (e.message || e), 'error'); }
+    });
     this.dom.pagePrev?.addEventListener('click', () => { if (this.state.page > 1) { this.state.page--; this.load(); } });
     this.dom.pageNext?.addEventListener('click', () => { this.state.page++; this.load(); });
     // Чипы статусов — делегировано на контейнер.
@@ -188,7 +210,13 @@ export const RegistryModule = {
     var st = scroller ? scroller.scrollTop : 0;
     let data;
     try { data = await api.get(this._query()); }
-    catch (e) { return; /* точечное действие уже показало свой toast */ }
+    catch (e) {
+      // Точечное действие уже показало свой тост об УСПЕХЕ — но список
+      // остался старым, об этом честно предупреждаем (иначе админ решит,
+      // что сохранение не прошло, и введёт повторно).
+      toast('Список не обновился (сеть?) — нажмите ⟳', 'warning');
+      return;
+    }
     this.renderControls(data);
     this.render(data);
     if (scroller) scroller.scrollTop = st;
@@ -205,6 +233,9 @@ export const RegistryModule = {
 
   // Период-селектор + чипы статусов + пагинация.
   renderControls(data) {
+    // Периоды и активный период — для модалки «➕ Ручной ввод».
+    this._periods = data.periods || this._periods || [];
+    this._activePeriodId = data.period_id != null ? data.period_id : this._activePeriodId;
     if (this.dom.period && data.periods && this.dom.period.options.length !== data.periods.length) {
       this.dom.period.innerHTML = data.periods.map(function (p) {
         return '<option value="' + p.id + '"' + (p.id === data.period_id ? ' selected' : '') + '>' +
@@ -374,16 +405,29 @@ export const RegistryModule = {
         var txt = (v > 0 ? '+' : '') + v.toLocaleString('ru-RU', { maximumFractionDigits: 2 });
         return '<br><span style="font-size:10px; color:' + col + ';" title="Расход за месяц (к прошлому показанию)">Δ ' + txt + '</span>';
       };
+      // Оснащённость помещения счётчиками (бэкенд отдаёт r.meters для боевых
+      // строк): в клетку несуществующего счётчика значение не впишешь —
+      // раньше inline-правка это позволяла (перенос проверки из ручного
+      // ввода). Вода гейтится КАК ПАРА (ГВС+ХВС подаются вместе): клетки
+      // открыты, пока есть хотя бы один водяной счётчик — иначе комната с
+      // одним счётчиком попадает в тупик «заполните оба».
+      var meterOn = { hot: true, cold: true, elect: true };
+      if (r.row_type === 'reading' && r.meters) {
+        var waterOn = !!(r.meters.hw || r.meters.cw);
+        meterOn = { hot: waterOn, cold: waterOn, elect: !!r.meters.el };
+      }
       var meterTd = function (field, val, delta) {
         // Свет у буфера редактируем только при сопоставленном жильце.
-        var cellEditable = editable && !(editBuffer && field === 'elect' && !bufMuid);
-        var hint = (editBuffer && field === 'elect')
-          ? 'В гугл-форме света нет — значение запишется показанием жильца в активный месяц'
-          : 'Нажми, чтобы изменить показание';
+        var cellEditable = editable && meterOn[field] && !(editBuffer && field === 'elect' && !bufMuid);
+        var hint = !meterOn[field]
+          ? 'У помещения нет этого счётчика'
+          : (editBuffer && field === 'elect')
+            ? 'В гугл-форме света нет — значение запишется показанием жильца в активный месяц'
+            : 'Нажми, чтобы изменить показание';
         var inner = fmtNum(val) + deltaHtml(delta);
         return cellEditable
           ? '<td class="reg-edit" data-field="' + field + '" data-raw="' + rawAttr(val) + '" style="text-align:right; font-family:monospace; cursor:text; line-height:1.25;" title="' + hint + '">' + inner + '</td>'
-          : '<td style="text-align:right; font-family:monospace; line-height:1.25;">' + inner + '</td>';
+          : '<td style="text-align:right; font-family:monospace; line-height:1.25;"' + (!meterOn[field] ? ' title="' + hint + '"' : '') + '>' + inner + '</td>';
       };
 
       // Тариф из колонки переехал в тултип ФИО (меньше шума в таблице).
@@ -505,8 +549,12 @@ export const RegistryModule = {
     if (payload.hot_water == null && payload.electricity == null) { td.innerHTML = oldHtml; return; }
     td.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>';
     try {
-      await api.post('/admin/readings/manual', payload);
-      toast('Показание обновлено и пересчитано', 'success');
+      var res = await api.post('/admin/readings/manual', payload);
+      // Закрытый месяц save_manual_entry утверждает сразу — говорим честно
+      // (хинт из ручного ввода: раньше это заставало админа врасплох).
+      toast(res && res.auto_approved
+        ? 'Записано и сразу утверждено (закрытый месяц)'
+        : 'Показание обновлено и пересчитано', 'success');
       this.softReload({ rt: 'reading', id: tr.dataset.id });
     } catch (e) {
       toast('Ошибка: ' + (e.message || e), 'error');

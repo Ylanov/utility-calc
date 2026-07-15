@@ -370,6 +370,22 @@ def pick_prev_pair(rows, target_period_name):
     return prev_meaningful, prev_any, earlier_desc
 
 
+def build_prev_map(rows, target_period_name):
+    """Батч-обвязка pick_prev_pair: группирует кандидатов по паре
+    (user_id, room_id) и выбирает канонический prev для каждой.
+
+    rows: iterable[(reading, period_name)] — обычно один SELECT утверждённых
+    показаний нужных жильцов с именем периода. Возвращает
+    {(user_id, room_id): prev_reading | None}. До 2026-07-15 эта группировка
+    была скопипащена в admin_registry / admin_readings_approve.
+    """
+    by_pair: dict = {}
+    for r, nm in rows:
+        by_pair.setdefault((r.user_id, r.room_id), []).append((r, nm))
+    return {pair: pick_prev_pair(rs, target_period_name)[0]
+            for pair, rs in by_pair.items()}
+
+
 async def find_prev_reading(db, *, user_id, room_id, target_period_name,
                             exclude_id=None):
     """Канонический async-выбор prev: утверждённые показания ЖИЛЬЦА В ЭТОЙ
@@ -400,6 +416,7 @@ __all__ = [
     "CalculationError",
     "find_prev_reading",
     "pick_prev_pair",
+    "build_prev_map",
     "is_meaningful_prev",
     "PREV_SKIP_FLAGS",
 ]

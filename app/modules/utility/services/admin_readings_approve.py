@@ -79,7 +79,7 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
     # утверждённые показания пар + имя периода, prev выбирает pick_prev_pair
     # (хронология имени, is_meaningful_prev — класс «Капранов», приоритет
     # METER_REPLACEMENT текущего месяца).
-    from app.modules.utility.services.reading_calculator import pick_prev_pair
+    from app.modules.utility.services.reading_calculator import build_prev_map
 
     _cand_rows = (await db.execute(
         select(MeterReading, BillingPeriod.name)
@@ -90,13 +90,7 @@ async def bulk_approve_drafts(db: AsyncSession, current_user=None):
             MeterReading.is_approved.is_(True),
         )
     )).all()
-    _by_pair: dict = {}
-    for _mr, _pname in _cand_rows:
-        _by_pair.setdefault((_mr.user_id, _mr.room_id), []).append((_mr, _pname))
-    prev_readings_map = {
-        pair: pick_prev_pair(rows, active_period.name)[0]
-        for pair, rows in _by_pair.items()
-    }
+    prev_readings_map = build_prev_map(_cand_rows, active_period.name)
 
     # Загружаем корректировки (долги / скидки)
     adj_res = await db.execute(

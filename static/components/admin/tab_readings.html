@@ -16,10 +16,17 @@
             <h3 style="margin:0;"><i class="fa-solid fa-layer-group" style="color:var(--primary-color); margin-right:8px;"></i> Реестр показаний</h3>
             <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
                 <div id="registryTotal" style="font-size:12px; color:var(--text-secondary); white-space:nowrap;"></div>
+                <!-- Ручной ввод (объединение 2026-07-15, бывшая секция
+                     «Операций»): модалка мульти-ввода — создание показаний
+                     с нуля и доввод задним числом (3 месяца). manual_entry.js -->
+                <button id="btnManualEntry" class="action-btn primary-btn" style="white-space:nowrap;"
+                        title="Ввод за жильца, если он не подал сам: поиск жильца, три месяца, утверждение">
+                    <i class="fa-solid fa-pen-to-square"></i> Ручной ввод
+                </button>
                 <!-- Импорт показаний из Excel (2026-06-15): загрузка пары
                      прев/текущий по каждому жильцу → разбор всеми анализаторами
                      → утверждение сразу в финотчётность за выбранный месяц. -->
-                <button id="btnExcelReadings" class="action-btn primary-btn" style="white-space:nowrap;">
+                <button id="btnExcelReadings" class="action-btn secondary-btn" style="white-space:nowrap;">
                     <i class="fa-solid fa-file-excel"></i> Загрузить из Excel
                 </button>
             </div>

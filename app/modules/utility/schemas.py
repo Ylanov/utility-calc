@@ -535,13 +535,6 @@ class AdminManualReadingSchema(BaseModel):
     period_id: Optional[int] = None
 
 
-class OneTimeChargeSchema(BaseModel):
-    user_id: int
-    amount: DecimalAmount
-    description: str
-    account_type: AllowedAccountType = "209"
-
-
 # ======================================================
 # RELOCATE USER SCHEMA
 # ======================================================
