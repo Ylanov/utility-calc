@@ -409,7 +409,7 @@ async def get_resident_finance_detail(
         "history": history,  # от свежих к старым
         "adjustments": adjustments,
         "contract": contract_data,
-        "balance": await _compute_user_balance(db, user.id, user.room_id),
+        "balance": await _compute_user_balance(db, user.id),
     }
 
 
@@ -460,7 +460,7 @@ async def get_resident_passport_360(
 
     # 1) Опубликованный баланс (что жилец видит) — напрямую через _compute_user_balance
     # (берёт 209/205 с РАЗНЫХ последних показаний; работает и для выселенных).
-    published_balance = await _compute_user_balance(db, user.id, user.room_id)
+    published_balance = await _compute_user_balance(db, user.id)
 
     # 1b) Начисления ПО ТАРИФУ «один в один как в финотчётности» — переиспользуем
     # тот же finance-detail (история периодов с total_209/205/итого + детальная
@@ -640,7 +640,7 @@ async def get_resident_passport_360(
     }
 
 
-async def _compute_user_balance(db: AsyncSession, user_id: int, room_id: Optional[int]) -> dict:
+async def _compute_user_balance(db: AsyncSession, user_id: int) -> dict:
     """Текущий баланс жильца — единое число «должен/переплатил» с учётом
     ОБОИХ счетов (209 коммуналка + 205 найм).
 
@@ -654,29 +654,30 @@ async def _compute_user_balance(db: AsyncSession, user_id: int, room_id: Optiona
     Фикс: отдельный поиск САМОГО СВЕЖЕГО reading где ненулевой 209,
     и отдельный — где ненулевой 205. balance_209/205 берутся независимо.
 
+    КРИТИЧЕСКИЙ ФИКС (аудит финотчётности 2026-07-16): фильтр — по
+    user_id (долг принадлежит ЛИЦЕВОМУ СЧЁТУ, models.py), НЕ по room_id.
+    Раньше фильтровали по комнате: в комнате из N жильцов каждому
+    показывался долг СОСЕДА со свежайшего reading'а, а QR-кошелёк
+    (public_portal суммирует балансы жильцов комнаты) умножал один долг
+    на N. Комната для баланса не нужна вовсе — долг следует за жильцом
+    (в т.ч. отвязанным от комнаты).
+
     balance_X > 0  → жилец должен по этому счёту
     balance_X < 0  → переплата по этому счёту
     balance_X == 0 → ноль
     """
-    if not room_id:
-        return {
-            "balance_209": 0.0, "balance_205": 0.0, "total": 0.0,
-            "kind": "no_room", "source_209_reading_id": None,
-            "source_205_reading_id": None,
-        }
-
-    # Свежий reading с НЕНУЛЕВЫМ 209-сальдо
+    # Свежий reading ЖИЛЬЦА с НЕНУЛЕВЫМ 209-сальдо
     latest_209 = (await db.execute(
         select(MeterReading).where(
-            MeterReading.room_id == room_id,
+            MeterReading.user_id == user_id,
             (MeterReading.debt_209 > 0) | (MeterReading.overpayment_209 > 0),
         ).order_by(MeterReading.created_at.desc()).limit(1)
     )).scalars().first()
 
-    # Свежий reading с НЕНУЛЕВЫМ 205-сальдо (может быть тот же или другой)
+    # Свежий reading ЖИЛЬЦА с НЕНУЛЕВЫМ 205-сальдо (может быть тот же или другой)
     latest_205 = (await db.execute(
         select(MeterReading).where(
-            MeterReading.room_id == room_id,
+            MeterReading.user_id == user_id,
             (MeterReading.debt_205 > 0) | (MeterReading.overpayment_205 > 0),
         ).order_by(MeterReading.created_at.desc()).limit(1)
     )).scalars().first()

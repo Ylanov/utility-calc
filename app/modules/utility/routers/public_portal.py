@@ -212,7 +212,7 @@ async def portal_state(
     )).scalars().all()
     net = 0.0
     for ruid in room_residents:
-        b = await _compute_user_balance(db, ruid, room.id)
+        b = await _compute_user_balance(db, ruid)
         net += float(b.get("balance_209", 0) or 0) + float(b.get("balance_205", 0) or 0)
     net = round(net, 2)
     balance = {
