@@ -1084,3 +1084,39 @@ async def download_import_template():
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": "attachment; filename=Import_Template.xlsx"}
     )
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# ОСИРОТЕВШИЕ ПОКАЗАНИЯ (инцидент Безродний 2026-07-16): показания
+# активного месяца в прежней комнате после смены привязки жильца.
+# Фронт после смены комнаты спрашивает админа и переносит по подтверждению.
+# ═══════════════════════════════════════════════════════════════════════
+
+@router.get("/{user_id}/stranded-readings")
+async def get_stranded_readings(
+        user_id: int,
+        current_user: User = Depends(allow_accountant),
+        db: AsyncSession = Depends(get_db)
+):
+    """Показания жильца за АКТИВНЫЙ месяц не в его текущей комнате."""
+    from app.modules.utility.services.stranded_readings import find_stranded
+    return await find_stranded(db, user_id)
+
+
+@router.post("/{user_id}/adopt-stranded-readings")
+async def adopt_stranded_readings(
+        user_id: int,
+        current_user: User = Depends(allow_accountant),
+        db: AsyncSession = Depends(get_db)
+):
+    """Перенести осиротевшие показания активного месяца в текущую комнату
+    жильца + пересчитать месяц. Только по подтверждению админа: при
+    ФИЗИЧЕСКОМ переезде показания должны остаться за старой комнатой —
+    тогда эту кнопку жать не надо."""
+    user = await db.get(User, user_id)
+    if not user or user.is_deleted:
+        raise HTTPException(status_code=404, detail="Жилец не найден")
+    if not user.room_id:
+        raise HTTPException(status_code=400, detail="Жилец не привязан к комнате")
+    from app.modules.utility.services.stranded_readings import adopt_for_user
+    return await adopt_for_user(db, user, current_user)

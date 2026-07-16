@@ -5,7 +5,7 @@ import { TableController } from '../core/table-controller.js';
 
 // Импорт вынесенной логики
 import { handleDormChange, handleRoomChange } from './users-ui.js';
-import { handleImport, openRelocateModal, handleRelocateSubmit } from './users-actions.js';
+import { handleImport, openRelocateModal, handleRelocateSubmit, offerAdoptStrandedReadings } from './users-actions.js';
 
 export const UsersModule = {
     table: null,
@@ -1190,6 +1190,9 @@ export const UsersModule = {
             toast('Данные обновлены успешно', 'success');
             this.closeModal();
             this.table.refresh();
+            // Если правкой сменили комнату — показания текущего месяца могли
+            // остаться в прежней (инцидент Безродний): спрашиваем про перенос.
+            if (data.room_id) await offerAdoptStrandedReadings(id);
         } catch (error) {
             toast(error.message, 'error');
         } finally {

@@ -448,6 +448,25 @@ def system_health_task() -> dict:
                                f"ГИС завышает долг у {gis_over} жильцов (реестр показывает больше, чем 1С) — "
                                "запустите «Актуализацию расхождений» в «Долги 1С».")
 
+                # 6. Осиротевшие показания (инцидент Безродний 2026-07-16):
+                # активный месяц в чужой комнате → пустые дельты + baseline
+                # с нулевым расходом. Страховка на случаи любого происхождения.
+                try:
+                    from app.modules.utility.services.stranded_readings import (
+                        count_stranded_global,
+                    )
+                    _stranded = await count_stranded_global(db)
+                    if _stranded:
+                        _alert("warn", "stranded_readings",
+                               f"У {_stranded} жильцов подача текущего месяца — в ПРЕЖНЕЙ "
+                               "комнате, а в текущей показаний нет (сломанные дельты, риск "
+                               "нулевого расхода). Исправляли привязку → откройте карточку "
+                               "жильца (пере-сохраните комнату) и подтвердите перенос; "
+                               "реальный переезд → показание должно остаться, скройте "
+                               "уведомление (✕).")
+                except Exception:
+                    logger.exception("[health] stranded_readings check failed")
+
                 # Запись сводки.
                 row = (await db.execute(_select(_SS).where(_SS.key == "system_health"))).scalars().first()
                 if row is None:

@@ -6,6 +6,38 @@ import { showImportResultModal } from './users-ui.js';
 // ==========================================
 // ИМПОРТ EXCEL
 // ==========================================
+// Осиротевшие показания (инцидент Безродний 2026-07-16): после смены
+// комнаты у жильца могли остаться показания ТЕКУЩЕГО месяца в прежней —
+// реестр теряет дельты, месяц пересчитывается с нулевым расходом.
+// Спрашиваем админа: исправление привязки → перенести; физический
+// переезд → оставить (показания принадлежат счётчикам старой комнаты).
+export async function offerAdoptStrandedReadings(userId) {
+    let st;
+    try { st = await api.get(`/users/${userId}/stranded-readings`); }
+    catch (e) { return; /* вспомогательная проверка — молча */ }
+    const items = (st && st.items) || [];
+    if (!items.length) return;
+    const list = items.slice(0, 6).map(i => `${i.period_name} — ${i.room_label}`).join('\n');
+    const more = items.length > 6 ? `\n…и ещё ${items.length - 6}` : '';
+    const ok = await showConfirm(
+        `У жильца остались подачи в прежней квартире:\n${list}${more}\n\n` +
+        `Перенести ВСЮ историю подач в новую квартиру и пересчитать эти месяцы?\n` +
+        `• «Перенести» — если исправляли ОШИБОЧНУЮ привязку (счётчики те же).\n` +
+        `• «Отмена» — если жилец реально переехал (показания останутся за старой квартирой).`,
+        { title: 'Показания в прежней квартире', confirmText: 'Перенести' });
+    if (!ok) return;
+    try {
+        const res = await api.post(`/users/${userId}/adopt-stranded-readings`, {});
+        const parts = [`Перенесено показаний: ${res.moved || 0}`];
+        if (res.skipped) parts.push(`пропущено (дубль месяца — решите в реестре): ${res.skipped}`);
+        if (res.recalced) parts.push(`пересчитано месяцев: ${res.recalced}`);
+        if (res.recalc_errors) parts.push(`⚠ ошибок пересчёта: ${res.recalc_errors} — пересчитайте вручную`);
+        toast(parts.join(' · '), res.recalc_errors ? 'warning' : 'success');
+    } catch (e) {
+        toast('Не удалось перенести показания: ' + (e.message || e), 'error');
+    }
+}
+
 export async function handleImport(importInput, btnImport, table) {
     const file = importInput.files[0];
 
@@ -126,6 +158,9 @@ export async function handleRelocateSubmit(e, rel, table) {
         toast(res.message, 'success');
         rel.modal.classList.remove('open');
         table.refresh();
+        // Переселение: показания текущего месяца могли остаться в прежней
+        // комнате — спрашиваем про перенос (исправление привязки vs переезд).
+        if (payload.new_room_id) await offerAdoptStrandedReadings(rel.userId.value);
     } catch (err) {
         toast(err.message, 'error');
     } finally {

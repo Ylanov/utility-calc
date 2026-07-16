@@ -1,0 +1,26 @@
+# Параметрическая проба в прод-контейнере (когда SSH недоступен): скрипт
+# передаётся base64-инпутом при dispatch — БЕЗ коммитов на каждую пробу.
+# ПРАВИЛА: вывод строго без ПДн (id/числа/флаги — репозиторий публичный);
+# инпут через env (не интерполяция в shell — инъекция исключена).
+# Запуск: gh workflow run probe.yml -f b64=<base64 python-скрипта>
+name: Probe (aleks container)
+
+on:
+  workflow_dispatch:
+    inputs:
+      b64:
+        description: base64 python для exec в web-контейнере (вывод без ПДн!)
+        required: true
+        type: string
+
+jobs:
+  probe:
+    runs-on: self-hosted
+    timeout-minutes: 10
+    steps:
+      - name: exec в web-контейнере
+        env:
+          B64: ${{ inputs.b64 }}
+        run: |
+          docker exec -e PYTHONPATH=/app -e B64="$B64" utility_calc_web_jkh \
+            python -c "import base64,os;exec(base64.b64decode(os.environ['B64']).decode())"
