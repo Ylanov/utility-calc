@@ -89,12 +89,17 @@ async def count_stranded_global(db: AsyncSession) -> int:
     active = await _active_period(db)
     if not active:
         return 0
+    # Alias обязателен: без него EXISTS-подзапрос автокоррелирует ОБЕ таблицы
+    # внешнего запроса и остаётся без FROM (InvalidRequestError, ловилось
+    # пробой 2026-07-16).
+    from sqlalchemy.orm import aliased
+    MR2 = aliased(MeterReading)
     in_current = (
-        select(MeterReading.id)
+        select(MR2.id)
         .where(
-            MeterReading.user_id == User.id,
-            MeterReading.period_id == active.id,
-            MeterReading.room_id == User.room_id,
+            MR2.user_id == User.id,
+            MR2.period_id == active.id,
+            MR2.room_id == User.room_id,
         ).limit(1)
     ).exists()
     return int((await db.execute(
