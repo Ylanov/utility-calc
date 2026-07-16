@@ -14,6 +14,17 @@
             </div>
             <button id="btnOpenAddRoom" class="action-btn primary-btn full-width mb-3"><i class="fa-solid fa-plus"></i> Добавить помещение</button>
 
+            <!-- Массовые операции QR-портала (2026-07-16): область действия =
+                 выбранное здание в фильтре («Все объекты» = весь жилфонд). -->
+            <button id="btnQrPdf" class="action-btn secondary-btn full-width mb-3"
+                    title="PDF с QR-кодами личных кабинетов всех квартир выбранного здания (или всех объектов) — 8 на страницу A4, под кодом адрес. Распечатать и раздать/расклеить.">
+                <i class="fa-solid fa-file-pdf"></i> PDF с QR-кодами
+            </button>
+            <button id="btnQrResetPasswords" class="action-btn secondary-btn full-width mb-3" style="color:#b45309; border-color:#fde68a;"
+                    title="Сбросить пароли личных кабинетов (4+ знака при входе по QR) у выбранного здания или ВСЕХ объектов. Жильцы зададут новые при следующем входе; QR-наклейки продолжают работать.">
+                <i class="fa-solid fa-key"></i> Сбросить пароли ЛК
+            </button>
+
             <!-- Анализ жилфонда переехал в единый «Центр анализа» на вкладке «Операции»:
                  Операции → Центр анализа → таб «Анализ жилфонда». Там же собраны
                  аномалии показаний, сравнение периодов и обслуживание буфера gsheets.

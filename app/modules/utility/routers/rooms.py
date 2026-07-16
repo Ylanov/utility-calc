@@ -1,6 +1,7 @@
 # app/modules/utility/routers/rooms.py
 from decimal import Decimal
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func, or_, update, and_
@@ -1146,6 +1147,180 @@ async def normalize_serials(
         "changed_rooms": len(changes),
         "changes": changes,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# МАССОВЫЕ ОПЕРАЦИИ QR-ПОРТАЛА (2026-07-16): печать QR-кодов домом/всеми
+# домами одним PDF + массовый сброс паролей личных кабинетов.
+# ═══════════════════════════════════════════════════════════════════════
+
+def _qr_scope_filter(q, dormitory: Optional[str],
+                     street: Optional[str], house_number: Optional[str]):
+    """Фильтр «здание»: общага (dormitory) ИЛИ дом (street+house_number).
+    Ничего не задано — все объекты. ЧАСТИЧНАЯ область (улица без дома) —
+    400, а не молчаливое «все объекты»: для массового сброса паролей
+    fail-open означал бы сброс всего жилфонда (ревью 2026-07-16)."""
+    dormitory = (dormitory or "").strip()
+    street = (street or "").strip()
+    house_number = (house_number or "").strip()
+    if (street or house_number) and not (street and house_number):
+        raise HTTPException(400, "Для дома нужны ОБА поля: street и house_number")
+    if dormitory:
+        return q.where(Room.dormitory_name == dormitory)
+    if street:
+        return q.where(Room.street == street, Room.house_number == house_number)
+    return q
+
+
+def _room_sort_key(room: Room):
+    """Натуральная сортировка: здание → номер (числом, затем суффикс «101а»)."""
+    import re
+    building = room.dormitory_name or f"{room.street or ''} {room.house_number or ''}"
+    num = room.room_number or room.apartment_number or ""
+    m = re.match(r"(\d+)", str(num))
+    return (building, int(m.group(1)) if m else 10 ** 9, str(num))
+
+
+@router.get("/qr-pdf", dependencies=[Depends(allow_management)])
+async def rooms_qr_pdf(
+    base: str = Query(..., max_length=200,
+                      description="origin фронта (https://asy-tk.ru) — уходит в QR"),
+    dormitory: Optional[str] = Query(None),
+    street: Optional[str] = Query(None),
+    house_number: Optional[str] = Query(None),
+    db: AsyncSession = Depends(get_db),
+):
+    """PDF с QR-кодами личных кабинетов: по зданию или по ВСЕМ объектам.
+
+    8 карточек на страницу A4 (2×4), под каждым кодом — адрес (дом +
+    квартира/комната), чтобы распечатать и раздать/расклеить сразу всем.
+    Токены недостающим комнатам выдаются лениво (как в per-room QR)."""
+    base = base.strip().rstrip("/")
+    if not (base.startswith("https://") or base.startswith("http://")) or " " in base:
+        raise HTTPException(400, "base должен быть http(s)-origin")
+
+    rooms = (await db.execute(
+        _qr_scope_filter(select(Room), dormitory, street, house_number)
+    )).scalars().all()
+    if not rooms:
+        raise HTTPException(404, "Помещений по этому фильтру нет")
+    rooms.sort(key=_room_sort_key)
+
+    # Лениво выдаём токены всем, у кого ещё нет (одним коммитом, не по одному).
+    from app.modules.utility.services.qr_portal import generate_qr_token
+    fresh = 0
+    for r in rooms:
+        if not r.qr_token:
+            r.qr_token = generate_qr_token()
+            fresh += 1
+    if fresh:
+        await db.commit()
+
+    # Данные для рендера собираем из ORM ЗАРАНЕЕ: сам рендер (400+ QR-PNG +
+    # многостраничный weasyprint) — секунды/десятки секунд чистого CPU,
+    # поэтому уходит в поток (to_thread), не блокируя event loop
+    # (ревью 2026-07-16: иначе на время рендера замирал весь портал).
+    def _building_label(r: Room) -> str:
+        if r.dormitory_name:
+            return r.dormitory_name
+        return f"ул. {r.street}, д. {r.house_number}" if r.street else "Без адреса"
+
+    items = [(_building_label(r), r.format_address, f"{base}/qr.html#{r.qr_token}")
+             for r in rooms]
+
+    def _render_pdf(items_: list) -> bytes:
+        import base64 as _b64
+        import html as _html
+        from io import BytesIO
+        import qrcode
+        from weasyprint import HTML as _WeasyHTML
+
+        def _qr_data_uri(text: str) -> str:
+            qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M,
+                               box_size=8, border=2)
+            qr.add_data(text)
+            qr.make(fit=True)
+            buf = BytesIO()
+            qr.make_image(fill_color="black", back_color="white").save(buf, format="PNG")
+            return "data:image/png;base64," + _b64.b64encode(buf.getvalue()).decode()
+
+        cards_by_building: dict[str, list[str]] = {}
+        for bld, addr, url in items_:
+            cards_by_building.setdefault(bld, []).append(
+                f'<div class="card"><img src="{_qr_data_uri(url)}">'
+                f'<div class="addr">{_html.escape(addr)}</div>'
+                f'<div class="hint">Личный кабинет — подача показаний.<br>'
+                f'Отсканируйте камерой телефона; пароль задаётся при первом входе.</div></div>'
+            )
+
+        sections = []
+        for i, (bld, cards) in enumerate(cards_by_building.items()):
+            brk = ' style="page-break-before: always;"' if i else ""
+            sections.append(
+                f'<div{brk}><h2>{_html.escape(bld)} — QR-коды личных кабинетов '
+                f'({len(cards)} шт.)</h2>{"".join(cards)}</div>'
+            )
+
+        html_doc = (
+            '<html><head><meta charset="utf-8"><style>'
+            '@page { size: A4; margin: 8mm; }'
+            "body { font-family: 'DejaVu Sans', sans-serif; margin: 0; }"
+            'h2 { font-size: 12pt; margin: 0 0 4mm 0; }'
+            '.card { display: inline-block; width: 49%; text-align: center;'
+            '  padding: 4mm 0 5mm; page-break-inside: avoid; vertical-align: top; }'
+            '.card img { width: 46mm; height: 46mm; }'
+            '.addr { font-size: 12pt; font-weight: bold; margin-top: 1mm; }'
+            '.hint { font-size: 7.5pt; color: #555; margin-top: 1mm; }'
+            '</style></head><body>' + "".join(sections) + '</body></html>'
+        )
+        return _WeasyHTML(string=html_doc).write_pdf()
+
+    import asyncio
+    pdf_bytes = await asyncio.to_thread(_render_pdf, items)
+
+    from urllib.parse import quote
+    scope = dormitory or (f"{street}_{house_number}" if street else "все_объекты")
+    scope = scope.replace("/", "_").replace("\\", "_")[:80]
+    return Response(
+        content=pdf_bytes, media_type="application/pdf",
+        headers={"Content-Disposition":
+                 "attachment; filename=\"qr_codes.pdf\"; "
+                 f"filename*=UTF-8''{quote('QR_' + scope + '.pdf', safe='')}"},
+    )
+
+
+class QrBulkResetScope(BaseModel):
+    dormitory: Optional[str] = None
+    street: Optional[str] = None
+    house_number: Optional[str] = None
+
+
+@router.post("/qr/reset-passwords", dependencies=[Depends(allow_management)])
+async def bulk_reset_qr_passwords(
+    scope: QrBulkResetScope,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Массовый сброс паролей личных кабинетов (QR-портала): по зданию или
+    по ВСЕМ объектам сразу. Пароль (4+ знака) задаёт сам жилец — сброс
+    обнуляет хэш, портал попросит придумать новый при следующем входе.
+    QR-токены НЕ меняются (наклейки продолжают работать)."""
+    q = _qr_scope_filter(
+        update(Room).values(qr_password_hash=None)
+        .where(Room.qr_password_hash.isnot(None)),
+        scope.dormitory, scope.street, scope.house_number,
+    )
+    res = await db.execute(q)
+    n = res.rowcount or 0
+    from app.modules.utility.routers.admin_dashboard import write_audit_log
+    await write_audit_log(
+        db, current_user.id, current_user.username,
+        action="bulk_reset_qr_passwords", entity_type="room", entity_id=0,
+        details={"dormitory": scope.dormitory, "street": scope.street,
+                 "house_number": scope.house_number, "reset_count": n},
+    )
+    await db.commit()
+    return {"reset": n}
 
 
 @router.post("/{room_id}/qr", dependencies=[Depends(allow_management)])

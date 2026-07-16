@@ -1,6 +1,6 @@
 // static/js/modules/housing.js
 import { api } from '../core/api.js';
-import { el, toast, setLoading, showConfirm } from '../core/dom.js';
+import { el, toast, setLoading, showConfirm, showPrompt } from '../core/dom.js';
 import { TableController } from '../core/table-controller.js';
 import { formatRoomAddress } from '../core/format-address.js';
 
@@ -39,6 +39,8 @@ export const HousingModule = {
             dormFilterSelect: document.getElementById('dormFilterSelect'),
             dormList: document.getElementById('dormList'),
             btnOpenAdd: document.getElementById('btnOpenAddRoom'),
+            btnQrPdf: document.getElementById('btnQrPdf'),
+            btnQrResetPasswords: document.getElementById('btnQrResetPasswords'),
             btnRefresh: document.getElementById('btnRefreshRooms'),
             btnExport: document.getElementById('btnExportRooms'),
             btnNormalizeList: document.getElementById('btnNormalizeSerialsList'),
@@ -157,6 +159,15 @@ export const HousingModule = {
 
         if (this.dom.btnExport) {
             this.dom.btnExport.addEventListener('click', () => this.exportExcel());
+        }
+
+        // Массовые операции QR-портала — область = выбранное здание в фильтре
+        // («Все объекты» = весь жилфонд).
+        if (this.dom.btnQrPdf) {
+            this.dom.btnQrPdf.addEventListener('click', () => this.downloadQrPdf());
+        }
+        if (this.dom.btnQrResetPasswords) {
+            this.dom.btnQrResetPasswords.addEventListener('click', () => this.bulkResetQrPasswords());
         }
         if (this.dom.btnNormalizeList) {
             this.dom.btnNormalizeList.addEventListener('click', () => this.normalizeSerialsByFilter());
@@ -502,6 +513,69 @@ export const HousingModule = {
         }
 
         modal.classList.add('open');
+    },
+
+    // ── Массовые операции QR-портала (2026-07-16) ──────────────────────
+
+    /** Область массовых операций: выбранное здание или весь жилфонд. */
+    _qrScope() {
+        const p = this._buildingFilterParams();
+        const sel = this.dom.dormFilterSelect;
+        const label = (p.dormitory || p.street)
+            ? (sel?.selectedOptions?.[0]?.textContent || 'выбранное здание')
+            : 'ВСЕХ объектов';
+        const qs = new URLSearchParams();
+        if (p.dormitory) qs.set('dormitory', p.dormitory);
+        if (p.street) { qs.set('street', p.street); qs.set('house_number', p.house_number); }
+        return { params: p, qs, label };
+    },
+
+    /** PDF с QR-кодами личных кабинетов: 8 на страницу A4, под кодом адрес. */
+    async downloadQrPdf() {
+        const btn = this.dom.btnQrPdf;
+        const { qs, label } = this._qrScope();
+        qs.set('base', location.origin);
+        btn.disabled = true;
+        const orig = btn.innerHTML;
+        btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Генерирую PDF…';
+        try {
+            await api.download('/rooms/qr-pdf?' + qs.toString(), 'qr_codes.pdf');
+            toast('PDF с QR-кодами (' + label + ') скачан — печатайте', 'success');
+        } catch (e) {
+            toast('Не удалось сгенерировать PDF: ' + (e.message || e), 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = orig;
+        }
+    },
+
+    /** Массовый сброс паролей ЛК: жильцы зададут новые при следующем входе. */
+    async bulkResetQrPasswords() {
+        const { params, label } = this._qrScope();
+        const word = await showPrompt(
+            'Сброс паролей личных кабинетов',
+            'Пароли ЛК (' + label + ') будут сброшены — каждый жилец задаст НОВЫЙ ' +
+            'пароль при следующем входе по QR. Наклейки с QR продолжают работать.\n\n' +
+            'Для подтверждения введите слово СБРОСИТЬ:',
+            '', 'СБРОСИТЬ');
+        if (word === null) return;
+        if (word.trim().toUpperCase() !== 'СБРОСИТЬ') {
+            toast('Отменено: подтверждающее слово не совпало', 'info');
+            return;
+        }
+        const btn = this.dom.btnQrResetPasswords;
+        btn.disabled = true;
+        try {
+            const body = {};
+            if (params.dormitory) body.dormitory = params.dormitory;
+            if (params.street) { body.street = params.street; body.house_number = params.house_number; }
+            const res = await api.post('/rooms/qr/reset-passwords', body);
+            toast('Сброшено паролей: ' + (res.reset || 0) + ' (' + label + ')', 'success');
+        } catch (e) {
+            toast('Не удалось сбросить пароли: ' + (e.message || e), 'error');
+        } finally {
+            btn.disabled = false;
+        }
     },
 
     // QR-код квартиры: get-or-create токен → показать QR (через /api/qr) +
